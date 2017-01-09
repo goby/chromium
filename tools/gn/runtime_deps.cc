@@ -17,6 +17,7 @@
 #include "tools/gn/filesystem_utils.h"
 #include "tools/gn/loader.h"
 #include "tools/gn/output_file.h"
+#include "tools/gn/scheduler.h"
 #include "tools/gn/settings.h"
 #include "tools/gn/switches.h"
 #include "tools/gn/target.h"
@@ -49,14 +50,6 @@ void AddIfNew(const std::string& str,
   AddIfNew(output_file, source, deps, found_file);
 }
 
-// Returns the output file that the runtime deps considers for the given
-// targets. This is weird only for shared libraries.
-const OutputFile& GetMainOutput(const Target* target) {
-  if (target->output_type() == Target::SHARED_LIBRARY)
-    return target->link_output_file();
-  return target->dependency_output_file();
-}
-
 // To avoid duplicate traversals of targets, or duplicating output files that
 // might be listed by more than one target, the set of targets and output files
 // that have been found so far is passed. The "value" of the seen_targets map
@@ -85,8 +78,10 @@ void RecursiveCollectRuntimeDeps(const Target* target,
   // loadable modules.
   if (target->output_type() == Target::EXECUTABLE ||
       target->output_type() == Target::LOADABLE_MODULE ||
-      target->output_type() == Target::SHARED_LIBRARY)
-    AddIfNew(GetMainOutput(target), target, deps, found_files);
+      target->output_type() == Target::SHARED_LIBRARY) {
+    for (const auto& runtime_output : target->runtime_outputs())
+      AddIfNew(runtime_output, target, deps, found_files);
+  }
 
   // Add all data files.
   for (const auto& file : target->data())
@@ -103,6 +98,21 @@ void RecursiveCollectRuntimeDeps(const Target* target,
       AddIfNew(output_file.value(), target, deps, found_files);
   }
 
+  // Data dependencies.
+  for (const auto& dep_pair : target->data_deps()) {
+    RecursiveCollectRuntimeDeps(dep_pair.ptr, true,
+                                deps, seen_targets, found_files);
+  }
+
+  // Do not recurse into bundle targets. A bundle's dependencies should be
+  // copied into the bundle itself for run-time access.
+  if (target->output_type() == Target::CREATE_BUNDLE) {
+    SourceDir bundle_root_dir =
+        target->bundle_data().GetBundleRootDirOutputAsDir(target->settings());
+    AddIfNew(bundle_root_dir.value(), target, deps, found_files);
+    return;
+  }
+
   // Non-data dependencies (both public and private).
   for (const auto& dep_pair : target->GetDeps(Target::DEPS_LINKED)) {
     if (dep_pair.ptr->output_type() == Target::EXECUTABLE)
@@ -110,126 +120,17 @@ void RecursiveCollectRuntimeDeps(const Target* target,
     RecursiveCollectRuntimeDeps(dep_pair.ptr, false,
                                 deps, seen_targets, found_files);
   }
-
-  // Data dependencies.
-  for (const auto& dep_pair : target->data_deps()) {
-    RecursiveCollectRuntimeDeps(dep_pair.ptr, true,
-                                deps, seen_targets, found_files);
-  }
 }
 
-bool WriteRuntimeDepsFile(const Target* target) {
-  SourceFile target_output_as_source =
-      GetMainOutput(target).AsSourceFile(target->settings()->build_settings());
-  std::string data_deps_file_as_str = target_output_as_source.value();
-  data_deps_file_as_str.append(".runtime_deps");
-  base::FilePath data_deps_file =
-      target->settings()->build_settings()->GetFullPath(
-          SourceFile(SourceFile::SwapIn(), &data_deps_file_as_str));
-
-  std::stringstream contents;
-  for (const auto& pair : ComputeRuntimeDeps(target))
-    contents << pair.first.value() << std::endl;
-
-  ScopedTrace trace(TraceItem::TRACE_FILE_WRITE, data_deps_file_as_str);
-  base::CreateDirectory(data_deps_file.DirName());
-
-  std::string contents_str = contents.str();
-  return base::WriteFile(data_deps_file, contents_str.c_str(),
-                         static_cast<int>(contents_str.size())) > -1;
-}
-
-}  // namespace
-
-const char kRuntimeDeps_Help[] =
-    "Runtime dependencies\n"
-    "\n"
-    "  Runtime dependencies of a target are exposed via the \"runtime_deps\"\n"
-    "  category of \"gn desc\" (see \"gn help desc\") or they can be written\n"
-    "  at build generation time via \"--runtime-deps-list-file\"\n"
-    "  (see \"gn help --runtime-deps-list-file\").\n"
-    "\n"
-    "  To a first approximation, the runtime dependencies of a target are\n"
-    "  the set of \"data\" files, data directories, and the shared libraries\n"
-    "  from all transitive dependencies. Executables, shared libraries, and\n"
-    "  loadable modules are considered runtime dependencies of themselves.\n"
-    "\n"
-    "Executables\n"
-    "\n"
-    "  Executable targets and those executable targets' transitive\n"
-    "  dependencies are not considered unless that executable is listed in\n"
-    "  \"data_deps\". Otherwise, GN assumes that the executable (and\n"
-    "  everything it requires) is a build-time dependency only.\n"
-    "\n"
-    "Actions and copies\n"
-    "\n"
-    "  Action and copy targets that are listed as \"data_deps\" will have all\n"
-    "  of their outputs and data files considered as runtime dependencies.\n"
-    "  Action and copy targets that are \"deps\" or \"public_deps\" will have\n"
-    "  only their data files considered as runtime dependencies. These\n"
-    "  targets can list an output file in both the \"outputs\" and \"data\"\n"
-    "  lists to force an output file as a runtime dependency in all cases.\n"
-    "\n"
-    "  The different rules for deps and data_deps are to express build-time\n"
-    "  (deps) vs. run-time (data_deps) outputs. If GN counted all build-time\n"
-    "  copy steps as data dependencies, there would be a lot of extra stuff,\n"
-    "  and if GN counted all run-time dependencies as regular deps, the\n"
-    "  build's parallelism would be unnecessarily constrained.\n"
-    "\n"
-    "  This rule can sometimes lead to unintuitive results. For example,\n"
-    "  given the three targets:\n"
-    "    A  --[data_deps]-->  B  --[deps]-->  ACTION\n"
-    "  GN would say that A does not have runtime deps on the result of the\n"
-    "  ACTION, which is often correct. But the purpose of the B target might\n"
-    "  be to collect many actions into one logic unit, and the \"data\"-ness\n"
-    "  of A's dependency is lost. Solutions:\n"
-    "\n"
-    "   - List the outputs of the action in it's data section (if the\n"
-    "     results of that action are always runtime files).\n"
-    "   - Have B list the action in data_deps (if the outputs of the actions\n"
-    "     are always runtime files).\n"
-    "   - Have B list the action in both deps and data deps (if the outputs\n"
-    "     might be used in both contexts and you don't care about unnecessary\n"
-    "     entries in the list of files required at runtime).\n"
-    "   - Split B into run-time and build-time versions with the appropriate\n"
-    "     \"deps\" for each.\n"
-    "\n"
-    "Static libraries and source sets\n"
-    "\n"
-    "  The results of static_library or source_set targets are not considered\n"
-    "  runtime dependencies since these are assumed to be intermediate\n"
-    "  targets only. If you need to list a static library as a runtime\n"
-    "  dependency, you can manually compute the .a/.lib file name for the\n"
-    "  current platform and list it in the \"data\" list of a target\n"
-    "  (possibly on the static library target itself).\n"
-    "\n"
-    "Multiple outputs\n"
-    "\n"
-    "  When a tool produces more than one output, only the first output\n"
-    "  is considered. For example, a shared library target may produce a\n"
-    "  .dll and a .lib file on Windows. Only the .dll file will be considered\n"
-    "  a runtime dependency. This applies only to linker tools, scripts and\n"
-    "  copy steps with multiple outputs will also get all outputs listed.\n";
-
-RuntimeDepsVector ComputeRuntimeDeps(const Target* target) {
-  RuntimeDepsVector result;
-  std::map<const Target*, bool> seen_targets;
-  std::set<OutputFile> found_files;
-
-  // The initial target is not considered a data dependency so that actions's
-  // outputs (if the current target is an action) are not automatically
-  // considered data deps.
-  RecursiveCollectRuntimeDeps(target, false,
-                              &result, &seen_targets, &found_files);
-  return result;
-}
-
-bool WriteRuntimeDepsFilesIfNecessary(const Builder& builder, Err* err) {
+bool CollectRuntimeDepsFromFlag(const Builder& builder,
+                                RuntimeDepsVector* files_to_write,
+                                Err* err) {
   std::string deps_target_list_file =
       base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
           switches::kRuntimeDepsListFile);
+
   if (deps_target_list_file.empty())
-    return true;  // Nothing to do.
+    return true;
 
   std::string list_contents;
   ScopedTrace load_trace(TraceItem::TRACE_FILE_LOAD, deps_target_list_file);
@@ -245,8 +146,9 @@ bool WriteRuntimeDepsFilesIfNecessary(const Builder& builder, Err* err) {
 
   SourceDir root_dir("//");
   Label default_toolchain_label = builder.loader()->GetDefaultToolchain();
-  for (const auto& line : base::SplitString(
-           list_contents, "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+  for (const auto& line :
+       base::SplitString(list_contents, "\n", base::TRIM_WHITESPACE,
+                         base::SPLIT_WANT_ALL)) {
     if (line.empty())
       continue;
     Label label = Label::Resolve(root_dir, default_toolchain_label,
@@ -265,10 +167,141 @@ bool WriteRuntimeDepsFilesIfNecessary(const Builder& builder, Err* err) {
       return false;
     }
 
+    OutputFile output_file;
+    const char extension[] = ".runtime_deps";
+    if (target->output_type() == Target::SHARED_LIBRARY ||
+        target->output_type() == Target::LOADABLE_MODULE) {
+      // Force the first output for shared-library-type linker outputs since
+      // the dependency output files might not be the main output.
+      CHECK(!target->computed_outputs().empty());
+      output_file =
+          OutputFile(target->computed_outputs()[0].value() + extension);
+    } else {
+      output_file =
+          OutputFile(target->dependency_output_file().value() + extension);
+    }
+    files_to_write->push_back(std::make_pair(output_file, target));
+  }
+  return true;
+}
+
+bool WriteRuntimeDepsFile(const OutputFile& output_file,
+                          const Target* target,
+                          Err* err) {
+  SourceFile output_as_source =
+      output_file.AsSourceFile(target->settings()->build_settings());
+  base::FilePath data_deps_file =
+      target->settings()->build_settings()->GetFullPath(output_as_source);
+
+  std::stringstream contents;
+  for (const auto& pair : ComputeRuntimeDeps(target))
+    contents << pair.first.value() << std::endl;
+
+  ScopedTrace trace(TraceItem::TRACE_FILE_WRITE, output_as_source.value());
+  return WriteFileIfChanged(data_deps_file, contents.str(), err);
+}
+
+}  // namespace
+
+const char kRuntimeDeps_Help[] =
+    R"(Runtime dependencies
+
+  Runtime dependencies of a target are exposed via the "runtime_deps" category
+  of "gn desc" (see "gn help desc") or they can be written at build generation
+  time via write_runtime_deps(), or --runtime-deps-list-file (see "gn help
+  --runtime-deps-list-file").
+
+  To a first approximation, the runtime dependencies of a target are the set of
+  "data" files, data directories, and the shared libraries from all transitive
+  dependencies. Executables, shared libraries, and loadable modules are
+  considered runtime dependencies of themselves.
+
+Executables
+
+  Executable targets and those executable targets' transitive dependencies are
+  not considered unless that executable is listed in "data_deps". Otherwise, GN
+  assumes that the executable (and everything it requires) is a build-time
+  dependency only.
+
+Actions and copies
+
+  Action and copy targets that are listed as "data_deps" will have all of their
+  outputs and data files considered as runtime dependencies. Action and copy
+  targets that are "deps" or "public_deps" will have only their data files
+  considered as runtime dependencies. These targets can list an output file in
+  both the "outputs" and "data" lists to force an output file as a runtime
+  dependency in all cases.
+
+  The different rules for deps and data_deps are to express build-time (deps)
+  vs. run-time (data_deps) outputs. If GN counted all build-time copy steps as
+  data dependencies, there would be a lot of extra stuff, and if GN counted all
+  run-time dependencies as regular deps, the build's parallelism would be
+  unnecessarily constrained.
+
+  This rule can sometimes lead to unintuitive results. For example, given the
+  three targets:
+    A  --[data_deps]-->  B  --[deps]-->  ACTION
+  GN would say that A does not have runtime deps on the result of the ACTION,
+  which is often correct. But the purpose of the B target might be to collect
+  many actions into one logic unit, and the "data"-ness of A's dependency is
+  lost. Solutions:
+
+   - List the outputs of the action in it's data section (if the results of
+     that action are always runtime files).
+   - Have B list the action in data_deps (if the outputs of the actions are
+     always runtime files).
+   - Have B list the action in both deps and data deps (if the outputs might be
+     used in both contexts and you don't care about unnecessary entries in the
+     list of files required at runtime).
+   - Split B into run-time and build-time versions with the appropriate "deps"
+     for each.
+
+Static libraries and source sets
+
+  The results of static_library or source_set targets are not considered
+  runtime dependencies since these are assumed to be intermediate targets only.
+  If you need to list a static library as a runtime dependency, you can
+  manually compute the .a/.lib file name for the current platform and list it
+  in the "data" list of a target (possibly on the static library target
+  itself).
+
+Multiple outputs
+
+  Linker tools can specify which of their outputs should be considered when
+  computing the runtime deps by setting runtime_outputs. If this is unset on
+  the tool, the default will be the first output only.
+)";
+
+RuntimeDepsVector ComputeRuntimeDeps(const Target* target) {
+  RuntimeDepsVector result;
+  std::map<const Target*, bool> seen_targets;
+  std::set<OutputFile> found_files;
+
+  // The initial target is not considered a data dependency so that actions's
+  // outputs (if the current target is an action) are not automatically
+  // considered data deps.
+  RecursiveCollectRuntimeDeps(target, false,
+                              &result, &seen_targets, &found_files);
+  return result;
+}
+
+bool WriteRuntimeDepsFilesIfNecessary(const Builder& builder, Err* err) {
+  RuntimeDepsVector files_to_write;
+  if (!CollectRuntimeDepsFromFlag(builder, &files_to_write, err))
+    return false;
+
+  // Files scheduled by write_runtime_deps.
+  for (const Target* target : g_scheduler->GetWriteRuntimeDepsTargets()) {
+    files_to_write.push_back(
+        std::make_pair(target->write_runtime_deps_output(), target));
+  }
+
+  for (const auto& entry : files_to_write) {
     // Currently this writes all runtime deps files sequentially. We generally
     // expect few of these. We can run this on the worker pool if it looks
     // like it's talking a long time.
-    WriteRuntimeDepsFile(target);
+    if (!WriteRuntimeDepsFile(entry.first, entry.second, err))
+      return false;
   }
   return true;
 }

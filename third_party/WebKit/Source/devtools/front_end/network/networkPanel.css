@@ -36,10 +36,6 @@
     background: rgb(203, 203, 203);
 }
 
-.network-close-button {
-    margin: auto -1px auto 4px;
-}
-
 .network-details-view-tall-header {
     margin-top: 4px;
 }
@@ -47,6 +43,11 @@
 .network-item-view {
     display: flex;
     background: white;
+}
+
+.network-item-preview-toolbar {
+    border-top: 1px solid #ccc;
+    background-color: #eee;
 }
 
 .resource-timing-view {
@@ -90,6 +91,12 @@
     font-weight: bold;
     color: rgb(255, 128, 0);
     padding: 2px 0;
+}
+
+.network-timing-table hr.break {
+    border: 0;
+    height: 1px;
+    background-image: linear-gradient(to right, #eee, #bbb, #eee);
 }
 
 .network-timing-footer td {
@@ -154,8 +161,24 @@
     background-color: #00C853;
 }
 
-.network-timing-bar.receiving, -theme-preserve {
+.network-timing-bar.receiving, -theme-preserve,
+.network-timing-bar.receiving-push, -theme-preserve {
     background-color: #03A9F4;
+}
+
+.network-timing-bar.push, -theme-preserve {
+    background-color: #8CDBff;
+}
+
+.network-timing-bar.server-timing, -theme-preserve {
+    background-color: #ddd;
+}
+
+.network-timing-table td.network-timing-metric {
+    white-space: nowrap;
+    max-width: 150px;
+    overflow-x: hidden;
+    text-overflow: ellipsis;
 }
 
 .network-timing-bar.proxy,
@@ -217,6 +240,7 @@
 
 .json-view {
     padding: 2px 6px;
+    overflow: auto;
 }
 
 .request-view.html iframe {

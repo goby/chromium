@@ -2,9 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <memory>
+
 #include "base/bind.h"
 #include "base/debug/stack_trace.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "media/base/pipeline_status.h"
 #include "media/base/serial_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -18,10 +24,10 @@ class SerialRunnerTest : public ::testing::Test {
   ~SerialRunnerTest() override {}
 
   void RunSerialRunner() {
-    message_loop_.PostTask(FROM_HERE, base::Bind(
-        &SerialRunnerTest::StartRunnerInternal, base::Unretained(this),
-        bound_fns_));
-    message_loop_.RunUntilIdle();
+    message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::Bind(&SerialRunnerTest::StartRunnerInternal,
+                              base::Unretained(this), bound_fns_));
+    base::RunLoop().RunUntilIdle();
   }
 
   // Pushes a bound function to the queue that will run its callback with
@@ -114,8 +120,9 @@ class SerialRunnerTest : public ::testing::Test {
 
   void CancelSerialRunner(const PipelineStatusCB& status_cb) {
     // Tasks run by |runner_| shouldn't reset it, hence we post a task to do so.
-    message_loop_.PostTask(FROM_HERE, base::Bind(
-        &SerialRunnerTest::ResetSerialRunner, base::Unretained(this)));
+    message_loop_.task_runner()->PostTask(
+        FROM_HERE, base::Bind(&SerialRunnerTest::ResetSerialRunner,
+                              base::Unretained(this)));
     status_cb.Run(PIPELINE_OK);
   }
 
@@ -125,7 +132,7 @@ class SerialRunnerTest : public ::testing::Test {
 
   base::MessageLoop message_loop_;
   SerialRunner::Queue bound_fns_;
-  scoped_ptr<SerialRunner> runner_;
+  std::unique_ptr<SerialRunner> runner_;
 
   // Used to enforce calling stack guarantees of the API.
   bool inside_start_;

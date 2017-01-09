@@ -5,6 +5,7 @@
 #include "chromeos/network/portal_detector/network_portal_detector_strategy.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
@@ -133,21 +134,22 @@ PortalDetectorStrategy::~PortalDetectorStrategy() {
 }
 
 // static
-scoped_ptr<PortalDetectorStrategy> PortalDetectorStrategy::CreateById(
+std::unique_ptr<PortalDetectorStrategy> PortalDetectorStrategy::CreateById(
     StrategyId id,
     Delegate* delegate) {
   switch (id) {
     case STRATEGY_ID_LOGIN_SCREEN:
-      return scoped_ptr<PortalDetectorStrategy>(
+      return std::unique_ptr<PortalDetectorStrategy>(
           new LoginScreenStrategy(delegate));
     case STRATEGY_ID_ERROR_SCREEN:
-      return scoped_ptr<PortalDetectorStrategy>(
+      return std::unique_ptr<PortalDetectorStrategy>(
           new ErrorScreenStrategy(delegate));
     case STRATEGY_ID_SESSION:
-      return scoped_ptr<PortalDetectorStrategy>(new SessionStrategy(delegate));
+      return std::unique_ptr<PortalDetectorStrategy>(
+          new SessionStrategy(delegate));
     default:
       NOTREACHED();
-      return scoped_ptr<PortalDetectorStrategy>(
+      return std::unique_ptr<PortalDetectorStrategy>(
           static_cast<PortalDetectorStrategy*>(nullptr));
   }
 }

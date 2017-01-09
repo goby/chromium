@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_ACTIVITY_LOG_ACTIVITY_ACTIONS_H_
 #define CHROME_BROWSER_EXTENSIONS_ACTIVITY_LOG_ACTIVITY_ACTIONS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/time/time.h"
 #include "chrome/browser/profiles/profile.h"
@@ -49,7 +52,7 @@ class Action : public base::RefCountedThreadSafe<Action> {
          const base::Time& time,
          const ActionType action_type,
          const std::string& api_name,
-         int64 action_id = -1);
+         int64_t action_id = -1);
 
   // Creates and returns a mutable copy of an Action.
   scoped_refptr<Action> Clone() const;
@@ -75,7 +78,7 @@ class Action : public base::RefCountedThreadSafe<Action> {
   // can be modified in place; if the list was null an empty list is created
   // first.
   const base::ListValue* args() const { return args_.get(); }
-  void set_args(scoped_ptr<base::ListValue> args);
+  void set_args(std::unique_ptr<base::ListValue> args);
   base::ListValue* mutable_args();
 
   // The URL of the page which was modified or accessed.
@@ -99,13 +102,13 @@ class Action : public base::RefCountedThreadSafe<Action> {
 
   // A dictionary where any additional data can be stored.
   const base::DictionaryValue* other() const { return other_.get(); }
-  void set_other(scoped_ptr<base::DictionaryValue> other);
+  void set_other(std::unique_ptr<base::DictionaryValue> other);
   base::DictionaryValue* mutable_other();
 
   // An ID that identifies an action stored in the Activity Log database. If the
   // action is not retrieved from the database, e.g., live stream, then the ID
   // is set to -1.
-  int64 action_id() const { return action_id_; }
+  int64_t action_id() const { return action_id_; }
 
   // Helper methods for serializing and deserializing URLs into strings.  If
   // the URL is marked as incognito, then the string is prefixed with
@@ -120,8 +123,7 @@ class Action : public base::RefCountedThreadSafe<Action> {
   void set_count(int count) { count_ = count; }
 
   // Flatten the activity's type-specific fields into an ExtensionActivity.
-  scoped_ptr<api::activity_log_private::ExtensionActivity>
-      ConvertToExtensionActivity();
+  api::activity_log_private::ExtensionActivity ConvertToExtensionActivity();
 
   // Print an action as a regular string for debugging purposes.
   virtual std::string PrintForDebug() const;
@@ -136,15 +138,15 @@ class Action : public base::RefCountedThreadSafe<Action> {
   base::Time time_;
   ActionType action_type_;
   std::string api_name_;
-  scoped_ptr<base::ListValue> args_;
+  std::unique_ptr<base::ListValue> args_;
   GURL page_url_;
   std::string page_title_;
   bool page_incognito_;
   GURL arg_url_;
   bool arg_incognito_;
-  scoped_ptr<base::DictionaryValue> other_;
+  std::unique_ptr<base::DictionaryValue> other_;
   int count_;
-  int64 action_id_;
+  int64_t action_id_;
 
   DISALLOW_COPY_AND_ASSIGN(Action);
 };

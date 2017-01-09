@@ -5,32 +5,22 @@
 #ifndef CHROME_RENDERER_PLUGINS_CHROME_PLUGIN_PLACEHOLDER_H_
 #define CHROME_RENDERER_PLUGINS_CHROME_PLUGIN_PLACEHOLDER_H_
 
+#include <stdint.h>
+#include <string>
+
+#include "base/macros.h"
+#include "chrome/common/features.h"
+#include "chrome/common/prerender_types.h"
+#include "chrome/renderer/plugins/power_saver_info.h"
 #include "components/plugins/renderer/loadable_plugin_placeholder.h"
 #include "content/public/renderer/context_menu_client.h"
-#include "content/public/renderer/render_process_observer.h"
-
-namespace gfx {
-class Size;
-}
+#include "content/public/renderer/render_thread_observer.h"
 
 enum class ChromeViewHostMsg_GetPluginInfo_Status;
 
-// This contains information specifying the poster image of plugin placeholders.
-// The default constructor specifies no poster image.
-struct PlaceholderPosterInfo {
-  // The poster image specified in image 'srcset' attribute format.
-  std::string poster_attribute;
-
-  // Used to resolve relative paths in |poster_attribute|.
-  GURL base_url;
-
-  // Specify this to provide partially obscured plugins a centered poster image.
-  gfx::Size custom_poster_size;
-};
-
 class ChromePluginPlaceholder final
     : public plugins::LoadablePluginPlaceholder,
-      public content::RenderProcessObserver,
+      public content::RenderThreadObserver,
       public content::ContextMenuClient,
       public gin::Wrappable<ChromePluginPlaceholder> {
  public:
@@ -45,7 +35,7 @@ class ChromePluginPlaceholder final
       const base::string16& name,
       int resource_id,
       const base::string16& message,
-      const PlaceholderPosterInfo& poster_info);
+      const PowerSaverInfo& power_saver_info);
 
   // Creates a new WebViewPlugin with a MissingPlugin as a delegate.
   static ChromePluginPlaceholder* CreateLoadableMissingPlugin(
@@ -55,9 +45,7 @@ class ChromePluginPlaceholder final
 
   void SetStatus(ChromeViewHostMsg_GetPluginInfo_Status status);
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
-  int32 CreateRoutingId();
-#endif
+  int32_t CreateRoutingId();
 
  private:
   ChromePluginPlaceholder(content::RenderFrame* render_frame,
@@ -67,8 +55,9 @@ class ChromePluginPlaceholder final
                           const base::string16& title);
   ~ChromePluginPlaceholder() override;
 
-  // content::LoadablePluginPlaceholder method
+  // content::LoadablePluginPlaceholder overrides.
   blink::WebPlugin* CreatePlugin() override;
+  void OnBlockedTinyContent() override;
 
   // gin::Wrappable (via PluginPlaceholder) method
   gin::ObjectTemplateBuilder GetObjectTemplateBuilder(
@@ -81,7 +70,7 @@ class ChromePluginPlaceholder final
   v8::Local<v8::Value> GetV8Handle(v8::Isolate* isolate) override;
   void ShowContextMenu(const blink::WebMouseEvent&) override;
 
-  // content::RenderProcessObserver methods:
+  // content::RenderThreadObserver methods:
   void PluginListChanged() override;
 
   // content::ContextMenuClient methods:
@@ -91,9 +80,11 @@ class ChromePluginPlaceholder final
   // Javascript callbacks:
   // Open chrome://plugins in a new tab.
   void OpenAboutPluginsCallback();
+  // Show the Plugins permission bubble.
+  void ShowPermissionBubbleCallback();
 
   // IPC message handlers:
-#if defined(ENABLE_PLUGIN_INSTALLATION)
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
   void OnDidNotFindMissingPlugin();
   void OnFoundMissingPlugin(const base::string16& plugin_name);
   void OnStartedDownloadingPlugin();
@@ -101,20 +92,27 @@ class ChromePluginPlaceholder final
   void OnErrorDownloadingPlugin(const std::string& error);
   void OnCancelledDownloadingPlugin();
 #endif
+  void OnPluginComponentUpdateDownloading();
+  void OnPluginComponentUpdateSuccess();
+  void OnPluginComponentUpdateFailure();
+  void OnSetPrerenderMode(prerender::PrerenderMode mode);
 
   ChromeViewHostMsg_GetPluginInfo_Status status_;
 
   base::string16 title_;
 
-#if defined(ENABLE_PLUGIN_INSTALLATION)
   // |routing_id()| is the routing ID of our associated RenderView, but we have
   // a separate routing ID for messages specific to this placeholder.
-  int32 placeholder_routing_id_;
+  int32_t placeholder_routing_id_ = MSG_ROUTING_NONE;
+
+#if BUILDFLAG(ENABLE_PLUGIN_INSTALLATION)
+  bool has_host_ = false;
 #endif
 
-  bool has_host_;
   int context_menu_request_id_;  // Nonzero when request pending.
   base::string16 plugin_name_;
+
+  bool did_send_blocked_content_notification_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromePluginPlaceholder);
 };

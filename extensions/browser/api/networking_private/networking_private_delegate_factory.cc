@@ -4,6 +4,7 @@
 
 #include "extensions/browser/api/networking_private/networking_private_delegate_factory.h"
 
+#include "build/build_config.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/extensions_browser_client.h"
@@ -57,40 +58,39 @@ NetworkingPrivateDelegateFactory::~NetworkingPrivateDelegateFactory() {
 }
 
 void NetworkingPrivateDelegateFactory::SetVerifyDelegateFactory(
-    scoped_ptr<VerifyDelegateFactory> factory) {
-  verify_factory_.reset(factory.release());
+    std::unique_ptr<VerifyDelegateFactory> factory) {
+  verify_factory_ = std::move(factory);
 }
 
 void NetworkingPrivateDelegateFactory::SetUIDelegateFactory(
-    scoped_ptr<UIDelegateFactory> factory) {
-  ui_factory_.reset(factory.release());
+    std::unique_ptr<UIDelegateFactory> factory) {
+  ui_factory_ = std::move(factory);
 }
 
 KeyedService* NetworkingPrivateDelegateFactory::BuildServiceInstanceFor(
     BrowserContext* browser_context) const {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  scoped_ptr<NetworkingPrivateDelegate::VerifyDelegate> verify_delegate;
+  std::unique_ptr<NetworkingPrivateDelegate::VerifyDelegate> verify_delegate;
   if (verify_factory_)
-    verify_delegate = verify_factory_->CreateDelegate().Pass();
+    verify_delegate = verify_factory_->CreateDelegate();
 
   NetworkingPrivateDelegate* delegate;
 #if defined(OS_CHROMEOS)
-  delegate =
-      new NetworkingPrivateChromeOS(browser_context, verify_delegate.Pass());
+  delegate = new NetworkingPrivateChromeOS(browser_context,
+                                           std::move(verify_delegate));
 #elif defined(OS_LINUX)
-  delegate =
-      new NetworkingPrivateLinux(browser_context, verify_delegate.Pass());
+  delegate = new NetworkingPrivateLinux(std::move(verify_delegate));
 #elif defined(OS_WIN) || defined(OS_MACOSX)
-  scoped_ptr<wifi::WiFiService> wifi_service(wifi::WiFiService::Create());
-  delegate = new NetworkingPrivateServiceClient(wifi_service.Pass(),
-                                                verify_delegate.Pass());
+  std::unique_ptr<wifi::WiFiService> wifi_service(wifi::WiFiService::Create());
+  delegate = new NetworkingPrivateServiceClient(std::move(wifi_service),
+                                                std::move(verify_delegate));
 #else
   NOTREACHED();
   delegate = nullptr;
 #endif
 
   if (ui_factory_)
-    delegate->set_ui_delegate(ui_factory_->CreateDelegate().Pass());
+    delegate->set_ui_delegate(ui_factory_->CreateDelegate());
 
   return delegate;
 }

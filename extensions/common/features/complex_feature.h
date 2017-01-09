@@ -5,11 +5,13 @@
 #ifndef EXTENSIONS_COMMON_FEATURES_COMPLEX_FEATURE_H_
 #define EXTENSIONS_COMMON_FEATURES_COMPLEX_FEATURE_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/features/feature.h"
 #include "extensions/common/manifest.h"
@@ -21,9 +23,8 @@ namespace extensions {
 // available, but not if only some combination of Features is available.
 class ComplexFeature : public Feature {
  public:
-  using FeatureList = std::vector<scoped_ptr<Feature>>;
-
-  explicit ComplexFeature(scoped_ptr<FeatureList> features);
+  // Takes ownership of Feature*s contained in |features|.
+  explicit ComplexFeature(std::vector<Feature*>* features);
   ~ComplexFeature() override;
 
   // extensions::Feature:
@@ -42,15 +43,13 @@ class ComplexFeature : public Feature {
   bool IsIdInWhitelist(const std::string& extension_id) const override;
 
  protected:
-  // extensions::Feature:
-  std::string GetAvailabilityMessage(AvailabilityResult result,
-                                     Manifest::Type type,
-                                     const GURL& url,
-                                     Context context) const override;
-
+  // Feature:
   bool IsInternal() const override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(FeaturesGenerationTest, FeaturesTest);
+
+  using FeatureList = std::vector<std::unique_ptr<Feature>>;
   FeatureList features_;
 
   DISALLOW_COPY_AND_ASSIGN(ComplexFeature);

@@ -54,14 +54,8 @@ PepperBrokerDispatcherWrapper::~PepperBrokerDispatcherWrapper() {}
 bool PepperBrokerDispatcherWrapper::Init(
     base::ProcessId broker_pid,
     const IPC::ChannelHandle& channel_handle) {
-  if (channel_handle.name.empty())
+  if (!channel_handle.is_mojo_channel_handle())
     return false;
-
-#if defined(OS_POSIX)
-  DCHECK_NE(-1, channel_handle.socket.fd);
-  if (channel_handle.socket.fd == -1)
-    return false;
-#endif
 
   dispatcher_delegate_.reset(new PepperProxyChannelDelegateImpl);
   dispatcher_.reset(new ppapi::proxy::BrokerHostDispatcher());
@@ -148,7 +142,7 @@ void PepperBroker::Disconnect(PPB_Broker_Impl* client) {
 void PepperBroker::OnBrokerChannelConnected(
     base::ProcessId broker_pid,
     const IPC::ChannelHandle& channel_handle) {
-  scoped_ptr<PepperBrokerDispatcherWrapper> dispatcher(
+  std::unique_ptr<PepperBrokerDispatcherWrapper> dispatcher(
       new PepperBrokerDispatcherWrapper);
   if (!dispatcher->Init(broker_pid, channel_handle)) {
     ReportFailureToClients(PP_ERROR_FAILED);
@@ -208,6 +202,9 @@ void PepperBroker::OnBrokerPermissionResult(PPB_Broker_Impl* client,
 
 PepperBroker::PendingConnection::PendingConnection() : is_authorized(false) {}
 
+PepperBroker::PendingConnection::PendingConnection(
+    const PendingConnection& other) = default;
+
 PepperBroker::PendingConnection::~PendingConnection() {}
 
 void PepperBroker::ReportFailureToClients(int error_code) {
@@ -231,8 +228,8 @@ void PepperBroker::ConnectPluginToBroker(PPB_Broker_Impl* client) {
 
   // The socket objects will be deleted when this function exits, closing the
   // handles. Any uses of the socket must duplicate them.
-  scoped_ptr<base::SyncSocket> broker_socket(new base::SyncSocket());
-  scoped_ptr<base::SyncSocket> plugin_socket(new base::SyncSocket());
+  std::unique_ptr<base::SyncSocket> broker_socket(new base::SyncSocket());
+  std::unique_ptr<base::SyncSocket> plugin_socket(new base::SyncSocket());
   if (base::SyncSocket::CreatePair(broker_socket.get(), plugin_socket.get())) {
     result = dispatcher_->SendHandleToBroker(client->pp_instance(),
                                              broker_socket->handle());

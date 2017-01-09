@@ -14,6 +14,7 @@ For ChromeDriver documentation, refer to http://code.google.com/p/chromedriver.
 import optparse
 import os
 import shutil
+import stat
 import sys
 import xml.dom.minidom as minidom
 
@@ -100,7 +101,17 @@ def _Run(java_tests_src_dir, test_filter,
   sys_props = ['selenium.browser=chrome',
                'webdriver.chrome.driver=' + os.path.abspath(chromedriver_path)]
   if chrome_path:
-    sys_props += ['webdriver.chrome.binary=' + os.path.abspath(chrome_path)]
+    if util.IsLinux() and not util.Is64Bit():
+      # Workaround for crbug.com/611886
+      chrome_wrapper_path = os.path.join(test_dir, 'chrome-wrapper-no-sandbox')
+      with open(chrome_wrapper_path, 'w') as f:
+        f.write('#!/bin/sh\n')
+        f.write('exec %s --no-sandbox "$@"\n' % os.path.abspath(chrome_path))
+      st = os.stat(chrome_wrapper_path)
+      os.chmod(chrome_wrapper_path, st.st_mode | stat.S_IEXEC)
+    else:
+      chrome_wrapper_path = os.path.abspath(chrome_path)
+    sys_props += ['webdriver.chrome.binary=' + chrome_wrapper_path]
   if log_path:
     sys_props += ['webdriver.chrome.logfile=' + log_path]
   if android_package_key:
@@ -304,14 +315,14 @@ def main():
                                       'java_tests')
     if (not os.path.exists(java_tests_src_dir) or
         not os.listdir(java_tests_src_dir)):
-      java_tests_url = ('http://src.chromium.org/svn/trunk/deps/third_party'
+      java_tests_url = ('https://chromium.googlesource.com/chromium/deps'
                         '/webdriver')
       print ('"%s" is empty or it doesn\'t exist. ' % java_tests_src_dir +
-             'Need to map <chrome-svn>/trunk/deps/third_party/webdriver to '
+             'Need to map ' + java_tests_url + ' to '
              'chrome/test/chromedriver/third_party/java_tests in .gclient.\n'
              'Alternatively, do:\n'
              '  $ cd chrome/test/chromedriver/third_party\n'
-             '  $ svn co %s java_tests' % java_tests_url)
+             '  $ git clone %s java_tests' % java_tests_url)
       return 1
 
     results = []

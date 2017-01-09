@@ -7,7 +7,6 @@
 
 #include <vector>
 
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/views/chrome_views_export.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
@@ -16,8 +15,6 @@ class Accelerator;
 }
 
 // This contains the list of accelerators for the Aura implementation.
-namespace chrome {
-
 struct AcceleratorMapping {
   ui::KeyboardCode keycode;
   int modifiers;
@@ -28,13 +25,11 @@ struct AcceleratorMapping {
 // handled by Chrome but excluding accelerators handled by Ash.
 CHROME_VIEWS_EXPORT std::vector<AcceleratorMapping> GetAcceleratorList();
 
-// Returns true if the desktop host type indicates Ash and if the
-// command id has an associated accelerator which is handled by
-// Ash. If the return is true the accelerator is returned via the
+// Returns true on Ash and if the command id has an associated accelerator which
+// is handled by Ash. If the return is true the accelerator is returned via the
 // second argument.
 CHROME_VIEWS_EXPORT bool GetAshAcceleratorForCommandId(
     int command_id,
-    HostDesktopType host_desktop_type,
     ui::Accelerator* accelerator);
 
 // Returns true if the command id has an associated standard
@@ -44,6 +39,8 @@ CHROME_VIEWS_EXPORT bool GetStandardAcceleratorForCommandId(
     int command_id,
     ui::Accelerator* accelerator);
 
-}  // namespace chrome
+// Returns true if the command identified by |command_id| should be executed
+// repeatedly while its accelerator keys are held down.
+CHROME_VIEWS_EXPORT bool IsCommandRepeatable(int command_id);
 
 #endif  // CHROME_BROWSER_UI_VIEWS_ACCELERATOR_TABLE_H_

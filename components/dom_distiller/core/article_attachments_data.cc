@@ -16,10 +16,11 @@ syncer::AttachmentIdList GetAttachmentIds(
   return ids;
 }
 
-scoped_ptr<ArticleAttachmentsData> ArticleAttachmentsData::GetFromAttachmentMap(
+std::unique_ptr<ArticleAttachmentsData>
+ArticleAttachmentsData::GetFromAttachmentMap(
     const sync_pb::ArticleAttachments& attachments_key,
     const syncer::AttachmentMap& attachment_map) {
-  scoped_ptr<ArticleAttachmentsData> data(new ArticleAttachmentsData);
+  std::unique_ptr<ArticleAttachmentsData> data(new ArticleAttachmentsData);
   syncer::AttachmentMap::const_iterator iter =
       attachment_map.find(syncer::AttachmentId::CreateFromProto(
           attachments_key.distilled_article()));
@@ -28,7 +29,7 @@ scoped_ptr<ArticleAttachmentsData> ArticleAttachmentsData::GetFromAttachmentMap(
       iter->second.GetData();
   data->distilled_article_.ParseFromArray(attachment_bytes->front(),
                                           attachment_bytes->size());
-  return data.Pass();
+  return data;
 }
 
 void ArticleAttachmentsData::CreateSyncAttachments(
@@ -38,8 +39,8 @@ void ArticleAttachmentsData::CreateSyncAttachments(
   CHECK(attachments_key);
   std::string serialized_article(distilled_article_.SerializeAsString());
   syncer::Attachment attachment(
-      syncer::Attachment::Create(make_scoped_refptr(
-          base::RefCountedString::TakeString(&serialized_article))));
+      syncer::Attachment::Create(
+          base::RefCountedString::TakeString(&serialized_article)));
   *attachments_key->mutable_distilled_article() =
       attachment.GetId().GetProto();
   attachment_list->push_back(attachment);

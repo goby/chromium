@@ -9,12 +9,14 @@
 #include "components/rlz/rlz_tracker.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "components/rlz/rlz_tracker_delegate.h"
 #include "net/http/http_util.h"
 
@@ -170,20 +172,20 @@ RLZTracker::~RLZTracker() {
 }
 
 // static
-void RLZTracker::SetRlzDelegate(scoped_ptr<RLZTrackerDelegate> delegate) {
+void RLZTracker::SetRlzDelegate(std::unique_ptr<RLZTrackerDelegate> delegate) {
   RLZTracker* tracker = GetInstance();
   if (!tracker->delegate_) {
     // RLZTracker::SetRlzDelegate is called at Profile creation time which can
     // happens multiple time on ChromeOS, so do nothing if the delegate already
     // exists.
-    tracker->SetDelegate(delegate.Pass());
+    tracker->SetDelegate(std::move(delegate));
   }
 }
 
-void RLZTracker::SetDelegate(scoped_ptr<RLZTrackerDelegate> delegate) {
+void RLZTracker::SetDelegate(std::unique_ptr<RLZTrackerDelegate> delegate) {
   DCHECK(delegate);
   DCHECK(!delegate_);
-  delegate_ = delegate.Pass();
+  delegate_ = std::move(delegate);
   worker_pool_token_ = delegate_->GetBlockingPool()->GetSequenceToken();
 }
 

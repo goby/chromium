@@ -90,21 +90,39 @@
    fun:_ZN4base12_GLOBAL__N_110ThreadFuncEPv
 }
 {
-   b_555798_a
+   bug_555798_a
    Memcheck:Leak
    fun:malloc
    fun:strdup
    obj:*
    ...
    fun:*LoadNativeLibrary*
-   fun:*CdmAdapterTest*
+   fun:*ExternalClearKeyTestHelper*
 }
 {
-   b_555798_b
+   bug_555798_b
    Memcheck:Leak
    fun:_Znw*
    obj:*
    ...
    fun:_dl_init
    fun:dl_open_worker
+}
+{
+   bug_569736
+   Memcheck:Leak
+   fun:_Znw*
+   obj:*
+   ...
+   fun:_ZN5media14CdmWrapperImplIN3cdm25ContentDecryptionModule_8EE7DecryptERKNS1_11InputBufferEPNS1_14DecryptedBlockE
+}
+{
+   bug_588788
+   Memcheck:Unaddressable
+   ...
+   fun:_ZN5views14AXAuraObjCache14GetFocusedViewEv
+   fun:_ZN5views14AXAuraObjCache8GetFocusEv
+   fun:_ZNK16AXTreeSourceAura11GetTreeDataEv
+   fun:_ZN2ui16AXTreeSerializerIPN5views16AXAuraObjWrapperENS_10AXNodeDataENS_10AXTreeDataEE16SerializeChangesES3_PNS_16AXTreeUpdateBaseIS4_S5_EE
+   fun:_ZN35AXTreeSourceAuraTest_Serialize_Test8TestBodyEv
 }

@@ -5,16 +5,13 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_INPUT_ROUTER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_INPUT_ROUTER_H_
 
-#include "base/basictypes.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/common/input/input_event_ack_state.h"
 #include "content/public/browser/native_web_keyboard_event.h"
 #include "ipc/ipc_listener.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 
 namespace content {
-
-class InputRouterClient;
 
 // The InputRouter allows the embedder to customize how input events are
 // sent to the renderer, and how responses are dispatched to the browser.
@@ -27,7 +24,7 @@ class InputRouter : public IPC::Listener {
   // Send and take ownership of the the given InputMsg_*. This should be used
   // only for event types not associated with a WebInputEvent.  Returns true on
   // success and false otherwise.
-  virtual bool SendInput(scoped_ptr<IPC::Message> message) = 0;
+  virtual bool SendInput(std::unique_ptr<IPC::Message> message) = 0;
 
   // WebInputEvents
   virtual void SendMouseEvent(
@@ -59,6 +56,10 @@ class InputRouter : public IPC::Listener {
   // A scale factor to scale the coordinate in WebInputEvent from DIP
   // to viewport.
   virtual void SetDeviceScaleFactor(float device_scale_factor) = 0;
+
+  // Sets the frame tree node id of associated frame, used when tracing
+  // input event latencies to relate events to their target frames.
+  virtual void SetFrameTreeNodeId(int frameTreeNodeId) = 0;
 };
 
 }  // namespace content

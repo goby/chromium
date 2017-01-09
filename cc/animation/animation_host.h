@@ -5,15 +5,20 @@
 #ifndef CC_ANIMATION_ANIMATION_HOST_H_
 #define CC_ANIMATION_ANIMATION_HOST_H_
 
+#include <memory>
+#include <unordered_map>
 #include <vector>
 
-#include "base/containers/scoped_ptr_hash_map.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
-#include "cc/animation/animation_events.h"
-#include "cc/base/cc_export.h"
+#include "cc/animation/animation.h"
+#include "cc/animation/animation_export.h"
+#include "cc/trees/mutator_host.h"
 #include "cc/trees/mutator_host_client.h"
+#include "ui/gfx/geometry/box_f.h"
+#include "ui/gfx/geometry/vector2d_f.h"
 
 namespace gfx {
 class ScrollOffset;
@@ -22,15 +27,13 @@ class ScrollOffset;
 namespace cc {
 
 class AnimationPlayer;
-class AnimationRegistrar;
 class AnimationTimeline;
 class ElementAnimations;
-class LayerAnimationController;
 class LayerTreeHost;
+class ScrollOffsetAnimations;
+class ScrollOffsetAnimationsImpl;
 
 enum class ThreadInstance { MAIN, IMPL };
-
-typedef std::vector<scoped_refptr<AnimationTimeline>> AnimationTimelineList;
 
 // An AnimationHost contains all the state required to play animations.
 // Specifically, it owns all the AnimationTimelines objects.
@@ -39,114 +42,145 @@ typedef std::vector<scoped_refptr<AnimationTimeline>> AnimationTimelineList;
 // We synchronize them during the commit process in a one-way data flow process
 // (PushPropertiesTo).
 // An AnimationHost talks to its correspondent LayerTreeHost via
-// LayerTreeMutatorsClient interface.
-// AnimationHost has it's own instance of AnimationRegistrar,
-// we want to merge AnimationRegistrar into AnimationHost.
-class CC_EXPORT AnimationHost {
+// MutatorHostClient interface.
+class CC_ANIMATION_EXPORT AnimationHost
+    : public NON_EXPORTED_BASE(MutatorHost) {
  public:
-  static scoped_ptr<AnimationHost> Create(ThreadInstance thread_instance);
-  virtual ~AnimationHost();
+  using ElementToAnimationsMap =
+      std::unordered_map<ElementId,
+                         scoped_refptr<ElementAnimations>,
+                         ElementIdHash>;
+  using PlayersList = std::vector<scoped_refptr<AnimationPlayer>>;
+
+  static std::unique_ptr<AnimationHost> CreateMainInstance();
+  static std::unique_ptr<AnimationHost> CreateForTesting(
+      ThreadInstance thread_instance);
+  ~AnimationHost() override;
 
   void AddAnimationTimeline(scoped_refptr<AnimationTimeline> timeline);
   void RemoveAnimationTimeline(scoped_refptr<AnimationTimeline> timeline);
   AnimationTimeline* GetTimelineById(int timeline_id) const;
 
-  void ClearTimelines();
+  void RegisterPlayerForElement(ElementId element_id, AnimationPlayer* player);
+  void UnregisterPlayerForElement(ElementId element_id,
+                                  AnimationPlayer* player);
 
-  void RegisterLayer(int layer_id, LayerTreeType tree_type);
-  void UnregisterLayer(int layer_id, LayerTreeType tree_type);
-
-  void RegisterPlayerForLayer(int layer_id, AnimationPlayer* player);
-  void UnregisterPlayerForLayer(int layer_id, AnimationPlayer* player);
-
-  ElementAnimations* GetElementAnimationsForLayerId(int layer_id) const;
-
-  // TODO(loyso): Get rid of LayerAnimationController.
-  LayerAnimationController* GetControllerForLayerId(int layer_id) const;
+  scoped_refptr<ElementAnimations> GetElementAnimationsForElementId(
+      ElementId element_id) const;
 
   // Parent LayerTreeHost or LayerTreeHostImpl.
   MutatorHostClient* mutator_host_client() { return mutator_host_client_; }
   const MutatorHostClient* mutator_host_client() const {
     return mutator_host_client_;
   }
-  void SetMutatorHostClient(MutatorHostClient* client);
 
   void SetNeedsCommit();
-  void SetNeedsRebuildPropertyTrees();
+  void SetNeedsPushProperties();
+  bool needs_push_properties() const { return needs_push_properties_; }
 
-  void PushPropertiesTo(AnimationHost* host_impl);
-
-  AnimationRegistrar* animation_registrar() const {
-    return animation_registrar_.get();
-  }
-
-  void SetSupportsScrollAnimations(bool supports_scroll_animations);
   bool SupportsScrollAnimations() const;
-  bool NeedsAnimateLayers() const;
 
-  bool ActivateAnimations();
-  bool AnimateLayers(base::TimeTicks monotonic_time);
+  // MutatorHost implementation.
+  std::unique_ptr<MutatorHost> CreateImplInstance(
+      bool supports_impl_scrolling) const override;
+  void ClearMutators() override;
+
+  void RegisterElement(ElementId element_id,
+                       ElementListType list_type) override;
+  void UnregisterElement(ElementId element_id,
+                         ElementListType list_type) override;
+
+  void SetMutatorHostClient(MutatorHostClient* client) override;
+
+  void PushPropertiesTo(MutatorHost* host_impl) override;
+
+  void SetSupportsScrollAnimations(bool supports_scroll_animations) override;
+  bool NeedsTickAnimations() const override;
+
+  bool ActivateAnimations() override;
+  bool TickAnimations(base::TimeTicks monotonic_time) override;
   bool UpdateAnimationState(bool start_ready_animations,
-                            AnimationEventsVector* events);
+                            MutatorEvents* events) override;
 
-  scoped_ptr<AnimationEventsVector> CreateEvents();
-  void SetAnimationEvents(scoped_ptr<AnimationEventsVector> events);
+  std::unique_ptr<MutatorEvents> CreateEvents() override;
+  void SetAnimationEvents(std::unique_ptr<MutatorEvents> events) override;
 
-  bool ScrollOffsetAnimationWasInterrupted(int layer_id) const;
+  bool ScrollOffsetAnimationWasInterrupted(ElementId element_id) const override;
 
-  bool IsAnimatingFilterProperty(int layer_id, LayerTreeType tree_type) const;
-  bool IsAnimatingOpacityProperty(int layer_id, LayerTreeType tree_type) const;
-  bool IsAnimatingTransformProperty(int layer_id,
-                                    LayerTreeType tree_type) const;
+  bool IsAnimatingFilterProperty(ElementId element_id,
+                                 ElementListType list_type) const override;
+  bool IsAnimatingOpacityProperty(ElementId element_id,
+                                  ElementListType list_type) const override;
+  bool IsAnimatingTransformProperty(ElementId element_id,
+                                    ElementListType list_type) const override;
 
-  bool HasPotentiallyRunningFilterAnimation(int layer_id,
-                                            LayerTreeType tree_type) const;
-  bool HasPotentiallyRunningOpacityAnimation(int layer_id,
-                                             LayerTreeType tree_type) const;
-  bool HasPotentiallyRunningTransformAnimation(int layer_id,
-                                               LayerTreeType tree_type) const;
+  bool HasPotentiallyRunningFilterAnimation(
+      ElementId element_id,
+      ElementListType list_type) const override;
+  bool HasPotentiallyRunningOpacityAnimation(
+      ElementId element_id,
+      ElementListType list_type) const override;
+  bool HasPotentiallyRunningTransformAnimation(
+      ElementId element_id,
+      ElementListType list_type) const override;
 
   bool HasAnyAnimationTargetingProperty(
-      int layer_id,
-      Animation::TargetProperty property) const;
+      ElementId element_id,
+      TargetProperty::Type property) const override;
 
-  bool FilterIsAnimatingOnImplOnly(int layer_id) const;
-  bool OpacityIsAnimatingOnImplOnly(int layer_id) const;
-  bool TransformIsAnimatingOnImplOnly(int layer_id) const;
+  bool HasFilterAnimationThatInflatesBounds(
+      ElementId element_id) const override;
+  bool HasTransformAnimationThatInflatesBounds(
+      ElementId element_id) const override;
+  bool HasAnimationThatInflatesBounds(ElementId element_id) const override;
 
-  bool HasFilterAnimationThatInflatesBounds(int layer_id) const;
-  bool HasTransformAnimationThatInflatesBounds(int layer_id) const;
-  bool HasAnimationThatInflatesBounds(int layer_id) const;
-
-  bool FilterAnimationBoundsForBox(int layer_id,
+  bool FilterAnimationBoundsForBox(ElementId element_id,
                                    const gfx::BoxF& box,
-                                   gfx::BoxF* bounds) const;
-  bool TransformAnimationBoundsForBox(int layer_id,
+                                   gfx::BoxF* bounds) const override;
+  bool TransformAnimationBoundsForBox(ElementId element_id,
                                       const gfx::BoxF& box,
-                                      gfx::BoxF* bounds) const;
+                                      gfx::BoxF* bounds) const override;
 
-  bool HasOnlyTranslationTransforms(int layer_id,
-                                    LayerTreeType tree_type) const;
-  bool AnimationsPreserveAxisAlignment(int layer_id) const;
+  bool HasOnlyTranslationTransforms(ElementId element_id,
+                                    ElementListType list_type) const override;
+  bool AnimationsPreserveAxisAlignment(ElementId element_id) const override;
 
-  bool MaximumTargetScale(int layer_id,
-                          LayerTreeType tree_type,
-                          float* max_scale) const;
-  bool AnimationStartScale(int layer_id,
-                           LayerTreeType tree_type,
-                           float* start_scale) const;
+  bool MaximumTargetScale(ElementId element_id,
+                          ElementListType list_type,
+                          float* max_scale) const override;
+  bool AnimationStartScale(ElementId element_id,
+                           ElementListType list_type,
+                           float* start_scale) const override;
 
-  bool HasAnyAnimation(int layer_id) const;
-  bool HasActiveAnimation(int layer_id) const;
+  bool HasAnyAnimation(ElementId element_id) const override;
+  bool HasTickingAnimationForTesting(ElementId element_id) const override;
 
-  void ImplOnlyScrollAnimationCreate(int layer_id,
+  void ImplOnlyScrollAnimationCreate(ElementId element_id,
                                      const gfx::ScrollOffset& target_offset,
-                                     const gfx::ScrollOffset& current_offset);
+                                     const gfx::ScrollOffset& current_offset,
+                                     base::TimeDelta delayed_by) override;
   bool ImplOnlyScrollAnimationUpdateTarget(
-      int layer_id,
+      ElementId element_id,
       const gfx::Vector2dF& scroll_delta,
       const gfx::ScrollOffset& max_scroll_offset,
-      base::TimeTicks frame_monotonic_time);
+      base::TimeTicks frame_monotonic_time,
+      base::TimeDelta delayed_by) override;
+
+  void ScrollAnimationAbort(bool needs_completion) override;
+
+  // This should only be called from the main thread.
+  ScrollOffsetAnimations& scroll_offset_animations() const;
+
+  // Registers the given animation player as ticking. A ticking animation
+  // player is one that has a running animation.
+  void AddToTicking(scoped_refptr<AnimationPlayer> player);
+
+  // Unregisters the given animation player. When this happens, the
+  // animation player will no longer be ticked.
+  void RemoveFromTicking(scoped_refptr<AnimationPlayer> player);
+
+  const PlayersList& ticking_players_for_testing() const;
+  const ElementToAnimationsMap& element_animations_for_testing() const;
 
  private:
   explicit AnimationHost(ThreadInstance thread_instance);
@@ -155,24 +189,25 @@ class CC_EXPORT AnimationHost {
   void RemoveTimelinesFromImplThread(AnimationHost* host_impl) const;
   void PushPropertiesToImplThread(AnimationHost* host_impl);
 
-  void EraseTimelines(AnimationTimelineList::iterator begin,
-                      AnimationTimelineList::iterator end);
+  void EraseTimeline(scoped_refptr<AnimationTimeline> timeline);
 
-  // TODO(loyso): For now AnimationPlayers share LayerAnimationController object
-  // if they are attached to the same element(layer). Note that Element can
-  // contain many Layers.
-  typedef base::ScopedPtrHashMap<int, scoped_ptr<ElementAnimations>>
-      LayerToElementAnimationsMap;
-  LayerToElementAnimationsMap layer_to_element_animations_map_;
+  ElementToAnimationsMap element_to_animations_map_;
+  PlayersList ticking_players_;
 
-  AnimationTimelineList timelines_;
-  scoped_ptr<AnimationRegistrar> animation_registrar_;
+  // A list of all timelines which this host owns.
+  using IdToTimelineMap =
+      std::unordered_map<int, scoped_refptr<AnimationTimeline>>;
+  IdToTimelineMap id_to_timeline_map_;
+
   MutatorHostClient* mutator_host_client_;
 
-  class ScrollOffsetAnimations;
-  scoped_ptr<ScrollOffsetAnimations> scroll_offset_animations_;
+  std::unique_ptr<ScrollOffsetAnimations> scroll_offset_animations_;
+  std::unique_ptr<ScrollOffsetAnimationsImpl> scroll_offset_animations_impl_;
 
   const ThreadInstance thread_instance_;
+
+  bool supports_scroll_animations_;
+  bool needs_push_properties_;
 
   DISALLOW_COPY_AND_ASSIGN(AnimationHost);
 };

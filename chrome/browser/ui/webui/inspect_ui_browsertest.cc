@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "chrome/browser/devtools/device/adb/adb_device_provider.h"
 #include "chrome/browser/devtools/device/adb/mock_adb_server.h"
 #include "chrome/browser/devtools/device/devtools_android_bridge.h"
@@ -50,9 +51,8 @@ IN_PROC_BROWSER_TEST_F(InspectUITest, SharedWorker) {
   ui_test_utils::NavigateToURL(browser(), url);
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(chrome::kChromeUIInspectURL),
-      NEW_FOREGROUND_TAB,
+      browser(), GURL(chrome::kChromeUIInspectURL),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   ASSERT_TRUE(WebUIBrowserTest::RunJavascriptAsyncTest(

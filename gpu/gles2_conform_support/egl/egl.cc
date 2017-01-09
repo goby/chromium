@@ -3,149 +3,60 @@
 // found in the LICENSE file.
 
 #include <EGL/egl.h>
+#include <stdint.h>
 
-#include "base/command_line.h"
 #include "gpu/command_buffer/client/gles2_lib.h"
+#include "gpu/gles2_conform_support/egl/config.h"
+#include "gpu/gles2_conform_support/egl/context.h"
 #include "gpu/gles2_conform_support/egl/display.h"
-#include "ui/gl/gl_context.h"
-#include "ui/gl/gl_surface.h"
-
-#if REGAL_STATIC_EGL
-extern "C" {
-
-typedef EGLContext RegalSystemContext;
-#define REGAL_DECL
-REGAL_DECL void RegalMakeCurrent( RegalSystemContext ctx );
-
-}  // extern "C"
-#endif
-
-namespace {
-void SetCurrentError(EGLint error_code) {
-}
-
-template<typename T>
-T EglError(EGLint error_code, T return_value) {
-  SetCurrentError(error_code);
-  return return_value;
-}
-
-template<typename T>
-T EglSuccess(T return_value) {
-  SetCurrentError(EGL_SUCCESS);
-  return return_value;
-}
-
-EGLint ValidateDisplay(EGLDisplay dpy) {
-  if (dpy == EGL_NO_DISPLAY)
-    return EGL_BAD_DISPLAY;
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->is_initialized())
-    return EGL_NOT_INITIALIZED;
-
-  return EGL_SUCCESS;
-}
-
-EGLint ValidateDisplayConfig(EGLDisplay dpy, EGLConfig config) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return error_code;
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->IsValidConfig(config))
-    return EGL_BAD_CONFIG;
-
-  return EGL_SUCCESS;
-}
-
-EGLint ValidateDisplaySurface(EGLDisplay dpy, EGLSurface surface) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return error_code;
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->IsValidSurface(surface))
-    return EGL_BAD_SURFACE;
-
-  return EGL_SUCCESS;
-}
-
-EGLint ValidateDisplayContext(EGLDisplay dpy, EGLContext context) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return error_code;
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->IsValidContext(context))
-    return EGL_BAD_CONTEXT;
-
-  return EGL_SUCCESS;
-}
-}  // namespace
+#include "gpu/gles2_conform_support/egl/surface.h"
+#include "gpu/gles2_conform_support/egl/thread_state.h"
 
 extern "C" {
 EGLAPI EGLint EGLAPIENTRY eglGetError() {
-  // TODO(alokp): Fix me.
-  return EGL_SUCCESS;
+  return egl::ThreadState::Get()->ConsumeErrorCode();
 }
 
 EGLAPI EGLDisplay EGLAPIENTRY eglGetDisplay(EGLNativeDisplayType display_id) {
-  return new egl::Display(display_id);
+  if (display_id != EGL_DEFAULT_DISPLAY)
+    return EGL_NO_DISPLAY;
+  return egl::ThreadState::Get()->GetDefaultDisplay();
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglInitialize(EGLDisplay dpy,
                                             EGLint* major,
                                             EGLint* minor) {
-  if (dpy == EGL_NO_DISPLAY)
-    return EglError(EGL_BAD_DISPLAY, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->Initialize())
-    return EglError(EGL_NOT_INITIALIZED, EGL_FALSE);
-
-  // eglInitialize can be called multiple times, prevent InitializeOneOff from
-  // being called multiple times.
-  if (gfx::GetGLImplementation() == gfx::kGLImplementationNone) {
-    int argc = 1;
-    const char* const argv[] = {"dummy"};
-    base::CommandLine::Init(argc, argv);
-    gfx::GLSurface::InitializeOneOff();
-  }
-
-  *major = 1;
-  *minor = 4;
-  return EglSuccess(EGL_TRUE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->Initialize(ts, major, minor);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglTerminate(EGLDisplay dpy) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  delete display;
-
-  return EglSuccess(EGL_TRUE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->Terminate(ts);
 }
 
 EGLAPI const char* EGLAPIENTRY eglQueryString(EGLDisplay dpy, EGLint name) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, static_cast<const char*>(NULL));
-
-  switch (name) {
-    case EGL_CLIENT_APIS:
-      return EglSuccess("OpenGL_ES");
-    case EGL_EXTENSIONS:
-      return EglSuccess("");
-    case EGL_VENDOR:
-      return EglSuccess("Google Inc.");
-    case EGL_VERSION:
-      return EglSuccess("1.4");
-    default:
-      return EglError(EGL_BAD_PARAMETER, static_cast<const char*>(NULL));
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  if (dpy == EGL_NO_DISPLAY) {
+    switch (name) {
+      case EGL_EXTENSIONS:
+        return ts->ReturnSuccess("");
+      case EGL_VERSION:
+        return ts->ReturnSuccess("1.4");
+      default:
+        break;
+    }
   }
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError<const char*>(EGL_BAD_DISPLAY, nullptr);
+  return display->QueryString(ts, name);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy,
@@ -153,103 +64,57 @@ EGLAPI EGLBoolean EGLAPIENTRY eglChooseConfig(EGLDisplay dpy,
                                               EGLConfig* configs,
                                               EGLint config_size,
                                               EGLint* num_config) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  if (num_config == NULL)
-    return EglError(EGL_BAD_PARAMETER, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->ChooseConfigs(configs, config_size, num_config))
-    return EglError(EGL_BAD_ATTRIBUTE, EGL_FALSE);
-
-  return EglSuccess(EGL_TRUE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->ChooseConfig(ts, attrib_list, configs, config_size,
+                               num_config);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigs(EGLDisplay dpy,
                                             EGLConfig* configs,
                                             EGLint config_size,
                                             EGLint* num_config) {
-  EGLint error_code = ValidateDisplay(dpy);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  if (num_config == NULL)
-    return EglError(EGL_BAD_PARAMETER, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->GetConfigs(configs, config_size, num_config))
-    return EglError(EGL_BAD_ATTRIBUTE, EGL_FALSE);
-
-  return EglSuccess(EGL_TRUE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->GetConfigs(ts, configs, config_size, num_config);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglGetConfigAttrib(EGLDisplay dpy,
-                                                 EGLConfig config,
+                                                 EGLConfig cfg,
                                                  EGLint attribute,
                                                  EGLint* value) {
-  EGLint error_code = ValidateDisplayConfig(dpy, config);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->GetConfigAttrib(config, attribute, value))
-    return EglError(EGL_BAD_ATTRIBUTE, EGL_FALSE);
-
-  return EglSuccess(EGL_TRUE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->GetConfigAttrib(ts, cfg, attribute, value);
 }
 
 EGLAPI EGLSurface EGLAPIENTRY
 eglCreateWindowSurface(EGLDisplay dpy,
-                       EGLConfig config,
+                       EGLConfig cfg,
                        EGLNativeWindowType win,
                        const EGLint* attrib_list) {
-  EGLint error_code = ValidateDisplayConfig(dpy, config);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_NO_SURFACE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->IsValidNativeWindow(win))
-    return EglError(EGL_BAD_NATIVE_WINDOW, EGL_NO_SURFACE);
-
-  EGLSurface surface = display->CreateWindowSurface(config, win, attrib_list);
-  if (surface == EGL_NO_SURFACE)
-    return EglError(EGL_BAD_ALLOC, EGL_NO_SURFACE);
-
-  return EglSuccess(surface);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_NO_SURFACE);
+  return display->CreateWindowSurface(ts, cfg, win, attrib_list);
 }
 
 EGLAPI EGLSurface EGLAPIENTRY
 eglCreatePbufferSurface(EGLDisplay dpy,
-                        EGLConfig config,
+                        EGLConfig cfg,
                         const EGLint* attrib_list) {
-  EGLint error_code = ValidateDisplayConfig(dpy, config);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_NO_SURFACE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  int width = 1;
-  int height = 1;
-  if (attrib_list) {
-    for (const int32_t* attr = attrib_list; attr[0] != EGL_NONE; attr += 2) {
-      switch (attr[0]) {
-        case EGL_WIDTH:
-          width = attr[1];
-          break;
-        case EGL_HEIGHT:
-          height = attr[1];
-          break;
-      }
-    }
-  }
-  display->SetCreateOffscreen(width, height);
-
-  EGLSurface surface = display->CreateWindowSurface(config, 0, attrib_list);
-  if (surface == EGL_NO_SURFACE)
-    return EglError(EGL_BAD_ALLOC, EGL_NO_SURFACE);
-
-  return EglSuccess(surface);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_NO_SURFACE);
+  return display->CreatePbufferSurface(ts, cfg, attrib_list);
 }
 
 EGLAPI EGLSurface EGLAPIENTRY
@@ -261,14 +126,12 @@ eglCreatePixmapSurface(EGLDisplay dpy,
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglDestroySurface(EGLDisplay dpy,
-                                                EGLSurface surface) {
-  EGLint error_code = ValidateDisplaySurface(dpy, surface);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  display->DestroySurface(surface);
-  return EglSuccess(EGL_TRUE);
+                                                EGLSurface sfe) {
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->DestroySurface(ts, sfe);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglQuerySurface(EGLDisplay dpy,
@@ -291,7 +154,8 @@ EGLAPI EGLBoolean EGLAPIENTRY eglWaitClient(void) {
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglReleaseThread(void) {
-  return EGL_FALSE;
+  egl::ThreadState::ReleaseThread();
+  return EGL_TRUE;
 }
 
 EGLAPI EGLSurface EGLAPIENTRY
@@ -327,64 +191,42 @@ EGLAPI EGLBoolean EGLAPIENTRY eglSwapInterval(EGLDisplay dpy, EGLint interval) {
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglCreateContext(EGLDisplay dpy,
-                                               EGLConfig config,
-                                               EGLContext share_context,
+                                               EGLConfig cfg,
+                                               EGLContext share_ctx,
                                                const EGLint* attrib_list) {
-  EGLint error_code = ValidateDisplayConfig(dpy, config);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_NO_CONTEXT);
-
-  if (share_context != EGL_NO_CONTEXT) {
-    error_code = ValidateDisplayContext(dpy, share_context);
-    if (error_code != EGL_SUCCESS)
-      return EglError(error_code, EGL_NO_CONTEXT);
-  }
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  EGLContext context = display->CreateContext(
-      config, share_context, attrib_list);
-  if (context == EGL_NO_CONTEXT)
-    return EglError(EGL_BAD_ALLOC, EGL_NO_CONTEXT);
-
-  return EglSuccess(context);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_NO_CONTEXT);
+  return display->CreateContext(ts, cfg, share_ctx, attrib_list);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglDestroyContext(EGLDisplay dpy,
                                                 EGLContext ctx) {
-  EGLint error_code = ValidateDisplayContext(dpy, ctx);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  display->DestroyContext(ctx);
-  return EGL_TRUE;
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->DestroyContext(ts, ctx);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglMakeCurrent(EGLDisplay dpy,
                                              EGLSurface draw,
                                              EGLSurface read,
                                              EGLContext ctx) {
-  if (ctx != EGL_NO_CONTEXT) {
-    EGLint error_code = ValidateDisplaySurface(dpy, draw);
-    if (error_code != EGL_SUCCESS)
-      return EglError(error_code, EGL_FALSE);
-    error_code = ValidateDisplaySurface(dpy, read);
-    if (error_code != EGL_SUCCESS)
-      return EglError(error_code, EGL_FALSE);
-    error_code = ValidateDisplayContext(dpy, ctx);
-    if (error_code != EGL_SUCCESS)
-      return EglError(error_code, EGL_FALSE);
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  if (draw == EGL_NO_SURFACE && read == EGL_NO_SURFACE &&
+      ctx == EGL_NO_CONTEXT) {
+    egl::Display* display =
+        dpy == EGL_NO_DISPLAY ? ts->GetDefaultDisplay() : ts->GetDisplay(dpy);
+    if (!display)
+      return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+    return display->ReleaseCurrent(ts);
   }
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  if (!display->MakeCurrent(draw, read, ctx))
-    return EglError(EGL_CONTEXT_LOST, EGL_FALSE);
-
-#if REGAL_STATIC_EGL
-  RegalMakeCurrent(ctx);
-#endif
-
-  return EGL_TRUE;
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->MakeCurrent(ts, draw, read, ctx);
 }
 
 EGLAPI EGLContext EGLAPIENTRY eglGetCurrentContext() {
@@ -414,15 +256,12 @@ EGLAPI EGLBoolean EGLAPIENTRY eglWaitNative(EGLint engine) {
   return EGL_FALSE;
 }
 
-EGLAPI EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy,
-                                             EGLSurface surface) {
-  EGLint error_code = ValidateDisplaySurface(dpy, surface);
-  if (error_code != EGL_SUCCESS)
-    return EglError(error_code, EGL_FALSE);
-
-  egl::Display* display = static_cast<egl::Display*>(dpy);
-  display->SwapBuffers(surface);
-  return EglSuccess(EGL_TRUE);
+EGLAPI EGLBoolean EGLAPIENTRY eglSwapBuffers(EGLDisplay dpy, EGLSurface sfe) {
+  egl::ThreadState* ts = egl::ThreadState::Get();
+  egl::Display* display = ts->GetDisplay(dpy);
+  if (!display)
+    return ts->ReturnError(EGL_BAD_DISPLAY, EGL_FALSE);
+  return display->SwapBuffers(ts, sfe);
 }
 
 EGLAPI EGLBoolean EGLAPIENTRY eglCopyBuffers(EGLDisplay dpy,

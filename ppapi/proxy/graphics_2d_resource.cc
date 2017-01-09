@@ -32,9 +32,10 @@ Graphics2DResource::Graphics2DResource(Connection connection,
       scale_(1.0f) {
   // These checks are copied from PPB_ImageData_Impl::Init to make tests passed.
   // Let's remove/refactor this when start to refactor ImageData.
-  bool bad_args = size.width <= 0 || size.height <= 0 ||
-      static_cast<int64>(size.width) * static_cast<int64>(size.height) >=
-          std::numeric_limits<int32>::max() / 4;
+  bool bad_args =
+      size.width <= 0 || size.height <= 0 ||
+      static_cast<int64_t>(size.width) * static_cast<int64_t>(size.height) >=
+          std::numeric_limits<int32_t>::max() / 4;
   if (!bad_args && !sent_create_to_renderer()) {
     SendCreate(RENDERER,
         PpapiHostMsg_Graphics2D_Create(size, is_always_opaque));
@@ -110,6 +111,20 @@ PP_Bool Graphics2DResource::SetScale(float scale) {
 
 float Graphics2DResource::GetScale() {
   return scale_;
+}
+
+PP_Bool Graphics2DResource::SetLayerTransform(float scale,
+                                              const PP_Point* origin,
+                                              const PP_Point* translate) {
+  if (scale <= 0.0f)
+    return PP_FALSE;
+  // Adding the origin to the transform.
+  PP_FloatPoint translate_with_origin;
+  translate_with_origin.x = (1 - scale) * origin->x - translate->x;
+  translate_with_origin.y = (1 - scale) * origin->y - translate->y;
+  Post(RENDERER,
+       PpapiHostMsg_Graphics2D_SetLayerTransform(scale, translate_with_origin));
+  return PP_TRUE;
 }
 
 int32_t Graphics2DResource::Flush(scoped_refptr<TrackedCallback> callback) {

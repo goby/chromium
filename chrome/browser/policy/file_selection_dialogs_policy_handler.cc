@@ -4,17 +4,17 @@
 
 #include "chrome/browser/policy/file_selection_dialogs_policy_handler.h"
 
-#include "base/prefs/pref_value_map.h"
 #include "base/values.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/policy_map.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 
 namespace policy {
 
 FileSelectionDialogsPolicyHandler::FileSelectionDialogsPolicyHandler()
     : TypeCheckingPolicyHandler(key::kAllowFileSelectionDialogs,
-                                base::Value::TYPE_BOOLEAN) {}
+                                base::Value::Type::BOOLEAN) {}
 
 FileSelectionDialogsPolicyHandler::~FileSelectionDialogsPolicyHandler() {}
 

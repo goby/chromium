@@ -5,14 +5,15 @@
 #ifndef COMPONENTS_DOMAIN_RELIABILITY_GOOGLE_CONFIGS_H_
 #define COMPONENTS_DOMAIN_RELIABILITY_GOOGLE_CONFIGS_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "components/domain_reliability/config.h"
 #include "components/domain_reliability/domain_reliability_export.h"
 
 namespace domain_reliability {
 
 void DOMAIN_RELIABILITY_EXPORT GetAllGoogleConfigs(
-    std::vector<DomainReliabilityConfig*>* configs_out);
+    std::vector<std::unique_ptr<DomainReliabilityConfig>>* configs_out);
 
 }  // namespace domain_reliability
 

@@ -5,10 +5,11 @@
 #ifndef CONTENT_PUBLIC_BROWSER_BROWSER_MAIN_PARTS_H_
 #define CONTENT_PUBLIC_BROWSER_BROWSER_MAIN_PARTS_H_
 
-#include "base/basictypes.h"
 #include "content/common/content_export.h"
 
 namespace content {
+
+class ServiceManagerConnection;
 
 // This class contains different "stages" to be executed by |BrowserMain()|,
 // Each stage is represented by a single BrowserMainParts method, called from
@@ -70,6 +71,9 @@ class CONTENT_EXPORT BrowserMainParts {
   // been run), and the toolkit has been initialized. Returns the error code
   // (or 0 if no error).
   virtual int PreCreateThreads();
+
+  virtual void ServiceManagerConnectionStarted(
+      ServiceManagerConnection* connection) {}
 
   // This is called just before the main message loop is run.  The
   // various browser threads have all been created at this point

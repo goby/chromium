@@ -5,17 +5,22 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CONFIGURATION_POLICY_PROVIDER_TEST_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CONFIGURATION_POLICY_PROVIDER_TEST_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema.h"
 #include "components/policy/core/common/schema_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_POSIX)
+#include "base/files/file_descriptor_watcher_posix.h"
+#endif
 
 namespace base {
 class DictionaryValue;
@@ -53,8 +58,12 @@ class PolicyTestBase : public testing::Test {
 
   SchemaRegistry schema_registry_;
 
-  // Create an actual IO loop (needed by FilePathWatcher).
+  // Needed by FilePathWatcher, which is used by ConfigDirPolicyLoader and
+  // PolicyLoaderMac.
   base::MessageLoopForIO loop_;
+#if defined(OS_POSIX)
+  base::FileDescriptorWatcher file_descriptor_watcher_;
+#endif
 
  private:
   DISALLOW_COPY_AND_ASSIGN(PolicyTestBase);
@@ -133,8 +142,8 @@ class ConfigurationPolicyProviderTest
                   const base::Value& expected_value,
                   base::Closure install_value);
 
-  scoped_ptr<PolicyProviderTestHarness> test_harness_;
-  scoped_ptr<ConfigurationPolicyProvider> provider_;
+  std::unique_ptr<PolicyProviderTestHarness> test_harness_;
+  std::unique_ptr<ConfigurationPolicyProvider> provider_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ConfigurationPolicyProviderTest);

@@ -4,9 +4,15 @@
 
 #include "chrome/browser/ui/webui/options/startup_pages_handler.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/prefs/pref_service.h"
+#include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -14,6 +20,7 @@
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/ui/webui/settings_utils.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
@@ -21,9 +28,10 @@
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_input.h"
 #include "components/omnibox/browser/autocomplete_result.h"
-#include "components/url_formatter/url_fixer.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/web_ui.h"
+#include "url/gurl.h"
 
 namespace options {
 
@@ -102,7 +110,7 @@ void StartupPagesHandler::InitializeHandler() {
                  base::Unretained(this)));
 
   autocomplete_controller_.reset(new AutocompleteController(
-      make_scoped_ptr(new ChromeAutocompleteProviderClient(profile)), this,
+      base::MakeUnique<ChromeAutocompleteProviderClient>(profile), this,
       AutocompleteClassifier::kDefaultOmniboxProviders));
 }
 
@@ -115,17 +123,17 @@ void StartupPagesHandler::OnModelChanged() {
   int page_count = startup_custom_pages_table_model_->RowCount();
   std::vector<GURL> urls = startup_custom_pages_table_model_->GetURLs();
   for (int i = 0; i < page_count; ++i) {
-    base::DictionaryValue* entry = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
     entry->SetString("title", startup_custom_pages_table_model_->GetText(i, 0));
     entry->SetString("url", urls[i].spec());
     entry->SetString("tooltip",
                      startup_custom_pages_table_model_->GetTooltip(i));
     entry->SetInteger("modelIndex", i);
-    startup_pages.Append(entry);
+    startup_pages.Append(std::move(entry));
   }
 
-  web_ui()->CallJavascriptFunction("StartupOverlay.updateStartupPages",
-                                   startup_pages);
+  web_ui()->CallJavascriptFunctionUnsafe("StartupOverlay.updateStartupPages",
+                                         startup_pages);
 }
 
 void StartupPagesHandler::OnItemsChanged(int start, int length) {
@@ -163,33 +171,35 @@ void StartupPagesHandler::AddStartupPage(const base::ListValue* args) {
   std::string url_string;
   CHECK(args->GetString(0, &url_string));
 
-  GURL url = url_formatter::FixupURL(url_string, std::string());
-  if (!url.is_valid())
+  GURL fixed_url;
+  if (!settings_utils::FixupAndValidateStartupPage(url_string, &fixed_url)) {
+    NOTREACHED();
     return;
+  }
 
   int row_count = startup_custom_pages_table_model_->RowCount();
   int index;
   if (!args->GetInteger(1, &index) || index > row_count)
     index = row_count;
 
-  startup_custom_pages_table_model_->Add(index, url);
+  startup_custom_pages_table_model_->Add(index, fixed_url);
 }
 
 void StartupPagesHandler::EditStartupPage(const base::ListValue* args) {
-  std::string url_string;
-  GURL fixed_url;
-  int index;
   CHECK_EQ(args->GetSize(), 2U);
+  int index;
   CHECK(args->GetInteger(0, &index));
-  CHECK(args->GetString(1, &url_string));
 
   if (index < 0 || index > startup_custom_pages_table_model_->RowCount()) {
     NOTREACHED();
     return;
   }
 
-  fixed_url = url_formatter::FixupURL(url_string, std::string());
-  if (!fixed_url.is_empty()) {
+  std::string url_string;
+  CHECK(args->GetString(1, &url_string));
+
+  GURL fixed_url;
+  if (settings_utils::FixupAndValidateStartupPage(url_string, &fixed_url)) {
     std::vector<GURL> urls = startup_custom_pages_table_model_->GetURLs();
     urls[index] = fixed_url;
     startup_custom_pages_table_model_->SetURLs(urls);
@@ -254,7 +264,7 @@ void StartupPagesHandler::OnResultChanged(bool default_match_changed) {
   const AutocompleteResult& result = autocomplete_controller_->result();
   base::ListValue suggestions;
   OptionsUI::ProcessAutocompleteSuggestions(result, &suggestions);
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "StartupOverlay.updateAutocompleteSuggestions", suggestions);
 }
 

@@ -4,18 +4,23 @@
 
 #include "components/update_client/action_update_check.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/version.h"
 #include "components/update_client/action_update.h"
 #include "components/update_client/configurator.h"
 #include "components/update_client/update_checker.h"
 #include "components/update_client/update_client.h"
+#include "components/update_client/update_client_errors.h"
 #include "components/update_client/utils.h"
 
 using std::string;
@@ -26,21 +31,20 @@ namespace update_client {
 namespace {
 
 // Returns true if the |proposed| version is newer than |current| version.
-bool IsVersionNewer(const Version& current, const std::string& proposed) {
-  Version proposed_ver(proposed);
+bool IsVersionNewer(const base::Version& current, const std::string& proposed) {
+  base::Version proposed_ver(proposed);
   return proposed_ver.IsValid() && current.CompareTo(proposed_ver) < 0;
 }
 
 }  // namespace
 
 ActionUpdateCheck::ActionUpdateCheck(
-    scoped_ptr<UpdateChecker> update_checker,
+    std::unique_ptr<UpdateChecker> update_checker,
     const base::Version& browser_version,
     const std::string& extra_request_parameters)
-    : update_checker_(update_checker.Pass()),
+    : update_checker_(std::move(update_checker)),
       browser_version_(browser_version),
-      extra_request_parameters_(extra_request_parameters) {
-}
+      extra_request_parameters_(extra_request_parameters) {}
 
 ActionUpdateCheck::~ActionUpdateCheck() {
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -56,19 +60,17 @@ void ActionUpdateCheck::Run(UpdateContext* update_context, Callback callback) {
   vector<CrxComponent> crx_components;
   update_context_->crx_data_callback.Run(update_context_->ids, &crx_components);
 
-  update_context_->update_items.reserve(crx_components.size());
-
   for (size_t i = 0; i != crx_components.size(); ++i) {
-    scoped_ptr<CrxUpdateItem> item(new CrxUpdateItem);
+    std::unique_ptr<CrxUpdateItem> item = base::MakeUnique<CrxUpdateItem>();
     const CrxComponent& crx_component = crx_components[i];
 
     item->id = GetCrxComponentID(crx_component);
     item->component = crx_component;
-    item->last_check = base::Time::Now();
+    item->last_check = base::TimeTicks::Now();
     item->crx_urls.clear();
     item->crx_diffurls.clear();
     item->previous_version = crx_component.version;
-    item->next_version = Version();
+    item->next_version = base::Version();
     item->previous_fp = crx_component.fingerprint;
     item->next_fp.clear();
     item->on_demand = update_context->is_foreground;
@@ -81,31 +83,31 @@ void ActionUpdateCheck::Run(UpdateContext* update_context, Callback callback) {
     item->diff_extra_code1 = 0;
     item->download_metrics.clear();
 
-    update_context_->update_items.push_back(item.get());
+    CrxUpdateItem* item_ptr = item.get();
+    update_context_->update_items[item_ptr->id] = std::move(item);
 
-    ChangeItemState(item.get(), CrxUpdateItem::State::kChecking);
-    ignore_result(item.release());
+    ChangeItemState(item_ptr, CrxUpdateItem::State::kChecking);
   }
 
   update_checker_->CheckForUpdates(
       update_context_->update_items, extra_request_parameters_,
+      update_context_->enabled_component_updates,
       base::Bind(&ActionUpdateCheck::UpdateCheckComplete,
                  base::Unretained(this)));
 }
 
 void ActionUpdateCheck::UpdateCheckComplete(
-    const GURL& original_url,
     int error,
-    const std::string& error_message,
-    const UpdateResponse::Results& results) {
+    const UpdateResponse::Results& results,
+    int retry_after_sec) {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  VLOG(1) << "Update check completed from: " << original_url.spec();
+  update_context_->retry_after_sec_ = retry_after_sec;
 
   if (!error)
     OnUpdateCheckSucceeded(results);
   else
-    OnUpdateCheckFailed(error, error_message);
+    OnUpdateCheckFailed(error);
 }
 
 void ActionUpdateCheck::OnUpdateCheckSucceeded(
@@ -133,7 +135,7 @@ void ActionUpdateCheck::OnUpdateCheckSucceeded(
     if (!IsVersionNewer(crx->component.version, it->manifest.version)) {
       // The CRX is up to date.
       ChangeItemState(crx, CrxUpdateItem::State::kUpToDate);
-      VLOG(1) << "Component already up-to-date: " << crx->id;
+      VLOG(1) << "Component already up to date: " << crx->id;
       continue;
     }
 
@@ -154,7 +156,7 @@ void ActionUpdateCheck::OnUpdateCheckSucceeded(
     }
 
     // Parse the members of the result and queue an upgrade for this CRX.
-    crx->next_version = Version(it->manifest.version);
+    crx->next_version = base::Version(it->manifest.version);
 
     VLOG(1) << "Update found for CRX: " << crx->id;
 
@@ -173,6 +175,9 @@ void ActionUpdateCheck::OnUpdateCheckSucceeded(
         crx->crx_diffurls.push_back(url);
     }
 
+    crx->hash_sha256 = package.hash_sha256;
+    crx->hashdiff_sha256 = package.hashdiff_sha256;
+
     ChangeItemState(crx, CrxUpdateItem::State::kCanUpdate);
 
     update_context_->queue.push(crx->id);
@@ -185,7 +190,7 @@ void ActionUpdateCheck::OnUpdateCheckSucceeded(
 
   if (update_context_->queue.empty()) {
     VLOG(1) << "Update check completed but no update is needed.";
-    UpdateComplete(0);
+    UpdateComplete(Error::NONE);
     return;
   }
 
@@ -193,8 +198,7 @@ void ActionUpdateCheck::OnUpdateCheckSucceeded(
   UpdateCrx();
 }
 
-void ActionUpdateCheck::OnUpdateCheckFailed(int error,
-                                            const std::string& error_message) {
+void ActionUpdateCheck::OnUpdateCheckFailed(int error) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(error);
 
@@ -203,7 +207,7 @@ void ActionUpdateCheck::OnUpdateCheckFailed(int error,
   ChangeAllItemsState(CrxUpdateItem::State::kChecking,
                       CrxUpdateItem::State::kNoUpdate);
 
-  UpdateComplete(error);
+  UpdateComplete(Error::UPDATE_CHECK_ERROR);
 }
 
 }  // namespace update_client

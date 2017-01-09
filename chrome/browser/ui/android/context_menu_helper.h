@@ -5,17 +5,19 @@
 #ifndef CHROME_BROWSER_UI_ANDROID_CONTEXT_MENU_HELPER_H_
 #define CHROME_BROWSER_UI_ANDROID_CONTEXT_MENU_HELPER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/android/jni_android.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "content/public/common/context_menu_params.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace content {
 struct ContextMenuParams;
+class RenderFrameHost;
 class WebContents;
 }
 
@@ -24,7 +26,11 @@ class ContextMenuHelper
  public:
   ~ContextMenuHelper() override;
 
-  void ShowContextMenu(const content::ContextMenuParams& params);
+  void ShowContextMenu(content::RenderFrameHost* render_frame_host,
+                       const content::ContextMenuParams& params);
+
+  void OnContextMenuClosed(JNIEnv* env,
+                           const base::android::JavaParamRef<jobject>& obj);
 
   void SetPopulator(jobject jpopulator);
 
@@ -32,7 +38,7 @@ class ContextMenuHelper
   void OnStartDownload(JNIEnv* env,
                        const base::android::JavaParamRef<jobject>& obj,
                        jboolean jis_link,
-                       const base::android::JavaParamRef<jstring>& jheaders);
+                       jboolean jis_data_reduction_proxy_enabled);
   void SearchForImage(JNIEnv* env,
                       const base::android::JavaParamRef<jobject>& obj);
   void ShareImage(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
@@ -51,6 +57,8 @@ class ContextMenuHelper
   content::WebContents* web_contents_;
 
   content::ContextMenuParams context_menu_params_;
+  int render_frame_id_;
+  int render_process_id_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextMenuHelper);
 };

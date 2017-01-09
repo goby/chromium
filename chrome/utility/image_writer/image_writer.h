@@ -5,6 +5,9 @@
 #ifndef CHROME_UTILITY_IMAGE_WRITER_IMAGE_WRITER_H_
 #define CHROME_UTILITY_IMAGE_WRITER_IMAGE_WRITER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
@@ -12,6 +15,7 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/memory/weak_ptr.h"
+#include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -59,7 +63,7 @@ class ImageWriter : public base::SupportsWeakPtr<ImageWriter> {
  private:
   // Convenience wrappers.
   void PostTask(const base::Closure& task);
-  void PostProgress(int64 progress);
+  void PostProgress(int64_t progress);
   void Error(const std::string& message);
 
   // Initializes the files.
@@ -75,7 +79,7 @@ class ImageWriter : public base::SupportsWeakPtr<ImageWriter> {
 
   base::File image_file_;
   base::File device_file_;
-  int64 bytes_processed_;
+  int64_t bytes_processed_;
   bool running_;
 
 #if defined(OS_WIN)
@@ -84,7 +88,7 @@ class ImageWriter : public base::SupportsWeakPtr<ImageWriter> {
 
 #if defined(OS_MACOSX)
   friend class DiskUnmounterMac;
-  scoped_ptr<DiskUnmounterMac> unmounter_;
+  std::unique_ptr<DiskUnmounterMac> unmounter_;
 #endif
 
   ImageWriterHandler* handler_;

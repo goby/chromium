@@ -17,6 +17,8 @@
 #include "ui/shell_dialogs/selected_file_info.h"
 
 using base::android::ConvertJavaStringToUTF8;
+using base::android::JavaParamRef;
+using base::android::ScopedJavaLocalRef;
 
 namespace ui {
 
@@ -26,10 +28,11 @@ SelectFileDialogImpl* SelectFileDialogImpl::Create(Listener* listener,
   return new SelectFileDialogImpl(listener, policy);
 }
 
-void SelectFileDialogImpl::OnFileSelected(JNIEnv* env,
-                                          jobject java_object,
-                                          jstring filepath,
-                                          jstring display_name) {
+void SelectFileDialogImpl::OnFileSelected(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& java_object,
+    const JavaParamRef<jstring>& filepath,
+    const JavaParamRef<jstring>& display_name) {
   if (!listener_)
     return;
 
@@ -45,10 +48,11 @@ void SelectFileDialogImpl::OnFileSelected(JNIEnv* env,
   listener_->FileSelectedWithExtraInfo(file_info, 0, NULL);
 }
 
-void SelectFileDialogImpl::OnMultipleFilesSelected(JNIEnv* env,
-                                                   jobject java_object,
-                                                   jobjectArray filepaths,
-                                                   jobjectArray display_names) {
+void SelectFileDialogImpl::OnMultipleFilesSelected(
+    JNIEnv* env,
+    const JavaParamRef<jobject>& java_object,
+    const JavaParamRef<jobjectArray>& filepaths,
+    const JavaParamRef<jobjectArray>& display_names) {
   if (!listener_)
     return;
 
@@ -78,7 +82,7 @@ void SelectFileDialogImpl::OnMultipleFilesSelected(JNIEnv* env,
 
 void SelectFileDialogImpl::OnFileNotSelected(
     JNIEnv* env,
-    jobject java_object) {
+    const JavaParamRef<jobject>& java_object) {
   if (listener_)
     listener_->FileSelectionCanceled(NULL);
 }
@@ -116,11 +120,9 @@ void SelectFileDialogImpl::SelectFileImpl(
 
   bool accept_multiple_files = SelectFileDialog::SELECT_OPEN_MULTI_FILE == type;
 
-  Java_SelectFileDialog_selectFile(env, java_object_.obj(),
-                                   accept_types_java.obj(),
-                                   accept_types.second,
-                                   accept_multiple_files,
-                                   owning_window->GetJavaObject().obj());
+  Java_SelectFileDialog_selectFile(env, java_object_, accept_types_java,
+                                   accept_types.second, accept_multiple_files,
+                                   owning_window->GetJavaObject());
 }
 
 bool SelectFileDialogImpl::RegisterSelectFileDialog(JNIEnv* env) {
@@ -143,9 +145,8 @@ bool SelectFileDialogImpl::HasMultipleFileTypeChoicesImpl() {
   return false;
 }
 
-SelectFileDialog* CreateAndroidSelectFileDialog(
-    SelectFileDialog::Listener* listener,
-    SelectFilePolicy* policy) {
+SelectFileDialog* CreateSelectFileDialog(SelectFileDialog::Listener* listener,
+                                         SelectFilePolicy* policy) {
   return SelectFileDialogImpl::Create(listener, policy);
 }
 

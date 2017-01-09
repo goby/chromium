@@ -5,21 +5,15 @@
 #ifndef CHROME_BROWSER_UI_ASH_CHROME_KEYBOARD_UI_H_
 #define CHROME_BROWSER_UI_ASH_CHROME_KEYBOARD_UI_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "ui/keyboard/content/keyboard_ui_content.h"
 
 namespace content {
 class BrowserContext;
 class WebContents;
-}
-namespace extensions {
-class ExtensionFunctionDispatcher;
-class WindowController;
-}
-namespace gfx {
-class Rect;
 }
 namespace keyboard {
 class KeyboardController;
@@ -41,7 +35,7 @@ class ChromeKeyboardUI : public keyboard::KeyboardUIContent,
   bool ShouldWindowOverscroll(aura::Window* window) const override;
 
  private:
-  // keyboard::KeyboardControllerProxy overrides
+  // keyboard::KeyboardUIContent overrides
   ui::InputMethod* GetInputMethod() override;
   void RequestAudioInput(
       content::WebContents* web_contents,
@@ -63,7 +57,7 @@ class ChromeKeyboardUI : public keyboard::KeyboardUIContent,
   // content::WebContentsObserver overrides
   void RenderViewCreated(content::RenderViewHost* render_view_host) override;
 
-  scoped_ptr<keyboard::KeyboardControllerObserver> observer_;
+  std::unique_ptr<keyboard::KeyboardControllerObserver> observer_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeKeyboardUI);
 };

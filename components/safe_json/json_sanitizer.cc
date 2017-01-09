@@ -13,9 +13,11 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/json/json_writer.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "components/safe_json/safe_json_parser.h"
 
 namespace safe_json {
@@ -32,7 +34,7 @@ class OopJsonSanitizer : public JsonSanitizer {
   friend std::default_delete<OopJsonSanitizer>;
   ~OopJsonSanitizer() {}
 
-  void OnParseSuccess(scoped_ptr<base::Value> value);
+  void OnParseSuccess(std::unique_ptr<base::Value> value);
   void OnParseError(const std::string& error);
 
   StringCallback success_callback_;
@@ -52,14 +54,15 @@ OopJsonSanitizer::OopJsonSanitizer(const std::string& unsafe_json,
                                    base::Unretained(this)));
 }
 
-void OopJsonSanitizer::OnParseSuccess(scoped_ptr<base::Value> value) {
+void OopJsonSanitizer::OnParseSuccess(std::unique_ptr<base::Value> value) {
   // Self-destruct at the end of this method.
-  scoped_ptr<OopJsonSanitizer> deleter(this);
+  std::unique_ptr<OopJsonSanitizer> deleter(this);
 
   // A valid JSON document may only have a dictionary or list as its top-level
   // type, but the JSON parser also accepts other types, so we filter them out.
   base::Value::Type type = value->GetType();
-  if (type != base::Value::TYPE_DICTIONARY && type != base::Value::TYPE_LIST) {
+  if (type != base::Value::Type::DICTIONARY &&
+      type != base::Value::Type::LIST) {
     error_callback_.Run("Invalid top-level type");
     return;
   }

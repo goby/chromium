@@ -32,52 +32,45 @@
 namespace blink {
 
 class WebGLRenderbuffer final : public WebGLSharedPlatform3DObject {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    ~WebGLRenderbuffer() override;
+  DEFINE_WRAPPERTYPEINFO();
 
-    static WebGLRenderbuffer* create(WebGLRenderingContextBase*);
+ public:
+  ~WebGLRenderbuffer() override;
 
-    void setInternalFormat(GLenum internalformat)
-    {
-        m_internalFormat = internalformat;
-    }
-    GLenum internalFormat() const { return m_internalFormat; }
+  static WebGLRenderbuffer* create(WebGLRenderingContextBase*);
 
-    void setSize(GLsizei width, GLsizei height)
-    {
-        m_width = width;
-        m_height = height;
-    }
-    GLsizei width() const { return m_width; }
-    GLsizei height() const { return m_height; }
+  void setInternalFormat(GLenum internalformat) {
+    m_internalFormat = internalformat;
+  }
+  GLenum internalFormat() const { return m_internalFormat; }
 
-    bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
+  void setSize(GLsizei width, GLsizei height) {
+    m_width = width;
+    m_height = height;
+  }
+  GLsizei width() const { return m_width; }
+  GLsizei height() const { return m_height; }
 
-    void setHasEverBeenBound() { m_hasEverBeenBound = true; }
+  bool hasEverBeenBound() const { return object() && m_hasEverBeenBound; }
 
-    void setEmulatedStencilBuffer(WebGLRenderbuffer* buffer) { m_emulatedStencilBuffer = buffer; }
-    WebGLRenderbuffer* emulatedStencilBuffer() const { return m_emulatedStencilBuffer; }
-    void deleteEmulatedStencilBuffer(WebGraphicsContext3D* context3d);
+  void setHasEverBeenBound() { m_hasEverBeenBound = true; }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-protected:
-    explicit WebGLRenderbuffer(WebGLRenderingContextBase*);
+ protected:
+  explicit WebGLRenderbuffer(WebGLRenderingContextBase*);
 
-    void deleteObjectImpl(WebGraphicsContext3D*) override;
+  void deleteObjectImpl(gpu::gles2::GLES2Interface*) override;
 
-private:
-    bool isRenderbuffer() const override { return true; }
+ private:
+  bool isRenderbuffer() const override { return true; }
 
-    GLenum m_internalFormat;
-    GLsizei m_width, m_height;
+  GLenum m_internalFormat;
+  GLsizei m_width, m_height;
 
-    bool m_hasEverBeenBound;
-
-    Member<WebGLRenderbuffer> m_emulatedStencilBuffer;
+  bool m_hasEverBeenBound;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WebGLRenderbuffer_h
+#endif  // WebGLRenderbuffer_h

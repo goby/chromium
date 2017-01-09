@@ -6,7 +6,6 @@
 
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
-#include "content/browser/browser_io_surface_manager_mac.h"
 #include "content/browser/mach_broker_mac.h"
 #include "content/common/sandbox_init_mac.h"
 #include "content/public/browser/browser_thread.h"
@@ -79,14 +78,9 @@ void BootstrapSandboxManager::RegisterRendererPolicy() {
   policy.rules["com.apple.windowserver.active"] =
       sandbox::Rule(sandbox::POLICY_ALLOW);
 
-  // Allow renderers to contact the IOSurfaceManager in the browser to share
-  // accelerated surfaces.
-  policy.rules[BrowserIOSurfaceManager::GetMachPortName()] =
-      sandbox::Rule(sandbox::POLICY_ALLOW);
-
   // Allow access to launchservicesd on 10.10+ otherwise the renderer will crash
   // attempting to get its ASN. http://crbug.com/533537
-  if (base::mac::IsOSYosemiteOrLater()) {
+  if (base::mac::IsAtLeastOS10_10()) {
     policy.rules["com.apple.coreservices.launchservicesd"] =
         sandbox::Rule(sandbox::POLICY_ALLOW);
   }

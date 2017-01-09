@@ -4,15 +4,18 @@
 
 #include "remoting/host/win/session_input_injector.h"
 
+#include <stddef.h>
+
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
-#include "base/win/windows_version.h"
 #include "remoting/host/sas_injector.h"
 #include "remoting/proto/event.pb.h"
 #include "third_party/webrtc/modules/desktop_capture/win/desktop.h"
@@ -30,6 +33,12 @@ bool CheckCtrlAndAltArePressed(const std::set<ui::DomCode>& pressed_keys) {
     (ctrl_keys + alt_keys == pressed_keys.size());
 }
 
+bool IsWinKeyPressed(const std::set<ui::DomCode>& pressed_keys) {
+  size_t win_keys = pressed_keys.count(ui::DomCode::META_LEFT) +
+                    pressed_keys.count(ui::DomCode::META_RIGHT);
+  return win_keys != 0 && win_keys == pressed_keys.size();
+}
+
 } // namespace
 
 namespace remoting {
@@ -44,14 +53,14 @@ class SessionInputInjectorWin::Core
     : public base::RefCountedThreadSafe<SessionInputInjectorWin::Core>,
       public InputInjector {
  public:
-  Core(
-      scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-      scoped_ptr<InputInjector> nested_executor,
-      scoped_refptr<base::SingleThreadTaskRunner> inject_sas_task_runner,
-      const base::Closure& inject_sas);
+  Core(scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
+       std::unique_ptr<InputInjector> nested_executor,
+       scoped_refptr<base::SingleThreadTaskRunner> inject_sas_task_runner,
+       const base::Closure& inject_sas,
+       const base::Closure& lock_workstation);
 
   // InputInjector implementation.
-  void Start(scoped_ptr<ClipboardStub> client_clipboard) override;
+  void Start(std::unique_ptr<ClipboardStub> client_clipboard) override;
 
   // protocol::ClipboardStub implementation.
   void InjectClipboardEvent(const ClipboardEvent& event) override;
@@ -73,19 +82,22 @@ class SessionInputInjectorWin::Core
   scoped_refptr<base::SingleThreadTaskRunner> input_task_runner_;
 
   // Pointer to the next event executor.
-  scoped_ptr<InputInjector> nested_executor_;
+  std::unique_ptr<InputInjector> nested_executor_;
 
-  scoped_refptr<base::SingleThreadTaskRunner> inject_sas_task_runner_;
+  scoped_refptr<base::SingleThreadTaskRunner> execute_action_task_runner_;
 
   webrtc::ScopedThreadDesktop desktop_;
 
-  // Used to inject Secure Attention Sequence on Vista+.
+  // Used to inject Secure Attention Sequence.
   base::Closure inject_sas_;
 
-  // Used to inject Secure Attention Sequence on XP.
-  scoped_ptr<SasInjector> sas_injector_;
+  // Used to lock the current session on non-home SKUs of Windows.
+  base::Closure lock_workstation_;
 
-  // Keys currently pressed by the client, used to detect Ctrl-Alt-Del.
+  // Used to inject Secure Attention Sequence on XP.
+  std::unique_ptr<SasInjector> sas_injector_;
+
+  // Keys currently pressed by the client, used to detect key sequences.
   std::set<ui::DomCode> pressed_keys_;
 
   DISALLOW_COPY_AND_ASSIGN(Core);
@@ -93,17 +105,18 @@ class SessionInputInjectorWin::Core
 
 SessionInputInjectorWin::Core::Core(
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_ptr<InputInjector> nested_executor,
-    scoped_refptr<base::SingleThreadTaskRunner> inject_sas_task_runner,
-    const base::Closure& inject_sas)
+    std::unique_ptr<InputInjector> nested_executor,
+    scoped_refptr<base::SingleThreadTaskRunner> execute_action_task_runner,
+    const base::Closure& inject_sas,
+    const base::Closure& lock_workstation)
     : input_task_runner_(input_task_runner),
-      nested_executor_(nested_executor.Pass()),
-      inject_sas_task_runner_(inject_sas_task_runner),
-      inject_sas_(inject_sas) {
-}
+      nested_executor_(std::move(nested_executor)),
+      execute_action_task_runner_(execute_action_task_runner),
+      inject_sas_(inject_sas),
+      lock_workstation_(lock_workstation) {}
 
 void SessionInputInjectorWin::Core::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   if (!input_task_runner_->BelongsToCurrentThread()) {
     input_task_runner_->PostTask(
         FROM_HERE,
@@ -111,7 +124,7 @@ void SessionInputInjectorWin::Core::Start(
     return;
   }
 
-  nested_executor_->Start(client_clipboard.Pass());
+  nested_executor_->Start(std::move(client_clipboard));
 }
 
 void SessionInputInjectorWin::Core::InjectClipboardEvent(
@@ -142,15 +155,10 @@ void SessionInputInjectorWin::Core::InjectKeyEvent(const KeyEvent& event) {
       if (dom_code == ui::DomCode::DEL &&
           CheckCtrlAndAltArePressed(pressed_keys_)) {
         VLOG(3) << "Sending Secure Attention Sequence to the session";
-
-        if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-          if (!sas_injector_)
-            sas_injector_ = SasInjector::Create();
-          if (!sas_injector_->InjectSas())
-            LOG(ERROR) << "Failed to inject Secure Attention Sequence.";
-        } else {
-          inject_sas_task_runner_->PostTask(FROM_HERE, inject_sas_);
-        }
+        execute_action_task_runner_->PostTask(FROM_HERE, inject_sas_);
+      } else if (dom_code == ui::DomCode::US_L &&
+                 IsWinKeyPressed(pressed_keys_)) {
+        execute_action_task_runner_->PostTask(FROM_HERE, lock_workstation_);
       }
 
       pressed_keys_.insert(dom_code);
@@ -202,7 +210,7 @@ SessionInputInjectorWin::Core::~Core() {
 void SessionInputInjectorWin::Core::SwitchToInputDesktop() {
   // Switch to the desktop receiving user input if different from the current
   // one.
-  scoped_ptr<webrtc::Desktop> input_desktop(
+  std::unique_ptr<webrtc::Desktop> input_desktop(
       webrtc::Desktop::GetInputDesktop());
   if (input_desktop.get() != nullptr && !desktop_.IsSame(*input_desktop)) {
     // If SetThreadDesktop() fails, the thread is still assigned a desktop.
@@ -213,19 +221,20 @@ void SessionInputInjectorWin::Core::SwitchToInputDesktop() {
 
 SessionInputInjectorWin::SessionInputInjectorWin(
     scoped_refptr<base::SingleThreadTaskRunner> input_task_runner,
-    scoped_ptr<InputInjector> nested_executor,
+    std::unique_ptr<InputInjector> nested_executor,
     scoped_refptr<base::SingleThreadTaskRunner> inject_sas_task_runner,
-    const base::Closure& inject_sas) {
-  core_ = new Core(input_task_runner, nested_executor.Pass(),
-                   inject_sas_task_runner, inject_sas);
+    const base::Closure& inject_sas,
+    const base::Closure& lock_workstation) {
+  core_ = new Core(input_task_runner, std::move(nested_executor),
+                   inject_sas_task_runner, inject_sas, lock_workstation);
 }
 
 SessionInputInjectorWin::~SessionInputInjectorWin() {
 }
 
 void SessionInputInjectorWin::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
-  core_->Start(client_clipboard.Pass());
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
+  core_->Start(std::move(client_clipboard));
 }
 
 void SessionInputInjectorWin::InjectClipboardEvent(

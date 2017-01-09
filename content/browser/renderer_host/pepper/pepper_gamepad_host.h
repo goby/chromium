@@ -5,11 +5,18 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_GAMEPAD_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_GAMEPAD_HOST_H_
 
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "content/browser/gamepad/gamepad_consumer.h"
 #include "content/common/content_export.h"
+#include "device/gamepad/gamepad_consumer.h"
 #include "ppapi/host/resource_host.h"
+
+namespace device {
+class GamepadService;
+}
 
 namespace ppapi {
 namespace host {
@@ -20,11 +27,10 @@ struct ReplyMessageContext;
 namespace content {
 
 class BrowserPpapiHost;
-class GamepadService;
 
 class CONTENT_EXPORT PepperGamepadHost :
     public ppapi::host::ResourceHost,
-    public GamepadConsumer {
+    public device::GamepadConsumer {
  public:
   PepperGamepadHost(BrowserPpapiHost* host,
                     PP_Instance instance,
@@ -32,7 +38,7 @@ class CONTENT_EXPORT PepperGamepadHost :
 
   // Allows tests to specify a gamepad service to use rather than the global
   // singleton. The caller owns the gamepad_service pointer.
-  PepperGamepadHost(GamepadService* gamepad_service,
+  PepperGamepadHost(device::GamepadService* gamepad_service,
                     BrowserPpapiHost* host,
                     PP_Instance instance,
                     PP_Resource resource);
@@ -56,7 +62,7 @@ class CONTENT_EXPORT PepperGamepadHost :
 
   BrowserPpapiHost* browser_ppapi_host_;
 
-  GamepadService* gamepad_service_;
+  device::GamepadService* gamepad_service_;
 
   bool is_started_;
 

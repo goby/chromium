@@ -4,6 +4,9 @@
 
 #include "chrome/browser/content_settings/content_settings_internal_extension_provider.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "chrome/browser/pdf/pdf_extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_content_client.h"
@@ -60,7 +63,7 @@ InternalExtensionProvider::~InternalExtensionProvider() {
   DCHECK(!registrar_.get());
 }
 
-scoped_ptr<RuleIterator> InternalExtensionProvider::GetRuleIterator(
+std::unique_ptr<RuleIterator> InternalExtensionProvider::GetRuleIterator(
     ContentSettingsType content_type,
     const ResourceIdentifier& resource_identifier,
     bool incognito) const {
@@ -192,7 +195,7 @@ void InternalExtensionProvider::SetContentSettingForExtensionAndResource(
     const extensions::Extension* extension,
     const ResourceIdentifier& resource,
     ContentSetting setting) {
-  scoped_ptr<ContentSettingsPattern::BuilderInterface> pattern_builder(
+  std::unique_ptr<ContentSettingsPattern::BuilderInterface> pattern_builder(
       ContentSettingsPattern::CreateBuilder(false));
   pattern_builder->WithScheme(extensions::kExtensionScheme);
   pattern_builder->WithHost(extension->id());

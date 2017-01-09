@@ -14,18 +14,17 @@
 #define CHROME_BROWSER_SAFE_BROWSING_CLIENT_SIDE_DETECTION_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/safe_browsing/client_side_model_loader.h"
@@ -35,10 +34,6 @@
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
-namespace base {
-class TimeDelta;
-}
-
 namespace content {
 class RenderProcessHost;
 }
@@ -47,14 +42,11 @@ namespace net {
 class URLFetcher;
 class URLRequestContextGetter;
 class URLRequestStatus;
-typedef std::vector<std::string> ResponseCookies;
 }  // namespace net
 
 namespace safe_browsing {
 class ClientMalwareRequest;
 class ClientPhishingRequest;
-class ClientPhishingResponse;
-class ClientSideModel;
 
 // Main service which pushes models to the renderers, responds to classification
 // requests. This owns two ModelLoader objects.
@@ -164,7 +156,6 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
 
     CacheState(bool phish, base::Time time);
   };
-  typedef std::map<GURL, linked_ptr<CacheState> > PhishingCache;
 
   static const char kClientReportMalwareUrl[];
   static const char kClientReportPhishingUrl[];
@@ -191,7 +182,6 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
                              const GURL& url,
                              const net::URLRequestStatus& status,
                              int response_code,
-                             const net::ResponseCookies& cookies,
                              const std::string& data);
 
   // Called by OnURLFetchComplete to handle the server response from
@@ -200,7 +190,6 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
                             const GURL& url,
                             const net::URLRequestStatus& status,
                             int response_code,
-                            const net::ResponseCookies& cookies,
                             const std::string& data);
 
   // Invalidate cache results which are no longer useful.
@@ -228,18 +217,18 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
 
   // We load two models: One for stadard Safe Browsing profiles,
   // and one for those opted into extended reporting.
-  scoped_ptr<ModelLoader> model_loader_standard_;
-  scoped_ptr<ModelLoader> model_loader_extended_;
+  std::unique_ptr<ModelLoader> model_loader_standard_;
+  std::unique_ptr<ModelLoader> model_loader_extended_;
 
   // Map of client report phishing request to the corresponding callback that
   // has to be invoked when the request is done.
-  struct ClientReportInfo;
-  std::map<const net::URLFetcher*, ClientReportInfo*>
+  struct ClientPhishingReportInfo;
+  std::map<const net::URLFetcher*, std::unique_ptr<ClientPhishingReportInfo>>
       client_phishing_reports_;
   // Map of client malware ip request to the corresponding callback that
   // has to be invoked when the request is done.
   struct ClientMalwareReportInfo;
-  std::map<const net::URLFetcher*, ClientMalwareReportInfo*>
+  std::map<const net::URLFetcher*, std::unique_ptr<ClientMalwareReportInfo>>
       client_malware_reports_;
 
   // Cache of completed requests. Used to satisfy requests for the same urls
@@ -248,7 +237,7 @@ class ClientSideDetectionService : public net::URLFetcherDelegate,
   // size of this cache is limited by kMaxReportsPerDay *
   // ceil(InDays(max(kNegativeCacheInterval, kPositiveCacheInterval))).
   // TODO(gcasto): Serialize this so that it doesn't reset on browser restart.
-  PhishingCache cache_;
+  std::map<GURL, std::unique_ptr<CacheState>> cache_;
 
   // Timestamp of when we sent a phishing request. Used to limit the number
   // of phishing requests that we send in a day.

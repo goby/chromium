@@ -6,6 +6,8 @@
 
 #include "chrome/browser/safe_browsing/threat_details.h"
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/lazy_instance.h"
 #include "base/md5.h"
@@ -13,6 +15,7 @@
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
 #include "chrome/browser/safe_browsing/threat_details_cache.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/load_flags.h"
@@ -26,7 +29,7 @@ using content::BrowserThread;
 
 // Only send small files for now, a better strategy would use the size
 // of the whole report and the user's bandwidth.
-static const uint32 kMaxBodySizeBytes = 1024;
+static const uint32_t kMaxBodySizeBytes = 1024;
 
 namespace safe_browsing {
 
@@ -80,9 +83,13 @@ void ThreatDetailsCacheCollector::OpenEntry() {
 
   current_fetch_ = net::URLFetcher::Create(GURL(resources_it_->first),
                                            net::URLFetcher::GET, this);
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      current_fetch_.get(),
+      data_use_measurement::DataUseUserData::SAFE_BROWSING);
   current_fetch_->SetRequestContext(request_context_getter_.get());
   // Only from cache, and don't save cookies.
   current_fetch_->SetLoadFlags(net::LOAD_ONLY_FROM_CACHE |
+                               net::LOAD_SKIP_CACHE_VALIDATION |
                                net::LOAD_DO_NOT_SAVE_COOKIES);
   current_fetch_->SetAutomaticallyRetryOn5xx(false);  // No retries.
   current_fetch_->Start();  // OnURLFetchComplete will be called when done.
@@ -149,7 +156,7 @@ void ThreatDetailsCacheCollector::ReadResponse(
   ClientSafeBrowsingReportRequest::HTTPResponse* pb_response =
       pb_resource->mutable_response();
   pb_response->mutable_firstline()->set_code(headers->response_code());
-  void* iter = NULL;
+  size_t iter = 0;
   std::string name, value;
   while (headers->EnumerateHeaderLines(&iter, &name, &value)) {
     ClientSafeBrowsingReportRequest::HTTPHeader* pb_header =

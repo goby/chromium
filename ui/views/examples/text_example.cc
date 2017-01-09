@@ -4,6 +4,7 @@
 
 #include "ui/views/examples/text_example.h"
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
@@ -92,6 +93,11 @@ class TextExample::TextExampleView : public View {
   int GetStyle() const { return font_list_.GetFontStyle(); }
   void SetStyle(int style) { font_list_ = font_list_.DeriveWithStyle(style); }
 
+  gfx::Font::Weight GetWeight() const { return font_list_.GetFontWeight(); }
+  void SetWeight(gfx::Font::Weight weight) {
+    font_list_ = font_list_.DeriveWithWeight(weight);
+  }
+
  private:
   // The font used for drawing the text.
   gfx::FontList font_list_;
@@ -142,7 +148,7 @@ Combobox* TextExample::AddCombobox(GridLayout* layout,
 
 void TextExample::CreateExampleView(View* container) {
   text_view_ = new TextExampleView;
-  text_view_->SetBorder(Border::CreateSolidBorder(1, SK_ColorGRAY));
+  text_view_->SetBorder(CreateSolidBorder(1, SK_ColorGRAY));
   GridLayout* layout = new GridLayout(container);
   container->SetLayoutManager(layout);
   layout->AddPaddingRow(0, 8);
@@ -189,12 +195,13 @@ void TextExample::ButtonPressed(Button* button, const ui::Event& event) {
   int style = text_view_->GetStyle();
   SetFlagFromCheckbox(multiline_checkbox_, &flags, gfx::Canvas::MULTI_LINE);
   SetFlagFromCheckbox(break_checkbox_, &flags, gfx::Canvas::CHARACTER_BREAK);
-  SetFlagFromCheckbox(bold_checkbox_, &style, gfx::Font::BOLD);
   SetFlagFromCheckbox(italic_checkbox_, &style, gfx::Font::ITALIC);
   SetFlagFromCheckbox(underline_checkbox_, &style, gfx::Font::UNDERLINE);
   text_view_->set_halo(halo_checkbox_->checked());
   text_view_->set_flags(flags);
   text_view_->SetStyle(style);
+  text_view_->SetWeight(bold_checkbox_->checked() ? gfx::Font::Weight::BOLD
+                                                  : gfx::Font::Weight::NORMAL);
   text_view_->SchedulePaint();
 }
 

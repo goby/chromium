@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_IMMERSIVE_MODE_CONTROLLER_ASH_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_IMMERSIVE_MODE_CONTROLLER_ASH_H_
 
-#include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
+#include <memory>
 
-#include "ash/wm/immersive_fullscreen_controller.h"
-#include "ash/wm/window_state_observer.h"
-#include "base/memory/scoped_ptr.h"
+#include "ash/common/wm/window_state_observer.h"
+#include "ash/shared/immersive_fullscreen_controller.h"
+#include "ash/shared/immersive_fullscreen_controller_delegate.h"
+#include "base/macros.h"
+#include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ui/gfx/geometry/rect.h"
@@ -18,14 +20,18 @@ namespace aura {
 class Window;
 }
 
+// See ash/mus/frame/README.md for description of how immersive mode works in
+// mash. This code works with both classic ash, and mash.
 class ImmersiveModeControllerAsh
     : public ImmersiveModeController,
-      public ash::ImmersiveFullscreenController::Delegate,
+      public ash::ImmersiveFullscreenControllerDelegate,
       public ash::wm::WindowStateObserver,
       public content::NotificationObserver {
  public:
   ImmersiveModeControllerAsh();
   ~ImmersiveModeControllerAsh() override;
+
+  ash::ImmersiveFullscreenController* controller() { return controller_.get(); }
 
   // ImmersiveModeController overrides:
   void Init(BrowserView* browser_view) override;
@@ -40,7 +46,6 @@ class ImmersiveModeControllerAsh
       WARN_UNUSED_RESULT;
   void OnFindBarVisibleBoundsChanged(
       const gfx::Rect& new_visible_bounds_in_screen) override;
-  void SetupForTest() override;
 
  private:
   // Enables or disables observers for window restore and entering / exiting
@@ -53,6 +58,13 @@ class ImmersiveModeControllerAsh
   // Updates whether the tab strip is painted in a short "light bar" style.
   // Returns true if the visibility of the tab indicators has changed.
   bool UpdateTabIndicators();
+
+  // Used when running in mash to create |mash_reveal_widget_|. Does nothing
+  // if already null.
+  void CreateMashRevealWidget();
+
+  // Destroys |mash_reveal_widget_| if valid, does nothing otherwise.
+  void DestroyMashRevealWidget();
 
   // ImmersiveFullscreenController::Delegate overrides:
   void OnImmersiveRevealStarted() override;
@@ -70,7 +82,7 @@ class ImmersiveModeControllerAsh
                const content::NotificationSource& source,
                const content::NotificationDetails& details) override;
 
-  scoped_ptr<ash::ImmersiveFullscreenController> controller_;
+  std::unique_ptr<ash::ImmersiveFullscreenController> controller_;
 
   // Not owned.
   BrowserView* browser_view_;
@@ -93,6 +105,10 @@ class ImmersiveModeControllerAsh
   // the top-of-window views are not revealed regardless of
   // |use_tab_indicators_|.
   double visible_fraction_;
+
+  // When running in mash a widget is created to draw the top container. This
+  // widget does not actually contain the top container, it just renders it.
+  std::unique_ptr<views::Widget> mash_reveal_widget_;
 
   content::NotificationRegistrar registrar_;
 

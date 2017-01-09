@@ -5,10 +5,13 @@
 #ifndef NET_SPDY_FUZZING_HPACK_FUZZ_UTIL_H_
 #define NET_SPDY_FUZZING_HPACK_FUZZ_UTIL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "net/base/net_export.h"
 #include "net/spdy/hpack/hpack_decoder.h"
@@ -66,9 +69,9 @@ class NET_EXPORT_PRIVATE HpackFuzzUtil {
   struct NET_EXPORT_PRIVATE FuzzerContext {
     FuzzerContext();
     ~FuzzerContext();
-    scoped_ptr<HpackDecoder> first_stage;
-    scoped_ptr<HpackEncoder> second_stage;
-    scoped_ptr<HpackDecoder> third_stage;
+    std::unique_ptr<HpackDecoder> first_stage;
+    std::unique_ptr<HpackEncoder> second_stage;
+    std::unique_ptr<HpackDecoder> third_stage;
   };
 
   static void InitializeFuzzerContext(FuzzerContext* context);
@@ -82,7 +85,7 @@ class NET_EXPORT_PRIVATE HpackFuzzUtil {
   // Flips random bits within |buffer|. The total number of flips is
   // |flip_per_thousand| bits for every 1,024 bytes of |buffer_length|,
   // rounding up.
-  static void FlipBits(uint8* buffer,
+  static void FlipBits(uint8_t* buffer,
                        size_t buffer_length,
                        size_t flip_per_thousand);
 };

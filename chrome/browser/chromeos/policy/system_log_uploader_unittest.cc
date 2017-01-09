@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/chromeos/policy/system_log_uploader.h"
+
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
-#include "chrome/browser/chromeos/policy/system_log_uploader.h"
 #include "chrome/browser/chromeos/settings/scoped_cros_settings_test_helper.h"
+#include "components/feedback/anonymizer_tool.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_utils.h"
 #include "net/http/http_request_headers.h"
@@ -22,7 +27,7 @@ const char* const kTestSystemLogFileNames[] = {"name1.txt", "name32.txt"};
 // Generate the fake system log files.
 SystemLogUploader::SystemLogs GenerateTestSystemLogFiles() {
   SystemLogUploader::SystemLogs system_logs;
-  for (auto const file_path : kTestSystemLogFileNames) {
+  for (auto* file_path : kTestSystemLogFileNames) {
     system_logs.push_back(std::make_pair(file_path, file_path));
   }
   return system_logs;
@@ -42,7 +47,7 @@ class MockUploadJob : public UploadJob {
   void AddDataSegment(const std::string& name,
                       const std::string& filename,
                       const std::map<std::string, std::string>& header_entries,
-                      scoped_ptr<std::string> data) override;
+                      std::unique_ptr<std::string> data) override;
   void Start() override;
 
  protected:
@@ -67,7 +72,7 @@ void MockUploadJob::AddDataSegment(
     const std::string& name,
     const std::string& filename,
     const std::map<std::string, std::string>& header_entries,
-    scoped_ptr<std::string> data) {
+    std::unique_ptr<std::string> data) {
   // Test all fields to upload.
   EXPECT_LT(file_index_, max_files_);
   EXPECT_GE(file_index_, 0);
@@ -115,14 +120,14 @@ class MockSystemLogDelegate : public SystemLogUploader::Delegate {
   void LoadSystemLogs(const LogUploadCallback& upload_callback) override {
     EXPECT_TRUE(is_upload_allowed_);
     upload_callback.Run(
-        make_scoped_ptr(new SystemLogUploader::SystemLogs(system_logs_)));
+        base::MakeUnique<SystemLogUploader::SystemLogs>(system_logs_));
   }
 
-  scoped_ptr<UploadJob> CreateUploadJob(
+  std::unique_ptr<UploadJob> CreateUploadJob(
       const GURL& url,
       UploadJob::Delegate* delegate) override {
-    return make_scoped_ptr(new MockUploadJob(url, delegate, is_upload_error_,
-                                             system_logs_.size()));
+    return base::MakeUnique<MockUploadJob>(url, delegate, is_upload_error_,
+                                           system_logs_.size());
   }
 
   void set_upload_allowed(bool is_upload_allowed) {
@@ -153,11 +158,11 @@ class SystemLogUploaderTest : public testing::Test {
   // Given a pending task to upload system logs.
   void RunPendingUploadTaskAndCheckNext(const SystemLogUploader& uploader,
                                         base::TimeDelta expected_delay) {
-    EXPECT_FALSE(task_runner_->GetPendingTasks().empty());
+    EXPECT_TRUE(task_runner_->HasPendingTask());
     task_runner_->RunPendingTasks();
 
     // The previous task should have uploaded another log upload task.
-    EXPECT_EQ(1U, task_runner_->GetPendingTasks().size());
+    EXPECT_EQ(1U, task_runner_->NumPendingTasks());
 
     CheckPendingTaskDelay(uploader, expected_delay);
   }
@@ -182,27 +187,27 @@ class SystemLogUploaderTest : public testing::Test {
 
 // Check disabled system log uploads by default.
 TEST_F(SystemLogUploaderTest, Basic) {
-  EXPECT_TRUE(task_runner_->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner_->HasPendingTask());
 
-  scoped_ptr<MockSystemLogDelegate> syslog_delegate(
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
       new MockSystemLogDelegate(false, SystemLogUploader::SystemLogs()));
   syslog_delegate->set_upload_allowed(false);
-  SystemLogUploader uploader(syslog_delegate.Pass(), task_runner_);
+  SystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
 
   task_runner_->RunPendingTasks();
 }
 
 // One success task pending.
 TEST_F(SystemLogUploaderTest, SuccessTest) {
-  EXPECT_TRUE(task_runner_->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner_->HasPendingTask());
 
-  scoped_ptr<MockSystemLogDelegate> syslog_delegate(
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
       new MockSystemLogDelegate(false, SystemLogUploader::SystemLogs()));
   syslog_delegate->set_upload_allowed(true);
   settings_helper_.SetBoolean(chromeos::kSystemLogUploadEnabled, true);
-  SystemLogUploader uploader(syslog_delegate.Pass(), task_runner_);
+  SystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
 
-  EXPECT_EQ(1U, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1U, task_runner_->NumPendingTasks());
 
   RunPendingUploadTaskAndCheckNext(
       uploader, base::TimeDelta::FromMilliseconds(
@@ -211,15 +216,15 @@ TEST_F(SystemLogUploaderTest, SuccessTest) {
 
 // Three failed responses recieved.
 TEST_F(SystemLogUploaderTest, ThreeFailureTest) {
-  EXPECT_TRUE(task_runner_->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner_->HasPendingTask());
 
-  scoped_ptr<MockSystemLogDelegate> syslog_delegate(
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
       new MockSystemLogDelegate(true, SystemLogUploader::SystemLogs()));
   syslog_delegate->set_upload_allowed(true);
   settings_helper_.SetBoolean(chromeos::kSystemLogUploadEnabled, true);
-  SystemLogUploader uploader(syslog_delegate.Pass(), task_runner_);
+  SystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
 
-  EXPECT_EQ(1U, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1U, task_runner_->NumPendingTasks());
 
   // Do not retry two times consequentially.
   RunPendingUploadTaskAndCheckNext(uploader,
@@ -237,16 +242,16 @@ TEST_F(SystemLogUploaderTest, ThreeFailureTest) {
 
 // Check header fields of system log files to upload.
 TEST_F(SystemLogUploaderTest, CheckHeaders) {
-  EXPECT_TRUE(task_runner_->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner_->HasPendingTask());
 
   SystemLogUploader::SystemLogs system_logs = GenerateTestSystemLogFiles();
-  scoped_ptr<MockSystemLogDelegate> syslog_delegate(
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
       new MockSystemLogDelegate(false, system_logs));
   syslog_delegate->set_upload_allowed(true);
   settings_helper_.SetBoolean(chromeos::kSystemLogUploadEnabled, true);
-  SystemLogUploader uploader(syslog_delegate.Pass(), task_runner_);
+  SystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
 
-  EXPECT_EQ(1U, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1U, task_runner_->NumPendingTasks());
 
   RunPendingUploadTaskAndCheckNext(
       uploader, base::TimeDelta::FromMilliseconds(
@@ -255,16 +260,16 @@ TEST_F(SystemLogUploaderTest, CheckHeaders) {
 
 // Disable system log uploads after one failed log upload.
 TEST_F(SystemLogUploaderTest, DisableLogUpload) {
-  EXPECT_TRUE(task_runner_->GetPendingTasks().empty());
+  EXPECT_FALSE(task_runner_->HasPendingTask());
 
-  scoped_ptr<MockSystemLogDelegate> syslog_delegate(
+  std::unique_ptr<MockSystemLogDelegate> syslog_delegate(
       new MockSystemLogDelegate(true, SystemLogUploader::SystemLogs()));
   MockSystemLogDelegate* mock_delegate = syslog_delegate.get();
   settings_helper_.SetBoolean(chromeos::kSystemLogUploadEnabled, true);
   mock_delegate->set_upload_allowed(true);
-  SystemLogUploader uploader(syslog_delegate.Pass(), task_runner_);
+  SystemLogUploader uploader(std::move(syslog_delegate), task_runner_);
 
-  EXPECT_EQ(1U, task_runner_->GetPendingTasks().size());
+  EXPECT_EQ(1U, task_runner_->NumPendingTasks());
   RunPendingUploadTaskAndCheckNext(uploader,
                                    base::TimeDelta::FromMilliseconds(
                                        SystemLogUploader::kErrorUploadDelayMs));
@@ -285,23 +290,31 @@ TEST_F(SystemLogUploaderTest, DisableLogUpload) {
 
 // Test RemovePII function.
 TEST_F(SystemLogUploaderTest, TestPII) {
+  feedback::AnonymizerTool anonymizer;
   std::string data =
-      "aaaaaaaaSSID=123aaaaaaaaaaa\n"     // SSID.
+      "aaaaaaaa [SSID=123aaaaaa]aaaaa\n"  // SSID.
       "aaaaaaaahttp://tets.comaaaaaaa\n"  // URL.
       "aaaaaemail@example.comaaa\n"       //  Email address.
-      "example@@1234\n"          //  No PII, it is not valid email address.
-      "255.255.355.255\n"        // No PII, it is not valid IP address format.
-      "aaaa123.123.45.4aaa\n"    // IP address.
-      "11:11;11::11\n"           // IP address.
-      "11::11\n"                 // IP address.
-      "11:11:abcdef:0:0:0:0:0";  // No PII, it is not valid IP address format.
+      "example@@1234\n"           //  No PII, it is not valid email address.
+      "255.255.155.255\n"         // IP address.
+      "aaaa123.123.45.4aaa\n"     // IP address.
+      "11:11;11::11\n"            // IP address.
+      "11::11\n"                  // IP address.
+      "11:11:abcdef:0:0:0:0:0\n"  // No PII.
+      "aa:aa:aa:aa:aa:aa";        // MAC address (BSSID).
 
   std::string result =
+      "aaaaaaaa [SSID=1]aaaaa\n"
+      "aaaaaaaa<URL: 1>\n"
+      "<email: 1>\n"
       "example@@1234\n"
-      "255.255.355.255\n"
-      "11:11:abcdef:0:0:0:0:0\n";
-
-  EXPECT_EQ(result, SystemLogUploader::RemoveSensitiveData(data));
+      "<IPv4: 1>55\n"
+      "aaaa<IPv4: 2>aaa\n"
+      "11:11;<IPv6: 1>\n"
+      "<IPv6: 1>\n"
+      "11:11:abcdef:0:0:0:0:0\n"
+      "aa:aa:aa:00:00:01";
+  EXPECT_EQ(result, SystemLogUploader::RemoveSensitiveData(&anonymizer, data));
 }
 
 }  // namespace policy

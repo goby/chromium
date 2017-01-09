@@ -5,9 +5,12 @@
 #ifndef PPAPI_PPB_FLASH_MESSAGE_LOOP_PROXY_H_
 #define PPAPI_PPB_FLASH_MESSAGE_LOOP_PROXY_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/pp_resource.h"
@@ -43,7 +46,8 @@ class PPB_Flash_MessageLoop_Proxy
                 IPC::Message* reply);
   void OnMsgQuit(const ppapi::HostResource& flash_message_loop);
 
-  void WillQuitSoon(scoped_ptr<IPC::Message> reply_message, int32_t result);
+  void WillQuitSoon(std::unique_ptr<IPC::Message> reply_message,
+                    int32_t result);
 
   DISALLOW_COPY_AND_ASSIGN(PPB_Flash_MessageLoop_Proxy);
 };

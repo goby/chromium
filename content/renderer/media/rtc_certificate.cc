@@ -4,31 +4,38 @@
 
 #include "content/renderer/media/rtc_certificate.h"
 
-#include "content/renderer/media/peer_connection_identity_store.h"
+#include "base/memory/ptr_util.h"
 #include "url/gurl.h"
 
 namespace content {
 
 RTCCertificate::RTCCertificate(
-    const blink::WebRTCKeyParams& key_params,
     const rtc::scoped_refptr<rtc::RTCCertificate>& certificate)
-    : key_params_(key_params), certificate_(certificate) {
+    : certificate_(certificate) {
   DCHECK(certificate_);
 }
 
 RTCCertificate::~RTCCertificate() {
 }
 
-RTCCertificate* RTCCertificate::shallowCopy() const {
-  return new RTCCertificate(key_params_, certificate_);
+std::unique_ptr<blink::WebRTCCertificate> RTCCertificate::shallowCopy() const {
+  return base::WrapUnique(new RTCCertificate(certificate_));
 }
 
-const blink::WebRTCKeyParams& RTCCertificate::keyParams() const {
-  return key_params_;
+uint64_t RTCCertificate::expires() const {
+  return certificate_->Expires();
 }
 
-double RTCCertificate::expires() const {
-  return static_cast<double>(certificate_->expires_timestamp_ns());
+blink::WebRTCCertificatePEM RTCCertificate::toPEM() const {
+  rtc::RTCCertificatePEM pem = certificate_->ToPEM();
+  return blink::WebRTCCertificatePEM(
+      blink::WebString::fromUTF8(pem.private_key()),
+          blink::WebString::fromUTF8(pem.certificate()));
+}
+
+bool RTCCertificate::equals(const blink::WebRTCCertificate& other) const {
+  return *certificate_ ==
+         *static_cast<const RTCCertificate&>(other).certificate_;
 }
 
 const rtc::scoped_refptr<rtc::RTCCertificate>&

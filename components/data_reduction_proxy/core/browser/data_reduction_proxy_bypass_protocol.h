@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_BYPASS_PROTOCOL_H_
 #define COMPONENTS_DATA_REDUCTION_PROXY_CORE_BROWSER_DATA_REDUCTION_PROXY_BYPASS_PROTOCOL_H_
 
+#include "base/macros.h"
+#include "base/threading/thread_checker.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 
 namespace net {
@@ -48,13 +50,11 @@ class DataReductionProxyBypassProtocol {
       DataReductionProxyBypassType* proxy_bypass_type,
       DataReductionProxyInfo* data_reduction_proxy_info);
 
-  // Returns true if the request method is idempotent. Only idempotent requests
-  // are retried on a bypass. Visible as part of the public API for testing.
-  static bool IsRequestIdempotent(const net::URLRequest* request);
-
  private:
   // Must outlive |this|.
   DataReductionProxyConfig* config_;
+
+  base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(DataReductionProxyBypassProtocol);
 };

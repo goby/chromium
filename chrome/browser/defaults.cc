@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "chrome/browser/defaults.h"
 
 namespace browser_defaults {
@@ -39,10 +40,8 @@ const bool kSizeTabButtonToTopOfTabStrip = false;
 
 #if defined(OS_CHROMEOS) || defined(OS_ANDROID)
 const bool kSyncAutoStarts = true;
-const bool kShowOtherBrowsersInAboutMemory = false;
 #else
 const bool kSyncAutoStarts = false;
-const bool kShowOtherBrowsersInAboutMemory = true;
 #endif
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)

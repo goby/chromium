@@ -4,12 +4,11 @@
 
 #include "chrome/browser/chromeos/system/pointer_device_observer.h"
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "chrome/browser/chromeos/system/input_device_settings.h"
 #include "content/public/browser/browser_thread.h"
-#include "ui/events/devices/device_data_manager.h"
+#include "ui/events/devices/input_device_manager.h"
 
 using content::BrowserThread;
 
@@ -21,11 +20,11 @@ PointerDeviceObserver::PointerDeviceObserver()
 }
 
 PointerDeviceObserver::~PointerDeviceObserver() {
-  ui::DeviceDataManager::GetInstance()->RemoveObserver(this);
+  ui::InputDeviceManager::GetInstance()->RemoveObserver(this);
 }
 
 void PointerDeviceObserver::Init() {
-  ui::DeviceDataManager::GetInstance()->AddObserver(this);
+  ui::InputDeviceManager::GetInstance()->AddObserver(this);
 }
 
 void PointerDeviceObserver::CheckDevices() {
@@ -62,11 +61,13 @@ void PointerDeviceObserver::CheckMouseExists() {
 }
 
 void PointerDeviceObserver::OnTouchpadExists(bool exists) {
-  FOR_EACH_OBSERVER(Observer, observers_, TouchpadExists(exists));
+  for (auto& observer : observers_)
+    observer.TouchpadExists(exists);
 }
 
 void PointerDeviceObserver::OnMouseExists(bool exists) {
-  FOR_EACH_OBSERVER(Observer, observers_, MouseExists(exists));
+  for (auto& observer : observers_)
+    observer.MouseExists(exists);
 }
 
 PointerDeviceObserver::Observer::~Observer() {

@@ -4,10 +4,10 @@
 
 #include "chrome/browser/icon_manager.h"
 
+#include <memory>
 #include <tuple>
 
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/stl_util.h"
 #include "base/task_runner.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -36,7 +36,7 @@ IconManager::IconManager() {
 }
 
 IconManager::~IconManager() {
-  STLDeleteValues(&icon_cache_);
+  base::STLDeleteValues(&icon_cache_);
 }
 
 gfx::Image* IconManager::LookupIconFromFilepath(const base::FilePath& file_name,

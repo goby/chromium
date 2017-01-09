@@ -2,17 +2,22 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "content/browser/renderer_host/input/input_ack_handler.h"
 #include "content/browser/renderer_host/input/input_router_client.h"
 #include "content/browser/renderer_host/input/input_router_impl.h"
-#include "content/common/input/web_input_event_traits.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "ipc/ipc_sender.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/perf/perf_test.h"
+#include "ui/events/blink/web_input_event_traits.h"
 #include "ui/gfx/geometry/vector2d_f.h"
 
 using base::TimeDelta;
@@ -78,12 +83,16 @@ class NullInputRouterClient : public InputRouterClient {
       const ui::LatencyInfo& latency_info) override {
     return INPUT_EVENT_ACK_STATE_NOT_CONSUMED;
   }
-  void IncrementInFlightEventCount() override {}
-  void DecrementInFlightEventCount() override {}
+  void IncrementInFlightEventCount(
+      blink::WebInputEvent::Type event_type) override {}
+  void DecrementInFlightEventCount(InputEventAckSource ack_source) override {}
   void OnHasTouchEventHandlers(bool has_handlers) override {}
   void DidFlush() override {}
-  void DidOverscroll(const DidOverscrollParams& params) override {}
+  void DidOverscroll(const ui::DidOverscrollParams& params) override {}
   void DidStopFlinging() override {}
+  void ForwardGestureEventWithLatencyInfo(
+      const blink::WebGestureEvent& event,
+      const ui::LatencyInfo& latency_info) override {}
 };
 
 class NullIPCSender : public IPC::Sender {
@@ -172,7 +181,7 @@ Touches BuildTouchSequence(size_t steps,
 
 class InputEventTimer {
  public:
-  InputEventTimer(const char* test_name, int64 event_count)
+  InputEventTimer(const char* test_name, int64_t event_count)
       : test_name_(test_name),
         event_count_(event_count),
         start_(base::TimeTicks::Now()) {}
@@ -190,7 +199,7 @@ class InputEventTimer {
 
  private:
   const char* test_name_;
-  int64 event_count_;
+  int64_t event_count_;
   base::TimeTicks start_;
   DISALLOW_COPY_AND_ASSIGN(InputEventTimer);
 };
@@ -216,7 +225,7 @@ class InputRouterImplPerfTest : public testing::Test {
   }
 
   void TearDown() override {
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     input_router_.reset();
     ack_handler_.reset();
@@ -236,9 +245,10 @@ class InputRouterImplPerfTest : public testing::Test {
 
   void SendEventAckIfNecessary(const blink::WebInputEvent& event,
                                InputEventAckState ack_result) {
-    if (!WebInputEventTraits::WillReceiveAckFromRenderer(event))
+    if (!ui::WebInputEventTraits::ShouldBlockEventStream(event))
       return;
-    InputEventAck ack(event.type, ack_result);
+    InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD, event.type,
+                      ack_result);
     InputHostMsg_HandleInputEvent_ACK response(0, ack);
     input_router_->OnMessageReceived(response);
   }
@@ -256,7 +266,7 @@ class InputRouterImplPerfTest : public testing::Test {
 
   size_t AckCount() const { return ack_handler_->ack_count(); }
 
-  int64 NextLatencyID() { return ++last_input_id_; }
+  int64_t NextLatencyID() { return ++last_input_id_; }
 
   ui::LatencyInfo CreateLatencyInfo() {
     ui::LatencyInfo latency;
@@ -329,11 +339,11 @@ class InputRouterImplPerfTest : public testing::Test {
   }
 
  private:
-  int64 last_input_id_;
-  scoped_ptr<NullIPCSender> sender_;
-  scoped_ptr<NullInputRouterClient> client_;
-  scoped_ptr<NullInputAckHandler> ack_handler_;
-  scoped_ptr<InputRouterImpl> input_router_;
+  int64_t last_input_id_;
+  std::unique_ptr<NullIPCSender> sender_;
+  std::unique_ptr<NullInputRouterClient> client_;
+  std::unique_ptr<NullInputAckHandler> ack_handler_;
+  std::unique_ptr<InputRouterImpl> input_router_;
   base::MessageLoopForUI message_loop_;
 };
 

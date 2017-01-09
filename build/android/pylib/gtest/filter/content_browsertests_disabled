@@ -1,8 +1,5 @@
 # List of suppressions
 # Timeouts
-Http/MediaTest.*
-File/MediaTest.*
-MediaTest.*
 DatabaseTest.*
 
 # Crashes
@@ -23,14 +20,18 @@ DumpAccessibilityTreeTest.AccessibilityAriaProgressbar
 DumpAccessibilityTreeTest.AccessibilityListMarkers
 DumpAccessibilityTreeTest.AccessibilityUl
 DumpAccessibilityTreeTest.AccessibilityCanvas
-RendererAccessibilityTest.DetachAccessibilityObject
 DumpAccessibilityTreeTest.AccessibilityDialog
 DumpAccessibilityTreeTest.AccessibilityModalDialogClosed
 DumpAccessibilityTreeTest.AccessibilityModalDialogInIframeOpened
-RendererAccessibilityTest.EventOnObjectNotInTree
+RenderAccessibilityImplTest.DetachAccessibilityObject
 
 # http://crbug.com/187500
-RenderViewImplTest.*
+RenderViewImplTest.ImeComposition
+RenderViewImplTest.InsertCharacters
+RenderViewImplTest.OnHandleKeyboardEvent
+RenderViewImplTest.OnNavStateChanged
+# ZoomLevel is not used on Android
+RenderFrameImplTest.ZoomLimit
 RendererAccessibilityTest.SendFullAccessibilityTreeOnReload
 RendererAccessibilityTest.HideAccessibilityObject
 RendererAccessibilityTest.ShowAccessibilityObject
@@ -41,9 +42,6 @@ IndexedDBBrowserTest.VersionChangeCrashResilience
 
 # http://crbug.com/233118
 IndexedDBBrowserTest.NullKeyPathPersistence
-
-# http://crbug.com/342525
-IndexedDBBrowserTestSingleProcess.RenderThreadShutdownTest
 
 # http://crbug.com/338421
 GinBrowserTest.GinAndGarbageCollection

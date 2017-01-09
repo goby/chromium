@@ -4,14 +4,18 @@
 
 #include "components/history/core/browser/top_sites_impl.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
+#include "build/build_config.h"
 #include "components/history/core/browser/history_client.h"
 #include "components/history/core/browser/history_constants.h"
 #include "components/history/core/browser/history_database_params.h"
@@ -21,9 +25,12 @@
 #include "components/history/core/browser/top_sites_cache.h"
 #include "components/history/core/browser/top_sites_observer.h"
 #include "components/history/core/browser/visit_delegate.h"
+#include "components/history/core/test/history_service_test_util.h"
 #include "components/history/core/test/history_unittest_base.h"
 #include "components/history/core/test/test_history_database.h"
 #include "components/history/core/test/wait_top_sites_loaded_observer.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "url/gurl.h"
@@ -31,9 +38,6 @@
 namespace history {
 
 namespace {
-
-// Key for URL blacklist.
-const char kAcceptLanguages[] = "en-US,en";
 
 const char kApplicationScheme[] = "application";
 const char kPrepopulatedPageURL[] =
@@ -43,25 +47,6 @@ const char kPrepopulatedPageURL[] =
 bool MockCanAddURLToHistory(const GURL& url) {
   return url.is_valid() && !url.SchemeIs(kApplicationScheme);
 }
-
-// Used by WaitForHistory, see it for details.
-class WaitForHistoryTask : public HistoryDBTask {
- public:
-  WaitForHistoryTask() {}
-
-  bool RunOnDBThread(HistoryBackend* backend, HistoryDatabase* db) override {
-    return true;
-  }
-
-  void DoneRunOnMainThread() override {
-    base::MessageLoop::current()->QuitWhenIdle();
-  }
-
- private:
-  ~WaitForHistoryTask() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(WaitForHistoryTask);
-};
 
 // Used for querying top sites. Either runs sequentially, or runs a nested
 // nested message loop until the response is complete. The later is used when
@@ -89,7 +74,7 @@ class TopSitesQuerier {
         include_forced_urls);
     if (wait && start_number_of_callbacks == number_of_callbacks_) {
       waiting_ = true;
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
     }
   }
 
@@ -140,10 +125,9 @@ class TopSitesImplTest : public HistoryUnitTestBase {
     pref_service_.reset(new TestingPrefServiceSimple);
     TopSitesImpl::RegisterPrefs(pref_service_->registry());
     history_service_.reset(
-        new HistoryService(nullptr, scoped_ptr<VisitDelegate>()));
+        new HistoryService(nullptr, std::unique_ptr<VisitDelegate>()));
     ASSERT_TRUE(history_service_->Init(
-        kAcceptLanguages,
-        TestHistoryDatabaseParamsForPath(scoped_temp_dir_.path())));
+        TestHistoryDatabaseParamsForPath(scoped_temp_dir_.GetPath())));
     ResetTopSites();
     WaitTopSitesLoaded();
   }
@@ -175,10 +159,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
   // Blocks the caller until history processes a task. This is useful if you
   // need to wait until you know history has processed a task.
   void WaitForHistory() {
-    history_service()->ScheduleDBTask(
-        scoped_ptr<history::HistoryDBTask>(new WaitForHistoryTask()),
-        &history_tracker_);
-    base::MessageLoop::current()->Run();
+    BlockUntilHistoryProcessesPendingRequests(history_service());
   }
 
   // Waits for top sites to finish processing a task. This is useful if you need
@@ -187,7 +168,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
     top_sites()->backend_->DoEmptyRequest(
         base::Bind(&TopSitesImplTest::QuitCallback, base::Unretained(this)),
         &top_sites_tracker_);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   TopSitesImpl* top_sites() { return top_sites_impl_.get(); }
@@ -314,7 +295,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
     top_sites_impl_ = new TopSitesImpl(
         pref_service_.get(), history_service_.get(),
         prepopulated_pages, base::Bind(MockCanAddURLToHistory));
-    top_sites_impl_->Init(scoped_temp_dir_.path().Append(kTopSitesFilename),
+    top_sites_impl_->Init(scoped_temp_dir_.GetPath().Append(kTopSitesFilename),
                           message_loop_.task_runner());
   }
 
@@ -324,7 +305,7 @@ class TopSitesImplTest : public HistoryUnitTestBase {
       top_sites_impl_ = nullptr;
 
       if (base::MessageLoop::current())
-        base::MessageLoop::current()->RunUntilIdle();
+        base::RunLoop().RunUntilIdle();
     }
   }
 
@@ -338,8 +319,8 @@ class TopSitesImplTest : public HistoryUnitTestBase {
   base::ScopedTempDir scoped_temp_dir_;
   base::MessageLoopForUI message_loop_;
 
-  scoped_ptr<TestingPrefServiceSimple> pref_service_;
-  scoped_ptr<HistoryService> history_service_;
+  std::unique_ptr<TestingPrefServiceSimple> pref_service_;
+  std::unique_ptr<HistoryService> history_service_;
   scoped_refptr<TopSitesImpl> top_sites_impl_;
 
   // To cancel HistoryService tasks.
@@ -965,16 +946,16 @@ TEST_F(TopSitesImplTest, DeleteNotifications) {
 
 // Makes sure GetUpdateDelay is updated appropriately.
 TEST_F(TopSitesImplTest, GetUpdateDelay) {
-#if defined(OS_IOS)
-  const int64 kExpectedUpdateDelayInSecondEmpty = 30;
-  const int64 kExpectedUpdateDelayInSecond0Changed = 5;
-  const int64 kExpectedUpdateDelayInSecond3Changed = 5;
-  const int64 kExpectedUpdateDelayInSecond20Changed = 1;
+#if defined(OS_IOS) || defined(OS_ANDROID)
+  const int64_t kExpectedUpdateDelayInSecondEmpty = 30;
+  const int64_t kExpectedUpdateDelayInMinute0Changed = 5;
+  const int64_t kExpectedUpdateDelayInMinute3Changed = 5;
+  const int64_t kExpectedUpdateDelayInMinute20Changed = 1;
 #else
-  const int64 kExpectedUpdateDelayInSecondEmpty = 30;
-  const int64 kExpectedUpdateDelayInSecond0Changed = 60;
-  const int64 kExpectedUpdateDelayInSecond3Changed = 52;
-  const int64 kExpectedUpdateDelayInSecond20Changed = 1;
+  const int64_t kExpectedUpdateDelayInSecondEmpty = 30;
+  const int64_t kExpectedUpdateDelayInMinute0Changed = 60;
+  const int64_t kExpectedUpdateDelayInMinute3Changed = 52;
+  const int64_t kExpectedUpdateDelayInMinute20Changed = 1;
 #endif
 
   SetLastNumUrlsChanged(0);
@@ -990,13 +971,13 @@ TEST_F(TopSitesImplTest, GetUpdateDelay) {
   SetTopSites(url_list);
   EXPECT_EQ(20u, last_num_urls_changed());
   SetLastNumUrlsChanged(0);
-  EXPECT_EQ(kExpectedUpdateDelayInSecond0Changed, GetUpdateDelay().InMinutes());
+  EXPECT_EQ(kExpectedUpdateDelayInMinute0Changed, GetUpdateDelay().InMinutes());
 
   SetLastNumUrlsChanged(3);
-  EXPECT_EQ(kExpectedUpdateDelayInSecond3Changed, GetUpdateDelay().InMinutes());
+  EXPECT_EQ(kExpectedUpdateDelayInMinute3Changed, GetUpdateDelay().InMinutes());
 
   SetLastNumUrlsChanged(20);
-  EXPECT_EQ(kExpectedUpdateDelayInSecond20Changed,
+  EXPECT_EQ(kExpectedUpdateDelayInMinute20Changed,
             GetUpdateDelay().InMinutes());
 }
 

@@ -24,12 +24,15 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_INPUT_RENDERER_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_INPUT_RENDERER_HOST_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
 #include "base/sequenced_task_runner_helpers.h"
@@ -40,10 +43,10 @@
 #include "media/audio/audio_io.h"
 #include "media/audio/audio_logging.h"
 #include "media/audio/simple_sources.h"
+#include "media/media_features.h"
 
 namespace media {
 class AudioManager;
-class AudioParameters;
 class UserInputMonitor;
 }
 
@@ -101,13 +104,13 @@ class CONTENT_EXPORT AudioInputRendererHost
   // Called from UI thread from the owner of this object.
   // |user_input_monitor| is used for typing detection and can be NULL.
   AudioInputRendererHost(int render_process_id,
-                         int32 renderer_pid,
+                         int32_t renderer_pid,
                          media::AudioManager* audio_manager,
                          MediaStreamManager* media_stream_manager,
                          AudioMirroringManager* audio_mirroring_manager,
                          media::UserInputMonitor* user_input_monitor);
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   // Enable and disable debug recording of input on all audio entries.
   void EnableDebugRecording(const base::FilePath& file);
   void DisableDebugRecording();
@@ -130,7 +133,7 @@ class CONTENT_EXPORT AudioInputRendererHost
 
   // Sets the PID renderer. This is used for constructing the debug recording
   // filename.
-  void set_renderer_pid(int32 renderer_pid);
+  void set_renderer_pid(int32_t renderer_pid);
 
  private:
   // TODO(henrika): extend test suite (compare AudioRenderHost)
@@ -220,7 +223,7 @@ class CONTENT_EXPORT AudioInputRendererHost
   void MaybeUnregisterKeyboardMicStream(
       const AudioInputHostMsg_CreateStream_Config& config);
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   void MaybeEnableDebugRecordingForId(int stream_id);
 
   base::FilePath GetDebugRecordingFilePathWithExtensions(
@@ -240,7 +243,7 @@ class CONTENT_EXPORT AudioInputRendererHost
 
   // PID of the render process connected to the RenderProcessHost that owns this
   // instance.
-  int32 renderer_pid_;
+  int32_t renderer_pid_;
 
   // Used to create an AudioInputController.
   media::AudioManager* audio_manager_;
@@ -256,7 +259,7 @@ class CONTENT_EXPORT AudioInputRendererHost
   // Raw pointer of the UserInputMonitor.
   media::UserInputMonitor* user_input_monitor_;
 
-  scoped_ptr<media::AudioLog> audio_log_;
+  std::unique_ptr<media::AudioLog> audio_log_;
 
   base::WeakPtrFactory<AudioInputRendererHost> weak_factory_;
 

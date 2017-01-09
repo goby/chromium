@@ -5,47 +5,26 @@
 #ifndef ASH_WM_LOCK_STATE_CONTROLLER_H_
 #define ASH_WM_LOCK_STATE_CONTROLLER_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "ash/shell_observer.h"
-#include "ash/wm/lock_state_observer.h"
+#include "ash/common/shell_observer.h"
 #include "ash/wm/session_state_animator.h"
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/observer_list.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
 #include "base/timer/timer.h"
 #include "ui/aura/window_tree_host_observer.h"
 
-namespace gfx {
-class Rect;
-class Size;
-}
-
-namespace ui {
-class Layer;
-}
-
 namespace ash {
+
+class ShutdownController;
 
 namespace test {
 class LockStateControllerTest;
-class PowerButtonControllerTest;
+class LockStateControllerTestApi;
 }
-
-// Performs system-related functions on behalf of LockStateController.
-class ASH_EXPORT LockStateControllerDelegate {
- public:
-  LockStateControllerDelegate() {}
-  virtual ~LockStateControllerDelegate() {}
-
-  virtual void RequestLockScreen() = 0;
-  virtual void RequestShutdown() = 0;
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LockStateControllerDelegate);
-};
 
 // Displays onscreen animations and locks or suspends the system in response to
 // the power button being pressed or released.
@@ -73,13 +52,6 @@ class ASH_EXPORT LockStateControllerDelegate {
 class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
                                        public ShellObserver {
  public:
-  // Amount of time that the power button needs to be held before we lock the
-  // screen.
-  static const int kLockTimeoutMs;
-
-  // Amount of time that the power button needs to be held before we shut down.
-  static const int kShutdownTimeoutMs;
-
   // Amount of time to wait for our lock requests to be honored before giving
   // up.
   static const int kLockFailTimeoutMs;
@@ -94,63 +66,8 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   // the animation time to finish.
   static const int kShutdownRequestDelayMs;
 
-  // Helper class used by tests to access internal state.
-  class ASH_EXPORT TestApi {
-   public:
-    explicit TestApi(LockStateController* controller);
-
-    virtual ~TestApi();
-
-    bool lock_fail_timer_is_running() const {
-      return controller_->lock_fail_timer_.IsRunning();
-    }
-    bool lock_to_shutdown_timer_is_running() const {
-      return controller_->lock_to_shutdown_timer_.IsRunning();
-    }
-    bool shutdown_timer_is_running() const {
-      return controller_->pre_shutdown_timer_.IsRunning();
-    }
-    bool real_shutdown_timer_is_running() const {
-      return controller_->real_shutdown_timer_.IsRunning();
-    }
-    bool is_animating_lock() const {
-      return controller_->animating_lock_;
-    }
-    bool is_lock_cancellable() const {
-      return controller_->CanCancelLockAnimation();
-    }
-
-    void trigger_lock_fail_timeout() {
-      controller_->OnLockFailTimeout();
-      controller_->lock_fail_timer_.Stop();
-    }
-    void trigger_lock_to_shutdown_timeout() {
-      controller_->OnLockToShutdownTimeout();
-      controller_->lock_to_shutdown_timer_.Stop();
-    }
-    void trigger_shutdown_timeout() {
-      controller_->OnPreShutdownAnimationTimeout();
-      controller_->pre_shutdown_timer_.Stop();
-    }
-    void trigger_real_shutdown_timeout() {
-      controller_->OnRealPowerTimeout();
-      controller_->real_shutdown_timer_.Stop();
-    }
-
-   private:
-    LockStateController* controller_;  // not owned
-
-    DISALLOW_COPY_AND_ASSIGN(TestApi);
-  };
-
-  LockStateController();
+  explicit LockStateController(ShutdownController* shutdown_controller);
   ~LockStateController() override;
-
-  void SetDelegate(scoped_ptr<LockStateControllerDelegate> delegate);
-
-  void AddObserver(LockStateObserver* observer);
-  void RemoveObserver(LockStateObserver* observer);
-  bool HasObserver(const LockStateObserver* observer) const;
 
   // Starts locking (with slow animation) that can be cancelled.
   // After locking and |kLockToShutdownTimeoutMs| StartShutdownAnimation()
@@ -205,7 +122,7 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   void OnHostCloseRequested(const aura::WindowTreeHost* host) override;
 
   // ShellObserver overrides:
-  void OnLoginStateChanged(user::LoginStatus status) override;
+  void OnLoginStateChanged(LoginStatus status) override;
   void OnAppTerminating() override;
   void OnLockStateChanged(bool locked) override;
 
@@ -214,11 +131,11 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   }
 
  private:
-  friend class test::PowerButtonControllerTest;
   friend class test::LockStateControllerTest;
+  friend class test::LockStateControllerTestApi;
 
   struct UnlockedStateProperties {
-    bool background_is_hidden;
+    bool wallpaper_is_hidden;
   };
 
   // Reverts the pre-lock animation, reports the error.
@@ -257,7 +174,7 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   void CancelPreLockAnimation();
   void StartPostLockAnimation();
   // This method calls |callback| when animation completes.
-  void StartUnlockAnimationBeforeUIDestroyed(base::Closure &callback);
+  void StartUnlockAnimationBeforeUIDestroyed(base::Closure& callback);
   void StartUnlockAnimationAfterUIDestroyed();
 
   // These methods are called when corresponding animation completes.
@@ -270,24 +187,20 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   void StoreUnlockedProperties();
   void RestoreUnlockedProperties();
 
-  // Fades in background layer with |speed| if it was hidden in unlocked state.
-  void AnimateBackgroundAppearanceIfNecessary(
+  // Fades in wallpaper layer with |speed| if it was hidden in unlocked state.
+  void AnimateWallpaperAppearanceIfNecessary(
       ash::SessionStateAnimator::AnimationSpeed speed,
       SessionStateAnimator::AnimationSequence* animation_sequence);
 
-  // Fades out background layer with |speed| if it was hidden in unlocked state.
-  void AnimateBackgroundHidingIfNecessary(
+  // Fades out wallpaper layer with |speed| if it was hidden in unlocked state.
+  void AnimateWallpaperHidingIfNecessary(
       ash::SessionStateAnimator::AnimationSpeed speed,
       SessionStateAnimator::AnimationSequence* animation_sequence);
 
-  scoped_ptr<SessionStateAnimator> animator_;
-
-  scoped_ptr<LockStateControllerDelegate> delegate_;
-
-  base::ObserverList<LockStateObserver> observers_;
+  std::unique_ptr<SessionStateAnimator> animator_;
 
   // The current login status, or original login status from before we locked.
-  user::LoginStatus login_status_;
+  LoginStatus login_status_;
 
   // Current lock status.
   bool system_is_locked_;
@@ -305,10 +218,13 @@ class ASH_EXPORT LockStateController : public aura::WindowTreeHostObserver,
   // Indicates that lock animation can be undone.
   bool can_cancel_lock_animation_;
 
-  scoped_ptr<UnlockedStateProperties> unlocked_properties_;
+  std::unique_ptr<UnlockedStateProperties> unlocked_properties_;
 
   // How long has it been since the request to lock the screen?
-  scoped_ptr<base::ElapsedTimer> lock_duration_timer_;
+  std::unique_ptr<base::ElapsedTimer> lock_duration_timer_;
+
+  // Controller used to trigger the actual shutdown.
+  ShutdownController* shutdown_controller_;
 
   // Started when we request that the screen be locked.  When it fires, we
   // assume that our request got dropped.

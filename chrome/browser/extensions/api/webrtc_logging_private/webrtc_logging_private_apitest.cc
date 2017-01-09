@@ -2,19 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/json/json_writer.h"
 #include "base/strings/string_split.h"
+#include "base/strings/stringprintf.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/api/webrtc_logging_private/webrtc_logging_private_api.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
-#include "chrome/browser/media/webrtc_log_uploader.h"
+#include "chrome/browser/media/webrtc/webrtc_log_uploader.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_switches.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
 #include "extensions/common/test_util.h"
+#include "third_party/zlib/google/compression_utils.h"
 
+using compression::GzipUncompress;
 using extensions::Extension;
 using extensions::WebrtcLoggingPrivateDiscardFunction;
 using extensions::WebrtcLoggingPrivateSetMetaDataFunction;
@@ -25,12 +34,15 @@ using extensions::WebrtcLoggingPrivateStopRtpDumpFunction;
 using extensions::WebrtcLoggingPrivateStoreFunction;
 using extensions::WebrtcLoggingPrivateUploadFunction;
 using extensions::WebrtcLoggingPrivateUploadStoredFunction;
+using extensions::WebrtcLoggingPrivateStartAudioDebugRecordingsFunction;
+using extensions::WebrtcLoggingPrivateStopAudioDebugRecordingsFunction;
 
 namespace utils = extension_function_test_utils;
 
 namespace {
 
-static const char kTestLoggingSessionId[] = "0123456789abcdef";
+static const char kTestLoggingSessionIdKey[] = "app_session_id";
+static const char kTestLoggingSessionIdValue[] = "0123456789abcdef";
 static const char kTestLoggingUrl[] = "dummy url string";
 
 std::string ParamsToString(const base::ListValue& parameters) {
@@ -40,21 +52,21 @@ std::string ParamsToString(const base::ListValue& parameters) {
 }
 
 void InitializeTestMetaData(base::ListValue* parameters) {
-  base::DictionaryValue* meta_data_entry = new base::DictionaryValue();
-  meta_data_entry->SetString("key", "app_session_id");
-  meta_data_entry->SetString("value", kTestLoggingSessionId);
-  base::ListValue* meta_data = new base::ListValue();
-  meta_data->Append(meta_data_entry);
-  meta_data_entry = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> meta_data_entry(
+      new base::DictionaryValue());
+  meta_data_entry->SetString("key", kTestLoggingSessionIdKey);
+  meta_data_entry->SetString("value", kTestLoggingSessionIdValue);
+  std::unique_ptr<base::ListValue> meta_data(new base::ListValue());
+  meta_data->Append(std::move(meta_data_entry));
+  meta_data_entry.reset(new base::DictionaryValue());
   meta_data_entry->SetString("key", "url");
   meta_data_entry->SetString("value", kTestLoggingUrl);
-  meta_data->Append(meta_data_entry);
-  parameters->Append(meta_data);
+  meta_data->Append(std::move(meta_data_entry));
+  parameters->Append(std::move(meta_data));
 }
 
 class WebrtcLoggingPrivateApiTest : public ExtensionApiTest {
  protected:
-
   void SetUp() override {
     ExtensionApiTest::SetUp();
     extension_ = extensions::test_util::CreateEmptyExtension();
@@ -73,25 +85,26 @@ class WebrtcLoggingPrivateApiTest : public ExtensionApiTest {
   }
 
   void AppendTabIdAndUrl(base::ListValue* parameters) {
-    base::DictionaryValue* request_info = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> request_info(
+        new base::DictionaryValue());
     request_info->SetInteger(
         "tabId", extensions::ExtensionTabUtil::GetTabId(web_contents()));
-    parameters->Append(request_info);
+    parameters->Append(std::move(request_info));
     parameters->AppendString(web_contents()->GetURL().GetOrigin().spec());
   }
 
   bool RunFunction(UIThreadExtensionFunction* function,
                    const base::ListValue& parameters,
                    bool expect_results) {
-    scoped_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
+    std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
         function, ParamsToString(parameters), browser()));
     if (expect_results) {
       EXPECT_TRUE(result.get());
-      return result.get() != nullptr;
+      return result != nullptr;
     }
 
     EXPECT_FALSE(result.get());
-    return result.get() == nullptr;
+    return result == nullptr;
   }
 
   template<typename Function>
@@ -156,6 +169,21 @@ class WebrtcLoggingPrivateApiTest : public ExtensionApiTest {
     AppendTabIdAndUrl(&params);
     params.AppendString(log_id);
     return RunFunction<WebrtcLoggingPrivateUploadStoredFunction>(params, true);
+  }
+
+  bool StartAudioDebugRecordings(int seconds) {
+    base::ListValue params;
+    AppendTabIdAndUrl(&params);
+    params.AppendInteger(seconds);
+    return RunFunction<WebrtcLoggingPrivateStartAudioDebugRecordingsFunction>(
+        params, true);
+  }
+
+  bool StopAudioDebugRecordings() {
+    base::ListValue params;
+    AppendTabIdAndUrl(&params);
+    return RunFunction<WebrtcLoggingPrivateStopAudioDebugRecordingsFunction>(
+        params, true);
   }
 
  private:
@@ -236,7 +264,6 @@ IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest, TestStartStopUpload) {
   InitializeTestMetaData(&parameters);
 
   SetMetaData(parameters);
-
   StartLogging();
   StopLogging();
   UploadLog();
@@ -248,8 +275,8 @@ IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest, TestStartStopUpload) {
 
   const char boundary[] = "------**--yradnuoBgoLtrapitluMklaTelgooG--**----";
 
-  // Remove the compressed data, it may contain "\r\n". Just verify that its
-  // size is > 0.
+  // Move the compressed data to its own string, since it may contain "\r\n" and
+  // it makes the tests below easier.
   const char zip_content_type[] = "Content-Type: application/gzip";
   size_t zip_pos = multipart.find(&zip_content_type[0]);
   ASSERT_NE(std::string::npos, zip_pos);
@@ -260,11 +287,22 @@ IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest, TestStartStopUpload) {
   // Calculate length, adjust for a "\r\n".
   zip_length -= zip_pos + 2;
   ASSERT_GT(zip_length, 0u);
+  std::string log_part = multipart.substr(zip_pos, zip_length);
   multipart.erase(zip_pos, zip_length);
 
+  // Uncompress log and verify contents.
+  EXPECT_TRUE(GzipUncompress(log_part, &log_part));
+  EXPECT_GT(log_part.length(), 0u);
+  // Verify that meta data exists.
+  EXPECT_NE(std::string::npos, log_part.find(base::StringPrintf("%s: %s",
+      kTestLoggingSessionIdKey, kTestLoggingSessionIdValue)));
+  // Verify that the basic info generated at logging startup exists.
+  EXPECT_NE(std::string::npos, log_part.find("Chrome version:"));
+  EXPECT_NE(std::string::npos, log_part.find("Cpu brand:"));
+
   // Check the multipart contents.
-  std::vector<std::string> multipart_lines;
-  base::SplitStringUsingSubstr(multipart, "\r\n", &multipart_lines);
+  std::vector<std::string> multipart_lines = base::SplitStringUsingSubstr(
+      multipart, "\r\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
   ASSERT_EQ(31, static_cast<int>(multipart_lines.size()));
 
   EXPECT_STREQ(&boundary[0], multipart_lines[0].c_str());
@@ -296,7 +334,7 @@ IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest, TestStartStopUpload) {
   EXPECT_STREQ("Content-Disposition: form-data; name=\"app_session_id\"",
                multipart_lines[17].c_str());
   EXPECT_TRUE(multipart_lines[18].empty());
-  EXPECT_STREQ(kTestLoggingSessionId, multipart_lines[19].c_str());
+  EXPECT_STREQ(kTestLoggingSessionIdValue, multipart_lines[19].c_str());
 
   EXPECT_STREQ(&boundary[0], multipart_lines[20].c_str());
   EXPECT_STREQ("Content-Disposition: form-data; name=\"url\"",
@@ -393,3 +431,20 @@ IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest,
             buffer_override.multipart().find(kTestLoggingUrl));
 }
 
+IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest,
+                       TestStartStopAudioDebugRecordings) {
+  // TODO(guidou): These tests are missing verification of the actual AEC dump
+  // data. This will be fixed with a separate browser test.
+  // See crbug.com/569957.
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kEnableAudioDebugRecordingsFromExtension);
+  ASSERT_TRUE(StartAudioDebugRecordings(0));
+  ASSERT_TRUE(StopAudioDebugRecordings());
+}
+
+IN_PROC_BROWSER_TEST_F(WebrtcLoggingPrivateApiTest,
+                       TestStartTimedAudioDebugRecordings) {
+  base::CommandLine::ForCurrentProcess()->AppendSwitch(
+      switches::kEnableAudioDebugRecordingsFromExtension);
+  ASSERT_TRUE(StartAudioDebugRecordings(1));
+}

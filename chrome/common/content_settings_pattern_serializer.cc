@@ -8,16 +8,23 @@
 #include "components/content_settings/core/common/content_settings_pattern.h"
 
 // static
+void ContentSettingsPatternSerializer::GetSize(
+    const ContentSettingsPattern& pattern, base::PickleSizer* s) {
+  IPC::GetParamSize(s, pattern.is_valid_);
+  IPC::GetParamSize(s, pattern.parts_);
+}
+
+// static
 void ContentSettingsPatternSerializer::WriteToMessage(
     const ContentSettingsPattern& pattern,
-    IPC::Message* m) {
+    base::Pickle* m) {
   IPC::WriteParam(m, pattern.is_valid_);
   IPC::WriteParam(m, pattern.parts_);
 }
 
 // static
 bool ContentSettingsPatternSerializer::ReadFromMessage(
-    const IPC::Message* m,
+    const base::Pickle* m,
     base::PickleIterator* iter,
     ContentSettingsPattern* pattern) {
   DCHECK(pattern);

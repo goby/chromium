@@ -4,7 +4,10 @@
 
 #include "ui/chromeos/ime/candidate_view.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
 #include "ui/events/test/event_generator.h"
@@ -106,7 +109,7 @@ class CandidateViewTest : public views::ViewsTestBase,
 
   views::Widget* widget_;
   views::View* container_;
-  scoped_ptr<ui::test::EventGenerator> event_generator_;
+  std::unique_ptr<ui::test::EventGenerator> event_generator_;
   views::View* last_pressed_;
 
   DISALLOW_COPY_AND_ASSIGN(CandidateViewTest);

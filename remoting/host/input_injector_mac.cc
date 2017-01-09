@@ -7,13 +7,17 @@
 #include <ApplicationServices/ApplicationServices.h>
 #include <Carbon/Carbon.h>
 #include <IOKit/pwr_mgt/IOPMLib.h>
-#include <algorithm>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <algorithm>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -79,7 +83,8 @@ class InputInjectorMac : public InputInjector {
   void InjectTouchEvent(const TouchEvent& event) override;
 
   // InputInjector interface.
-  void Start(scoped_ptr<protocol::ClipboardStub> client_clipboard) override;
+  void Start(
+      std::unique_ptr<protocol::ClipboardStub> client_clipboard) override;
 
  private:
   // The actual implementation resides in InputInjectorMac::Core class.
@@ -96,7 +101,7 @@ class InputInjectorMac : public InputInjector {
     void InjectMouseEvent(const MouseEvent& event);
 
     // Mirrors the InputInjector interface.
-    void Start(scoped_ptr<protocol::ClipboardStub> client_clipboard);
+    void Start(std::unique_ptr<protocol::ClipboardStub> client_clipboard);
 
     void Stop();
 
@@ -108,8 +113,8 @@ class InputInjectorMac : public InputInjector {
 
     scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
     webrtc::DesktopVector mouse_pos_;
-    uint32 mouse_button_state_;
-    scoped_ptr<Clipboard> clipboard_;
+    uint32_t mouse_button_state_;
+    std::unique_ptr<Clipboard> clipboard_;
     uint64_t left_modifiers_;
     uint64_t right_modifiers_;
     base::TimeTicks last_time_display_woken_;
@@ -152,8 +157,8 @@ void InputInjectorMac::InjectTouchEvent(const TouchEvent& event) {
 }
 
 void InputInjectorMac::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
-  core_->Start(client_clipboard.Pass());
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
+  core_->Start(std::move(client_clipboard));
 }
 
 InputInjectorMac::Core::Core(
@@ -332,7 +337,7 @@ void InputInjectorMac::Core::InjectMouseEvent(const MouseEvent& event) {
 }
 
 void InputInjectorMac::Core::Start(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   if (!task_runner_->BelongsToCurrentThread()) {
     task_runner_->PostTask(
         FROM_HERE,
@@ -340,7 +345,7 @@ void InputInjectorMac::Core::Start(
     return;
   }
 
-  clipboard_->Start(client_clipboard.Pass());
+  clipboard_->Start(std::move(client_clipboard));
 }
 
 void InputInjectorMac::Core::Stop() {
@@ -385,10 +390,10 @@ InputInjectorMac::Core::~Core() {}
 }  // namespace
 
 // static
-scoped_ptr<InputInjector> InputInjector::Create(
+std::unique_ptr<InputInjector> InputInjector::Create(
     scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner) {
-  return make_scoped_ptr(new InputInjectorMac(main_task_runner));
+  return base::WrapUnique(new InputInjectorMac(main_task_runner));
 }
 
 // static

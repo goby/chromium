@@ -14,48 +14,48 @@ namespace {
 // else than holding GinJavaBridgeValues.  If a need for such scenario ever
 // emerges, the best solution would be to extend GinJavaBridgeValue to be able
 // to wrap raw BinaryValues.
-const uint32 kHeaderMagic = 0xBEEFCAFE;
+const uint32_t kHeaderMagic = 0xBEEFCAFE;
 
 #pragma pack(push, 4)
 struct Header : public base::Pickle::Header {
-  uint32 magic;
-  int32 type;
+  uint32_t magic;
+  int32_t type;
 };
 #pragma pack(pop)
 
 }
 
 // static
-scoped_ptr<base::BinaryValue> GinJavaBridgeValue::CreateUndefinedValue() {
+std::unique_ptr<base::BinaryValue> GinJavaBridgeValue::CreateUndefinedValue() {
   GinJavaBridgeValue gin_value(TYPE_UNDEFINED);
-  return make_scoped_ptr(gin_value.SerializeToBinaryValue());
+  return gin_value.SerializeToBinaryValue();
 }
 
 // static
-scoped_ptr<base::BinaryValue> GinJavaBridgeValue::CreateNonFiniteValue(
+std::unique_ptr<base::BinaryValue> GinJavaBridgeValue::CreateNonFiniteValue(
     float in_value) {
   GinJavaBridgeValue gin_value(TYPE_NONFINITE);
   gin_value.pickle_.WriteFloat(in_value);
-  return make_scoped_ptr(gin_value.SerializeToBinaryValue());
+  return gin_value.SerializeToBinaryValue();
 }
 
 // static
-scoped_ptr<base::BinaryValue> GinJavaBridgeValue::CreateNonFiniteValue(
+std::unique_ptr<base::BinaryValue> GinJavaBridgeValue::CreateNonFiniteValue(
     double in_value) {
-  return CreateNonFiniteValue(static_cast<float>(in_value)).Pass();
+  return CreateNonFiniteValue(static_cast<float>(in_value));
 }
 
 // static
-scoped_ptr<base::BinaryValue> GinJavaBridgeValue::CreateObjectIDValue(
-    int32 in_value) {
+std::unique_ptr<base::BinaryValue> GinJavaBridgeValue::CreateObjectIDValue(
+    int32_t in_value) {
   GinJavaBridgeValue gin_value(TYPE_OBJECT_ID);
   gin_value.pickle_.WriteInt(in_value);
-  return make_scoped_ptr(gin_value.SerializeToBinaryValue());
+  return gin_value.SerializeToBinaryValue();
 }
 
 // static
 bool GinJavaBridgeValue::ContainsGinJavaBridgeValue(const base::Value* value) {
-  if (!value->IsType(base::Value::TYPE_BINARY))
+  if (!value->IsType(base::Value::Type::BINARY))
     return false;
   const base::BinaryValue* binary_value =
       reinterpret_cast<const base::BinaryValue*>(value);
@@ -71,10 +71,10 @@ bool GinJavaBridgeValue::ContainsGinJavaBridgeValue(const base::Value* value) {
 }
 
 // static
-scoped_ptr<const GinJavaBridgeValue> GinJavaBridgeValue::FromValue(
+std::unique_ptr<const GinJavaBridgeValue> GinJavaBridgeValue::FromValue(
     const base::Value* value) {
-  return scoped_ptr<const GinJavaBridgeValue>(
-      value->IsType(base::Value::TYPE_BINARY)
+  return std::unique_ptr<const GinJavaBridgeValue>(
+      value->IsType(base::Value::Type::BINARY)
           ? new GinJavaBridgeValue(
                 reinterpret_cast<const base::BinaryValue*>(value))
           : NULL);
@@ -99,7 +99,7 @@ bool GinJavaBridgeValue::GetAsNonFinite(float* out_value) const {
   }
 }
 
-bool GinJavaBridgeValue::GetAsObjectID(int32* out_object_id) const {
+bool GinJavaBridgeValue::GetAsObjectID(int32_t* out_object_id) const {
   if (GetType() == TYPE_OBJECT_ID) {
     base::PickleIterator iter(pickle_);
     return iter.ReadInt(out_object_id);
@@ -120,7 +120,8 @@ GinJavaBridgeValue::GinJavaBridgeValue(const base::BinaryValue* value)
   DCHECK(ContainsGinJavaBridgeValue(value));
 }
 
-base::BinaryValue* GinJavaBridgeValue::SerializeToBinaryValue() {
+std::unique_ptr<base::BinaryValue>
+GinJavaBridgeValue::SerializeToBinaryValue() {
   return base::BinaryValue::CreateWithCopiedBuffer(
       reinterpret_cast<const char*>(pickle_.data()), pickle_.size());
 }

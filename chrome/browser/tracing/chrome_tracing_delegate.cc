@@ -4,9 +4,10 @@
 
 #include "chrome/browser/tracing/chrome_tracing_delegate.h"
 
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
+#include <utility>
+
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -15,8 +16,12 @@
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_otr_state.h"
 #include "chrome/common/pref_names.h"
+#include "chrome/common/trace_event_args_whitelist.h"
 #include "components/metrics/metrics_pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
 #include "components/variations/active_field_trials.h"
+#include "components/version_info/version_info.h"
 #include "content/public/browser/background_tracing_config.h"
 #include "content/public/browser/browser_thread.h"
 
@@ -32,22 +37,28 @@ void ChromeTracingDelegate::RegisterPrefs(PrefRegistrySimple* registry) {
 
 ChromeTracingDelegate::ChromeTracingDelegate() : incognito_launched_(false) {
   CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+#if !defined(OS_ANDROID)
   BrowserList::AddObserver(this);
+#endif
 }
 
 ChromeTracingDelegate::~ChromeTracingDelegate() {
   CHECK(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+#if !defined(OS_ANDROID)
   BrowserList::RemoveObserver(this);
+#endif
 }
 
 void ChromeTracingDelegate::OnBrowserAdded(Browser* browser) {
+#if !defined(OS_ANDROID)
   if (browser->profile()->IsOffTheRecord())
     incognito_launched_ = true;
+#endif
 }
 
-scoped_ptr<content::TraceUploader> ChromeTracingDelegate::GetTraceUploader(
+std::unique_ptr<content::TraceUploader> ChromeTracingDelegate::GetTraceUploader(
     net::URLRequestContextGetter* request_context) {
-  return scoped_ptr<content::TraceUploader>(
+  return std::unique_ptr<content::TraceUploader>(
       new TraceCrashServiceUploader(request_context));
 }
 
@@ -73,18 +84,25 @@ bool ProfileAllowsScenario(const content::BackgroundTracingConfig& config,
       return true;
   }
 
+#if !defined(OS_ANDROID)
   // Safeguard, in case background tracing is responsible for a crash on
   // startup.
   if (profile->GetLastSessionExitType() == Profile::EXIT_CRASHED)
     return false;
+#else
+  // In case of Android the exit state is always set as EXIT_CRASHED. So,
+  // preemptive mode cannot be used safely.
+  if (config.tracing_mode() == content::BackgroundTracingConfig::PREEMPTIVE)
+    return false;
+#endif
 
   PrefService* local_state = g_browser_process->local_state();
   DCHECK(local_state);
 
-#if !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS) && defined(OFFICIAL_BUILD)
   if (!local_state->GetBoolean(metrics::prefs::kMetricsReportingEnabled))
     return false;
-#endif // OS_CHROMEOS
+#endif // !OS_CHROMEOS && OFFICIAL_BUILD
 
   if (config.tracing_mode() == content::BackgroundTracingConfig::PREEMPTIVE) {
     const base::Time last_upload_time = base::Time::FromInternalValue(
@@ -106,10 +124,16 @@ bool ProfileAllowsScenario(const content::BackgroundTracingConfig& config,
 bool ChromeTracingDelegate::IsAllowedToBeginBackgroundScenario(
     const content::BackgroundTracingConfig& config,
     bool requires_anonymized_data) {
+#if defined(OS_ANDROID)
+  // TODO(oysteine): Support preemptive mode safely in Android.
+  if (config.tracing_mode() == content::BackgroundTracingConfig::PREEMPTIVE)
+    return false;
+#endif
+
   if (!ProfileAllowsScenario(config, PROFILE_NOT_REQUIRED))
     return false;
 
-  if (requires_anonymized_data && chrome::IsOffTheRecordSessionActive())
+  if (requires_anonymized_data && chrome::IsIncognitoSessionActive())
     return false;
 
   return true;
@@ -118,8 +142,10 @@ bool ChromeTracingDelegate::IsAllowedToBeginBackgroundScenario(
 bool ChromeTracingDelegate::IsAllowedToEndBackgroundScenario(
     const content::BackgroundTracingConfig& config,
     bool requires_anonymized_data) {
-  if (requires_anonymized_data && incognito_launched_)
+  if (requires_anonymized_data &&
+      (incognito_launched_ || chrome::IsIncognitoSessionActive())) {
     return false;
+  }
 
   if (!ProfileAllowsScenario(config, PROFILE_REQUIRED))
     return false;
@@ -144,9 +170,15 @@ void ChromeTracingDelegate::GenerateMetadataDict(
   std::vector<std::string> variations;
   variations::GetFieldTrialActiveGroupIdsAsStrings(&variations);
 
-  scoped_ptr<base::ListValue> variations_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> variations_list(new base::ListValue());
   for (const auto& it : variations)
-    variations_list->Append(new base::StringValue(it));
+    variations_list->AppendString(it);
 
-  metadata_dict->Set("field-trials", variations_list.Pass());
+  metadata_dict->Set("field-trials", std::move(variations_list));
+  metadata_dict->SetString("revision", version_info::GetLastChange());
+}
+
+content::MetadataFilterPredicate
+ChromeTracingDelegate::GetMetadataFilterPredicate() {
+  return base::Bind(&IsMetadataWhitelisted);
 }

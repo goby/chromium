@@ -4,10 +4,12 @@
 
 GEN('#if defined(OS_CHROMEOS)');
 
+GEN_INCLUDE(['../options_browsertest_base.js']);
+
 function BluetoothWebUITestAsync() {}
 
 BluetoothWebUITestAsync.prototype = {
-  __proto__: testing.Test.prototype,
+  __proto__: OptionsBrowsertestBase.prototype,
 
   /** @override */
   isAsync: true,
@@ -22,7 +24,7 @@ BluetoothWebUITestAsync.prototype = {
     address: '00:11:22:33:44:55',
     connectable: true,
     connected: false,
-    name: 'Fake Device',
+    name: 'Fake Device (name)',
     paired: true
   },
 
@@ -30,7 +32,7 @@ BluetoothWebUITestAsync.prototype = {
     address: '20:7D:74:00:00:04',
     connectable: false,
     connected: false,
-    name: 'Paired Unconnectable Device',
+    name: 'Paired Unconnectable Device (name)',
     paired: true
   },
 
@@ -48,6 +50,22 @@ BluetoothWebUITestAsync.prototype = {
     connected: false,
     name: 'PIN Device',
     paired: false
+  },
+
+  /** @override */
+  setUp: function() {
+    OptionsBrowsertestBase.prototype.setUp.call(this);
+
+    var unsupportedAriaAttributeSelectors = [
+      '#bluetooth-paired-devices-list',
+      '#bluetooth-unpaired-devices-list',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_ARIA_10: http://crbug.com/570564
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'unsupportedAriaAttribute',
+        unsupportedAriaAttributeSelectors);
   },
 
   /**
@@ -86,7 +104,6 @@ BluetoothWebUITestAsync.prototype = {
     element.value = text;
     cr.dispatchSimpleEvent(element, 'input');
   },
-
 };
 
 TEST_F('BluetoothWebUITestAsync', 'testEnableBluetooth', function() {
@@ -106,7 +123,8 @@ TEST_F('BluetoothWebUITestAsync', 'testEnableBluetooth', function() {
   }.bind(this));
 });
 
-TEST_F('BluetoothWebUITestAsync', 'testAddDevice', function() {
+// TODO(crbug.com/603499) Test is flaky.
+TEST_F('BluetoothWebUITestAsync', 'DISABLED_testAddDevice', function() {
   assertEquals(this.browsePreload, document.location.href);
 
   // Enable bluetooth.
@@ -214,7 +232,8 @@ TEST_F('BluetoothWebUITestAsync', 'testDevicePairing', function() {
   }.bind(this));
 });
 
-TEST_F('BluetoothWebUITestAsync', 'testConnect', function() {
+// TODO(crbug.com/608126) Test is flaky.
+TEST_F('BluetoothWebUITestAsync', 'DISABLED_testConnect', function() {
   assertEquals(this.browsePreload, document.location.href);
 
   // Enable bluetooth.
@@ -294,7 +313,8 @@ TEST_F('BluetoothWebUITestAsync', 'testDisconnect', function() {
   }.bind(this));
 });
 
-TEST_F('BluetoothWebUITestAsync', 'testForget', function() {
+// TODO(crbug.com/605090): Disabled because of flakiness.
+TEST_F('BluetoothWebUITestAsync', 'DISABLED_testForget', function() {
   assertEquals(this.browsePreload, document.location.href);
 
   // Enable bluetooth.

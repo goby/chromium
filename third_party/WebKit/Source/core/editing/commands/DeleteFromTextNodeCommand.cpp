@@ -23,55 +23,56 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/editing/commands/DeleteFromTextNodeCommand.h"
 
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
 #include "core/dom/Text.h"
+#include "core/editing/EditingUtilities.h"
 
 namespace blink {
 
-DeleteFromTextNodeCommand::DeleteFromTextNodeCommand(PassRefPtrWillBeRawPtr<Text> node, unsigned offset, unsigned count)
-    : SimpleEditCommand(node->document())
-    , m_node(node)
-    , m_offset(offset)
-    , m_count(count)
-{
-    ASSERT(m_node);
-    ASSERT(m_offset <= m_node->length());
-    ASSERT(m_offset + m_count <= m_node->length());
+DeleteFromTextNodeCommand::DeleteFromTextNodeCommand(Text* node,
+                                                     unsigned offset,
+                                                     unsigned count)
+    : SimpleEditCommand(node->document()),
+      m_node(node),
+      m_offset(offset),
+      m_count(count) {
+  DCHECK(m_node);
+  DCHECK_LE(m_offset, m_node->length());
+  DCHECK_LE(m_offset + m_count, m_node->length());
 }
 
-void DeleteFromTextNodeCommand::doApply()
-{
-    ASSERT(m_node);
+void DeleteFromTextNodeCommand::doApply(EditingState*) {
+  DCHECK(m_node);
 
-    if (!m_node->isContentEditable(Node::UserSelectAllIsAlwaysNonEditable))
-        return;
+  document().updateStyleAndLayoutTree();
+  if (!hasEditableStyle(*m_node))
+    return;
 
-    TrackExceptionState exceptionState;
-    m_text = m_node->substringData(m_offset, m_count, exceptionState);
-    if (exceptionState.hadException())
-        return;
+  DummyExceptionStateForTesting exceptionState;
+  m_text = m_node->substringData(m_offset, m_count, exceptionState);
+  if (exceptionState.hadException())
+    return;
 
-    m_node->deleteData(m_offset, m_count, exceptionState, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+  m_node->deleteData(m_offset, m_count, exceptionState);
+  m_node->document().updateStyleAndLayout();
 }
 
-void DeleteFromTextNodeCommand::doUnapply()
-{
-    ASSERT(m_node);
+void DeleteFromTextNodeCommand::doUnapply() {
+  DCHECK(m_node);
 
-    if (!m_node->hasEditableStyle())
-        return;
+  if (!hasEditableStyle(*m_node))
+    return;
 
-    m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION, CharacterData::DeprecatedRecalcStyleImmediatlelyForEditing);
+  m_node->insertData(m_offset, m_text, IGNORE_EXCEPTION);
+  m_node->document().updateStyleAndLayout();
 }
 
-DEFINE_TRACE(DeleteFromTextNodeCommand)
-{
-    visitor->trace(m_node);
-    SimpleEditCommand::trace(visitor);
+DEFINE_TRACE(DeleteFromTextNodeCommand) {
+  visitor->trace(m_node);
+  SimpleEditCommand::trace(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

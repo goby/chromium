@@ -5,26 +5,28 @@
 #include "chrome/browser/safe_browsing/browser_feature_extractor.h"
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/safe_browsing/browser_features.h"
 #include "chrome/browser/safe_browsing/client_side_detection_host.h"
-#include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/safe_browsing_service.h"
-#include "chrome/browser/safe_browsing/test_database_manager.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/safe_browsing_db/database_manager.h"
+#include "components/safe_browsing_db/test_database_manager.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
@@ -37,7 +39,6 @@
 #include "url/gurl.h"
 
 using content::BrowserThread;
-using content::ResourceType;
 using content::WebContentsTester;
 
 using testing::DoAll;
@@ -134,7 +135,6 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     int pending_id =
         web_contents()->GetController().GetPendingEntry()->GetUniqueID();
 
-    static int page_id = 0;
     content::RenderFrameHost* rfh =
         WebContentsTester::For(web_contents())->GetPendingMainFrame();
     if (!rfh) {
@@ -142,13 +142,13 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     }
     WebContentsTester::For(web_contents())->ProceedWithCrossSiteNavigation();
     WebContentsTester::For(web_contents())->TestDidNavigateWithReferrer(
-        rfh, ++page_id, pending_id, true, url,
+        rfh, pending_id, true, url,
         content::Referrer(referrer, blink::WebReferrerPolicyDefault), type);
   }
 
   bool ExtractFeatures(ClientPhishingRequest* request) {
     StartExtractFeatures(request);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
     EXPECT_EQ(1U, success_.count(request));
     return success_.count(request) ? success_[request] : false;
   }
@@ -177,7 +177,8 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
     // Feature extraction takes ownership of the request object
     // and passes it along to the done callback in the end.
     StartExtractMalwareFeatures(request);
-    base::MessageLoopForUI::current()->Run();
+    ASSERT_TRUE(base::MessageLoopForUI::IsCurrent());
+    base::RunLoop().Run();
     EXPECT_EQ(1U, success_.count(request));
     EXPECT_TRUE(success_[request]);
   }
@@ -205,15 +206,15 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
   }
 
   int num_pending_;  // Number of pending feature extractions.
-  scoped_ptr<BrowserFeatureExtractor> extractor_;
+  std::unique_ptr<BrowserFeatureExtractor> extractor_;
   std::map<void*, bool> success_;
-  scoped_ptr<BrowseInfo> browse_info_;
-  scoped_ptr<StrictMock<MockClientSideDetectionHost> > host_;
+  std::unique_ptr<BrowseInfo> browse_info_;
+  std::unique_ptr<StrictMock<MockClientSideDetectionHost>> host_;
   scoped_refptr<StrictMock<MockSafeBrowsingDatabaseManager> > db_manager_;
 
  private:
   void ExtractFeaturesDone(bool success,
-                           scoped_ptr<ClientPhishingRequest> request) {
+                           std::unique_ptr<ClientPhishingRequest> request) {
     EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
     ASSERT_EQ(0U, success_.count(request.get()));
     // The pointer doesn't really belong to us.  It belongs to
@@ -226,7 +227,7 @@ class BrowserFeatureExtractorTest : public ChromeRenderViewHostTestHarness {
 
   void ExtractMalwareFeaturesDone(
       bool success,
-      scoped_ptr<ClientMalwareRequest> request) {
+      std::unique_ptr<ClientMalwareRequest> request) {
     EXPECT_TRUE(BrowserThread::CurrentlyOn(BrowserThread::UI));
     ASSERT_EQ(0U, success_.count(request.get()));
     // The pointer doesn't really belong to us.  It belongs to
@@ -339,7 +340,7 @@ TEST_F(BrowserFeatureExtractorTest, MultipleRequestsAtOnce) {
   request2.set_client_score(1.0);
   StartExtractFeatures(&request2);
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_TRUE(success_[&request]);
   // Success is false because the second URL is not in the history and we are
   // not able to distinguish between a missing URL in the history and an error.
@@ -574,7 +575,7 @@ TEST_F(BrowserFeatureExtractorTest, SafeBrowsingFeatures) {
   request.set_client_score(0.5);
 
   browse_info_->unsafe_resource.reset(
-      new SafeBrowsingUIManager::UnsafeResource);
+      new security_interstitials::UnsafeResource);
   browse_info_->unsafe_resource->url = GURL("http://www.malware.com/");
   browse_info_->unsafe_resource->original_url = GURL("http://www.good.com/");
   browse_info_->unsafe_resource->is_subresource = true;
@@ -592,7 +593,7 @@ TEST_F(BrowserFeatureExtractorTest, SafeBrowsingFeatures) {
        features::kSafeBrowsingOriginalUrl,
         "http://www.good.com/")));
   EXPECT_DOUBLE_EQ(1.0, features[features::kSafeBrowsingIsSubresource]);
-  EXPECT_DOUBLE_EQ(2.0, features[features::kSafeBrowsingThreatType]);
+  EXPECT_DOUBLE_EQ(3.0, features[features::kSafeBrowsingThreatType]);
 }
 
 TEST_F(BrowserFeatureExtractorTest, MalwareFeatures) {

@@ -9,8 +9,8 @@
 #include <queue>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
@@ -33,6 +33,7 @@ class MEDIA_EXPORT SerialRunner {
   class MEDIA_EXPORT Queue {
    public:
     Queue();
+    Queue(const Queue& other);
     ~Queue();
 
     void Push(const base::Closure& closure);
@@ -62,8 +63,8 @@ class MEDIA_EXPORT SerialRunner {
   //
   // Deleting the object will prevent execution of any unstarted bound
   // functions, including |done_cb|.
-  static scoped_ptr<SerialRunner> Run(
-      const Queue& bound_fns, const PipelineStatusCB& done_cb);
+  static std::unique_ptr<SerialRunner> Run(const Queue& bound_fns,
+                                           const PipelineStatusCB& done_cb);
 
  private:
   friend std::default_delete<SerialRunner>;

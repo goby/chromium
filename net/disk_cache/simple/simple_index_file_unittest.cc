@@ -2,19 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/disk_cache/simple/simple_index_file.h"
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/hash.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/cache_type.h"
 #include "net/base/test_completion_callback.h"
@@ -23,10 +25,13 @@
 #include "net/disk_cache/simple/simple_backend_version.h"
 #include "net/disk_cache/simple/simple_entry_format.h"
 #include "net/disk_cache/simple/simple_index.h"
-#include "net/disk_cache/simple/simple_index_file.h"
 #include "net/disk_cache/simple/simple_util.h"
 #include "net/disk_cache/simple/simple_version_upgrade.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsOk;
 
 using base::Time;
 using disk_cache::SimpleIndexFile;
@@ -44,14 +49,18 @@ TEST(IndexMetadataTest, Basics) {
 
   EXPECT_EQ(disk_cache::kSimpleIndexMagicNumber, index_metadata.magic_number_);
   EXPECT_EQ(disk_cache::kSimpleVersion, index_metadata.version_);
-  EXPECT_EQ(0U, index_metadata.GetNumberOfEntries());
+  EXPECT_EQ(0U, index_metadata.entry_count());
   EXPECT_EQ(0U, index_metadata.cache_size_);
+
+  // Without setting a |reason_|, the index metadata isn't valid.
+  index_metadata.reason_ = SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN;
 
   EXPECT_TRUE(index_metadata.CheckIndexMetadata());
 }
 
 TEST(IndexMetadataTest, Serialize) {
-  SimpleIndexFile::IndexMetadata index_metadata(123, 456);
+  SimpleIndexFile::IndexMetadata index_metadata(
+      SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN, 123, 456);
   base::Pickle pickle;
   index_metadata.Serialize(&pickle);
   base::PickleIterator it(pickle);
@@ -60,9 +69,52 @@ TEST(IndexMetadataTest, Serialize) {
 
   EXPECT_EQ(new_index_metadata.magic_number_, index_metadata.magic_number_);
   EXPECT_EQ(new_index_metadata.version_, index_metadata.version_);
-  EXPECT_EQ(new_index_metadata.GetNumberOfEntries(),
-            index_metadata.GetNumberOfEntries());
+  EXPECT_EQ(new_index_metadata.reason_, index_metadata.reason_);
+  EXPECT_EQ(new_index_metadata.entry_count(), index_metadata.entry_count());
   EXPECT_EQ(new_index_metadata.cache_size_, index_metadata.cache_size_);
+
+  EXPECT_TRUE(new_index_metadata.CheckIndexMetadata());
+}
+
+// This derived index metadata class allows us to serialize the older V6 format
+// of the index metadata, thus allowing us to test deserializing the old format.
+class V6IndexMetadataForTest : public SimpleIndexFile::IndexMetadata {
+ public:
+  // Do not default to |SimpleIndex::INDEX_WRITE_REASON_MAX|, because we want to
+  // ensure we don't serialize that value and then deserialize it and have a
+  // false positive result.
+  V6IndexMetadataForTest(uint64_t entry_count, uint64_t cache_size)
+      : SimpleIndexFile::IndexMetadata(SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+                                       entry_count,
+                                       cache_size) {
+    version_ = 6;
+  }
+
+  // Copied and pasted from the V6 implementation of
+  // |SimpleIndexFile::IndexMetadata()| (removing DCHECKs).
+  void Serialize(base::Pickle* pickle) const override {
+    pickle->WriteUInt64(magic_number_);
+    pickle->WriteUInt32(version_);
+    pickle->WriteUInt64(entry_count_);
+    pickle->WriteUInt64(cache_size_);
+  }
+};
+
+TEST(IndexMetadataTest, ReadV6Format) {
+  V6IndexMetadataForTest v6_index_metadata(123, 456);
+  EXPECT_EQ(6U, v6_index_metadata.version_);
+  base::Pickle pickle;
+  v6_index_metadata.Serialize(&pickle);
+  base::PickleIterator it(pickle);
+  SimpleIndexFile::IndexMetadata new_index_metadata;
+  new_index_metadata.Deserialize(&it);
+
+  EXPECT_EQ(new_index_metadata.magic_number_, v6_index_metadata.magic_number_);
+  EXPECT_EQ(new_index_metadata.version_, v6_index_metadata.version_);
+
+  EXPECT_EQ(new_index_metadata.reason_, SimpleIndex::INDEX_WRITE_REASON_MAX);
+  EXPECT_EQ(new_index_metadata.entry_count(), v6_index_metadata.entry_count());
+  EXPECT_EQ(new_index_metadata.cache_size_, v6_index_metadata.cache_size_);
 
   EXPECT_TRUE(new_index_metadata.CheckIndexMetadata());
 }
@@ -108,19 +160,22 @@ class SimpleIndexFileTest : public testing::Test {
 
 TEST_F(SimpleIndexFileTest, Serialize) {
   SimpleIndex::EntrySet entries;
-  static const uint64 kHashes[] = { 11, 22, 33 };
+  static const uint64_t kHashes[] = {11, 22, 33};
   static const size_t kNumHashes = arraysize(kHashes);
   EntryMetadata metadata_entries[kNumHashes];
 
-  SimpleIndexFile::IndexMetadata index_metadata(static_cast<uint64>(kNumHashes),
-                                                456);
+  SimpleIndexFile::IndexMetadata index_metadata(
+      SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+      static_cast<uint64_t>(kNumHashes), 456);
   for (size_t i = 0; i < kNumHashes; ++i) {
-    uint64 hash = kHashes[i];
-    metadata_entries[i] = EntryMetadata(Time(), hash);
+    uint64_t hash = kHashes[i];
+    // TODO(eroman): Should restructure the test so no casting here (and same
+    //               elsewhere where a hash is cast to an entry size).
+    metadata_entries[i] = EntryMetadata(Time(), static_cast<uint32_t>(hash));
     SimpleIndex::InsertInEntrySet(hash, metadata_entries[i], &entries);
   }
 
-  scoped_ptr<base::Pickle> pickle =
+  std::unique_ptr<base::Pickle> pickle =
       WrappedSimpleIndexFile::Serialize(index_metadata, entries);
   EXPECT_TRUE(pickle.get() != NULL);
   base::Time now = base::Time::Now();
@@ -147,7 +202,7 @@ TEST_F(SimpleIndexFileTest, LegacyIsIndexFileStale) {
   base::ScopedTempDir cache_dir;
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
   base::Time cache_mtime;
-  const base::FilePath cache_path = cache_dir.path();
+  const base::FilePath cache_path = cache_dir.GetPath();
 
   ASSERT_TRUE(simple_util::GetMTime(cache_path, &cache_mtime));
   WrappedSimpleIndexFile simple_index_file(cache_path);
@@ -181,28 +236,29 @@ TEST_F(SimpleIndexFileTest, WriteThenLoadIndex) {
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
 
   SimpleIndex::EntrySet entries;
-  static const uint64 kHashes[] = { 11, 22, 33 };
+  static const uint64_t kHashes[] = {11, 22, 33};
   static const size_t kNumHashes = arraysize(kHashes);
   EntryMetadata metadata_entries[kNumHashes];
   for (size_t i = 0; i < kNumHashes; ++i) {
-    uint64 hash = kHashes[i];
-    metadata_entries[i] = EntryMetadata(Time(), hash);
+    uint64_t hash = kHashes[i];
+    metadata_entries[i] = EntryMetadata(Time(), static_cast<uint32_t>(hash));
     SimpleIndex::InsertInEntrySet(hash, metadata_entries[i], &entries);
   }
 
-  const uint64 kCacheSize = 456U;
+  const uint64_t kCacheSize = 456U;
   net::TestClosure closure;
   {
-    WrappedSimpleIndexFile simple_index_file(cache_dir.path());
-    simple_index_file.WriteToDisk(entries, kCacheSize, base::TimeTicks(),
-                                  false, closure.closure());
+    WrappedSimpleIndexFile simple_index_file(cache_dir.GetPath());
+    simple_index_file.WriteToDisk(SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+                                  entries, kCacheSize, base::TimeTicks(), false,
+                                  closure.closure());
     closure.WaitForResult();
     EXPECT_TRUE(base::PathExists(simple_index_file.GetIndexFilePath()));
   }
 
-  WrappedSimpleIndexFile simple_index_file(cache_dir.path());
+  WrappedSimpleIndexFile simple_index_file(cache_dir.GetPath());
   base::Time fake_cache_mtime;
-  ASSERT_TRUE(simple_util::GetMTime(cache_dir.path(), &fake_cache_mtime));
+  ASSERT_TRUE(simple_util::GetMTime(cache_dir.GetPath(), &fake_cache_mtime));
   SimpleIndexLoadResult load_index_result;
   simple_index_file.LoadIndexEntries(fake_cache_mtime, closure.closure(),
                                      &load_index_result);
@@ -221,7 +277,7 @@ TEST_F(SimpleIndexFileTest, LoadCorruptIndex) {
   base::ScopedTempDir cache_dir;
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
 
-  WrappedSimpleIndexFile simple_index_file(cache_dir.path());
+  WrappedSimpleIndexFile simple_index_file(cache_dir.GetPath());
   ASSERT_TRUE(simple_index_file.CreateIndexFileDirectory());
   const base::FilePath& index_path = simple_index_file.GetIndexFilePath();
   const std::string kDummyData = "nothing to be seen here";
@@ -247,7 +303,7 @@ TEST_F(SimpleIndexFileTest, LoadCorruptIndex) {
 TEST_F(SimpleIndexFileTest, SimpleCacheUpgrade) {
   base::ScopedTempDir cache_dir;
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
-  const base::FilePath cache_path = cache_dir.path();
+  const base::FilePath cache_path = cache_dir.GetPath();
 
   // Write an old fake index file.
   base::File file(cache_path.AppendASCII("index"),
@@ -271,7 +327,8 @@ TEST_F(SimpleIndexFileTest, SimpleCacheUpgrade) {
                             index_file_contents.size()));
 
   // Upgrade the cache.
-  ASSERT_TRUE(disk_cache::UpgradeSimpleCacheOnDisk(cache_path));
+  ASSERT_TRUE(
+      disk_cache::UpgradeSimpleCacheOnDisk(cache_path, SimpleExperiment()));
 
   // Create the backend and initiate index flush by destroying the backend.
   base::Thread cache_thread("CacheThread");
@@ -282,9 +339,9 @@ TEST_F(SimpleIndexFileTest, SimpleCacheUpgrade) {
                                         cache_thread.task_runner().get(), NULL);
   net::TestCompletionCallback cb;
   int rv = simple_cache->Init(cb.callback());
-  EXPECT_EQ(net::OK, cb.GetResult(rv));
+  EXPECT_THAT(cb.GetResult(rv), IsOk());
   rv = simple_cache->index()->ExecuteWhenReady(cb.callback());
-  EXPECT_EQ(net::OK, cb.GetResult(rv));
+  EXPECT_THAT(cb.GetResult(rv), IsOk());
   delete simple_cache;
 
   // The backend flushes the index on destruction and does so on the cache
@@ -317,7 +374,7 @@ TEST_F(SimpleIndexFileTest, SimpleCacheUpgrade) {
 TEST_F(SimpleIndexFileTest, OverwritesStaleTempFile) {
   base::ScopedTempDir cache_dir;
   ASSERT_TRUE(cache_dir.CreateUniqueTempDir());
-  const base::FilePath cache_path = cache_dir.path();
+  const base::FilePath cache_path = cache_dir.GetPath();
   WrappedSimpleIndexFile simple_index_file(cache_path);
   ASSERT_TRUE(simple_index_file.CreateIndexFileDirectory());
 
@@ -332,9 +389,10 @@ TEST_F(SimpleIndexFileTest, OverwritesStaleTempFile) {
 
   // Write the index file.
   SimpleIndex::EntrySet entries;
-  SimpleIndex::InsertInEntrySet(11, EntryMetadata(Time(), 11), &entries);
+  SimpleIndex::InsertInEntrySet(11, EntryMetadata(Time(), 11u), &entries);
   net::TestClosure closure;
-  simple_index_file.WriteToDisk(entries, 120U, base::TimeTicks(), false,
+  simple_index_file.WriteToDisk(SimpleIndex::INDEX_WRITE_REASON_SHUTDOWN,
+                                entries, 120U, base::TimeTicks(), false,
                                 closure.closure());
   closure.WaitForResult();
 

@@ -5,22 +5,22 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_MOCK_DRM_DEVICE_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_MOCK_DRM_DEVICE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
 #include <queue>
 #include <vector>
 
 #include "base/macros.h"
-#include "skia/ext/refptr.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "third_party/skia/include/core/SkSurface.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
 
 namespace ui {
 
-class CrtcController;
-struct GammaRampRGBEntry;
-
 // The real DrmDevice makes actual DRM calls which we can't use in unit tests.
-class MockDrmDevice : public ui::DrmDevice {
+class MockDrmDevice : public DrmDevice {
  public:
   MockDrmDevice();
   MockDrmDevice(bool use_sync_flips,
@@ -50,9 +50,7 @@ class MockDrmDevice : public ui::DrmDevice {
 
   uint32_t current_framebuffer() const { return current_framebuffer_; }
 
-  const std::vector<skia::RefPtr<SkSurface>> buffers() const {
-    return buffers_;
-  }
+  const std::vector<sk_sp<SkSurface>> buffers() const { return buffers_; }
 
   uint32_t get_cursor_handle_for_crtc(uint32_t crtc) const {
     const auto it = crtc_cursor_map_.find(crtc);
@@ -111,8 +109,10 @@ class MockDrmDevice : public ui::DrmDevice {
                         uint32_t flags,
                         uint32_t crtc_count,
                         const PageFlipCallback& callback) override;
-  bool SetGammaRamp(uint32_t crtc_id,
-                    const std::vector<GammaRampRGBEntry>& lut) override;
+  bool SetColorCorrection(uint32_t crtc_id,
+                          const std::vector<GammaRampRGBEntry>& degamma_lut,
+                          const std::vector<GammaRampRGBEntry>& gamma_lut,
+                          const std::vector<float>& correction_matrix) override;
   bool SetCapability(uint64_t capability, uint64_t value) override;
 
  private:
@@ -137,7 +137,7 @@ class MockDrmDevice : public ui::DrmDevice {
 
   uint32_t current_framebuffer_;
 
-  std::vector<skia::RefPtr<SkSurface>> buffers_;
+  std::vector<sk_sp<SkSurface>> buffers_;
 
   std::map<uint32_t, uint32_t> crtc_cursor_map_;
 

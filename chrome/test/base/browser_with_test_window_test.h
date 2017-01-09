@@ -6,9 +6,10 @@
 #define CHROME_TEST_BASE_BROWSER_WITH_TEST_WINDOW_TEST_H_
 
 #include "base/at_exit.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -30,6 +31,7 @@ class GURL;
 #if defined(OS_CHROMEOS)
 namespace ash {
 namespace test {
+class AshTestEnvironment;
 class AshTestHelper;
 }
 }
@@ -41,7 +43,6 @@ class ScopedViewsTestHelper;
 
 namespace content {
 class NavigationController;
-class WebContents;
 }
 
 // Base class for browser based unit tests. BrowserWithTestWindowTest creates a
@@ -60,7 +61,7 @@ class WebContents;
 //
 //   // This is equivalent to the above, and lets you test pending navigations.
 //   browser()->OpenURL(OpenURLParams(
-//       GURL("http://foo/2"), GURL(), CURRENT_TAB,
+//       GURL("http://foo/2"), GURL(), WindowOpenDisposition::CURRENT_TAB,
 //       ui::PAGE_TRANSITION_TYPED, false));
 //   CommitPendingLoad(controller);
 //
@@ -74,9 +75,7 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   // Creates a BrowserWithTestWindowTest for which the initial window will be
   // the specified type.
-  BrowserWithTestWindowTest(Browser::Type browser_type,
-                            chrome::HostDesktopType host_desktop_type,
-                            bool hosted_app);
+  BrowserWithTestWindowTest(Browser::Type browser_type, bool hosted_app);
 
   ~BrowserWithTestWindowTest() override;
 
@@ -142,12 +141,11 @@ class BrowserWithTestWindowTest : public testing::Test {
   // value. Can return NULL to use the default window created by Browser.
   virtual BrowserWindow* CreateBrowserWindow();
 
-  // Creates the browser given |profile|, |browser_type|, |hosted_app|,
-  // |host_desktop_type| and |browser_window|. The caller owns the return value.
+  // Creates the browser given |profile|, |browser_type|, |hosted_app|, and
+  // |browser_window|. The caller owns the return value.
   virtual Browser* CreateBrowser(Profile* profile,
                                  Browser::Type browser_type,
                                  bool hosted_app,
-                                 chrome::HostDesktopType host_desktop_type,
                                  BrowserWindow* browser_window);
 
  private:
@@ -165,17 +163,18 @@ class BrowserWithTestWindowTest : public testing::Test {
   // |DestroyProfile()| function - which can be overwritten by derived testing
   // frameworks.
   TestingProfile* profile_;
-  scoped_ptr<BrowserWindow> window_;  // Usually a TestBrowserWindow.
-  scoped_ptr<Browser> browser_;
+  std::unique_ptr<BrowserWindow> window_;  // Usually a TestBrowserWindow.
+  std::unique_ptr<Browser> browser_;
 
   // The existence of this object enables tests via
   // RenderViewHostTester.
   content::RenderViewHostTestEnabler rvh_test_enabler_;
 
 #if defined(OS_CHROMEOS)
-  scoped_ptr<ash::test::AshTestHelper> ash_test_helper_;
+  std::unique_ptr<ash::test::AshTestEnvironment> ash_test_environment_;
+  std::unique_ptr<ash::test::AshTestHelper> ash_test_helper_;
 #elif defined(TOOLKIT_VIEWS)
-  scoped_ptr<views::ScopedViewsTestHelper> views_test_helper_;
+  std::unique_ptr<views::ScopedViewsTestHelper> views_test_helper_;
 #endif
 
 #if defined(OS_WIN)
@@ -184,9 +183,6 @@ class BrowserWithTestWindowTest : public testing::Test {
 
   // The type of browser to create (tabbed or popup).
   Browser::Type browser_type_;
-
-  // The desktop to create the initial window on.
-  chrome::HostDesktopType host_desktop_type_;
 
   // Whether the browser is part of a hosted app.
   bool hosted_app_;

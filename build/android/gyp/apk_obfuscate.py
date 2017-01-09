@@ -69,6 +69,8 @@ def ParseArgs(argv):
                          'These will not be obfuscated.')
   parser.add_option('--multidex-configuration-path',
                     help='A JSON file containing multidex build configuration.')
+  parser.add_option('--verbose', '-v', action='store_true',
+                    help='Print all proguard output')
 
   (options, args) = parser.parse_args(argv)
 
@@ -99,10 +101,10 @@ def DoProguard(options):
   proguard = proguard_util.ProguardCmdBuilder(options.proguard_jar_path)
   proguard.outjar(options.obfuscated_jar_path)
 
-  input_jars = build_utils.ParseGypList(options.input_jars_paths)
+  input_jars = build_utils.ParseGnList(options.input_jars_paths)
 
   exclude_paths = []
-  configs = build_utils.ParseGypList(options.proguard_configs)
+  configs = build_utils.ParseGnList(options.proguard_configs)
   if options.tested_apk_obfuscated_jar_path:
     # configs should only contain the process_resources.py generated config.
     assert len(configs) == 1, (
@@ -118,6 +120,7 @@ def DoProguard(options):
     configs.append(multidex_config)
 
   proguard.configs(configs)
+  proguard.verbose(options.verbose)
   proguard.CheckOutput()
 
 
@@ -150,7 +153,7 @@ def _PossibleMultidexConfig(options):
 def main(argv):
   options, _ = ParseArgs(argv)
 
-  input_jars = build_utils.ParseGypList(options.input_jars_paths)
+  input_jars = build_utils.ParseGnList(options.input_jars_paths)
 
   if options.testapp:
     dependency_class_filters = [

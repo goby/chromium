@@ -3,16 +3,20 @@
 // found in the LICENSE file.
 
 #import <Cocoa/Cocoa.h>
+#include <stddef.h>
+
+#include <utility>
 
 #import "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #import "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #import "chrome/browser/translate/chrome_translate_client.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/infobars/before_translate_infobar_controller.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_cocoa.h"
 #import "chrome/browser/ui/cocoa/infobars/translate_infobar_base.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #import "components/translate/core/browser/options_menu_model.h"
 #import "components/translate/core/browser/translate_infobar_delegate.h"
@@ -99,10 +103,10 @@ class TranslationInfoBarTest : public CocoaProfileTest {
 
     ChromeTranslateClient* chrome_translate_client =
         ChromeTranslateClient::FromWebContents(web_contents_.get());
-    scoped_ptr<translate::TranslateInfoBarDelegate> delegate(
+    std::unique_ptr<translate::TranslateInfoBarDelegate> delegate(
         new MockTranslateInfoBarDelegate(web_contents_.get(), type, error));
-    scoped_ptr<infobars::InfoBar> infobar(
-        chrome_translate_client->CreateInfoBar(delegate.Pass()));
+    std::unique_ptr<infobars::InfoBar> infobar(
+        chrome_translate_client->CreateInfoBar(std::move(delegate)));
     if (infobar_)
       infobar_->CloseSoon();
     infobar_ = static_cast<InfoBarCocoa*>(infobar.release());
@@ -122,7 +126,7 @@ class TranslationInfoBarTest : public CocoaProfileTest {
     return static_cast<MockTranslateInfoBarDelegate*>(infobar_->delegate());
   }
 
-  scoped_ptr<WebContents> web_contents_;
+  std::unique_ptr<WebContents> web_contents_;
   InfoBarCocoa* infobar_;  // weak, deletes itself
   base::scoped_nsobject<TranslateInfoBarControllerBase> infobar_controller_;
 };
@@ -222,7 +226,9 @@ TEST_F(TranslationInfoBarTest, Bug36666) {
     .Times(0);
 
   int arbitrary_index = 2;
-  [infobar_controller_ sourceLanguageModified:arbitrary_index];
+  NSString* arbitrary_language = @"es";
+  [infobar_controller_ sourceLanguageModified:arbitrary_language
+                            withLanguageIndex:arbitrary_index];
   EXPECT_CALL(*infobar_delegate(), Translate())
     .Times(0);
 }
@@ -243,7 +249,7 @@ TEST_F(TranslationInfoBarTest, Bug36895) {
 // Verify that the infobar shows the "Always translate this language" button
 // after doing 3 translations.
 TEST_F(TranslationInfoBarTest, TriggerShowAlwaysTranslateButton) {
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(profile()->GetPrefs()));
   translate_prefs->ResetTranslationAcceptedCount("en");
   for (int i = 0; i < 4; ++i) {
@@ -259,7 +265,7 @@ TEST_F(TranslationInfoBarTest, TriggerShowAlwaysTranslateButton) {
 // Verify that the infobar shows the "Never translate this language" button
 // after denying 3 translations.
 TEST_F(TranslationInfoBarTest, TriggerShowNeverTranslateButton) {
-  scoped_ptr<translate::TranslatePrefs> translate_prefs(
+  std::unique_ptr<translate::TranslatePrefs> translate_prefs(
       ChromeTranslateClient::CreateTranslatePrefs(profile()->GetPrefs()));
   translate_prefs->ResetTranslationDeniedCount("en");
   for (int i = 0; i < 4; ++i) {

@@ -5,8 +5,11 @@
 #ifndef CHROME_UTILITY_SAFE_BROWSING_MAC_DMG_ITERATOR_H_
 #define CHROME_UTILITY_SAFE_BROWSING_MAC_DMG_ITERATOR_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string16.h"
 #include "chrome/utility/safe_browsing/mac/udif.h"
@@ -42,13 +45,14 @@ class DMGIterator {
   base::string16 GetPath();
 
   // Returns a ReadStream for the current file item.
-  scoped_ptr<ReadStream> GetReadStream();
+  std::unique_ptr<ReadStream> GetReadStream();
 
  private:
   UDIFParser udif_;  // The UDIF parser that accesses the partitions.
   ScopedVector<ReadStream> partitions_;  // Streams for all the HFS partitions.
   size_t current_partition_;  // The index in |partitions_| of the current one.
-  scoped_ptr<HFSIterator> hfs_;  // The HFSIterator for |current_partition_|.
+  std::unique_ptr<HFSIterator>
+      hfs_;  // The HFSIterator for |current_partition_|.
 
   DISALLOW_COPY_AND_ASSIGN(DMGIterator);
 };

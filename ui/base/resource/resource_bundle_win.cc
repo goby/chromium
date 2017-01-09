@@ -14,7 +14,6 @@
 #include "ui/gfx/geometry/size_conversions.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_source.h"
-#include "ui/gfx/win/dpi.h"
 
 namespace ui {
 
@@ -37,10 +36,7 @@ void ResourceBundle::LoadCommonResources() {
   LoadChromeResources();
 }
 
-gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id, ImageRTL rtl) {
-  // Flipped image is not used on Windows.
-  DCHECK_EQ(rtl, RTL_DISABLED);
-
+gfx::Image& ResourceBundle::GetNativeImageNamed(int resource_id) {
   // Windows only uses SkBitmap for gfx::Image, so this is the same as
   // GetImageNamed.
   return GetImageNamed(resource_id);

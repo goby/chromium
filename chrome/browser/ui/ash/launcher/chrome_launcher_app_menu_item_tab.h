@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_CHROME_LAUNCHER_APP_MENU_ITEM_TAB_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_CHROME_LAUNCHER_APP_MENU_ITEM_TAB_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -12,8 +13,6 @@
 namespace content{
 class WebContents;
 }
-
-class TabStripModel;
 
 // A menu item controller for a running browser tab. It gets created when an
 // application/tab list gets created. It's main purpose is to add the

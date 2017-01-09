@@ -4,6 +4,8 @@
 
 #include "components/storage_monitor/storage_monitor_mac.h"
 
+#include <stdint.h>
+
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/strings/sys_string_conversions.h"
@@ -61,7 +63,7 @@ StorageInfo BuildStorageInfo(
   CFNumberRef size_number =
       base::mac::GetValueFromDictionary<CFNumberRef>(
           dict, kDADiskDescriptionMediaSizeKey);
-  uint64 size_in_bytes = 0;
+  uint64_t size_in_bytes = 0;
   if (size_number)
     CFNumberGetValue(size_number, kCFNumberLongLongType, &size_in_bytes);
 
@@ -133,7 +135,7 @@ struct EjectDiskOptions {
 void PostEjectCallback(DADiskRef disk,
                        DADissenterRef dissenter,
                        void* context) {
-  scoped_ptr<EjectDiskOptions> options_deleter(
+  std::unique_ptr<EjectDiskOptions> options_deleter(
       static_cast<EjectDiskOptions*>(context));
   if (dissenter) {
     options_deleter->callback.Run(StorageMonitor::EJECT_IN_USE);
@@ -146,7 +148,7 @@ void PostEjectCallback(DADiskRef disk,
 void PostUnmountCallback(DADiskRef disk,
                          DADissenterRef dissenter,
                          void* context) {
-  scoped_ptr<EjectDiskOptions> options_deleter(
+  std::unique_ptr<EjectDiskOptions> options_deleter(
       static_cast<EjectDiskOptions*>(context));
   if (dissenter) {
     options_deleter->callback.Run(StorageMonitor::EJECT_IN_USE);
@@ -199,10 +201,8 @@ void StorageMonitorMac::Init() {
   DASessionScheduleWithRunLoop(
       session_, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
 
-  if (base::mac::IsOSLionOrLater()) {
-    image_capture_device_manager_.reset(new ImageCaptureDeviceManager);
-    image_capture_device_manager_->SetNotifications(receiver());
-  }
+  image_capture_device_manager_.reset(new ImageCaptureDeviceManager);
+  image_capture_device_manager_->SetNotifications(receiver());
 }
 
 void StorageMonitorMac::UpdateDisk(
@@ -320,7 +320,7 @@ void StorageMonitorMac::EjectDevice(
   EjectDiskOptions* options = new EjectDiskOptions;
   options->bsd_name = bsd_name;
   options->callback = callback;
-  options->disk.reset(disk.release());
+  options->disk = std::move(disk);
   content::BrowserThread::PostTask(content::BrowserThread::UI, FROM_HERE,
                                    base::Bind(EjectDisk, options));
 }

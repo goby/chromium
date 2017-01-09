@@ -31,6 +31,7 @@
 #ifndef HarfBuzzFace_h
 #define HarfBuzzFace_h
 
+#include "platform/fonts/UnicodeRangeSet.h"
 #include "wtf/Allocator.h"
 #include "wtf/HashMap.h"
 #include "wtf/Noncopyable.h"
@@ -44,50 +45,35 @@
 namespace blink {
 
 class FontPlatformData;
+struct HarfBuzzFontData;
 
 class HarfBuzzFace : public RefCounted<HarfBuzzFace> {
-    WTF_MAKE_NONCOPYABLE(HarfBuzzFace);
-public:
-    static const hb_tag_t vertTag;
-    static const hb_tag_t vrt2Tag;
+  WTF_MAKE_NONCOPYABLE(HarfBuzzFace);
 
-    static PassRefPtr<HarfBuzzFace> create(FontPlatformData* platformData, uint64_t uniqueID)
-    {
-        return adoptRef(new HarfBuzzFace(platformData, uniqueID));
-    }
-    ~HarfBuzzFace();
+ public:
+  static PassRefPtr<HarfBuzzFace> create(FontPlatformData* platformData,
+                                         uint64_t uniqueID) {
+    return adoptRef(new HarfBuzzFace(platformData, uniqueID));
+  }
+  ~HarfBuzzFace();
 
-    // In order to support the restricting effect of unicode-range optionally a
-    // range restriction can be passed in, which will restrict which glyphs we
-    // return in the harfBuzzGetGlyph function.
-    hb_font_t* createFont(unsigned rangeFrom = 0, unsigned rangeTo = kMaxCodepoint) const;
-    hb_face_t* face() const { return m_face; }
+  // In order to support the restricting effect of unicode-range optionally a
+  // range restriction can be passed in, which will restrict which glyphs we
+  // return in the harfBuzzGetGlyph function.
+  hb_font_t* getScaledFont(PassRefPtr<UnicodeRangeSet> = nullptr) const;
 
-private:
-    HarfBuzzFace(FontPlatformData*, uint64_t);
+ private:
+  HarfBuzzFace(FontPlatformData*, uint64_t);
 
-    hb_face_t* createFace();
+  hb_face_t* createFace();
+  void prepareHarfBuzzFontData();
 
-    FontPlatformData* m_platformData;
-    uint64_t m_uniqueID;
-    hb_face_t* m_face;
-    WTF::HashMap<uint32_t, uint16_t>* m_glyphCacheForFaceCacheEntry;
+  FontPlatformData* m_platformData;
+  uint64_t m_uniqueID;
+  hb_font_t* m_unscaledFont;
+  HarfBuzzFontData* m_harfBuzzFontData;
 };
 
-} // namespace blink
+}  // namespace blink
 
-namespace WTF {
-
-template<typename T> struct OwnedPtrDeleter;
-template<> struct OwnedPtrDeleter<hb_font_t> {
-    STATIC_ONLY(OwnedPtrDeleter);
-    static void deletePtr(hb_font_t* font)
-    {
-        if (font)
-            hb_font_destroy(font);
-    }
-};
-
-} // namespace WTF
-
-#endif // HarfBuzzFace_h
+#endif  // HarfBuzzFace_h

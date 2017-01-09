@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("bubble") {
+static_library("bubble") {
   sources = [
     "bubble_close_reason.h",
     "bubble_controller.cc",
@@ -20,7 +20,7 @@ source_set("bubble") {
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
 
   sources = [
@@ -30,6 +30,7 @@ source_set("test_support") {
 
   deps = [
     ":bubble",
+    "//base",
     "//testing/gmock",
     "//testing/gtest",
   ]
@@ -45,6 +46,7 @@ source_set("unit_tests") {
   deps = [
     ":bubble",
     ":test_support",
+    "//base",
     "//testing/gmock",
     "//testing/gtest",
   ]

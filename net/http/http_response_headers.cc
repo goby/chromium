@@ -10,6 +10,8 @@
 #include "net/http/http_response_headers.h"
 
 #include <algorithm>
+#include <unordered_map>
+#include <utility>
 
 #include "base/format_macros.h"
 #include "base/logging.h"
@@ -22,9 +24,11 @@
 #include "base/time/time.h"
 #include "base/values.h"
 #include "net/base/escape.h"
+#include "net/base/parse_number.h"
 #include "net/http/http_byte_range.h"
 #include "net/http/http_log_util.h"
 #include "net/http/http_util.h"
+#include "net/log/net_log_capture_mode.h"
 
 using base::StringPiece;
 using base::Time;
@@ -312,7 +316,7 @@ void HttpResponseHeaders::RemoveHeaderLine(const std::string& name,
 
   new_raw_headers.reserve(raw_headers_.size());
 
-  void* iter = NULL;
+  size_t iter = 0;
   std::string old_header_name;
   std::string old_header_value;
   while (EnumerateHeaderLines(&iter, &old_header_name, &old_header_value)) {
@@ -351,6 +355,10 @@ void HttpResponseHeaders::AddHeader(const std::string& header) {
   Parse(new_raw_headers);
 }
 
+void HttpResponseHeaders::AddCookie(const std::string& cookie_string) {
+  AddHeader("Set-Cookie: " + cookie_string);
+}
+
 void HttpResponseHeaders::ReplaceStatusLine(const std::string& new_status) {
   CheckDoesNotHaveEmbededNulls(new_status);
   // Copy up to the null byte.  This just copies the status line.
@@ -361,10 +369,9 @@ void HttpResponseHeaders::ReplaceStatusLine(const std::string& new_status) {
   MergeWithHeaders(new_raw_headers, empty_to_remove);
 }
 
-void HttpResponseHeaders::UpdateWithNewRange(
-    const HttpByteRange& byte_range,
-    int64 resource_size,
-    bool replace_status_line) {
+void HttpResponseHeaders::UpdateWithNewRange(const HttpByteRange& byte_range,
+                                             int64_t resource_size,
+                                             bool replace_status_line) {
   DCHECK(byte_range.IsValid());
   DCHECK(byte_range.HasFirstBytePosition());
   DCHECK(byte_range.HasLastBytePosition());
@@ -375,9 +382,9 @@ void HttpResponseHeaders::UpdateWithNewRange(
   RemoveHeader(kLengthHeader);
   RemoveHeader(kRangeHeader);
 
-  int64 start = byte_range.first_byte_position();
-  int64 end = byte_range.last_byte_position();
-  int64 range_len = end - start + 1;
+  int64_t start = byte_range.first_byte_position();
+  int64_t end = byte_range.last_byte_position();
+  int64_t range_len = end - start + 1;
 
   if (replace_status_line)
     ReplaceStatusLine("HTTP/1.1 206 Partial Content");
@@ -456,7 +463,7 @@ void HttpResponseHeaders::GetNormalizedHeaders(std::string* output) const {
   // be a web app, we cannot be certain of the semantics of commas despite the
   // fact that RFC 2616 says that they should be regarded as value separators.
   //
-  typedef base::hash_map<std::string, size_t> HeadersMap;
+  using HeadersMap = std::unordered_map<std::string, size_t>;
   HeadersMap headers_map;
   HeadersMap::iterator iter = headers_map.end();
 
@@ -549,10 +556,10 @@ std::string HttpResponseHeaders::GetStatusText() const {
   return std::string(begin, end);
 }
 
-bool HttpResponseHeaders::EnumerateHeaderLines(void** iter,
+bool HttpResponseHeaders::EnumerateHeaderLines(size_t* iter,
                                                std::string* name,
                                                std::string* value) const {
-  size_t i = reinterpret_cast<size_t>(*iter);
+  size_t i = *iter;
   if (i == parsed_.size())
     return false;
 
@@ -567,18 +574,18 @@ bool HttpResponseHeaders::EnumerateHeaderLines(void** iter,
 
   value->assign(value_begin, value_end);
 
-  *iter = reinterpret_cast<void*>(i);
+  *iter = i;
   return true;
 }
 
-bool HttpResponseHeaders::EnumerateHeader(void** iter,
+bool HttpResponseHeaders::EnumerateHeader(size_t* iter,
                                           const base::StringPiece& name,
                                           std::string* value) const {
   size_t i;
   if (!iter || !*iter) {
     i = FindHeader(0, name);
   } else {
-    i = reinterpret_cast<size_t>(*iter);
+    i = *iter;
     if (i >= parsed_.size()) {
       i = std::string::npos;
     } else if (!parsed_[i].is_continuation()) {
@@ -592,7 +599,7 @@ bool HttpResponseHeaders::EnumerateHeader(void** iter,
   }
 
   if (iter)
-    *iter = reinterpret_cast<void*>(i + 1);
+    *iter = i + 1;
   value->assign(parsed_[i].value_begin, parsed_[i].value_end);
   return true;
 }
@@ -601,7 +608,7 @@ bool HttpResponseHeaders::HasHeaderValue(const base::StringPiece& name,
                                          const base::StringPiece& value) const {
   // The value has to be an exact match.  This is important since
   // 'cache-control: no-cache' != 'cache-control: no-cache="foo"'
-  void* iter = NULL;
+  size_t iter = 0;
   std::string temp;
   while (EnumerateHeader(&iter, name, &temp)) {
     if (base::EqualsCaseInsensitiveASCII(value, temp))
@@ -654,13 +661,13 @@ HttpVersion HttpResponseHeaders::ParseVersion(
   ++p;  // from / to first digit.
   ++dot;  // from . to second digit.
 
-  if (!(*p >= '0' && *p <= '9' && *dot >= '0' && *dot <= '9')) {
+  if (!(base::IsAsciiDigit(*p) && base::IsAsciiDigit(*dot))) {
     DVLOG(1) << "malformed version number";
     return HttpVersion();
   }
 
-  uint16 major = *p - '0';
-  uint16 minor = *dot - '0';
+  uint16_t major = *p - '0';
+  uint16_t minor = *dot - '0';
 
   return HttpVersion(major, minor);
 }
@@ -709,7 +716,7 @@ void HttpResponseHeaders::ParseStatusLine(
     ++p;
 
   std::string::const_iterator code = p;
-  while (p < line_end && *p >= '0' && *p <= '9')
+  while (p < line_end && base::IsAsciiDigit(*p))
     ++p;
 
   if (p == code) {
@@ -757,13 +764,13 @@ bool HttpResponseHeaders::GetCacheControlDirective(const StringPiece& directive,
 
   size_t directive_size = directive.size();
 
-  void* iter = NULL;
+  size_t iter = 0;
   while (EnumerateHeader(&iter, name, &value)) {
     if (value.size() > directive_size + 1 &&
         base::StartsWith(value, directive,
                          base::CompareCase::INSENSITIVE_ASCII) &&
         value[directive_size] == '=') {
-      int64 seconds;
+      int64_t seconds;
       base::StringToInt64(
           StringPiece(value.begin() + directive_size + 1, value.end()),
           &seconds);
@@ -814,7 +821,7 @@ void HttpResponseHeaders::AddNonCacheableHeaders(HeaderSet* result) const {
   const size_t kPrefixLen = sizeof(kPrefix) - 1;
 
   std::string value;
-  void* iter = NULL;
+  size_t iter = 0;
   while (EnumerateHeader(&iter, kCacheControl, &value)) {
     // If the value is smaller than the prefix and a terminal quote, skip
     // it.
@@ -889,7 +896,7 @@ void HttpResponseHeaders::GetMimeTypeAndCharset(std::string* mime_type,
 
   bool had_charset = false;
 
-  void* iter = NULL;
+  size_t iter = 0;
   while (EnumerateHeader(&iter, name, &value))
     HttpUtil::ParseContentType(value, mime_type, charset, &had_charset, NULL);
 }
@@ -961,7 +968,7 @@ ValidationType HttpResponseHeaders::RequiresValidation(
     const Time& response_time,
     const Time& current_time) const {
   FreshnessLifetimes lifetimes = GetFreshnessLifetimes(response_time);
-  if (lifetimes.freshness == TimeDelta() && lifetimes.staleness == TimeDelta())
+  if (lifetimes.freshness.is_zero() && lifetimes.staleness.is_zero())
     return VALIDATION_SYNCHRONOUS;
 
   TimeDelta age = GetCurrentAge(request_time, response_time, current_time);
@@ -1152,11 +1159,23 @@ bool HttpResponseHeaders::GetMaxAgeValue(TimeDelta* result) const {
 
 bool HttpResponseHeaders::GetAgeValue(TimeDelta* result) const {
   std::string value;
-  if (!EnumerateHeader(NULL, "Age", &value))
+  if (!EnumerateHeader(nullptr, "Age", &value))
     return false;
 
-  int64 seconds;
-  base::StringToInt64(value, &seconds);
+  // Parse the delta-seconds as 1*DIGIT.
+  uint32_t seconds;
+  ParseIntError error;
+  if (!ParseUint32(value, &seconds, &error)) {
+    if (error == ParseIntError::FAILED_OVERFLOW) {
+      // If the Age value cannot fit in a uint32_t, saturate it to a maximum
+      // value. This is similar to what RFC 2616 says in section 14.6 for how
+      // caches should transmit values that overflow.
+      seconds = std::numeric_limits<decltype(seconds)>::max();
+    } else {
+      return false;
+    }
+  }
+
   *result = TimeDelta::FromSeconds(seconds);
   return true;
 }
@@ -1181,7 +1200,7 @@ bool HttpResponseHeaders::GetStaleWhileRevalidateValue(
 bool HttpResponseHeaders::GetTimeValuedHeader(const std::string& name,
                                               Time* result) const {
   std::string value;
-  if (!EnumerateHeader(NULL, name, &value))
+  if (!EnumerateHeader(nullptr, name, &value))
     return false;
 
   // When parsing HTTP dates it's beneficial to default to GMT because:
@@ -1223,7 +1242,7 @@ bool HttpResponseHeaders::IsKeepAlive() const {
     return false;
 
   for (const char* header : kConnectionHeaders) {
-    void* iterator = nullptr;
+    size_t iterator = 0;
     std::string token;
     while (EnumerateHeader(&iterator, header, &token)) {
       for (const KeepAliveToken& keep_alive_token : kKeepAliveTokens) {
@@ -1237,26 +1256,35 @@ bool HttpResponseHeaders::IsKeepAlive() const {
 
 bool HttpResponseHeaders::HasStrongValidators() const {
   std::string etag_header;
-  EnumerateHeader(NULL, "etag", &etag_header);
+  EnumerateHeader(nullptr, "etag", &etag_header);
   std::string last_modified_header;
-  EnumerateHeader(NULL, "Last-Modified", &last_modified_header);
+  EnumerateHeader(nullptr, "Last-Modified", &last_modified_header);
   std::string date_header;
-  EnumerateHeader(NULL, "Date", &date_header);
+  EnumerateHeader(nullptr, "Date", &date_header);
   return HttpUtil::HasStrongValidators(GetHttpVersion(),
                                        etag_header,
                                        last_modified_header,
                                        date_header);
 }
 
+bool HttpResponseHeaders::HasValidators() const {
+  std::string etag_header;
+  EnumerateHeader(NULL, "etag", &etag_header);
+  std::string last_modified_header;
+  EnumerateHeader(NULL, "Last-Modified", &last_modified_header);
+  return HttpUtil::HasValidators(GetHttpVersion(), etag_header,
+                                 last_modified_header);
+}
+
 // From RFC 2616:
 // Content-Length = "Content-Length" ":" 1*DIGIT
-int64 HttpResponseHeaders::GetContentLength() const {
+int64_t HttpResponseHeaders::GetContentLength() const {
   return GetInt64HeaderValue("content-length");
 }
 
-int64 HttpResponseHeaders::GetInt64HeaderValue(
+int64_t HttpResponseHeaders::GetInt64HeaderValue(
     const std::string& header) const {
-  void* iter = NULL;
+  size_t iter = 0;
   std::string content_length_val;
   if (!EnumerateHeader(&iter, header, &content_length_val))
     return -1;
@@ -1267,7 +1295,7 @@ int64 HttpResponseHeaders::GetInt64HeaderValue(
   if (content_length_val[0] == '+')
     return -1;
 
-  int64 result;
+  int64_t result;
   bool ok = base::StringToInt64(content_length_val, &result);
   if (!ok || result < 0)
     return -1;
@@ -1275,126 +1303,27 @@ int64 HttpResponseHeaders::GetInt64HeaderValue(
   return result;
 }
 
-// From RFC 2616 14.16:
-// content-range-spec =
-//     bytes-unit SP byte-range-resp-spec "/" ( instance-length | "*" )
-// byte-range-resp-spec = (first-byte-pos "-" last-byte-pos) | "*"
-// instance-length = 1*DIGIT
-// bytes-unit = "bytes"
-bool HttpResponseHeaders::GetContentRange(int64* first_byte_position,
-                                          int64* last_byte_position,
-                                          int64* instance_length) const {
-  void* iter = NULL;
+bool HttpResponseHeaders::GetContentRange(int64_t* first_byte_position,
+                                          int64_t* last_byte_position,
+                                          int64_t* instance_length) const {
+  size_t iter = 0;
   std::string content_range_spec;
-  *first_byte_position = *last_byte_position = *instance_length = -1;
-  if (!EnumerateHeader(&iter, kContentRange, &content_range_spec))
-    return false;
-
-  // If the header value is empty, we have an invalid header.
-  if (content_range_spec.empty())
-    return false;
-
-  size_t space_position = content_range_spec.find(' ');
-  if (space_position == std::string::npos)
-    return false;
-
-  // Invalid header if it doesn't contain "bytes-unit".
-  std::string::const_iterator content_range_spec_begin =
-      content_range_spec.begin();
-  std::string::const_iterator content_range_spec_end =
-      content_range_spec.begin() + space_position;
-  HttpUtil::TrimLWS(&content_range_spec_begin, &content_range_spec_end);
-  if (!base::LowerCaseEqualsASCII(
-          base::StringPiece(content_range_spec_begin, content_range_spec_end),
-          "bytes")) {
+  if (!EnumerateHeader(&iter, kContentRange, &content_range_spec)) {
+    *first_byte_position = *last_byte_position = *instance_length = -1;
     return false;
   }
 
-  size_t slash_position = content_range_spec.find('/', space_position + 1);
-  if (slash_position == std::string::npos)
-    return false;
-
-  // Obtain the part behind the space and before slash.
-  std::string::const_iterator byte_range_resp_spec_begin =
-      content_range_spec.begin() + space_position + 1;
-  std::string::const_iterator byte_range_resp_spec_end =
-      content_range_spec.begin() + slash_position;
-  HttpUtil::TrimLWS(&byte_range_resp_spec_begin, &byte_range_resp_spec_end);
-
-  // Parse the byte-range-resp-spec part.
-  std::string byte_range_resp_spec(byte_range_resp_spec_begin,
-                                   byte_range_resp_spec_end);
-  // If byte-range-resp-spec != "*".
-  if (!base::LowerCaseEqualsASCII(byte_range_resp_spec, "*")) {
-    size_t minus_position = byte_range_resp_spec.find('-');
-    if (minus_position != std::string::npos) {
-      // Obtain first-byte-pos.
-      std::string::const_iterator first_byte_pos_begin =
-          byte_range_resp_spec.begin();
-      std::string::const_iterator first_byte_pos_end =
-          byte_range_resp_spec.begin() + minus_position;
-      HttpUtil::TrimLWS(&first_byte_pos_begin, &first_byte_pos_end);
-
-      bool ok = base::StringToInt64(StringPiece(first_byte_pos_begin,
-                                                first_byte_pos_end),
-                                    first_byte_position);
-
-      // Obtain last-byte-pos.
-      std::string::const_iterator last_byte_pos_begin =
-          byte_range_resp_spec.begin() + minus_position + 1;
-      std::string::const_iterator last_byte_pos_end =
-          byte_range_resp_spec.end();
-      HttpUtil::TrimLWS(&last_byte_pos_begin, &last_byte_pos_end);
-
-      ok &= base::StringToInt64(StringPiece(last_byte_pos_begin,
-                                            last_byte_pos_end),
-                                last_byte_position);
-      if (!ok) {
-        *first_byte_position = *last_byte_position = -1;
-        return false;
-      }
-      if (*first_byte_position < 0 || *last_byte_position < 0 ||
-          *first_byte_position > *last_byte_position)
-        return false;
-    } else {
-      return false;
-    }
-  }
-
-  // Parse the instance-length part.
-  // If instance-length == "*".
-  std::string::const_iterator instance_length_begin =
-      content_range_spec.begin() + slash_position + 1;
-  std::string::const_iterator instance_length_end =
-      content_range_spec.end();
-  HttpUtil::TrimLWS(&instance_length_begin, &instance_length_end);
-
-  if (base::StartsWith(
-          base::StringPiece(instance_length_begin, instance_length_end), "*",
-          base::CompareCase::SENSITIVE)) {
-    return false;
-  } else if (!base::StringToInt64(StringPiece(instance_length_begin,
-                                              instance_length_end),
-                                  instance_length)) {
-    *instance_length = -1;
-    return false;
-  }
-
-  // We have all the values; let's verify that they make sense for a 206
-  // response.
-  if (*first_byte_position < 0 || *last_byte_position < 0 ||
-      *instance_length < 0 || *instance_length - 1 < *last_byte_position)
-    return false;
-
-  return true;
+  return HttpUtil::ParseContentRangeHeader(content_range_spec,
+                                           first_byte_position,
+                                           last_byte_position, instance_length);
 }
 
-scoped_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
+std::unique_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
     NetLogCaptureMode capture_mode) const {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   base::ListValue* headers = new base::ListValue();
-  headers->Append(new base::StringValue(GetStatusLine()));
-  void* iterator = NULL;
+  headers->AppendString(EscapeNonASCII(GetStatusLine()));
+  size_t iterator = 0;
   std::string name;
   std::string value;
   while (EnumerateHeaderLines(&iterator, &name, &value)) {
@@ -1402,13 +1331,11 @@ scoped_ptr<base::Value> HttpResponseHeaders::NetLogCallback(
         ElideHeaderValueForNetLog(capture_mode, name, value);
     std::string escaped_name = EscapeNonASCII(name);
     std::string escaped_value = EscapeNonASCII(log_value);
-    headers->Append(
-      new base::StringValue(
-          base::StringPrintf("%s: %s", escaped_name.c_str(),
-                             escaped_value.c_str())));
+    headers->AppendString(base::StringPrintf("%s: %s", escaped_name.c_str(),
+                                             escaped_value.c_str()));
   }
   dict->Set("headers", headers);
-  return dict.Pass();
+  return std::move(dict);
 }
 
 // static

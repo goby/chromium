@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_SHARED_WORKER_SHARED_WORKER_MESSAGE_FILTER_H_
 #define CONTENT_BROWSER_SHARED_WORKER_SHARED_WORKER_MESSAGE_FILTER_H_
 
+#include "base/macros.h"
 #include "content/browser/shared_worker/worker_storage_partition.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -54,12 +55,6 @@ class CONTENT_EXPORT SharedWorkerMessageFilter : public BrowserMessageFilter {
   void OnWorkerScriptLoaded(int worker_route_id);
   void OnWorkerScriptLoadFailed(int worker_route_id);
   void OnWorkerConnected(int message_port_id, int worker_route_id);
-  void OnAllowDatabase(int worker_route_id,
-                       const GURL& url,
-                       const base::string16& name,
-                       const base::string16& display_name,
-                       unsigned long estimated_size,
-                       bool* result);
   void OnRequestFileSystemAccess(int worker_route_id,
                                  const GURL& url,
                                  IPC::Message* reply_msg);

@@ -5,33 +5,33 @@
 #ifndef NET_SOCKET_SOCKS_CLIENT_SOCKET_H_
 #define NET_SOCKET_SOCKS_CLIENT_SOCKET_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/address_list.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_errors.h"
+#include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
-#include "net/dns/single_request_host_resolver.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
 
 namespace net {
 
 class ClientSocketHandle;
-class BoundNetLog;
 
 // The SOCKS client socket implementation
 class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
  public:
   // |req_info| contains the hostname and port to which the socket above will
   // communicate to via the socks layer. For testing the referrer is optional.
-  SOCKSClientSocket(scoped_ptr<ClientSocketHandle> transport_socket,
+  SOCKSClientSocket(std::unique_ptr<ClientSocketHandle> transport_socket,
                     const HostResolver::RequestInfo& req_info,
                     RequestPriority priority,
                     HostResolver* host_resolver);
@@ -46,11 +46,10 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
-  const BoundNetLog& NetLog() const override;
+  const NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(SSLInfo* ssl_info) override;
@@ -67,8 +66,8 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
             int buf_len,
             const CompletionCallback& callback) override;
 
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
 
   int GetPeerAddress(IPEndPoint* address) const override;
   int GetLocalAddress(IPEndPoint* address) const override;
@@ -103,7 +102,7 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   const std::string BuildHandshakeWriteBuffer() const;
 
   // Stores the underlying socket.
-  scoped_ptr<ClientSocketHandle> transport_;
+  std::unique_ptr<ClientSocketHandle> transport_;
 
   State next_state_;
 
@@ -131,12 +130,13 @@ class NET_EXPORT_PRIVATE SOCKSClientSocket : public StreamSocket {
   bool was_ever_used_;
 
   // Used to resolve the hostname to which the SOCKS proxy will connect.
-  SingleRequestHostResolver host_resolver_;
+  HostResolver* host_resolver_;
+  std::unique_ptr<HostResolver::Request> request_;
   AddressList addresses_;
   HostResolver::RequestInfo host_request_info_;
   RequestPriority priority_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(SOCKSClientSocket);
 };

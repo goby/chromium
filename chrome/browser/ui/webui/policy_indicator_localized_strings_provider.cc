@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/webui/policy_indicator_localized_strings_provider.h"
 
+#include "build/build_config.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/web_ui_data_source.h"
 
@@ -17,9 +18,6 @@ void AddLocalizedStrings(content::WebUIDataSource* html_source) {
   html_source->AddLocalizedString(
       "controlledSettingRecommendedDiffers",
       IDS_OPTIONS_CONTROLLED_SETTING_HAS_RECOMMENDATION);
-  html_source->AddLocalizedString(
-      "controlledSettingExtension",
-      IDS_SETTINGS_CONTROLLED_SETTING_NAMED_EXTENSION);
 #if defined(OS_CHROMEOS)
   html_source->AddLocalizedString("controlledSettingShared",
                                   IDS_OPTIONS_CONTROLLED_SETTING_SHARED);

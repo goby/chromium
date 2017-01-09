@@ -4,11 +4,12 @@
 
 #include "extensions/browser/api/vpn_provider/vpn_provider_api.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -143,6 +144,11 @@ void ConvertParameters(const api_vpn::Parameters& parameters,
       shill::kDnsServersParameterThirdPartyVpn,
       base::JoinString(parameters.dns_servers, ip_delimiter));
 
+  if (parameters.reconnect) {
+    parameter_value->SetStringWithoutPathExpansion(
+        shill::kReconnectParameterThirdPartyVpn, *parameters.reconnect);
+  }
+
   return;
 }
 
@@ -157,7 +163,7 @@ void VpnThreadExtensionFunction::SignalCallCompletionSuccess() {
 
 void VpnThreadExtensionFunction::SignalCallCompletionSuccessWithId(
     const std::string& configuration_id) {
-  Respond(OneArgument(new base::StringValue(configuration_id)));
+  Respond(OneArgument(base::MakeUnique<base::StringValue>(configuration_id)));
 }
 
 void VpnThreadExtensionFunction::SignalCallCompletionSuccessWithWarning(
@@ -184,7 +190,7 @@ VpnProviderCreateConfigFunction::~VpnProviderCreateConfigFunction() {
 }
 
 ExtensionFunction::ResponseAction VpnProviderCreateConfigFunction::Run() {
-  scoped_ptr<api_vpn::CreateConfig::Params> params(
+  std::unique_ptr<api_vpn::CreateConfig::Params> params(
       api_vpn::CreateConfig::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error("Invalid arguments."));
@@ -214,7 +220,7 @@ VpnProviderDestroyConfigFunction::~VpnProviderDestroyConfigFunction() {
 }
 
 ExtensionFunction::ResponseAction VpnProviderDestroyConfigFunction::Run() {
-  scoped_ptr<api_vpn::DestroyConfig::Params> params(
+  std::unique_ptr<api_vpn::DestroyConfig::Params> params(
       api_vpn::DestroyConfig::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error("Invalid arguments."));
@@ -241,7 +247,7 @@ VpnProviderSetParametersFunction::~VpnProviderSetParametersFunction() {
 }
 
 ExtensionFunction::ResponseAction VpnProviderSetParametersFunction::Run() {
-  scoped_ptr<api_vpn::SetParameters::Params> params(
+  std::unique_ptr<api_vpn::SetParameters::Params> params(
       api_vpn::SetParameters::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error("Invalid arguments."));
@@ -276,7 +282,7 @@ VpnProviderSendPacketFunction::~VpnProviderSendPacketFunction() {
 }
 
 ExtensionFunction::ResponseAction VpnProviderSendPacketFunction::Run() {
-  scoped_ptr<api_vpn::SendPacket::Params> params(
+  std::unique_ptr<api_vpn::SendPacket::Params> params(
       api_vpn::SendPacket::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error("Invalid arguments."));
@@ -305,7 +311,7 @@ VpnProviderNotifyConnectionStateChangedFunction::
 
 ExtensionFunction::ResponseAction
 VpnProviderNotifyConnectionStateChangedFunction::Run() {
-  scoped_ptr<api_vpn::NotifyConnectionStateChanged::Params> params(
+  std::unique_ptr<api_vpn::NotifyConnectionStateChanged::Params> params(
       api_vpn::NotifyConnectionStateChanged::Params::Create(*args_));
   if (!params) {
     return RespondNow(Error("Invalid arguments."));

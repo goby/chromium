@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/global_error/global_error_service.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/stl_util.h"
@@ -17,7 +19,7 @@ GlobalErrorService::GlobalErrorService(Profile* profile) : profile_(profile) {
 }
 
 GlobalErrorService::~GlobalErrorService() {
-  STLDeleteElements(&errors_);
+  base::STLDeleteElements(&errors_);
 }
 
 void GlobalErrorService::AddGlobalError(GlobalError* error) {

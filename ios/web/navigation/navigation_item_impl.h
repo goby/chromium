@@ -7,9 +7,9 @@
 
 #import <Foundation/Foundation.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "ios/web/navigation/navigation_item_facade_delegate.h"
 #include "ios/web/public/favicon_status.h"
@@ -37,7 +37,7 @@ class NavigationItemImpl : public web::NavigationItem {
   // NOTE: to minimize facade synchronization code, NavigationItems take
   // ownership of their facade delegates.
   void SetFacadeDelegate(
-      scoped_ptr<NavigationItemFacadeDelegate> facade_delegate);
+      std::unique_ptr<NavigationItemFacadeDelegate> facade_delegate);
   NavigationItemFacadeDelegate* GetFacadeDelegate() const;
 
   // NavigationItem implementation:
@@ -52,8 +52,7 @@ class NavigationItemImpl : public web::NavigationItem {
   const base::string16& GetTitle() const override;
   void SetPageDisplayState(const PageDisplayState& display_state) override;
   const PageDisplayState& GetPageDisplayState() const override;
-  const base::string16& GetTitleForDisplay(
-      const std::string& languages) const override;
+  const base::string16& GetTitleForDisplay() const override;
   void SetTransitionType(ui::PageTransition transition_type) override;
   ui::PageTransition GetTransitionType() const override;
   const FaviconStatus& GetFavicon() const override;
@@ -62,8 +61,6 @@ class NavigationItemImpl : public web::NavigationItem {
   SSLStatus& GetSSL() override;
   void SetTimestamp(base::Time timestamp) override;
   base::Time GetTimestamp() const override;
-  void SetUnsafe(bool is_unsafe) override;
-  bool IsUnsafe() const override;
   void SetIsOverridingUserAgent(bool is_overriding_user_agent) override;
   bool IsOverridingUserAgent() const override;
   bool HasPostData() const override;
@@ -81,6 +78,18 @@ class NavigationItemImpl : public web::NavigationItem {
   // Whether or not this item was created by calling history.pushState().
   void SetIsCreatedFromPushState(bool push_state);
   bool IsCreatedFromPushState() const;
+
+  // Whether the state for this navigation has been changed by
+  // history.replaceState().
+  // TODO(crbug.com/659816): This state is only tracked because of flaky early
+  // page script injection.  Once the root cause of this flake is found, this
+  // can be removed.
+  void SetHasStateBeenReplaced(bool replace_state);
+  bool HasStateBeenReplaced() const;
+
+  // Whether this navigation is the result of a hash change.
+  void SetIsCreatedFromHashChange(bool hash_change);
+  bool IsCreatedFromHashChange() const;
 
   // Whether or not to bypass showing the resubmit data confirmation when
   // loading a POST request. Set to YES for browser-generated POST requests.
@@ -124,6 +133,8 @@ class NavigationItemImpl : public web::NavigationItem {
 
   base::scoped_nsobject<NSString> serialized_state_object_;
   bool is_created_from_push_state_;
+  bool has_state_been_replaced_;
+  bool is_created_from_hash_change_;
   bool should_skip_resubmit_data_confirmation_;
   base::scoped_nsobject<NSData> post_data_;
 
@@ -140,7 +151,7 @@ class NavigationItemImpl : public web::NavigationItem {
   mutable base::string16 cached_display_title_;
 
   // Weak pointer to the facade delegate.
-  scoped_ptr<NavigationItemFacadeDelegate> facade_delegate_;
+  std::unique_ptr<NavigationItemFacadeDelegate> facade_delegate_;
 
   // Copy and assignment is explicitly allowed for this class.
 };

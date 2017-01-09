@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/PresentationRequest.h"
 
 #include "bindings/core/v8/CallbackPromiseAdapter.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptPromise.h"
 #include "bindings/core/v8/ScriptPromiseResolver.h"
+#include "core/dom/DOMException.h"
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
+#include "core/frame/Settings.h"
 #include "core/frame/UseCounter.h"
+#include "core/loader/MixedContentChecker.h"
 #include "modules/EventTargetModules.h"
 #include "modules/presentation/PresentationAvailability.h"
 #include "modules/presentation/PresentationAvailabilityCallbacks.h"
@@ -26,125 +28,190 @@ namespace blink {
 namespace {
 
 // TODO(mlamouri): refactor in one common place.
-WebPresentationClient* presentationClient(ExecutionContext* executionContext)
-{
-    ASSERT(executionContext && executionContext->isDocument());
+WebPresentationClient* presentationClient(ExecutionContext* executionContext) {
+  DCHECK(executionContext);
 
-    Document* document = toDocument(executionContext);
-    if (!document->frame())
-        return nullptr;
-    PresentationController* controller = PresentationController::from(*document->frame());
-    return controller ? controller->client() : nullptr;
+  Document* document = toDocument(executionContext);
+  if (!document->frame())
+    return nullptr;
+  PresentationController* controller =
+      PresentationController::from(*document->frame());
+  return controller ? controller->client() : nullptr;
 }
 
-} // anonymous namespace
+Settings* settings(ExecutionContext* executionContext) {
+  DCHECK(executionContext);
+
+  Document* document = toDocument(executionContext);
+  return document->settings();
+}
+
+ScriptPromise rejectWithMixedContentException(ScriptState* scriptState,
+                                              const String& url) {
+  return ScriptPromise::rejectWithDOMException(
+      scriptState,
+      DOMException::create(SecurityError,
+                           "Presentation of an insecure document [" + url +
+                               "] is prohibited from a secure context."));
+}
+
+ScriptPromise rejectWithSandBoxException(ScriptState* scriptState) {
+  return ScriptPromise::rejectWithDOMException(
+      scriptState, DOMException::create(SecurityError,
+                                        "The document is sandboxed and lacks "
+                                        "the 'allow-presentation' flag."));
+}
+
+}  // anonymous namespace
 
 // static
-PresentationRequest* PresentationRequest::create(ExecutionContext* executionContext, const String& url, ExceptionState& exceptionState)
-{
-    KURL parsedUrl = KURL(executionContext->url(), url);
-    if (!parsedUrl.isValid() || parsedUrl.protocolIsAbout()) {
-        exceptionState.throwTypeError("'" + url + "' can't be resolved to a valid URL.");
-        return nullptr;
-    }
+PresentationRequest* PresentationRequest::create(
+    ExecutionContext* executionContext,
+    const String& url,
+    ExceptionState& exceptionState) {
+  KURL parsedUrl = KURL(executionContext->url(), url);
+  if (!parsedUrl.isValid() || parsedUrl.protocolIsAbout()) {
+    exceptionState.throwTypeError("'" + url +
+                                  "' can't be resolved to a valid URL.");
+    return nullptr;
+  }
 
-    PresentationRequest* request = new PresentationRequest(executionContext, parsedUrl);
-    request->suspendIfNeeded();
-    return request;
+  PresentationRequest* request =
+      new PresentationRequest(executionContext, parsedUrl);
+  request->suspendIfNeeded();
+  return request;
 }
 
-const AtomicString& PresentationRequest::interfaceName() const
-{
-    return EventTargetNames::PresentationRequest;
+const AtomicString& PresentationRequest::interfaceName() const {
+  return EventTargetNames::PresentationRequest;
 }
 
-ExecutionContext* PresentationRequest::executionContext() const
-{
-    return ActiveDOMObject::executionContext();
+ExecutionContext* PresentationRequest::getExecutionContext() const {
+  return SuspendableObject::getExecutionContext();
 }
 
-bool PresentationRequest::addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
-{
-    if (eventType == EventTypeNames::connectionavailable)
-        UseCounter::count(executionContext(), UseCounter::PresentationRequestConnectionAvailableEventListener);
-
-    return EventTarget::addEventListenerInternal(eventType, listener, options);
+void PresentationRequest::addedEventListener(
+    const AtomicString& eventType,
+    RegisteredEventListener& registeredListener) {
+  EventTargetWithInlineData::addedEventListener(eventType, registeredListener);
+  if (eventType == EventTypeNames::connectionavailable)
+    UseCounter::count(
+        getExecutionContext(),
+        UseCounter::PresentationRequestConnectionAvailableEventListener);
 }
 
-bool PresentationRequest::hasPendingActivity() const
-{
-    if (!executionContext() || executionContext()->activeDOMObjectsAreStopped())
-        return false;
+bool PresentationRequest::hasPendingActivity() const {
+  if (!getExecutionContext() || getExecutionContext()->isContextDestroyed())
+    return false;
 
-    // Prevents garbage collecting of this object when not hold by another
-    // object but still has listeners registered.
-    return hasEventListeners();
+  // Prevents garbage collecting of this object when not hold by another
+  // object but still has listeners registered.
+  return hasEventListeners();
 }
 
-ScriptPromise PresentationRequest::start(ScriptState* scriptState)
-{
-    ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
-    ScriptPromise promise = resolver->promise();
+ScriptPromise PresentationRequest::start(ScriptState* scriptState) {
+  Settings* contextSettings = settings(getExecutionContext());
+  bool isUserGestureRequired =
+      !contextSettings || contextSettings->presentationRequiresUserGesture();
 
-    if (!UserGestureIndicator::processingUserGesture()) {
-        resolver->reject(DOMException::create(InvalidAccessError, "PresentationRequest::start() requires user gesture."));
-        return promise;
-    }
+  if (isUserGestureRequired && !UserGestureIndicator::utilizeUserGesture())
+    return ScriptPromise::rejectWithDOMException(
+        scriptState,
+        DOMException::create(
+            InvalidAccessError,
+            "PresentationRequest::start() requires user gesture."));
 
-    WebPresentationClient* client = presentationClient(executionContext());
-    if (!client) {
-        resolver->reject(DOMException::create(InvalidStateError, "The PresentationRequest is no longer associated to a frame."));
-        return promise;
-    }
-    client->startSession(m_url.string(), new PresentationConnectionCallbacks(resolver, this));
+  if (MixedContentChecker::isMixedContent(
+          getExecutionContext()->getSecurityOrigin(), m_url)) {
+    return rejectWithMixedContentException(scriptState, m_url.getString());
+  }
 
-    return promise;
+  if (toDocument(getExecutionContext())->isSandboxed(SandboxPresentation))
+    return rejectWithSandBoxException(scriptState);
+
+  WebPresentationClient* client = presentationClient(getExecutionContext());
+  if (!client)
+    return ScriptPromise::rejectWithDOMException(
+        scriptState,
+        DOMException::create(
+            InvalidStateError,
+            "The PresentationRequest is no longer associated to a frame."));
+
+  ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
+  // TODO(crbug.com/627655): Accept multiple URLs per PresentationRequest.
+  WebVector<WebURL> presentationUrls(static_cast<size_t>(1U));
+  presentationUrls[0] = m_url;
+  client->startSession(
+      presentationUrls,
+      WTF::makeUnique<PresentationConnectionCallbacks>(resolver, this));
+  return resolver->promise();
 }
 
-ScriptPromise PresentationRequest::reconnect(ScriptState* scriptState, const String& id)
-{
-    ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
-    ScriptPromise promise = resolver->promise();
+ScriptPromise PresentationRequest::reconnect(ScriptState* scriptState,
+                                             const String& id) {
+  if (MixedContentChecker::isMixedContent(
+          getExecutionContext()->getSecurityOrigin(), m_url)) {
+    return rejectWithMixedContentException(scriptState, m_url.getString());
+  }
 
-    WebPresentationClient* client = presentationClient(executionContext());
-    if (!client) {
-        resolver->reject(DOMException::create(InvalidStateError, "The PresentationRequest is no longer associated to a frame."));
-        return promise;
-    }
-    client->joinSession(m_url.string(), id, new PresentationConnectionCallbacks(resolver, this));
+  if (toDocument(getExecutionContext())->isSandboxed(SandboxPresentation))
+    return rejectWithSandBoxException(scriptState);
 
-    return promise;
+  WebPresentationClient* client = presentationClient(getExecutionContext());
+  if (!client)
+    return ScriptPromise::rejectWithDOMException(
+        scriptState,
+        DOMException::create(
+            InvalidStateError,
+            "The PresentationRequest is no longer associated to a frame."));
+
+  ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
+  // TODO(crbug.com/627655): Accept multiple URLs per PresentationRequest.
+  WebVector<WebURL> presentationUrls(static_cast<size_t>(1U));
+  presentationUrls[0] = m_url;
+  client->joinSession(
+      presentationUrls, id,
+      WTF::makeUnique<PresentationConnectionCallbacks>(resolver, this));
+  return resolver->promise();
 }
 
-ScriptPromise PresentationRequest::getAvailability(ScriptState* scriptState)
-{
-    ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
-    ScriptPromise promise = resolver->promise();
+ScriptPromise PresentationRequest::getAvailability(ScriptState* scriptState) {
+  if (MixedContentChecker::isMixedContent(
+          getExecutionContext()->getSecurityOrigin(), m_url)) {
+    return rejectWithMixedContentException(scriptState, m_url.getString());
+  }
 
-    WebPresentationClient* client = presentationClient(executionContext());
-    if (!client) {
-        resolver->reject(DOMException::create(InvalidStateError, "The object is no longer associated to a frame."));
-        return promise;
-    }
-    client->getAvailability(m_url.string(), new PresentationAvailabilityCallbacks(resolver, m_url));
-    return promise;
+  if (toDocument(getExecutionContext())->isSandboxed(SandboxPresentation))
+    return rejectWithSandBoxException(scriptState);
+
+  WebPresentationClient* client = presentationClient(getExecutionContext());
+  if (!client)
+    return ScriptPromise::rejectWithDOMException(
+        scriptState,
+        DOMException::create(
+            InvalidStateError,
+            "The PresentationRequest is no longer associated to a frame."));
+
+  ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
+  client->getAvailability(
+      m_url,
+      WTF::makeUnique<PresentationAvailabilityCallbacks>(resolver, m_url));
+  return resolver->promise();
 }
 
-const KURL& PresentationRequest::url() const
-{
-    return m_url;
+const KURL& PresentationRequest::url() const {
+  return m_url;
 }
 
-DEFINE_TRACE(PresentationRequest)
-{
-    RefCountedGarbageCollectedEventTargetWithInlineData<PresentationRequest>::trace(visitor);
-    ActiveDOMObject::trace(visitor);
+DEFINE_TRACE(PresentationRequest) {
+  EventTargetWithInlineData::trace(visitor);
+  SuspendableObject::trace(visitor);
 }
 
-PresentationRequest::PresentationRequest(ExecutionContext* executionContext, const KURL& url)
-    : ActiveDOMObject(executionContext)
-    , m_url(url)
-{
-}
+PresentationRequest::PresentationRequest(ExecutionContext* executionContext,
+                                         const KURL& url)
+    : ActiveScriptWrappable(this),
+      SuspendableObject(executionContext),
+      m_url(url) {}
 
-} // namespace blink
+}  // namespace blink

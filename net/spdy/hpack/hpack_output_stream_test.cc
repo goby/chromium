@@ -6,7 +6,6 @@
 
 #include <cstddef>
 
-#include "base/basictypes.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -47,7 +46,7 @@ TEST(HpackOutputStreamTest, AppendBits) {
 
 // Utility function to return I as a string encoded with an N-bit
 // prefix.
-string EncodeUint32(uint8 N, uint32 I) {
+string EncodeUint32(uint8_t N, uint32_t I) {
   HpackOutputStream output_stream;
   if (N < 8) {
     output_stream.AppendBits(0x00, 8 - N);
@@ -253,6 +252,25 @@ TEST(HpackOutputStreamTest, AppendBytes) {
   string str;
   output_stream.TakeString(&str);
   EXPECT_EQ("buffer1buffer2", str);
+}
+
+TEST(HpackOutputStreamTest, BoundedTakeString) {
+  HpackOutputStream output_stream;
+
+  output_stream.AppendBytes("buffer12");
+  output_stream.AppendBytes("buffer456");
+
+  string str;
+  output_stream.BoundedTakeString(9, &str);
+  EXPECT_EQ("buffer12b", str);
+
+  output_stream.AppendBits(0x7f, 7);
+  output_stream.AppendUint32(0x11);
+  output_stream.BoundedTakeString(9, &str);
+  EXPECT_EQ("uffer456\xff", str);
+
+  output_stream.BoundedTakeString(9, &str);
+  EXPECT_EQ("\x10", str);
 }
 
 }  // namespace

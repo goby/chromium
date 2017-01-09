@@ -7,6 +7,34 @@
 var worker = 'resources/fetch-event-test-worker.js';
 
 async_test(function(t) {
+    const scope = 'resources/simple.html?headers';
+    service_worker_unregister_and_register(t, worker, scope)
+      .then(function(reg) {
+          return wait_for_state(t, reg.installing, 'activated');
+        })
+      .then(function() { return with_iframe(scope); })
+      .then(function(frame) {
+          // We have this test to prevent unexpected exposure of headers to a
+          // ServiceWorker. Feel free to rebaseline this expectation if it
+          // looks good.
+          const headers = JSON.parse(frame.contentDocument.body.textContent);
+          const header_names = [];
+          for (const [name, value] of headers) {
+            header_names.push(name);
+          }
+          header_names.sort();
+          assert_array_equals(
+            header_names,
+            ["accept", "upgrade-insecure-requests", "user-agent"],
+            'event.request has the expected headers.');
+
+          frame.remove();
+          return service_worker_unregister_and_done(t, scope);
+        })
+      .catch(unreached_rejection(t));
+  }, 'Service Worker headers in the request of a fetch event');
+
+async_test(function(t) {
     var scope = 'resources/simple.html?string';
     service_worker_unregister_and_register(t, worker, scope)
       .then(function(reg) {
@@ -67,6 +95,47 @@ async_test(function(t) {
         })
       .catch(unreached_rejection(t));
   }, 'Service Worker responds to fetch event with the referrer URL');
+
+async_test(function(t) {
+    var scope = 'resources/simple.html?clientId';
+    var frame;
+    var client_id1, client_id2;
+    service_worker_unregister_and_register(t, worker, scope)
+      .then(function(reg) {
+          return wait_for_state(t, reg.installing, 'activated');
+        })
+      .then(function() { return with_iframe(scope); })
+      .then(function(f) {
+          frame = f;
+          assert_equals(
+            frame.contentDocument.body.textContent.substr(0, 19),
+            'Client ID Not Found',
+            'Service Worker should respond to navigation fetch with no ' +
+            'client id');
+          return frame.contentWindow.fetch('resources/other.html?clientId');
+        })
+      .then(function(response) { return response.text(); })
+      .then(function(response_text) {
+          client_id1 = response_text.substr(17, 36);
+          assert_equals(
+            response_text.substr(0, 15),
+            'Client ID Found',
+            'Service Worker should respond to fetch with a client id');
+          return frame.contentWindow.fetch('resources/other.html?clientId');
+        })
+      .then(function(response) { return response.text(); })
+      .then(function(response_text) {
+          client_id2 = response_text.substr(17, 36);
+          assert_equals(
+            client_id1,
+            client_id2,
+            'Service Worker should respond to another fetch from the same ' +
+            'client with the same client id');
+          frame.remove();
+          return service_worker_unregister_and_done(t, scope);
+        })
+      .catch(unreached_rejection(t));
+  }, 'Service Worker responds to fetch event with a client id');
 
 async_test(function(t) {
     var scope = 'resources/simple.html?ignore';
@@ -155,8 +224,9 @@ async_test(function(t) {
         })
       .then(function(frame) {
           assert_equals(frame.contentDocument.body.textContent,
-                        'POST:testName1=testValue1&testName2=testValue2');
-          document.body.removeChild(frame);
+                        'POST:application/x-www-form-urlencoded:' +
+                        'testName1=testValue1&testName2=testValue2');
+          frame.remove();
           return service_worker_unregister_and_done(t, scope);
         })
       .catch(unreached_rejection(t));
@@ -172,15 +242,7 @@ async_test(function(t) {
       .then(function(frame) {
           assert_equals(
             frame.contentDocument.body.textContent,
-            '(0)',
-            'Response should be the argument of the first respondWith() call.');
-          frame.remove();
-          return with_iframe(scope);
-        })
-      .then(function(frame) {
-          assert_equals(
-            frame.contentDocument.body.textContent,
-            '(0)(1)[InvalidStateError](2)[InvalidStateError](0)',
+            '(0)(1)[InvalidStateError](2)[InvalidStateError]',
             'Multiple calls of respondWith must throw InvalidStateErrors.');
           frame.remove();
           return service_worker_unregister_and_done(t, scope);
@@ -190,6 +252,7 @@ async_test(function(t) {
 
 async_test(function(t) {
     var scope = 'resources/simple.html?used-check';
+    var first_frame;
     service_worker_unregister_and_register(t, worker, scope)
       .then(function(reg) {
           return wait_for_state(t, reg.installing, 'activated');
@@ -199,7 +262,7 @@ async_test(function(t) {
           assert_equals(frame.contentDocument.body.textContent,
                         'Here\'s an other html file.\n',
                         'Response should come from fetched other file');
-          frame.remove();
+          first_frame = frame;
           return with_iframe(scope);
         })
       .then(function(frame) {
@@ -211,6 +274,7 @@ async_test(function(t) {
             frame.contentDocument.body.textContent,
             'bodyUsed: true',
             'event.respondWith must set the used flag.');
+          first_frame.remove();
           frame.remove();
           return service_worker_unregister_and_done(t, scope);
         })

@@ -6,6 +6,7 @@
 
 #include <xf86drmMode.h>
 
+#include "base/macros.h"
 #include "ui/display/types/gamma_ramp_rgb_entry.h"
 #include "ui/ozone/platform/drm/common/drm_util.h"
 #include "ui/ozone/platform/drm/gpu/drm_device.h"
@@ -87,8 +88,8 @@ DrmDisplay::~DrmDisplay() {
 
 DisplaySnapshot_Params DrmDisplay::Update(HardwareDisplayControllerInfo* info,
                                           size_t device_index) {
-  DisplaySnapshot_Params params =
-      CreateDisplaySnapshotParams(info, drm_->get_fd(), device_index, origin_);
+  DisplaySnapshot_Params params = CreateDisplaySnapshotParams(
+      info, drm_->get_fd(), drm_->device_path(), device_index, origin_);
   crtc_ = info->crtc()->crtc_id;
   connector_ = info->connector()->connector_id;
   display_id_ = params.display_id;
@@ -169,10 +170,14 @@ bool DrmDisplay::SetHDCPState(HDCPState state) {
       GetContentProtectionValue(hdcp_property.get(), state));
 }
 
-void DrmDisplay::SetGammaRamp(const std::vector<GammaRampRGBEntry>& lut) {
-  if (!drm_->SetGammaRamp(crtc_, lut)) {
-    LOG(ERROR) << "Failed to set gamma ramp for display: crtc_id = " << crtc_
-               << " size = " << lut.size();
+void DrmDisplay::SetColorCorrection(
+    const std::vector<GammaRampRGBEntry>& degamma_lut,
+    const std::vector<GammaRampRGBEntry>& gamma_lut,
+    const std::vector<float>& correction_matrix) {
+  if (!drm_->SetColorCorrection(crtc_, degamma_lut, gamma_lut,
+                                correction_matrix)) {
+    LOG(ERROR) << "Failed to set color correction for display: crtc_id = "
+               << crtc_;
   }
 }
 

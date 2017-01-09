@@ -7,6 +7,7 @@
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
+#include "build/build_config.h"
 
 using base::FilePath;
 
@@ -52,11 +53,9 @@ bool JSONFileValueSerializer::SerializeInternal(const base::Value& root,
 }
 
 JSONFileValueDeserializer::JSONFileValueDeserializer(
-    const base::FilePath& json_file_path)
-    : json_file_path_(json_file_path),
-      allow_trailing_comma_(false),
-      last_read_size_(0U) {
-}
+    const base::FilePath& json_file_path,
+    int options)
+    : json_file_path_(json_file_path), options_(options), last_read_size_(0U) {}
 
 JSONFileValueDeserializer::~JSONFileValueDeserializer() {
 }
@@ -100,7 +99,7 @@ const char* JSONFileValueDeserializer::GetErrorMessageForCode(int error_code) {
   }
 }
 
-scoped_ptr<base::Value> JSONFileValueDeserializer::Deserialize(
+std::unique_ptr<base::Value> JSONFileValueDeserializer::Deserialize(
     int* error_code,
     std::string* error_str) {
   std::string json_string;
@@ -113,7 +112,6 @@ scoped_ptr<base::Value> JSONFileValueDeserializer::Deserialize(
     return NULL;
   }
 
-  JSONStringValueDeserializer deserializer(json_string);
-  deserializer.set_allow_trailing_comma(allow_trailing_comma_);
+  JSONStringValueDeserializer deserializer(json_string, options_);
   return deserializer.Deserialize(error_code, error_str);
 }

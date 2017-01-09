@@ -5,10 +5,15 @@
 #ifndef COMPONENTS_BOOKMARKS_MANAGED_MANAGED_BOOKMARKS_TRACKER_H_
 #define COMPONENTS_BOOKMARKS_MANAGED_MANAGED_BOOKMARKS_TRACKER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/strings/string16.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class GURL;
 class PrefService;
@@ -35,6 +40,7 @@ class ManagedBookmarksTracker {
   static const char kName[];
   static const char kUrl[];
   static const char kChildren[];
+  static const char kFolderName[];
 
   // If |is_supervised| is true, this will track supervised bookmarks rather
   // than managed bookmarks.
@@ -46,14 +52,14 @@ class ManagedBookmarksTracker {
 
   // Returns the initial list of managed bookmarks, which can be passed to
   // LoadInitial() to do the initial load.
-  scoped_ptr<base::ListValue> GetInitialManagedBookmarks();
+  std::unique_ptr<base::ListValue> GetInitialManagedBookmarks();
 
   // Loads the initial managed/supervised bookmarks in |list| into |folder|.
   // New nodes will be assigned IDs starting at |next_node_id|.
   // Returns the next node ID to use.
-  static int64 LoadInitial(BookmarkNode* folder,
-                           const base::ListValue* list,
-                           int64 next_node_id);
+  static int64_t LoadInitial(BookmarkNode* folder,
+                             const base::ListValue* list,
+                             int64_t next_node_id);
 
   // Starts tracking the pref for updates to the managed/supervised bookmarks.
   // Should be called after loading the initial bookmarks.

@@ -57,7 +57,6 @@ defaultFixedFontSize type=int, initial=0, invalidate=Style
 
 editingBehaviorType type=EditingBehaviorType, initial=editingBehaviorTypeForPlatform()
 
-caretBrowsingEnabled initial=false
 localStorageEnabled initial=false
 allowUniversalAccessFromFileURLs initial=true
 allowFileAccessFromFileURLs initial=true
@@ -71,7 +70,6 @@ textAreasAreResizable initial=false, invalidate=Style
 acceleratedCompositingEnabled initial=true, invalidate=AcceleratedCompositing
 
 offlineWebApplicationCacheEnabled initial=true
-usesEncodingDetector initial=false
 allowScriptsToCloseWindows initial=false
 
 # FIXME: This should really be disabled by default as it makes platforms that
@@ -80,7 +78,6 @@ allowScriptsToCloseWindows initial=false
 downloadableBinaryFontsEnabled initial=true
 
 xssAuditorEnabled initial=false
-unsafePluginPastingEnabled initial=false
 
 preferCompositingToLCDTextEnabled initial=false, invalidate=AcceleratedCompositing
 
@@ -88,20 +85,20 @@ preferCompositingToLCDTextEnabled initial=false, invalidate=AcceleratedCompositi
 webGLEnabled initial=false
 
 webGLErrorsToConsoleEnabled initial=true
-accelerated2dCanvasEnabled initial=false
 antialiased2dCanvasEnabled initial=true
-antialiasedClips2dCanvasEnabled initial=false
+antialiasedClips2dCanvasEnabled initial=true
 accelerated2dCanvasMSAASampleCount type=int, initial=0
 
-# WebAudio support.
-webAudioEnabled initial=false
-
 hyperlinkAuditingEnabled initial=false
-allowDisplayOfInsecureContent initial=true
 allowRunningOfInsecureContent initial=true
 
 mediaControlsOverlayPlayButtonEnabled initial=false
 mediaPlaybackRequiresUserGesture initial=false
+
+# This flags overrides mediaPlaybackRequiresUserGesture
+crossOriginMediaPlaybackRequiresUserGesture initial=false
+
+presentationRequiresUserGesture initial=true
 
 scrollAnimatorEnabled initial=true
 
@@ -109,10 +106,6 @@ scrollAnimatorEnabled initial=true
 # crbug.com/410974 tracks removal once alternative solutions for selective
 # main thread scrolling are supported.
 threadedScrollingEnabled initial=true, invalidate=Style
-
-# Handles frame-level scrolls via the root Layer instead of the FrameView.
-# crbug.com/417782 tracks enabling this by default.
-rootLayerScrolls initial=false
 
 # Used in layout tests for gesture tap highlights. Makes the highlights square
 # (rather than rounded) to make it possible to reftest the results.
@@ -161,8 +154,6 @@ spatialNavigationEnabled initial=false
 # enabled, the user can initiate drag using long press.
 # crbug.com/304894 tracks removal once it's been enabled on all platforms.
 touchDragDropEnabled initial=false
-
-unifiedTextCheckerEnabled initial=false
 
 # Some apps could have a default video poster if it is not set.
 defaultVideoPosterURL type=String
@@ -216,6 +207,12 @@ useWideViewport initial=true, invalidate=ViewportDescription
 # http://developer.android.com/reference/android/webkit/WebSettings.html#setLoadWithOverviewMode(boolean)
 loadWithOverviewMode initial=true, invalidate=ViewportDescription
 
+# Used by android_webview to support legacy apps that inject script into a top-level initial empty
+# document and expect it to persist on navigation, even though the origin is unique. Note that this
+# behavior violates the requirements described by [Initialising a new Document object] in
+# https://html.spec.whatwg.org/multipage/browsers.html#navigating-across-documents.
+shouldReuseGlobalForUnownedMainFrame initial=false
+
 ######## End of settings used by Android WebView ########
 
 
@@ -223,22 +220,14 @@ loadWithOverviewMode initial=true, invalidate=ViewportDescription
 # crbug.com/304873 tracks removal once it's been enabled on all platforms.
 touchEditingEnabled initial=false
 
-# Settings for experimental desktop pinch-zoom support (with semantics
-# optimized for large screens).  Pinch-zoom generally is implemented mainly
-# outside of blink (in the compositor) and doesn't require any settings.
-# These settings are for an experimental modification to how pinch-zoom
-# behaves. crbug.com/304869 tracks removal.
+# If true, scrollers will use overlay scrollbars.  These do not take up any
+# layout width, are drawn using solid color quads by the compositor, and fade away
+# after a timeout.
 useSolidColorScrollbars initial=false
-pinchOverlayScrollbarThickness type=int, initial=0
-
-# Experiment to invert the scroll order of the layout and visual viewports
-# in some circumstances. Namely, during a pinch-zoom gesture and browser
-# generated scrolls like "scroll into view".
-invertViewportScrollOrder initial=false
 
 # Experiment to have all APIs reflect the layout viewport.
 # crbug.com/489206 tracks the experiment.
-inertVisualViewport initial=true
+inertVisualViewport initial=false
 
 # The rubber-band overscroll effect is implemented in Blink and is being moved
 # to the compositor thread. This will be set to true and eventually removed.
@@ -271,9 +260,11 @@ doHtmlPreloadScanning initial=true
 pluginsEnabled initial=false
 
 viewportEnabled initial=false, invalidate=ViewportDescription
-viewportMetaEnabled initial=false
+viewportMetaEnabled initial=false, invalidate=ViewportDescription
 
 dnsPrefetchingEnabled initial=false, invalidate=DNSPrefetching
+
+dataSaverEnabled initial=false
 
 # FIXME: This is a temporary flag and should be removed
 # when squashing is ready. (crbug.com/261605)
@@ -283,6 +274,10 @@ layerSquashingEnabled initial=false
 # instead of this function. ScriptController::canExecuteScripts() checks the
 # HTML sandbox, plugin sandboxing, and other important details.
 scriptEnabled initial=false
+
+# Forces initialization of main world, even if no scripts will be executed.
+# Used by inspector to report all contexts.
+forceMainWorldInitialization initial=false, invalidate=DOMWorlds
 
 # Compensates for poor text legibility on mobile devices. This value is
 # multiplied by the font scale factor when performing text autosizing of
@@ -307,6 +302,9 @@ fullscreenSupported initial=true
 # V8 supports different types of caching. Used by V8 bindings.
 v8CacheOptions type=V8CacheOptions, initial=V8CacheOptionsDefault
 
+# V8 code cache for CacheStorage supports three types of strategies (none, normal and aggressive).
+v8CacheStrategiesForCacheStorage type=V8CacheStrategiesForCacheStorage, initial=V8CacheStrategiesForCacheStorage::Default
+
 # These values are bit fields for the properties of available pointing devices
 # and may take on multiple values (e.g. laptop with touchpad and touchscreen
 # has pointerType coarse *and* fine).
@@ -330,17 +328,24 @@ inlineTextBoxAccessibilityEnabled initial=false
 # Typically enabled on Windows to match platform convention.
 showContextMenuOnMouseUp initial=false
 
+# If true, context menu will be shown on any long press event.
+# Used on Android to prevent a context menu from being shown in certain situations
+# (i.e. long pressing an empty div)
+alwaysShowContextMenuOnTouch initial=true
+
 disableReadingFromCanvas initial=false
 strictMixedContentChecking initial=false
 strictMixedContentCheckingForPlugin initial=false
 strictPowerfulFeatureRestrictions initial=false
 strictlyBlockBlockableMixedContent initial=false
+allowGeolocationOnInsecureOrigins initial=false
 logDnsPrefetchAndPreconnect initial=false
 logPreload initial=false
 
-# If true, the UA styles will include viewportAndroid.css. It is used for
-# Android, and dynamically set by the inspector for mobile emulation.
-useMobileViewportStyle initial=false, invalidate=ViewportRule
+# These values specify the UA intial viewport style.
+# It is dynamically set by the inspector for mobile emulation and can be
+# used by content embedders to specify custom style on certain platforms.
+viewportStyle type=WebViewportStyle, initial=WebViewportStyle::Default, invalidate=ViewportRule
 
 # Automatic track selection is performed based on user preference for track kind specified
 # by this setting.
@@ -355,27 +360,78 @@ textTrackTextColor type=String
 textTrackTextShadow type=String
 textTrackTextSize type=String
 
+# Margin for title-safe placement of cues with overscan, gives top and bottom margin size as
+# percentage of video element height (for horizontal text) into which cues will not be placed.
+textTrackMarginPercentage type=double, initial=0
+
 lowPriorityIframes initial=false
 
-reportWheelOverscroll initial=false
+progressBarCompletion type=ProgressBarCompletion, initial=ProgressBarCompletion::LoadEvent
 
-mainResourceOnlyProgress initial=false
+historyEntryRequiresUserGesture initial=false
 
 # Do we want to try to save screen real estate in the media player by hiding
 # the volume slider / mute button?
 preferHiddenVolumeControls initial=false
 
-# Controls for resource fetch prioritization.
-# Overall rationale and details here: https://docs.google.com/document/d/1bCDuq9H1ih9iNjgzyAL0gpwNFiEP4TZS-YLRp_RuMlc/edit?usp=sharing
-fetchDeferLateScripts initial=false
-fetchIncreaseFontPriority initial=false
-fetchIncreaseAsyncScriptPriority initial=false
-# Increases the priorities for CSS, Scripts, Fonts and Images all by one level
-# and parser-blocking scripts and visible images by 2.
-# This is used in conjunction with logic on the Chrome side to raise the threshold
-# of "layout-blocking" resources and provide a boost to resources that are needed
-# as soon as possible for something currently on the screen.
-fetchIncreasePriorities initial=false
+# Whether to disallow network fetches for parser blocking scripts in the main
+# frame inserted via document.write, for users on 2G or connections that are
+# effectively 2G.
+disallowFetchForDocWrittenScriptsInMainFrameIfEffectively2G initial=false
 
-# The autoplay gesture override experiment is described in crbug.com/487345 .
-autoplayExperimentMode type=String, initial="off"
+# Whether to disallow network fetches for parser blocking scripts in the main
+# frame inserted via document.write, for users on slow connections.
+disallowFetchForDocWrittenScriptsInMainFrameOnSlowConnections initial=false
+
+# Whether to disallow network fetches for parser blocking scripts in the main
+# frame inserted via document.write, regardless of connection type.
+disallowFetchForDocWrittenScriptsInMainFrame initial=false
+
+# Whether to invalidate device-dependent media queries and restore scroll positions
+# on frame resize assuming device rotation.
+mainFrameResizesAreOrientationChanges initial=false
+
+# Ability to override the default 'passive' value in AddEventListenerOptions. This
+# is useful to demonstrate the power of passive event listeners. This can be removed
+# when there is greater adoption, interventions to force it on and associated devtools
+# to enable it have been shipped.
+passiveListenerDefault type=PassiveListenerDefault, initial=PassiveListenerDefault::False
+
+# Use default interpolation quality to scale bitmap images if quality is not determined
+# in other ways. This can help us writing reftests containing scaled images.
+useDefaultImageInterpolationQuality initial=false
+
+# Variant of the ParseHTMLOnMainThread experiment. One experiment immediately
+# tokenizes input bytes. The default is to tokenize with a post task.
+parseHTMLOnMainThreadSyncTokenize initial=false
+
+# Variant of the ParseHTMLOnMainThread experiment. This is designed to coalesce
+# TokenizedChunks when the experiment is running in threaded mode.
+parseHTMLOnMainThreadCoalesceChunks initial=false
+
+# Whether the CSSPreloadScanner is used for externally CSS preloads. NoPreload
+# indicates that the scanner will be used, but no preloads issued.
+cssExternalScannerNoPreload initial=false
+cssExternalScannerPreload initial=false
+
+browserSideNavigationEnabled initial=false
+
+# Some platforms have media subsystems which are too buggy to allow preloading
+# of content by default. See http://crbug.com/612909 for details.
+forcePreloadNoneForMediaElements initial=false
+
+hideScrollbars initial=false
+
+# Spellchecking is enabled by default for elements that do not specify it explicitly
+# using the "spellcheck" attribute.
+spellCheckEnabledByDefault initial=true
+
+# Whether download UI should be hidden for the current page content.
+hideDownloadUI initial=false
+
+# Whether or not to issue range requests for images and show placeholders.
+fetchImagePlaceholders initial=false
+
+# Whether the frame is a presentation receiver and should expose
+# `navigator.presentation.receiver`.
+presentationReceiver initial=false

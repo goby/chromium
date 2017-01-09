@@ -2,7 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
@@ -12,10 +13,10 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
-#include "ui/base/l10n/l10n_util.h"
 
 namespace language_options_ui_test {
 
@@ -33,9 +34,9 @@ class LanguageOptionsWebUITest : public InProcessBrowserTest {
   // a subset of languages from the list of available languages.
   void SetUpOnMainThread() override {
 #if defined(OS_CHROMEOS)
-    auto setting_name = prefs::kLanguagePreferredLanguages;
+    auto* setting_name = prefs::kLanguagePreferredLanguages;
 #else
-    auto setting_name = prefs::kAcceptLanguages;
+    auto* setting_name = prefs::kAcceptLanguages;
 #endif
 
     const GURL url = chrome::GetSettingsUrl(chrome::kLanguageOptionsSubPage);

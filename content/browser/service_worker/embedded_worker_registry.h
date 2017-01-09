@@ -6,19 +6,18 @@
 #define CONTENT_BROWSER_SERVICE_WORKER_EMBEDDED_WORKER_REGISTRY_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_status_code.h"
 
-struct EmbeddedWorkerMsg_StartWorker_Params;
 class GURL;
 
 namespace IPC {
@@ -29,6 +28,7 @@ class Sender;
 namespace content {
 
 class EmbeddedWorkerInstance;
+struct EmbeddedWorkerStartParams;
 class MessagePortMessageFilter;
 class ServiceWorkerContextCore;
 
@@ -55,11 +55,11 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
 
   // Creates and removes a new worker instance entry for bookkeeping.
   // This doesn't actually start or stop the worker.
-  scoped_ptr<EmbeddedWorkerInstance> CreateWorker();
+  std::unique_ptr<EmbeddedWorkerInstance> CreateWorker();
 
   // Called from EmbeddedWorkerInstance, relayed to the child process.
   ServiceWorkerStatusCode SendStartWorker(
-      scoped_ptr<EmbeddedWorkerMsg_StartWorker_Params> params,
+      std::unique_ptr<EmbeddedWorkerStartParams> params,
       int process_id);
   ServiceWorkerStatusCode StopWorker(int process_id,
                                      int embedded_worker_id);
@@ -109,15 +109,16 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
 
  private:
   friend class base::RefCounted<EmbeddedWorkerRegistry>;
+  friend class MojoEmbeddedWorkerInstanceTest;
   friend class EmbeddedWorkerInstance;
   friend class EmbeddedWorkerInstanceTest;
-  FRIEND_TEST_ALL_PREFIXES(EmbeddedWorkerInstanceTest,
+  FRIEND_TEST_ALL_PREFIXES(EmbeddedWorkerInstanceTestP,
                            RemoveWorkerInSharedProcess);
 
-  typedef std::map<int, EmbeddedWorkerInstance*> WorkerInstanceMap;
-  typedef std::map<int, IPC::Sender*> ProcessToSenderMap;
-  typedef std::map<int, MessagePortMessageFilter*>
-      ProcessToMessagePortMessageFilterMap;
+  using WorkerInstanceMap = std::map<int, EmbeddedWorkerInstance*>;
+  using ProcessToSenderMap = std::map<int, IPC::Sender*>;
+  using ProcessToMessagePortMessageFilterMap =
+      std::map<int, MessagePortMessageFilter*>;
 
   EmbeddedWorkerRegistry(
       const base::WeakPtr<ServiceWorkerContextCore>& context,
@@ -126,9 +127,19 @@ class CONTENT_EXPORT EmbeddedWorkerRegistry
 
   ServiceWorkerStatusCode Send(int process_id, IPC::Message* message);
 
+  // Called when EmbeddedWorkerInstance is ready for IPC. This function
+  // prepares a route to the child worker thread.
+  // TODO(shimazu): Remove this function once mojofication is completed.
+  void BindWorkerToProcess(int process_id, int embedded_worker_id);
+
   // RemoveWorker is called when EmbeddedWorkerInstance is destructed.
-  // |process_id| could be invalid (i.e. -1) if it's not running.
+  // |process_id| could be invalid (i.e. ChildProcessHost::kInvalidUniqueID)
+  // if it's not running.
   void RemoveWorker(int process_id, int embedded_worker_id);
+  // DetachWorker is called when EmbeddedWorkerInstance releases a process.
+  // |process_id| could be invalid (i.e. ChildProcessHost::kInvalidUniqueID)
+  // if it's not running.
+  void DetachWorker(int process_id, int embedded_worker_id);
 
   EmbeddedWorkerInstance* GetWorkerForMessage(int process_id,
                                               int embedded_worker_id);

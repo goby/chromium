@@ -4,6 +4,8 @@
 
 #include "content/browser/renderer_host/p2p/socket_host_tcp_server.h"
 
+#include <stdint.h>
+
 #include <list>
 
 #include "content/browser/renderer_host/p2p/socket_host_tcp.h"
@@ -21,10 +23,7 @@ namespace {
 
 class FakeServerSocket : public net::ServerSocket {
  public:
-  FakeServerSocket()
-      : listening_(false),
-        accept_socket_(NULL) {
-  }
+  FakeServerSocket() : listening_(false), accept_socket_(nullptr) {}
 
   ~FakeServerSocket() override {}
 
@@ -34,7 +33,7 @@ class FakeServerSocket : public net::ServerSocket {
     if (!accept_callback_.is_null()) {
       DCHECK(incoming_sockets_.empty());
       accept_socket_->reset(socket);
-      accept_socket_ = NULL;
+      accept_socket_ = nullptr;
 
       // This copy is necessary because this implementation of ServerSocket
       // bases logic on the null-ness of |accept_callback_| in the bound
@@ -58,7 +57,7 @@ class FakeServerSocket : public net::ServerSocket {
     return net::OK;
   }
 
-  int Accept(scoped_ptr<net::StreamSocket>* socket,
+  int Accept(std::unique_ptr<net::StreamSocket>* socket,
              const net::CompletionCallback& callback) override {
     DCHECK(socket);
     if (!incoming_sockets_.empty()) {
@@ -77,7 +76,7 @@ class FakeServerSocket : public net::ServerSocket {
 
   net::IPEndPoint local_address_;
 
-  scoped_ptr<net::StreamSocket>* accept_socket_;
+  std::unique_ptr<net::StreamSocket>* accept_socket_;
   net::CompletionCallback accept_callback_;
 
   std::list<net::StreamSocket*> incoming_sockets_;
@@ -95,15 +94,15 @@ class P2PSocketHostTcpServerTest : public testing::Test {
         new P2PSocketHostTcpServer(&sender_, 0, P2P_SOCKET_TCP_CLIENT));
     socket_host_->socket_.reset(socket_);
 
-    EXPECT_CALL(sender_, Send(
-        MatchMessage(static_cast<uint32>(P2PMsg_OnSocketCreated::ID))))
+    EXPECT_CALL(
+        sender_,
+        Send(MatchMessage(static_cast<uint32_t>(P2PMsg_OnSocketCreated::ID))))
         .WillOnce(DoAll(DeleteArg<0>(), Return(true)));
 
     P2PHostAndIPEndPoint dest;
     dest.ip_address = ParseAddress(kTestIpAddress1, kTestPort1);
 
-    socket_host_->Init(ParseAddress(kTestLocalIpAddress, 0),
-                       dest);
+    socket_host_->Init(ParseAddress(kTestLocalIpAddress, 0), 0, 0, dest);
     EXPECT_TRUE(socket_->listening());
   }
 
@@ -115,12 +114,12 @@ class P2PSocketHostTcpServerTest : public testing::Test {
 
   MockIPCSender sender_;
   FakeServerSocket* socket_;  // Owned by |socket_host_|.
-  scoped_ptr<P2PSocketHostTcpServer> socket_host_;
+  std::unique_ptr<P2PSocketHostTcpServer> socket_host_;
 };
 
 // Accept incoming connection.
 TEST_F(P2PSocketHostTcpServerTest, Accept) {
-  FakeSocket* incoming = new FakeSocket(NULL);
+  FakeSocket* incoming = new FakeSocket(nullptr);
   incoming->SetLocalAddress(ParseAddress(kTestLocalIpAddress, kTestPort1));
   net::IPEndPoint addr = ParseAddress(kTestIpAddress1, kTestPort1);
   incoming->SetPeerAddress(addr);
@@ -131,20 +130,20 @@ TEST_F(P2PSocketHostTcpServerTest, Accept) {
 
   const int kAcceptedSocketId = 1;
 
-  scoped_ptr<P2PSocketHost> new_host(
+  std::unique_ptr<P2PSocketHost> new_host(
       socket_host_->AcceptIncomingTcpConnection(addr, kAcceptedSocketId));
-  ASSERT_TRUE(new_host.get() != NULL);
+  ASSERT_TRUE(new_host.get() != nullptr);
   EXPECT_EQ(incoming, GetSocketFormTcpSocketHost(
       reinterpret_cast<P2PSocketHostTcp*>(new_host.get())));
 }
 
 // Accept 2 simultaneous connections.
 TEST_F(P2PSocketHostTcpServerTest, Accept2) {
-  FakeSocket* incoming1 = new FakeSocket(NULL);
+  FakeSocket* incoming1 = new FakeSocket(nullptr);
   incoming1->SetLocalAddress(ParseAddress(kTestLocalIpAddress, kTestPort1));
   net::IPEndPoint addr1 = ParseAddress(kTestIpAddress1, kTestPort1);
   incoming1->SetPeerAddress(addr1);
-  FakeSocket* incoming2 = new FakeSocket(NULL);
+  FakeSocket* incoming2 = new FakeSocket(nullptr);
   incoming2->SetLocalAddress(ParseAddress(kTestLocalIpAddress, kTestPort1));
   net::IPEndPoint addr2 = ParseAddress(kTestIpAddress2, kTestPort2);
   incoming2->SetPeerAddress(addr2);
@@ -159,14 +158,14 @@ TEST_F(P2PSocketHostTcpServerTest, Accept2) {
   const int kAcceptedSocketId1 = 1;
   const int kAcceptedSocketId2 = 2;
 
-  scoped_ptr<P2PSocketHost> new_host1(
+  std::unique_ptr<P2PSocketHost> new_host1(
       socket_host_->AcceptIncomingTcpConnection(addr1, kAcceptedSocketId1));
-  ASSERT_TRUE(new_host1.get() != NULL);
+  ASSERT_TRUE(new_host1.get() != nullptr);
   EXPECT_EQ(incoming1, GetSocketFormTcpSocketHost(
       reinterpret_cast<P2PSocketHostTcp*>(new_host1.get())));
-  scoped_ptr<P2PSocketHost> new_host2(
+  std::unique_ptr<P2PSocketHost> new_host2(
       socket_host_->AcceptIncomingTcpConnection(addr2, kAcceptedSocketId2));
-  ASSERT_TRUE(new_host2.get() != NULL);
+  ASSERT_TRUE(new_host2.get() != nullptr);
   EXPECT_EQ(incoming2, GetSocketFormTcpSocketHost(
       reinterpret_cast<P2PSocketHostTcp*>(new_host2.get())));
 }

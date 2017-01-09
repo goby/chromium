@@ -4,12 +4,16 @@
 
 #include "content/renderer/pepper/pepper_graphics_2d_host.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "cc/resources/shared_bitmap.h"
 #include "cc/resources/texture_mailbox.h"
 #include "content/child/child_shared_bitmap_manager.h"
@@ -32,6 +36,7 @@
 #include "ppapi/thunk/enter.h"
 #include "skia/ext/platform_canvas.h"
 #include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/skia/include/core/SkSwizzle.h"
 #include "ui/gfx/blit.h"
 #include "ui/gfx/geometry/point_conversions.h"
 #include "ui/gfx/geometry/rect.h"
@@ -51,7 +56,7 @@ namespace content {
 
 namespace {
 
-const int64 kOffscreenCallbackDelayMs = 1000 / 30;  // 30 fps
+const int64_t kOffscreenCallbackDelayMs = 1000 / 30;  // 30 fps
 
 // Converts a rect inside an image of the given dimensions. The rect may be
 // NULL to indicate it should be the entire image. If the rect is outside of
@@ -70,34 +75,19 @@ bool ValidateAndConvertRect(const PP_Rect* rect,
       return false;
 
     // Check the max bounds, being careful of overflow.
-    if (static_cast<int64>(rect->point.x) +
-            static_cast<int64>(rect->size.width) >
-        static_cast<int64>(image_width))
+    if (static_cast<int64_t>(rect->point.x) +
+            static_cast<int64_t>(rect->size.width) >
+        static_cast<int64_t>(image_width))
       return false;
-    if (static_cast<int64>(rect->point.y) +
-            static_cast<int64>(rect->size.height) >
-        static_cast<int64>(image_height))
+    if (static_cast<int64_t>(rect->point.y) +
+            static_cast<int64_t>(rect->size.height) >
+        static_cast<int64_t>(image_height))
       return false;
 
     *dest = gfx::Rect(
         rect->point.x, rect->point.y, rect->size.width, rect->size.height);
   }
   return true;
-}
-
-// Converts BGRA <-> RGBA.
-void ConvertBetweenBGRAandRGBA(const uint32_t* input,
-                               int pixel_length,
-                               uint32_t* output) {
-  for (int i = 0; i < pixel_length; i++) {
-    const unsigned char* pixel_in =
-        reinterpret_cast<const unsigned char*>(&input[i]);
-    unsigned char* pixel_out = reinterpret_cast<unsigned char*>(&output[i]);
-    pixel_out[0] = pixel_in[2];
-    pixel_out[1] = pixel_in[1];
-    pixel_out[2] = pixel_in[0];
-    pixel_out[3] = pixel_in[3];
-  }
 }
 
 // Converts ImageData from PP_IMAGEDATAFORMAT_BGRA_PREMUL to
@@ -113,26 +103,28 @@ void ConvertImageData(PPB_ImageData_Impl* src_image,
   DCHECK(PPB_ImageData_Impl::IsImageDataFormatSupported(src_image->format()));
   DCHECK(PPB_ImageData_Impl::IsImageDataFormatSupported(dest_image->format()));
 
-  const SkBitmap* src_bitmap = src_image->GetMappedBitmap();
-  const SkBitmap* dest_bitmap = dest_image->GetMappedBitmap();
+  SkBitmap src_bitmap(src_image->GetMappedBitmap());
+  SkBitmap dest_bitmap(dest_image->GetMappedBitmap());
+  SkAutoLockPixels src_lock(src_bitmap);
+  SkAutoLockPixels dest_lock(dest_bitmap);
   if (src_rect.width() == src_image->width() &&
       dest_rect.width() == dest_image->width()) {
-    // Fast path if the full line needs to be converted.
-    ConvertBetweenBGRAandRGBA(
-        src_bitmap->getAddr32(static_cast<int>(src_rect.fLeft),
-                              static_cast<int>(src_rect.fTop)),
-        src_rect.width() * src_rect.height(),
-        dest_bitmap->getAddr32(static_cast<int>(dest_rect.fLeft),
-                               static_cast<int>(dest_rect.fTop)));
+    // Fast path if the full frame can be converted at once.
+    SkSwapRB(
+        dest_bitmap.getAddr32(static_cast<int>(dest_rect.fLeft),
+                              static_cast<int>(dest_rect.fTop)),
+        src_bitmap.getAddr32(static_cast<int>(src_rect.fLeft),
+                             static_cast<int>(src_rect.fTop)),
+        src_rect.width() * src_rect.height());
   } else {
     // Slow path where we convert line by line.
     for (int y = 0; y < src_rect.height(); y++) {
-      ConvertBetweenBGRAandRGBA(
-          src_bitmap->getAddr32(static_cast<int>(src_rect.fLeft),
-                                static_cast<int>(src_rect.fTop + y)),
-          src_rect.width(),
-          dest_bitmap->getAddr32(static_cast<int>(dest_rect.fLeft),
-                                 static_cast<int>(dest_rect.fTop + y)));
+      SkSwapRB(
+          dest_bitmap.getAddr32(static_cast<int>(dest_rect.fLeft),
+                                static_cast<int>(dest_rect.fTop + y)),
+          src_bitmap.getAddr32(static_cast<int>(src_rect.fLeft),
+                               static_cast<int>(src_rect.fTop + y)),
+          src_rect.width());
     }
   }
 }
@@ -140,7 +132,7 @@ void ConvertImageData(PPB_ImageData_Impl* src_image,
 }  // namespace
 
 struct PepperGraphics2DHost::QueuedOperation {
-  enum Type { PAINT, SCROLL, REPLACE, };
+  enum Type { PAINT, SCROLL, REPLACE, TRANSFORM };
 
   QueuedOperation(Type t)
       : type(t), paint_x(0), paint_y(0), scroll_dx(0), scroll_dy(0) {}
@@ -158,6 +150,10 @@ struct PepperGraphics2DHost::QueuedOperation {
 
   // Valid when type == REPLACE.
   scoped_refptr<PPB_ImageData_Impl> replace_image;
+
+  // Valid when type == TRANSFORM
+  float scale;
+  gfx::PointF translation;
 };
 
 // static
@@ -233,6 +229,8 @@ int32_t PepperGraphics2DHost::OnResourceMessageReceived(
                                         OnHostMsgFlush)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_Graphics2D_SetScale,
                                       OnHostMsgSetScale)
+    PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_Graphics2D_SetLayerTransform,
+                                      OnHostMsgSetLayerTransform)
     PPAPI_DISPATCH_HOST_RESOURCE_CALL(PpapiHostMsg_Graphics2D_ReadImageData,
                                       OnHostMsgReadImageData)
   PPAPI_END_MESSAGE_MAP()
@@ -255,12 +253,12 @@ bool PepperGraphics2DHost::ReadImageData(PP_Resource image,
   // Validate the bitmap position.
   int x = top_left->x;
   if (x < 0 ||
-      static_cast<int64>(x) + static_cast<int64>(image_resource->width()) >
+      static_cast<int64_t>(x) + static_cast<int64_t>(image_resource->width()) >
           image_data_->width())
     return false;
   int y = top_left->y;
   if (y < 0 ||
-      static_cast<int64>(y) + static_cast<int64>(image_resource->height()) >
+      static_cast<int64_t>(y) + static_cast<int64_t>(image_resource->height()) >
           image_data_->height())
     return false;
 
@@ -282,9 +280,9 @@ bool PepperGraphics2DHost::ReadImageData(PP_Resource image,
 
     // We want to replace the contents of the bitmap rather than blend.
     SkPaint paint;
-    paint.setXfermodeMode(SkXfermode::kSrc_Mode);
+    paint.setBlendMode(SkBlendMode::kSrc);
     dest_canvas->drawBitmapRect(
-        *image_data_->GetMappedBitmap(), src_irect, dest_rect, &paint);
+        image_data_->GetMappedBitmap(), src_irect, dest_rect, &paint);
   }
   return true;
 }
@@ -324,7 +322,7 @@ void PepperGraphics2DHost::Paint(blink::WebCanvas* canvas,
                                  const gfx::Rect& paint_rect) {
   TRACE_EVENT0("pepper", "PepperGraphics2DHost::Paint");
   ImageDataAutoMapper auto_mapper(image_data_.get());
-  const SkBitmap& backing_bitmap = *image_data_->GetMappedBitmap();
+  SkBitmap backing_bitmap = image_data_->GetMappedBitmap();
 
   gfx::Rect invalidate_rect = plugin_rect;
   invalidate_rect.Intersect(paint_rect);
@@ -348,27 +346,19 @@ void PepperGraphics2DHost::Paint(blink::WebCanvas* canvas,
     SkAutoCanvasRestore auto_restore(canvas, true);
     SkRect image_data_rect =
         gfx::RectToSkRect(gfx::Rect(plugin_rect.origin(), image_size));
-    canvas->clipRect(image_data_rect, SkRegion::kDifference_Op);
+    canvas->clipRect(image_data_rect, kDifference_SkClipOp);
 
     SkPaint paint;
-    paint.setXfermodeMode(SkXfermode::kSrc_Mode);
+    paint.setBlendMode(SkBlendMode::kSrc);
     paint.setColor(SK_ColorWHITE);
     canvas->drawRect(sk_invalidate_rect, paint);
   }
-
-  SkBitmap image;
-  // Copy to device independent bitmap when target canvas doesn't support
-  // platform paint.
-  if (!skia::SupportsPlatformPaint(canvas))
-    backing_bitmap.copyTo(&image, kN32_SkColorType);
-  else
-    image = backing_bitmap;
 
   SkPaint paint;
   if (is_always_opaque_) {
     // When we know the device is opaque, we can disable blending for slightly
     // more optimized painting.
-    paint.setXfermodeMode(SkXfermode::kSrc_Mode);
+    paint.setBlendMode(SkBlendMode::kSrc);
   }
 
   SkPoint pixel_origin(PointToSkPoint(plugin_rect.origin()));
@@ -376,7 +366,8 @@ void PepperGraphics2DHost::Paint(blink::WebCanvas* canvas,
     canvas->scale(scale_, scale_);
     pixel_origin.scale(1.0f / scale_);
   }
-  canvas->drawBitmap(image, pixel_origin.x(), pixel_origin.y(), &paint);
+  canvas->drawBitmap(backing_bitmap, pixel_origin.x(), pixel_origin.y(),
+                     &paint);
 }
 
 void PepperGraphics2DHost::ViewInitiatedPaint() {
@@ -386,8 +377,6 @@ void PepperGraphics2DHost::ViewInitiatedPaint() {
     need_flush_ack_ = false;
   }
 }
-
-void PepperGraphics2DHost::SetScale(float scale) { scale_ = scale; }
 
 float PepperGraphics2DHost::GetScale() const { return scale_; }
 
@@ -430,14 +419,14 @@ int32_t PepperGraphics2DHost::OnHostMsgPaintImageData(
 
   // Validate the bitmap position using the previously-validated rect, there
   // should be no painted area outside of the image.
-  int64 x64 = static_cast<int64>(top_left.x);
-  int64 y64 = static_cast<int64>(top_left.y);
-  if (x64 + static_cast<int64>(operation.paint_src_rect.x()) < 0 ||
-      x64 + static_cast<int64>(operation.paint_src_rect.right()) >
+  int64_t x64 = static_cast<int64_t>(top_left.x);
+  int64_t y64 = static_cast<int64_t>(top_left.y);
+  if (x64 + static_cast<int64_t>(operation.paint_src_rect.x()) < 0 ||
+      x64 + static_cast<int64_t>(operation.paint_src_rect.right()) >
           image_data_->width())
     return PP_ERROR_BADARGUMENT;
-  if (y64 + static_cast<int64>(operation.paint_src_rect.y()) < 0 ||
-      y64 + static_cast<int64>(operation.paint_src_rect.bottom()) >
+  if (y64 + static_cast<int64_t>(operation.paint_src_rect.y()) < 0 ||
+      y64 + static_cast<int64_t>(operation.paint_src_rect.bottom()) >
           image_data_->height())
     return PP_ERROR_BADARGUMENT;
   operation.paint_x = top_left.x;
@@ -461,8 +450,8 @@ int32_t PepperGraphics2DHost::OnHostMsgScroll(
 
   // If we're being asked to scroll by more than the clip rect size, just
   // ignore this scroll command and say it worked.
-  int32 dx = amount.x;
-  int32 dy = amount.y;
+  int32_t dx = amount.x;
+  int32_t dy = amount.y;
   if (dx <= -image_data_->width() || dx >= image_data_->width() ||
       dy <= -image_data_->height() || dy >= image_data_->height())
     return PP_ERROR_BADARGUMENT;
@@ -534,6 +523,21 @@ int32_t PepperGraphics2DHost::OnHostMsgSetScale(
   return PP_ERROR_BADARGUMENT;
 }
 
+int32_t PepperGraphics2DHost::OnHostMsgSetLayerTransform(
+            ppapi::host::HostMessageContext* context,
+            float scale,
+            const PP_FloatPoint& translation) {
+  if (scale < 0.0f)
+    return PP_ERROR_BADARGUMENT;
+
+  QueuedOperation operation(QueuedOperation::TRANSFORM);
+  operation.scale = scale;
+  operation.translation = gfx::PointF(translation.x, translation.y);
+  queued_operations_.push_back(operation);
+  return PP_OK;
+}
+
+
 int32_t PepperGraphics2DHost::OnHostMsgReadImageData(
     ppapi::host::HostMessageContext* context,
     PP_Resource image,
@@ -542,29 +546,30 @@ int32_t PepperGraphics2DHost::OnHostMsgReadImageData(
   return ReadImageData(image, &top_left) ? PP_OK : PP_ERROR_FAILED;
 }
 
-void PepperGraphics2DHost::ReleaseCallback(scoped_ptr<cc::SharedBitmap> bitmap,
-                                           const gfx::Size& bitmap_size,
-                                           const gpu::SyncToken& sync_token,
-                                           bool lost_resource) {
+void PepperGraphics2DHost::ReleaseCallback(
+    std::unique_ptr<cc::SharedBitmap> bitmap,
+    const gfx::Size& bitmap_size,
+    const gpu::SyncToken& sync_token,
+    bool lost_resource) {
   cached_bitmap_.reset();
   // Only keep around a cached bitmap if the plugin is currently drawing (has
   // need_flush_ack_ set).
   if (need_flush_ack_ && bound_instance_)
-    cached_bitmap_ = bitmap.Pass();
+    cached_bitmap_ = std::move(bitmap);
   cached_bitmap_size_ = bitmap_size;
 }
 
 bool PepperGraphics2DHost::PrepareTextureMailbox(
     cc::TextureMailbox* mailbox,
-    scoped_ptr<cc::SingleReleaseCallback>* release_callback) {
+    std::unique_ptr<cc::SingleReleaseCallback>* release_callback) {
   if (!texture_mailbox_modified_)
     return false;
   // TODO(jbauman): Send image_data_ through mailbox to avoid copy.
   gfx::Size pixel_image_size(image_data_->width(), image_data_->height());
-  scoped_ptr<cc::SharedBitmap> shared_bitmap;
+  std::unique_ptr<cc::SharedBitmap> shared_bitmap;
   if (cached_bitmap_) {
     if (cached_bitmap_size_ == pixel_image_size)
-      shared_bitmap = cached_bitmap_.Pass();
+      shared_bitmap = std::move(cached_bitmap_);
     else
       cached_bitmap_.reset();
   }
@@ -599,10 +604,14 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
   bool done_replace_contents = false;
   bool no_update_visible = true;
   bool is_plugin_visible = true;
+
   for (size_t i = 0; i < queued_operations_.size(); i++) {
     QueuedOperation& operation = queued_operations_[i];
     gfx::Rect op_rect;
     switch (operation.type) {
+      case QueuedOperation::TRANSFORM:
+        ExecuteTransform(operation.scale, operation.translation, &op_rect);
+        break;
       case QueuedOperation::PAINT:
         ExecutePaintImageData(operation.paint_image.get(),
                               operation.paint_x,
@@ -636,11 +645,15 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
     // is visible to determine how to deal with the callback.
     if (bound_instance_ && !op_rect.IsEmpty()) {
       gfx::Point scroll_delta(operation.scroll_dx, operation.scroll_dy);
-      if (!ConvertToLogicalPixels(scale_,
-                                  &op_rect,
+      // In use-zoom-for-dsf mode, the viewport (thus cc) uses native
+      // pixels, so the damage and rects have to be scaled.
+      gfx::Rect op_rect_in_viewport = op_rect;
+      ConvertToLogicalPixels(scale_, &op_rect, nullptr);
+      if (!ConvertToLogicalPixels(scale_ / viewport_to_dip_scale_,
+                                  &op_rect_in_viewport,
                                   operation.type == QueuedOperation::SCROLL
                                       ? &scroll_delta
-                                      : NULL)) {
+                                      : nullptr)) {
         // Conversion requires falling back to InvalidateRect.
         operation.type = QueuedOperation::PAINT;
       }
@@ -658,10 +671,10 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
       // partially or completely off-screen.
       if (operation.type == QueuedOperation::SCROLL) {
         bound_instance_->ScrollRect(
-            scroll_delta.x(), scroll_delta.y(), op_rect);
+            scroll_delta.x(), scroll_delta.y(), op_rect_in_viewport);
       } else {
-        if (!op_rect.IsEmpty())
-          bound_instance_->InvalidateRect(op_rect);
+        if (!op_rect_in_viewport.IsEmpty())
+          bound_instance_->InvalidateRect(op_rect_in_viewport);
       }
       texture_mailbox_modified_ = true;
     }
@@ -686,6 +699,13 @@ int32_t PepperGraphics2DHost::Flush(PP_Resource* old_image_data) {
   }
 
   return PP_OK_COMPLETIONPENDING;
+}
+
+void PepperGraphics2DHost::ExecuteTransform(const float& scale,
+                                            const gfx::PointF& translate,
+                                            gfx::Rect* invalidated_rect) {
+  bound_instance_->SetGraphics2DTransform(scale, translate);
+  *invalidated_rect = PP_ToGfxRect(bound_instance_->view_data().clip_rect);
 }
 
 void PepperGraphics2DHost::ExecutePaintImageData(PPB_ImageData_Impl* image,
@@ -719,9 +739,9 @@ void PepperGraphics2DHost::ExecutePaintImageData(PPB_ImageData_Impl* image,
 
     // We want to replace the contents of the bitmap rather than blend.
     SkPaint paint;
-    paint.setXfermodeMode(SkXfermode::kSrc_Mode);
+    paint.setBlendMode(SkBlendMode::kSrc);
     backing_canvas->drawBitmapRect(
-        *image->GetMappedBitmap(), src_irect, dest_rect, &paint);
+        image->GetMappedBitmap(), src_irect, dest_rect, &paint);
   }
 }
 

@@ -57,20 +57,33 @@ Gnubby.hexCid = function(cid) {
 };
 
 /**
+ * Cancels open attempt for this gnubby, if available.
+ */
+Gnubby.prototype.cancelOpen = function() {
+  if (this.which)
+    Gnubby.gnubbies_.cancelAddClient(this.which);
+};
+
+/**
  * Opens the gnubby with the given index, or the first found gnubby if no
  * index is specified.
  * @param {GnubbyDeviceId} which The device to open. If null, the first
  *     gnubby found is opened.
+ * @param {GnubbyEnumerationTypes=} opt_type Which type of device to enumerate.
  * @param {function(number)|undefined} opt_cb Called with result of opening the
  *     gnubby.
+ * @param {string=} opt_caller Identifier for the caller.
  */
-Gnubby.prototype.open = function(which, opt_cb) {
+Gnubby.prototype.open = function(which, opt_type, opt_cb, opt_caller) {
   var cb = opt_cb ? opt_cb : Gnubby.defaultCallback;
   if (this.closed) {
     cb(-GnubbyDevice.NODEVICE);
     return;
   }
   this.closingWhenIdle = false;
+  if (opt_caller) {
+    this.caller_ = opt_caller;
+  }
 
   var self = this;
 
@@ -94,10 +107,13 @@ Gnubby.prototype.open = function(which, opt_cb) {
       if (rc == -GnubbyDevice.NODEVICE && enumerateRetriesRemaining-- > 0) {
         // We were trying to open the first device, but now it's not there?
         // Do over.
-        Gnubby.gnubbies_.enumerate(enumerated);
+        Gnubby.gnubbies_.enumerate(enumerated, opt_type);
         return;
       }
       self.dev = device;
+      if (self.closeHook_) {
+        self.dev.setDestroyHook(self.closeHook_);
+      }
       cb(rc);
     });
   }
@@ -106,11 +122,16 @@ Gnubby.prototype.open = function(which, opt_cb) {
     setCid(which);
     self.which = which;
     Gnubby.gnubbies_.addClient(which, self, function(rc, device) {
-      self.dev = device;
+      if (!rc) {
+        self.dev = device;
+        if (self.closeHook_) {
+          self.dev.setDestroyHook(self.closeHook_);
+        }
+      }
       cb(rc);
     });
   } else {
-    Gnubby.gnubbies_.enumerate(enumerated);
+    Gnubby.gnubbies_.enumerate(enumerated, opt_type);
   }
 };
 
@@ -173,6 +194,15 @@ Gnubby.prototype.closeWhenIdle = function(cb) {
 };
 
 /**
+ * Sets a callback that will get called when this gnubby is closed.
+ * @param {function() : ?Promise} cb Called back when closed. Callback
+ *     may yield a promise that resolves when the close hook completes.
+ */
+Gnubby.prototype.setCloseHook = function(cb) {
+  this.closeHook_ = cb;
+};
+
+/**
  * Close and notify every caller that it is now closed.
  * @private
  */
@@ -223,6 +253,13 @@ Gnubby.prototype.receivedFrame = function(frame) {
 };
 
 /**
+ * @return {number|undefined} The last read error seen by this device.
+ */
+Gnubby.prototype.getLastReadError = function() {
+  return this.lastReadError_;
+};
+
+/**
  * @return {ArrayBuffer|Uint8Array} oldest received frame. Throw if none.
  * @private
  */
@@ -263,6 +300,7 @@ Gnubby.prototype.read_ = function(cmd, timeout, cb) {
       window.clearTimeout(tid);
       tid = null;
     }
+    self.lastReadError_ = /** @private {number|undefined} */ (a);
     var c = callback;
     if (c) {
       callback = null;

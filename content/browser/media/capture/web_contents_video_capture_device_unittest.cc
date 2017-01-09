@@ -4,22 +4,27 @@
 
 #include "content/browser/media/capture/web_contents_video_capture_device.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/bind_helpers.h"
 #include "base/debug/debugger.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/test_timeouts.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
-#include "content/browser/media/capture/web_contents_capture_util.h"
-#include "content/browser/renderer_host/media/video_capture_buffer_pool.h"
 #include "content/browser/renderer_host/render_view_host_factory.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/web_contents/web_contents_impl.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_widget_host_view_frame_subscriber.h"
+#include "content/public/browser/web_contents_media_capture_id.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -27,20 +32,22 @@
 #include "content/test/test_render_frame_host_factory.h"
 #include "content/test/test_render_view_host.h"
 #include "content/test/test_web_contents.h"
-#include "media/base/video_capture_types.h"
 #include "media/base/video_frame.h"
 #include "media/base/video_util.h"
 #include "media/base/yuv_convert.h"
+#include "media/capture/video/video_capture_buffer_pool_impl.h"
+#include "media/capture/video/video_capture_buffer_tracker_factory_impl.h"
+#include "media/capture/video_capture_types.h"
 #include "skia/ext/platform_canvas.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/layout.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
+#include "ui/display/test/test_screen.h"
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
-#include "ui/gfx/screen.h"
-#include "ui/gfx/test/test_screen.h"
 
 namespace content {
 namespace {
@@ -54,7 +61,8 @@ const SkColor kNotInterested = ~kNothingYet;
 
 void DeadlineExceeded(base::Closure quit_closure) {
   if (!base::debug::BeingDebugged()) {
-    quit_closure.Run();
+    if (!quit_closure.is_null())
+      quit_closure.Run();
     FAIL() << "Deadline exceeded while waiting, quitting";
   } else {
     LOG(WARNING) << "Deadline exceeded; test would fail if debugger weren't "
@@ -68,14 +76,14 @@ void RunCurrentLoopWithDeadline() {
       FROM_HERE, TestTimeouts::action_max_timeout(),
       base::Bind(&DeadlineExceeded,
                  base::MessageLoop::current()->QuitWhenIdleClosure()));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   deadline.Stop();
 }
 
 SkColor ConvertRgbToYuv(SkColor rgb) {
-  uint8 yuv[3];
-  media::ConvertRGB32ToYUV(reinterpret_cast<uint8*>(&rgb),
-                           yuv, yuv + 1, yuv + 2, 1, 1, 1, 1, 1);
+  uint8_t yuv[3];
+  media::ConvertRGB32ToYUV(reinterpret_cast<uint8_t*>(&rgb), yuv, yuv + 1,
+                           yuv + 2, 1, 1, 1, 1, 1);
   return SkColorSetRGB(yuv[0], yuv[1], yuv[2]);
 }
 
@@ -88,8 +96,7 @@ class CaptureTestSourceController {
   CaptureTestSourceController()
       : color_(SK_ColorMAGENTA),
         copy_result_size_(kTestWidth, kTestHeight),
-        can_copy_to_video_frame_(false),
-        use_frame_subscriber_(false) {}
+        can_copy_to_video_frame_(true) {}
 
   void SetSolidColor(SkColor color) {
     base::AutoLock guard(lock_);
@@ -130,16 +137,6 @@ class CaptureTestSourceController {
     return can_copy_to_video_frame_;
   }
 
-  void SetUseFrameSubscriber(bool value) {
-    base::AutoLock guard(lock_);
-    use_frame_subscriber_ = value;
-  }
-
-  bool CanUseFrameSubscriber() {
-    base::AutoLock guard(lock_);
-    return use_frame_subscriber_;
-  }
-
   void WaitForNextCopy() {
     {
       base::AutoLock guard(lock_);
@@ -154,7 +151,6 @@ class CaptureTestSourceController {
   SkColor color_;
   gfx::Size copy_result_size_;
   bool can_copy_to_video_frame_;
-  bool use_frame_subscriber_;
   base::Closure copy_done_;
 
   DISALLOW_COPY_AND_ASSIGN(CaptureTestSourceController);
@@ -166,8 +162,8 @@ class CaptureTestSourceController {
 // CaptureTestSourceController.
 class CaptureTestView : public TestRenderWidgetHostView {
  public:
-  explicit CaptureTestView(RenderWidgetHostImpl* rwh,
-                           CaptureTestSourceController* controller)
+  CaptureTestView(RenderWidgetHostImpl* rwh,
+                  CaptureTestSourceController* controller)
       : TestRenderWidgetHostView(rwh),
         controller_(controller),
         fake_bounds_(100, 100, 100 + kTestWidth, 100 + kTestHeight) {}
@@ -203,7 +199,8 @@ class CaptureTestView : public TestRenderWidgetHostView {
   }
 
   void BeginFrameSubscription(
-      scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) override {
+      std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber)
+      override {
     subscriber_.reset(subscriber.release());
   }
 
@@ -227,47 +224,26 @@ class CaptureTestView : public TestRenderWidgetHostView {
   }
 
  private:
-  scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber_;
+  std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber_;
   CaptureTestSourceController* const controller_;
   gfx::Rect fake_bounds_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(CaptureTestView);
 };
 
-#if defined(COMPILER_MSVC)
-// MSVC warns on diamond inheritance. See comment for same warning on
-// RenderViewHostImpl.
-#pragma warning(push)
-#pragma warning(disable: 4250)
-#endif
-
 // A stub implementation which returns solid-color bitmaps in calls to
 // CopyFromBackingStore(). The behavior is controlled by a
 // CaptureTestSourceController.
-class CaptureTestRenderViewHost : public TestRenderViewHost {
+class CaptureTestRenderWidgetHost : public RenderWidgetHostImpl {
  public:
-  CaptureTestRenderViewHost(SiteInstance* instance,
-                            RenderViewHostDelegate* delegate,
-                            RenderWidgetHostDelegate* widget_delegate,
-                            int32 routing_id,
-                            int32 main_frame_routing_id,
-                            bool swapped_out,
-                            CaptureTestSourceController* controller)
-      : TestRenderViewHost(instance,
-                           delegate,
-                           widget_delegate,
-                           routing_id,
-                           main_frame_routing_id,
-                           swapped_out),
-        controller_(controller) {
-    // Override the default view installed by TestRenderViewHost; we need
-    // our special subclass which has mocked-out tab capture support.
-    RenderWidgetHostView* old_view = GetWidget()->GetView();
-    GetWidget()->SetView(new CaptureTestView(GetWidget(), controller));
-    delete old_view;
-  }
+  CaptureTestRenderWidgetHost(RenderWidgetHostDelegate* delegate,
+                              RenderProcessHost* process,
+                              int32_t routing_id,
+                              CaptureTestSourceController* controller)
+      : RenderWidgetHostImpl(delegate, process, routing_id, false /* hidden */),
+        controller_(controller) {}
 
-  // TestRenderViewHost overrides.
+  // RenderWidgetHostImpl overrides.
   void CopyFromBackingStore(const gfx::Rect& src_rect,
                             const gfx::Size& accelerated_dst_size,
                             const ReadbackRequestCallback& callback,
@@ -288,13 +264,37 @@ class CaptureTestRenderViewHost : public TestRenderViewHost {
  private:
   CaptureTestSourceController* controller_;
 
-  DISALLOW_IMPLICIT_CONSTRUCTORS(CaptureTestRenderViewHost);
+  DISALLOW_IMPLICIT_CONSTRUCTORS(CaptureTestRenderWidgetHost);
 };
 
-#if defined(COMPILER_MSVC)
-// Re-enable warning 4250
-#pragma warning(pop)
-#endif
+class CaptureTestRenderViewHost : public TestRenderViewHost {
+ public:
+  CaptureTestRenderViewHost(SiteInstance* instance,
+                            RenderViewHostDelegate* delegate,
+                            RenderWidgetHostDelegate* widget_delegate,
+                            int32_t routing_id,
+                            int32_t main_frame_routing_id,
+                            bool swapped_out,
+                            CaptureTestSourceController* controller)
+      : TestRenderViewHost(instance,
+                           base::MakeUnique<CaptureTestRenderWidgetHost>(
+                               widget_delegate,
+                               instance->GetProcess(),
+                               routing_id,
+                               controller),
+                           delegate,
+                           main_frame_routing_id,
+                           swapped_out) {
+    // Override the default view installed by TestRenderViewHost; we need
+    // our special subclass which has mocked-out tab capture support.
+    RenderWidgetHostView* old_view = GetWidget()->GetView();
+    GetWidget()->SetView(new CaptureTestView(GetWidget(), controller));
+    delete old_view;
+  }
+
+ private:
+  DISALLOW_IMPLICIT_CONSTRUCTORS(CaptureTestRenderViewHost);
+};
 
 class CaptureTestRenderViewHostFactory : public RenderViewHostFactory {
  public:
@@ -310,8 +310,8 @@ class CaptureTestRenderViewHostFactory : public RenderViewHostFactory {
       SiteInstance* instance,
       RenderViewHostDelegate* delegate,
       RenderWidgetHostDelegate* widget_delegate,
-      int32 routing_id,
-      int32 main_frame_routing_id,
+      int32_t routing_id,
+      int32_t main_frame_routing_id,
       bool swapped_out) override {
     return new CaptureTestRenderViewHost(instance, delegate, widget_delegate,
                                          routing_id, main_frame_routing_id,
@@ -333,55 +333,52 @@ class StubClient : public media::VideoCaptureDevice::Client {
       const base::Closure& error_callback)
       : report_callback_(report_callback),
         error_callback_(error_callback) {
-    buffer_pool_ = new VideoCaptureBufferPool(2);
+    buffer_pool_ = new media::VideoCaptureBufferPoolImpl(
+        base::MakeUnique<media::VideoCaptureBufferTrackerFactoryImpl>(), 2);
   }
   ~StubClient() override {}
 
-  MOCK_METHOD5(OnIncomingCapturedData,
-               void(const uint8* data,
+  MOCK_METHOD7(OnIncomingCapturedData,
+               void(const uint8_t* data,
                     int length,
                     const media::VideoCaptureFormat& frame_format,
                     int rotation,
-                    const base::TimeTicks& timestamp));
-  MOCK_METHOD9(OnIncomingCapturedYuvData,
-               void(const uint8* y_data,
-                    const uint8* u_data,
-                    const uint8* v_data,
-                    size_t y_stride,
-                    size_t u_stride,
-                    size_t v_stride,
-                    const media::VideoCaptureFormat& frame_format,
-                    int clockwise_rotation,
-                    const base::TimeTicks& timestamp));
+                    base::TimeTicks reference_time,
+                    base::TimeDelta timestamp,
+                    int frame_feedback_id));
 
   MOCK_METHOD0(DoOnIncomingCapturedBuffer, void(void));
 
-  scoped_ptr<media::VideoCaptureDevice::Client::Buffer> ReserveOutputBuffer(
-      const gfx::Size& dimensions,
-      media::VideoPixelFormat format,
-      media::VideoPixelStorage storage) override {
+  std::unique_ptr<media::VideoCaptureDevice::Client::Buffer>
+  ReserveOutputBuffer(const gfx::Size& dimensions,
+                      media::VideoPixelFormat format,
+                      media::VideoPixelStorage storage,
+                      int frame_feedback_id) override {
     CHECK_EQ(format, media::PIXEL_FORMAT_I420);
-    int buffer_id_to_drop = VideoCaptureBufferPool::kInvalidId;  // Ignored.
+    int buffer_id_to_drop =
+        media::VideoCaptureBufferPool::kInvalidId;  // Ignored.
     const int buffer_id = buffer_pool_->ReserveForProducer(
-        format, storage, dimensions, &buffer_id_to_drop);
-    if (buffer_id == VideoCaptureBufferPool::kInvalidId)
+        dimensions, format, storage, frame_feedback_id, &buffer_id_to_drop);
+    if (buffer_id == media::VideoCaptureBufferPool::kInvalidId)
       return NULL;
 
-    return scoped_ptr<media::VideoCaptureDevice::Client::Buffer>(
-        new AutoReleaseBuffer(
-            buffer_pool_, buffer_pool_->GetBufferHandle(buffer_id), buffer_id));
+    return std::unique_ptr<media::VideoCaptureDevice::Client::Buffer>(
+        new AutoReleaseBuffer(buffer_pool_,
+                              buffer_pool_->GetBufferHandle(buffer_id),
+                              buffer_id, frame_feedback_id));
   }
-  // Trampoline method to workaround GMOCK problems with scoped_ptr<>.
-  void OnIncomingCapturedBuffer(scoped_ptr<Buffer> buffer,
-                                const media::VideoCaptureFormat& frame_format,
-                                const base::TimeTicks& timestamp) override {
+
+  // Trampoline method to workaround GMOCK problems with std::unique_ptr<>.
+  void OnIncomingCapturedBuffer(std::unique_ptr<Buffer> buffer,
+                                const media::VideoCaptureFormat& format,
+                                base::TimeTicks reference_time,
+                                base::TimeDelta timestamp) override {
     DoOnIncomingCapturedBuffer();
   }
 
   void OnIncomingCapturedVideoFrame(
-      scoped_ptr<Buffer> buffer,
-      const scoped_refptr<media::VideoFrame>& frame,
-      const base::TimeTicks& timestamp) override {
+      std::unique_ptr<Buffer> buffer,
+      scoped_refptr<media::VideoFrame> frame) override {
     EXPECT_FALSE(frame->visible_rect().IsEmpty());
     EXPECT_EQ(media::PIXEL_FORMAT_I420, frame->format());
     double frame_rate = 0;
@@ -407,6 +404,22 @@ class StubClient : public media::VideoCaptureDevice::Client {
         frame->visible_rect().size());
   }
 
+  std::unique_ptr<media::VideoCaptureDevice::Client::Buffer>
+  ResurrectLastOutputBuffer(const gfx::Size& dimensions,
+                            media::VideoPixelFormat format,
+                            media::VideoPixelStorage storage,
+                            int frame_feedback_id) override {
+    CHECK_EQ(format, media::PIXEL_FORMAT_I420);
+    const int buffer_id =
+        buffer_pool_->ResurrectLastForProducer(dimensions, format, storage);
+    if (buffer_id == media::VideoCaptureBufferPool::kInvalidId)
+      return nullptr;
+    return std::unique_ptr<media::VideoCaptureDevice::Client::Buffer>(
+        new AutoReleaseBuffer(buffer_pool_,
+                              buffer_pool_->GetBufferHandle(buffer_id),
+                              buffer_id, frame_feedback_id));
+  }
+
   void OnError(const tracked_objects::Location& from_here,
                const std::string& reason) override {
     error_callback_.Run();
@@ -418,36 +431,47 @@ class StubClient : public media::VideoCaptureDevice::Client {
   class AutoReleaseBuffer : public media::VideoCaptureDevice::Client::Buffer {
    public:
     AutoReleaseBuffer(
-        const scoped_refptr<VideoCaptureBufferPool>& pool,
-        scoped_ptr<VideoCaptureBufferPool::BufferHandle> buffer_handle,
-        int buffer_id)
+        const scoped_refptr<media::VideoCaptureBufferPool>& pool,
+        std::unique_ptr<media::VideoCaptureBufferHandle> buffer_handle,
+        int buffer_id,
+        int frame_feedback_id)
         : id_(buffer_id),
+          frame_feedback_id_(frame_feedback_id),
           pool_(pool),
-          buffer_handle_(buffer_handle.Pass()) {
-      DCHECK(pool_.get());
+          buffer_handle_(std::move(buffer_handle)) {
+      DCHECK(pool_);
     }
     int id() const override { return id_; }
-    gfx::Size dimensions() const override { return gfx::Size(); }
+    int frame_feedback_id() const override { return frame_feedback_id_; }
+    gfx::Size dimensions() const override {
+      return buffer_handle_->dimensions();
+    }
     size_t mapped_size() const override {
       return buffer_handle_->mapped_size();
     }
     void* data(int plane) override { return buffer_handle_->data(plane); }
-    ClientBuffer AsClientBuffer(int plane) override { return nullptr; }
-#if defined(OS_POSIX) && !(defined(OS_MACOSX) && !defined(OS_IOS))
+#if defined(OS_POSIX) && !defined(OS_MACOSX)
     base::FileDescriptor AsPlatformFile() override {
       return base::FileDescriptor();
     }
 #endif
+    bool IsBackedByVideoFrame() const override {
+      return buffer_handle_->IsBackedByVideoFrame();
+    }
+    scoped_refptr<media::VideoFrame> GetVideoFrame() override {
+      return buffer_handle_->GetVideoFrame();
+    }
 
    private:
     ~AutoReleaseBuffer() override { pool_->RelinquishProducerReservation(id_); }
 
     const int id_;
-    const scoped_refptr<VideoCaptureBufferPool> pool_;
-    const scoped_ptr<VideoCaptureBufferPool::BufferHandle> buffer_handle_;
+    const int frame_feedback_id_;
+    const scoped_refptr<media::VideoCaptureBufferPool> pool_;
+    const std::unique_ptr<media::VideoCaptureBufferHandle> buffer_handle_;
   };
 
-  scoped_refptr<VideoCaptureBufferPool> buffer_pool_;
+  scoped_refptr<media::VideoCaptureBufferPool> buffer_pool_;
   base::Callback<void(SkColor, const gfx::Size&)> report_callback_;
   base::Closure error_callback_;
 
@@ -459,7 +483,7 @@ class StubClientObserver {
   StubClientObserver()
       : error_encountered_(false),
         wait_color_yuv_(0xcafe1950),
-        wait_size_(kTestWidth, kTestHeight) {
+        expecting_frames_(true) {
     client_.reset(new StubClient(
         base::Bind(&StubClientObserver::DidDeliverFrame,
                    base::Unretained(this)),
@@ -468,34 +492,47 @@ class StubClientObserver {
 
   virtual ~StubClientObserver() {}
 
-  scoped_ptr<media::VideoCaptureDevice::Client> PassClient() {
-    return client_.Pass();
+  std::unique_ptr<media::VideoCaptureDevice::Client> PassClient() {
+    return std::move(client_);
+  }
+
+  void SetIsExpectingFrames(bool expecting_frames) {
+    base::AutoLock guard(lock_);
+    expecting_frames_ = expecting_frames;
   }
 
   void QuitIfConditionsMet(SkColor color, const gfx::Size& size) {
     base::AutoLock guard(lock_);
-    if (error_encountered_)
+    EXPECT_TRUE(expecting_frames_);
+    if (error_encountered_ || wait_color_yuv_ == kNotInterested ||
+        wait_color_yuv_ == color) {
+      last_frame_color_yuv_ = color;
+      last_frame_size_ = size;
       base::MessageLoop::current()->QuitWhenIdle();
-    else if (wait_color_yuv_ == color && wait_size_.IsEmpty())
-      base::MessageLoop::current()->QuitWhenIdle();
-    else if (wait_color_yuv_ == color && wait_size_ == size)
-      base::MessageLoop::current()->QuitWhenIdle();
+    }
   }
 
-  // Run the current loop until a frame is delivered with the |expected_color|
-  // and any non-empty frame size.
+  // Run the current loop until the next frame is delivered.  Returns the YUV
+  // color and frame size.
+  std::pair<SkColor, gfx::Size> WaitForNextFrame() {
+    {
+      base::AutoLock guard(lock_);
+      wait_color_yuv_ = kNotInterested;
+      error_encountered_ = false;
+    }
+    RunCurrentLoopWithDeadline();
+    {
+      base::AutoLock guard(lock_);
+      CHECK(!error_encountered_);
+      return std::make_pair(last_frame_color_yuv_, last_frame_size_);
+    }
+  }
+
+  // Run the current loop until a frame is delivered with the |expected_color|.
   void WaitForNextColor(SkColor expected_color) {
-    WaitForNextColorAndFrameSize(expected_color, gfx::Size());
-  }
-
-  // Run the current loop until a frame is delivered with the |expected_color|
-  // and is of the |expected_size|.
-  void WaitForNextColorAndFrameSize(SkColor expected_color,
-                                    const gfx::Size& expected_size) {
     {
       base::AutoLock guard(lock_);
       wait_color_yuv_ = ConvertRgbToYuv(expected_color);
-      wait_size_ = expected_size;
       error_encountered_ = false;
     }
     RunCurrentLoopWithDeadline();
@@ -509,7 +546,6 @@ class StubClientObserver {
     {
       base::AutoLock guard(lock_);
       wait_color_yuv_ = kNotInterested;
-      wait_size_ = gfx::Size();
       error_encountered_ = false;
     }
     RunCurrentLoopWithDeadline();
@@ -548,8 +584,10 @@ class StubClientObserver {
   base::Lock lock_;
   bool error_encountered_;
   SkColor wait_color_yuv_;
-  gfx::Size wait_size_;
-  scoped_ptr<StubClient> client_;
+  SkColor last_frame_color_yuv_;
+  gfx::Size last_frame_size_;
+  std::unique_ptr<StubClient> client_;
+  bool expecting_frames_;
 
   DISALLOW_COPY_AND_ASSIGN(StubClientObserver);
 };
@@ -574,12 +612,16 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
 
  protected:
   void SetUp() override {
-    test_screen_.display()->set_id(0x1337);
-    test_screen_.display()->set_bounds(gfx::Rect(0, 0, 2560, 1440));
-    test_screen_.display()->set_device_scale_factor(kTestDeviceScaleFactor);
-
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, &test_screen_);
-    ASSERT_EQ(&test_screen_, gfx::Screen::GetNativeScreen());
+    const display::Display test_display = test_screen_.GetPrimaryDisplay();
+    display::Display display(test_display);
+    display.set_id(0x1337);
+    display.set_bounds(gfx::Rect(0, 0, 2560, 1440));
+    display.set_device_scale_factor(kTestDeviceScaleFactor);
+    test_screen_.display_list().RemoveDisplay(test_display.id());
+    test_screen_.display_list().AddDisplay(display,
+                                           display::DisplayList::Type::PRIMARY);
+    display::Screen::SetScreenInstance(&test_screen_);
+    ASSERT_EQ(&test_screen_, display::Screen::GetScreen());
 
     // TODO(nick): Sadness and woe! Much "mock-the-world" boilerplate could be
     // eliminated here, if only we could use RenderViewHostTestHarness. The
@@ -605,10 +647,9 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
     web_contents_.reset(
         TestWebContents::Create(browser_context_.get(), site_instance.get()));
     RenderFrameHost* const main_frame = web_contents_->GetMainFrame();
-    device_.reset(WebContentsVideoCaptureDevice::Create(
-        base::StringPrintf("web-contents-media-stream://%d:%d",
-                           main_frame->GetProcess()->GetID(),
-                           main_frame->GetRoutingID())));
+    device_ = WebContentsVideoCaptureDevice::Create(base::StringPrintf(
+        "web-contents-media-stream://%d:%d", main_frame->GetProcess()->GetID(),
+        main_frame->GetRoutingID()));
 
     base::RunLoop().RunUntilIdle();
   }
@@ -637,7 +678,7 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
     render_view_host_factory_.reset();
     render_process_host_factory_.reset();
 
-    gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, NULL);
+    display::Screen::SetScreenInstance(nullptr);
   }
 
   // Accessors.
@@ -657,19 +698,30 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
   }
 
   void SimulateDrawEvent() {
-    if (source()->CanUseFrameSubscriber()) {
-      // Print
-      CaptureTestView* test_view = static_cast<CaptureTestView*>(
-          web_contents_->GetRenderViewHost()->GetWidget()->GetView());
-      test_view->SimulateUpdate();
-    } else {
-      // Simulate a non-accelerated paint.
-      NotificationService::current()->Notify(
-          NOTIFICATION_RENDER_WIDGET_HOST_DID_UPDATE_BACKING_STORE,
-          Source<RenderWidgetHost>(
-              web_contents_->GetRenderViewHost()->GetWidget()),
-          NotificationService::NoDetails());
-    }
+    DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+    // Force at least one frame period's worth of time to pass. Otherwise,
+    // internal logic may decide not to capture a frame because the draw events
+    // are more frequent that kTestFramesPerSecond.
+    //
+    // TODO(miu): Instead of physically waiting, we should inject simulated
+    // clocks for testing.
+    base::RunLoop run_loop;
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        run_loop.QuitClosure(),
+        base::TimeDelta::FromMicroseconds(
+            base::Time::kMicrosecondsPerSecond / kTestFramesPerSecond));
+    run_loop.Run();
+
+    // Schedule the update to occur when the test runs the event loop (and not
+    // before expectations have been set).
+    CaptureTestView* test_view = static_cast<CaptureTestView*>(
+        web_contents_->GetRenderViewHost()->GetWidget()->GetView());
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&CaptureTestView::SimulateUpdate,
+                   base::Unretained(test_view)));
   }
 
   void SimulateSourceSizeChange(const gfx::Size& size) {
@@ -688,6 +740,45 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
         as_web_contents_impl->GetMainFrame()->GetRenderWidgetHost(), true);
   }
 
+  // Repeatedly schedules draw events and scans for frames until the output from
+  // the capture device matches the given RGB |color| and frame |size|.
+  void SimulateDrawsUntilNewFrameSizeArrives(SkColor color,
+                                             const gfx::Size& size) {
+    const base::TimeTicks start_time = base::TimeTicks::Now();
+    while ((base::TimeTicks::Now() - start_time) <
+               TestTimeouts::action_max_timeout()) {
+      SimulateDrawEvent();
+      const auto color_and_size = client_observer()->WaitForNextFrame();
+      if (color_and_size.first == ConvertRgbToYuv(color) &&
+          color_and_size.second == size) {
+        return;
+      }
+    }
+    DeadlineExceeded(base::Closure());
+  }
+
+  void SimulateRefreshFrameRequest() {
+    // Force at least three frame period's worth of time to pass. The wait is
+    // needed because refresh frame requests are only honored when drawing
+    // events, which trigger frame captures, are not occurring frequently
+    // enough.
+    //
+    // TODO(miu): Instead of physically waiting, we should inject simulated
+    // clocks for testing.
+    base::RunLoop run_loop;
+    BrowserThread::PostDelayedTask(
+        BrowserThread::UI, FROM_HERE,
+        run_loop.QuitClosure(),
+        base::TimeDelta::FromMicroseconds(
+            3 * base::Time::kMicrosecondsPerSecond / kTestFramesPerSecond));
+    run_loop.Run();
+
+    BrowserThread::PostTask(
+        BrowserThread::UI, FROM_HERE,
+        base::Bind(&media::VideoCaptureDevice::RequestRefreshFrame,
+                   base::Unretained(device_.get())));
+  }
+
   void DestroyVideoCaptureDevice() { device_.reset(); }
 
   StubClientObserver* client_observer() {
@@ -695,7 +786,7 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
   }
 
  private:
-  gfx::test::TestScreen test_screen_;
+  display::test::TestScreen test_screen_;
 
   StubClientObserver client_observer_;
 
@@ -703,21 +794,21 @@ class MAYBE_WebContentsVideoCaptureDeviceTest : public testing::Test {
   CaptureTestSourceController controller_;
 
   // Self-registering RenderProcessHostFactory.
-  scoped_ptr<MockRenderProcessHostFactory> render_process_host_factory_;
+  std::unique_ptr<MockRenderProcessHostFactory> render_process_host_factory_;
 
   // Creates capture-capable RenderViewHosts whose pixel content production is
   // under the control of |controller_|.
-  scoped_ptr<CaptureTestRenderViewHostFactory> render_view_host_factory_;
+  std::unique_ptr<CaptureTestRenderViewHostFactory> render_view_host_factory_;
 
   // Self-registering RenderFrameHostFactory.
-  scoped_ptr<TestRenderFrameHostFactory> render_frame_host_factory_;
+  std::unique_ptr<TestRenderFrameHostFactory> render_frame_host_factory_;
 
   // A mocked-out browser and tab.
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<WebContents> web_contents_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<WebContents> web_contents_;
 
   // Finally, the WebContentsVideoCaptureDevice under test.
-  scoped_ptr<media::VideoCaptureDevice> device_;
+  std::unique_ptr<media::VideoCaptureDevice> device_;
 
   TestBrowserThreadBundle thread_bundle_;
 };
@@ -752,7 +843,9 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, WebContentsDestroyed) {
   capture_params.requested_format.frame_rate = kTestFramesPerSecond;
   capture_params.requested_format.pixel_format = media::PIXEL_FORMAT_I420;
   device()->AllocateAndStart(capture_params, client_observer()->PassClient());
-  // Do one capture to prove
+
+  // Do one capture to prove the tab is initially open and being captured
+  // normally.
   source()->SetSolidColor(SK_ColorRED);
   SimulateDrawEvent();
   ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorRED));
@@ -792,9 +885,9 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
 }
 
 TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, StopWithRendererWorkToDo) {
-  // Set up the test to use RGB copies and an normal
+  // Set up the test to use RGB captures into SkBitmaps instead of YUV captures
+  // into VideoFrames.
   source()->SetCanCopyToVideoFrame(false);
-  source()->SetUseFrameSubscriber(false);
   media::VideoCaptureParams capture_params;
   capture_params.requested_format.frame_size.SetSize(kTestWidth, kTestHeight);
   capture_params.requested_format.frame_rate = kTestFramesPerSecond;
@@ -803,7 +896,7 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, StopWithRendererWorkToDo) {
 
   base::RunLoop().RunUntilIdle();
 
-  for (int i = 0; i < 10; ++i)
+  for (int i = 0; i < 3; ++i)
     SimulateDrawEvent();
 
   ASSERT_FALSE(client_observer()->HasError());
@@ -849,8 +942,8 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, DeviceRestart) {
 
 // The "happy case" test.  No scaling is needed, so we should be able to change
 // the picture emitted from the source and expect to see each delivered to the
-// consumer. The test will alternate between the three capture paths, simulating
-// falling in and out of accelerated compositing.
+// consumer. The test will alternate between the RGB/SkBitmap and YUV/VideoFrame
+// capture paths.
 TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, GoesThroughAllTheMotions) {
   media::VideoCaptureParams capture_params;
   capture_params.requested_format.frame_size.SetSize(kTestWidth, kTestHeight);
@@ -858,26 +951,14 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, GoesThroughAllTheMotions) {
   capture_params.requested_format.pixel_format = media::PIXEL_FORMAT_I420;
   device()->AllocateAndStart(capture_params, client_observer()->PassClient());
 
-  for (int i = 0; i < 6; i++) {
+  for (int i = 0; i < 4; i++) {
     const char* name = NULL;
-    switch (i % 3) {
-      case 0:
-        source()->SetCanCopyToVideoFrame(true);
-        source()->SetUseFrameSubscriber(false);
-        name = "VideoFrame";
-        break;
-      case 1:
-        source()->SetCanCopyToVideoFrame(false);
-        source()->SetUseFrameSubscriber(true);
-        name = "Subscriber";
-        break;
-      case 2:
-        source()->SetCanCopyToVideoFrame(false);
-        source()->SetUseFrameSubscriber(false);
-        name = "SkBitmap";
-        break;
-      default:
-        FAIL();
+    if (i % 2) {
+      source()->SetCanCopyToVideoFrame(false);
+      name = "SkBitmap";
+    } else {
+      source()->SetCanCopyToVideoFrame(true);
+      name = "VideoFrame";
     }
 
     SCOPED_TRACE(base::StringPrintf("Using %s path, iteration #%d", name, i));
@@ -913,17 +994,18 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, BadFramesGoodFrames) {
 
   // These frames ought to be dropped during the Render stage. Let
   // several captures to happen.
-  ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
-  ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
-  ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
-  ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
-  ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
+  for (int i = 0; i < 3; ++i) {
+    SimulateDrawEvent();
+    ASSERT_NO_FATAL_FAILURE(source()->WaitForNextCopy());
+  }
 
   // Now push some good frames through; they should be processed normally.
   source()->SetCopyResultSize(kTestWidth, kTestHeight);
   source()->SetSolidColor(SK_ColorGREEN);
+  SimulateDrawEvent();
   ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorGREEN));
   source()->SetSolidColor(SK_ColorRED);
+  SimulateDrawEvent();
   ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorRED));
 
   device()->StopAndDeAllocate();
@@ -943,17 +1025,14 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
 
   device()->AllocateAndStart(capture_params, client_observer()->PassClient());
 
-  source()->SetUseFrameSubscriber(true);
-
   // Source size equals maximum size.  Expect delivered frames to be
   // kTestWidth by kTestHeight.
   source()->SetSolidColor(SK_ColorRED);
   const float device_scale_factor = GetDeviceScaleFactor();
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth, kTestHeight)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorRED, gfx::Size(kTestWidth, kTestHeight)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorRED, gfx::Size(kTestWidth, kTestHeight));
 
   // Source size is half in both dimensions.  Expect delivered frames to be of
   // the same aspect ratio as kTestWidth by kTestHeight, but larger than the
@@ -961,27 +1040,24 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
   source()->SetSolidColor(SK_ColorGREEN);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth / 2, kTestHeight / 2)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorGREEN, gfx::Size(180 * kTestWidth / kTestHeight, 180)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorGREEN, gfx::Size(180 * kTestWidth / kTestHeight, 180));
 
   // Source size changes aspect ratio.  Expect delivered frames to be padded
   // in the horizontal dimension to preserve aspect ratio.
   source()->SetSolidColor(SK_ColorBLUE);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth / 2, kTestHeight)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorBLUE, gfx::Size(kTestWidth, kTestHeight)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorBLUE, gfx::Size(kTestWidth, kTestHeight));
 
   // Source size changes aspect ratio again.  Expect delivered frames to be
   // padded in the vertical dimension to preserve aspect ratio.
   source()->SetSolidColor(SK_ColorBLACK);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth, kTestHeight / 2)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorBLACK, gfx::Size(kTestWidth, kTestHeight)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorBLACK, gfx::Size(kTestWidth, kTestHeight));
 
   device()->StopAndDeAllocate();
 }
@@ -1000,26 +1076,22 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
 
   device()->AllocateAndStart(capture_params, client_observer()->PassClient());
 
-  source()->SetUseFrameSubscriber(true);
-
   // Source size equals maximum size.  Expect delivered frames to be
   // kTestWidth by kTestHeight.
   source()->SetSolidColor(SK_ColorRED);
   const float device_scale_factor = GetDeviceScaleFactor();
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth, kTestHeight)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorRED, gfx::Size(kTestWidth, kTestHeight)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorRED, gfx::Size(kTestWidth, kTestHeight));
 
   // Source size is half in both dimensions.  Expect delivered frames to also
   // be half in both dimensions.
   source()->SetSolidColor(SK_ColorGREEN);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(
       device_scale_factor, gfx::Size(kTestWidth / 2, kTestHeight / 2)));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorGREEN, gfx::Size(kTestWidth / 2, kTestHeight / 2)));
+  SimulateDrawsUntilNewFrameSizeArrives(
+      SK_ColorGREEN, gfx::Size(kTestWidth / 2, kTestHeight / 2));
 
   // Source size changes to something arbitrary.  Since the source size is
   // less than the maximum size, expect delivered frames to be the same size
@@ -1028,9 +1100,7 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
   gfx::Size arbitrary_source_size(kTestWidth / 2 + 42, kTestHeight - 10);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(device_scale_factor,
                                                  arbitrary_source_size));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
-      SK_ColorBLUE, arbitrary_source_size));
+  SimulateDrawsUntilNewFrameSizeArrives(SK_ColorBLUE, arbitrary_source_size);
 
   // Source size changes to something arbitrary that exceeds the maximum frame
   // size.  Since the source size exceeds the maximum size, expect delivered
@@ -1039,11 +1109,10 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
   arbitrary_source_size = gfx::Size(kTestWidth * 2, kTestHeight / 2);
   SimulateSourceSizeChange(gfx::ConvertSizeToDIP(device_scale_factor,
                                                  arbitrary_source_size));
-  SimulateDrawEvent();
-  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColorAndFrameSize(
+  SimulateDrawsUntilNewFrameSizeArrives(
       SK_ColorBLACK, gfx::Size(kTestWidth,
                                kTestWidth * arbitrary_source_size.height() /
-                                   arbitrary_source_size.width())));
+                                   arbitrary_source_size.width()));
 
   device()->StopAndDeAllocate();
 }
@@ -1140,6 +1209,72 @@ TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest,
     RunTestForPreferredSize(
         policies[i], gfx::Size(837, 999), gfx::Size(837, 999));
   }
+}
+
+// Tests the Suspend/Resume() functionality.
+TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, SuspendsAndResumes) {
+  media::VideoCaptureParams capture_params;
+  capture_params.requested_format.frame_size.SetSize(kTestWidth, kTestHeight);
+  capture_params.requested_format.frame_rate = kTestFramesPerSecond;
+  capture_params.requested_format.pixel_format = media::PIXEL_FORMAT_I420;
+  device()->AllocateAndStart(capture_params, client_observer()->PassClient());
+
+  for (int i = 0; i < 3; ++i) {
+    // Draw a RED frame and wait for a normal frame capture to occur.
+    source()->SetSolidColor(SK_ColorRED);
+    SimulateDrawEvent();
+    ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorRED));
+
+    // Suspend capture and then draw a GREEN frame. No frame capture should
+    // occur.
+    device()->MaybeSuspend();
+    base::RunLoop().RunUntilIdle();
+    client_observer()->SetIsExpectingFrames(false);
+    source()->SetSolidColor(SK_ColorGREEN);
+    SimulateDrawEvent();
+    base::RunLoop().RunUntilIdle();
+
+    // Resume capture and then draw a BLUE frame and wait for it to be captured.
+    device()->Resume();
+    base::RunLoop().RunUntilIdle();
+    client_observer()->SetIsExpectingFrames(true);
+    source()->SetSolidColor(SK_ColorBLUE);
+    SimulateDrawEvent();
+    ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorBLUE));
+  }
+
+  device()->StopAndDeAllocate();
+}
+
+// Tests the RequestRefreshFrame() functionality.
+TEST_F(MAYBE_WebContentsVideoCaptureDeviceTest, ProvidesRefreshFrames) {
+  media::VideoCaptureParams capture_params;
+  capture_params.requested_format.frame_size.SetSize(kTestWidth, kTestHeight);
+  capture_params.requested_format.frame_rate = kTestFramesPerSecond;
+  capture_params.requested_format.pixel_format = media::PIXEL_FORMAT_I420;
+  device()->AllocateAndStart(capture_params, client_observer()->PassClient());
+
+  // Request a refresh frame before the first frame has been drawn.  This forces
+  // a capture.
+  source()->SetSolidColor(SK_ColorRED);
+  SimulateRefreshFrameRequest();
+  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorRED));
+
+  // Now, draw a frame and wait for a normal frame capture to occur.
+  source()->SetSolidColor(SK_ColorGREEN);
+  SimulateDrawEvent();
+  ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorGREEN));
+
+  // Now, make three more refresh frame requests. Although the source has
+  // changed to BLUE, no draw event has occurred. Therefore, expect the refresh
+  // frames to contain the content from the last drawn frame, which is GREEN.
+  source()->SetSolidColor(SK_ColorBLUE);
+  for (int i = 0; i < 3; ++i) {
+    SimulateRefreshFrameRequest();
+    ASSERT_NO_FATAL_FAILURE(client_observer()->WaitForNextColor(SK_ColorGREEN));
+  }
+
+  device()->StopAndDeAllocate();
 }
 
 }  // namespace

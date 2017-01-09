@@ -9,6 +9,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "build/build_config.h"
 
 namespace zip {
 
@@ -38,6 +39,17 @@ bool ZipFiles(const base::FilePath& src_dir,
               const std::vector<base::FilePath>& src_relative_paths,
               int dest_fd);
 #endif  // defined(OS_POSIX)
+
+// Unzip the contents of zip_file into dest_dir.
+// For each file in zip_file, include it only if the callback |filter_cb|
+// returns true. Otherwise omit it.
+// If |log_skipped_files| is true, files skipped during extraction are printed
+// to debug log.
+typedef base::Callback<bool(const base::FilePath&)> FilterCallback;
+bool UnzipWithFilterCallback(const base::FilePath& zip_file,
+                             const base::FilePath& dest_dir,
+                             const FilterCallback& filter_cb,
+                             bool log_skipped_files);
 
 // Unzip the contents of zip_file into dest_dir.
 bool Unzip(const base::FilePath& zip_file, const base::FilePath& dest_dir);

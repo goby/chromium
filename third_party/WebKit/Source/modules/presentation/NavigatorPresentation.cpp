@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/NavigatorPresentation.h"
 
 #include "core/frame/Navigator.h"
@@ -10,43 +9,38 @@
 
 namespace blink {
 
-NavigatorPresentation::NavigatorPresentation()
-{
+NavigatorPresentation::NavigatorPresentation() {}
+
+// static
+const char* NavigatorPresentation::supplementName() {
+  return "NavigatorPresentation";
 }
 
 // static
-const char* NavigatorPresentation::supplementName()
-{
-    return "NavigatorPresentation";
+NavigatorPresentation& NavigatorPresentation::from(Navigator& navigator) {
+  NavigatorPresentation* supplement = static_cast<NavigatorPresentation*>(
+      Supplement<Navigator>::from(navigator, supplementName()));
+  if (!supplement) {
+    supplement = new NavigatorPresentation();
+    provideTo(navigator, supplementName(), supplement);
+  }
+  return *supplement;
 }
 
 // static
-NavigatorPresentation& NavigatorPresentation::from(Navigator& navigator)
-{
-    NavigatorPresentation* supplement = static_cast<NavigatorPresentation*>(HeapSupplement<Navigator>::from(navigator, supplementName()));
-    if (!supplement) {
-        supplement = new NavigatorPresentation();
-        provideTo(navigator, supplementName(), supplement);
-    }
-    return *supplement;
+Presentation* NavigatorPresentation::presentation(Navigator& navigator) {
+  NavigatorPresentation& self = NavigatorPresentation::from(navigator);
+  if (!self.m_presentation) {
+    if (!navigator.frame())
+      return nullptr;
+    self.m_presentation = Presentation::create(navigator.frame());
+  }
+  return self.m_presentation;
 }
 
-// static
-Presentation* NavigatorPresentation::presentation(Navigator& navigator)
-{
-    NavigatorPresentation& self = NavigatorPresentation::from(navigator);
-    if (!self.m_presentation) {
-        if (!navigator.frame())
-            return nullptr;
-        self.m_presentation = Presentation::create(navigator.frame());
-    }
-    return self.m_presentation;
+DEFINE_TRACE(NavigatorPresentation) {
+  visitor->trace(m_presentation);
+  Supplement<Navigator>::trace(visitor);
 }
 
-DEFINE_TRACE(NavigatorPresentation)
-{
-    visitor->trace(m_presentation);
-    HeapSupplement<Navigator>::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

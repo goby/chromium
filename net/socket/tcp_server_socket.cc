@@ -4,6 +4,8 @@
 
 #include "net/socket/tcp_server_socket.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
@@ -12,10 +14,8 @@
 
 namespace net {
 
-TCPServerSocket::TCPServerSocket(NetLog* net_log, const NetLog::Source& source)
-    : socket_(net_log, source),
-      pending_accept_(false) {
-}
+TCPServerSocket::TCPServerSocket(NetLog* net_log, const NetLogSource& source)
+    : socket_(nullptr, net_log, source), pending_accept_(false) {}
 
 TCPServerSocket::~TCPServerSocket() {
 }
@@ -50,7 +50,7 @@ int TCPServerSocket::GetLocalAddress(IPEndPoint* address) const {
   return socket_.GetLocalAddress(address);
 }
 
-int TCPServerSocket::Accept(scoped_ptr<StreamSocket>* socket,
+int TCPServerSocket::Accept(std::unique_ptr<StreamSocket>* socket,
                             const CompletionCallback& callback) {
   DCHECK(socket);
   DCHECK(!callback.is_null());
@@ -85,20 +85,20 @@ void TCPServerSocket::DetachFromThread() {
 
 int TCPServerSocket::ConvertAcceptedSocket(
     int result,
-    scoped_ptr<StreamSocket>* output_accepted_socket) {
+    std::unique_ptr<StreamSocket>* output_accepted_socket) {
   // Make sure the TCPSocket object is destroyed in any case.
-  scoped_ptr<TCPSocket> temp_accepted_socket(accepted_socket_.Pass());
+  std::unique_ptr<TCPSocket> temp_accepted_socket(std::move(accepted_socket_));
   if (result != OK)
     return result;
 
-  output_accepted_socket->reset(new TCPClientSocket(
-      temp_accepted_socket.Pass(), accepted_address_));
+  output_accepted_socket->reset(
+      new TCPClientSocket(std::move(temp_accepted_socket), accepted_address_));
 
   return OK;
 }
 
 void TCPServerSocket::OnAcceptCompleted(
-    scoped_ptr<StreamSocket>* output_accepted_socket,
+    std::unique_ptr<StreamSocket>* output_accepted_socket,
     const CompletionCallback& forward_callback,
     int result) {
   result = ConvertAcceptedSocket(result, output_accepted_socket);

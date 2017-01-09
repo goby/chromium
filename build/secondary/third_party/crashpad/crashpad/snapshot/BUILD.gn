@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-source_set("snapshot") {
+static_library("snapshot") {
   deps = [
     "../client",
     "../compat",
@@ -18,6 +18,8 @@ source_set("snapshot") {
   }
 
   sources = [
+    "capture_memory.cc",
+    "capture_memory.h",
     "cpu_architecture.h",
     "cpu_context.cc",
     "cpu_context.h",
@@ -77,6 +79,10 @@ source_set("snapshot") {
     "process_snapshot.h",
     "system_snapshot.h",
     "thread_snapshot.h",
+    "unloaded_module_snapshot.cc",
+    "unloaded_module_snapshot.h",
+    "win/capture_memory_delegate_win.cc",
+    "win/capture_memory_delegate_win.h",
     "win/cpu_context_win.cc",
     "win/cpu_context_win.h",
     "win/exception_snapshot_win.cc",
@@ -91,13 +97,40 @@ source_set("snapshot") {
     "win/pe_image_annotations_reader.h",
     "win/pe_image_reader.cc",
     "win/pe_image_reader.h",
+    "win/pe_image_resource_reader.cc",
+    "win/pe_image_resource_reader.h",
     "win/process_reader_win.cc",
     "win/process_reader_win.h",
     "win/process_snapshot_win.cc",
     "win/process_snapshot_win.h",
+    "win/process_subrange_reader.cc",
+    "win/process_subrange_reader.h",
     "win/system_snapshot_win.cc",
     "win/system_snapshot_win.h",
     "win/thread_snapshot_win.cc",
     "win/thread_snapshot_win.h",
   ]
+}
+
+if (is_win) {
+  source_set("snapshot_api") {
+    deps = [
+      ":snapshot",
+      "../compat",
+      "../util",
+      "//base",
+    ]
+
+    include_dirs = [ ".." ]
+
+    cflags = [ "/wd4201" ]
+
+    sources = [
+      "api/module_annotations_win.cc",
+      "api/module_annotations_win.h",
+    ]
+  }
+} else {
+  group("snapshot_api") {
+  }
 }

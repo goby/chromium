@@ -6,13 +6,13 @@
 #define CHROMEOS_NETWORK_NETWORK_CONFIGURATION_HANDLER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "chromeos/chromeos_export.h"
@@ -103,7 +103,7 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
   void CreateShillConfiguration(
       const base::DictionaryValue& shill_properties,
       NetworkConfigurationObserver::Source source,
-      const network_handler::StringResultCallback& callback,
+      const network_handler::ServiceResultCallback& callback,
       const network_handler::ErrorCallback& error_callback);
 
   // Removes the network |service_path| from any profiles that include it.
@@ -141,8 +141,8 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
   void RunCreateNetworkCallback(
       const std::string& profile_path,
       NetworkConfigurationObserver::Source source,
-      scoped_ptr<base::DictionaryValue> configure_properties,
-      const network_handler::StringResultCallback& callback,
+      std::unique_ptr<base::DictionaryValue> configure_properties,
+      const network_handler::ServiceResultCallback& callback,
       const dbus::ObjectPath& service_path);
 
   // Called from ProfileEntryDeleter instances when they complete causing
@@ -173,7 +173,7 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
   // for the service after setting properties.
   void SetPropertiesSuccessCallback(
       const std::string& service_path,
-      scoped_ptr<base::DictionaryValue> set_properties,
+      std::unique_ptr<base::DictionaryValue> set_properties,
       NetworkConfigurationObserver::Source source,
       const base::Closure& callback);
   void SetPropertiesErrorCallback(
@@ -202,10 +202,11 @@ class CHROMEOS_EXPORT NetworkConfigurationHandler
   NetworkStateHandler* network_state_handler_;
   NetworkDeviceHandler* network_device_handler_;
 
-  // Map of in-progress deleter instances. Owned by this class.
-  std::map<std::string, ProfileEntryDeleter*> profile_entry_deleters_;
+  // Map of in-progress deleter instances.
+  std::map<std::string, std::unique_ptr<ProfileEntryDeleter>>
+      profile_entry_deleters_;
 
-  base::ObserverList<NetworkConfigurationObserver> observers_;
+  base::ObserverList<NetworkConfigurationObserver, true> observers_;
 
   DISALLOW_COPY_AND_ASSIGN(NetworkConfigurationHandler);
 };

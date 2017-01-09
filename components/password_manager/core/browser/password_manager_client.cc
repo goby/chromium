@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "components/password_manager/core/browser/password_manager_client.h"
 
 namespace password_manager {
@@ -18,12 +19,20 @@ bool PasswordManagerClient::IsFillingEnabledForCurrentPage() const {
   return true;
 }
 
+bool PasswordManagerClient::OnCredentialManagerUsed() {
+  return true;
+}
+
 void PasswordManagerClient::ForceSavePassword() {
 }
 
+void PasswordManagerClient::GeneratePassword() {}
+
 void PasswordManagerClient::PasswordWasAutofilled(
-    const autofill::PasswordFormMap& best_matches,
-    const GURL& origin) const {}
+    const std::map<base::string16, const autofill::PasswordForm*>& best_matches,
+    const GURL& origin,
+    const std::vector<const autofill::PasswordForm*>* federated_matches) const {
+}
 
 PasswordSyncState PasswordManagerClient::GetPasswordSyncState() const {
   return NOT_SYNCING_PASSWORDS;
@@ -31,22 +40,6 @@ PasswordSyncState PasswordManagerClient::GetPasswordSyncState() const {
 
 bool PasswordManagerClient::WasLastNavigationHTTPError() const {
   return false;
-}
-
-PasswordStore::AuthorizationPromptPolicy
-PasswordManagerClient::GetAuthorizationPromptPolicy(
-    const autofill::PasswordForm& form) {
-  // Password Autofill is supposed to be a convenience. If it creates a
-  // blocking dialog, it is no longer convenient. We should only prompt the
-  // user after a full username has been typed in. Until that behavior is
-  // implemented, never prompt the user for keychain access.
-  // Effectively, this means that passwords stored by Chrome still work,
-  // since Chrome can access those without a prompt, but passwords stored by
-  // Safari, Firefox, or Chrome Canary will not work. Note that the latest
-  // build of Safari and Firefox don't create keychain items with the
-  // relevant tags anyways (7/11/2014).
-  // http://crbug.com/178358
-  return PasswordStore::DISALLOW_PROMPT;
 }
 
 bool PasswordManagerClient::DidLastPageLoadEncounterSSLErrors() const {
@@ -75,12 +68,10 @@ const GURL& PasswordManagerClient::GetMainFrameURL() const {
   return GURL::EmptyGURL();
 }
 
-bool PasswordManagerClient::IsUpdatePasswordUIEnabled() const {
-  return false;
-}
-
 const LogManager* PasswordManagerClient::GetLogManager() const {
   return nullptr;
 }
+
+void PasswordManagerClient::AnnotateNavigationEntry(bool has_password_field) {}
 
 }  // namespace password_manager

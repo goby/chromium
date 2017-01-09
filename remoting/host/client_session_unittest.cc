@@ -2,18 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "remoting/host/client_session.h"
+
+#include <stdint.h>
+
 #include <algorithm>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/constants.h"
 #include "remoting/codec/video_encoder_verbatim.h"
-#include "remoting/host/client_session.h"
 #include "remoting/host/desktop_environment.h"
 #include "remoting/host/fake_desktop_environment.h"
 #include "remoting/host/fake_host_extension.h"
@@ -127,13 +132,13 @@ class ClientSessionTest : public testing::Test {
   std::vector<HostExtension*> extensions_;
 
   // ClientSession instance under test.
-  scoped_ptr<ClientSession> client_session_;
+  std::unique_ptr<ClientSession> client_session_;
 
   // ClientSession::EventHandler mock for use in tests.
   MockClientSessionEventHandler session_event_handler_;
 
   // Storage for values to be returned by the protocol::Session mock.
-  scoped_ptr<SessionConfig> session_config_;
+  std::unique_ptr<SessionConfig> session_config_;
   const std::string client_jid_;
 
   // Stubs returned to |client_session_| components by |connection_|.
@@ -142,7 +147,7 @@ class ClientSessionTest : public testing::Test {
   // ClientSession owns |connection_| but tests need it to inject fake events.
   protocol::FakeConnectionToClient* connection_;
 
-  scoped_ptr<FakeDesktopEnvironmentFactory> desktop_environment_factory_;
+  std::unique_ptr<FakeDesktopEnvironmentFactory> desktop_environment_factory_;
 };
 
 void ClientSessionTest::SetUp() {
@@ -150,7 +155,8 @@ void ClientSessionTest::SetUp() {
   task_runner_ = new AutoThreadTaskRunner(
       message_loop_.task_runner(), run_loop_.QuitClosure());
 
-  desktop_environment_factory_.reset(new FakeDesktopEnvironmentFactory());
+  desktop_environment_factory_.reset(
+      new FakeDesktopEnvironmentFactory(message_loop_.task_runner()));
   session_config_ = SessionConfig::ForTest();
 }
 
@@ -169,30 +175,22 @@ void ClientSessionTest::TearDown() {
 
 void ClientSessionTest::CreateClientSession() {
   // Mock protocol::Session APIs called directly by ClientSession.
-  scoped_ptr<protocol::MockSession> session(new MockSession());
+  std::unique_ptr<protocol::MockSession> session(new MockSession());
   EXPECT_CALL(*session, config()).WillRepeatedly(ReturnRef(*session_config_));
   EXPECT_CALL(*session, jid()).WillRepeatedly(ReturnRef(client_jid_));
 
   // Mock protocol::ConnectionToClient APIs called directly by ClientSession.
   // HostStub is not touched by ClientSession, so we can safely pass nullptr.
-  scoped_ptr<protocol::FakeConnectionToClient> connection(
-      new protocol::FakeConnectionToClient(session.Pass()));
+  std::unique_ptr<protocol::FakeConnectionToClient> connection(
+      new protocol::FakeConnectionToClient(std::move(session)));
   connection->set_client_stub(&client_stub_);
   connection_ = connection.get();
 
-  client_session_.reset(new ClientSession(
-      &session_event_handler_,
-      task_runner_,  // Audio thread.
-      task_runner_,  // Input thread.
-      task_runner_,  // Capture thread.
-      task_runner_,  // Encode thread.
-      task_runner_,  // Network thread.
-      task_runner_,  // UI thread.
-      connection.Pass(),
-      desktop_environment_factory_.get(),
-      base::TimeDelta(),
-      nullptr,
-      extensions_));
+  client_session_.reset(
+      new ClientSession(&session_event_handler_, std::move(connection),
+                        desktop_environment_factory_.get(),
+                        DesktopEnvironmentOptions::CreateDefault(),
+                        base::TimeDelta(), nullptr, extensions_));
 }
 
 void ClientSessionTest::ConnectClientSession() {
@@ -203,18 +201,21 @@ void ClientSessionTest::ConnectClientSession() {
   EXPECT_FALSE(connection_->clipboard_stub());
   EXPECT_FALSE(connection_->input_stub());
 
-  client_session_->OnConnectionAuthenticated(client_session_->connection());
+  client_session_->OnConnectionAuthenticated();
 
   EXPECT_TRUE(connection_->clipboard_stub());
   EXPECT_TRUE(connection_->input_stub());
 
-  client_session_->OnConnectionChannelsConnected(client_session_->connection());
+  client_session_->CreateMediaStreams();
+  client_session_->OnConnectionChannelsConnected();
 }
 
 void ClientSessionTest::NotifyVideoSize() {
-  connection_->last_video_stream()->size_callback().Run(
+  connection_->last_video_stream()->observer()->OnVideoSizeChanged(
+      connection_->last_video_stream().get(),
       webrtc::DesktopSize(protocol::FakeDesktopCapturer::kWidth,
-                          protocol::FakeDesktopCapturer::kHeight));
+                          protocol::FakeDesktopCapturer::kHeight),
+      webrtc::DesktopVector(kDefaultDpi, kDefaultDpi));
 }
 
 TEST_F(ClientSessionTest, DisableInputs) {
@@ -376,46 +377,6 @@ TEST_F(ClientSessionTest, ClampMouseEvents) {
   }
 }
 
-TEST_F(ClientSessionTest, NoGnubbyAuth) {
-  CreateClientSession();
-  ConnectClientSession();
-  NotifyVideoSize();
-
-  protocol::ExtensionMessage message;
-  message.set_type("gnubby-auth");
-  message.set_data("test");
-
-  // Host should ignore gnubby messages when gnubby is disabled.
-  client_session_->DeliverClientMessage(message);
-}
-
-TEST_F(ClientSessionTest, EnableGnubbyAuth) {
-  CreateClientSession();
-  ConnectClientSession();
-  NotifyVideoSize();
-
-  // Lifetime controlled by object under test.
-  MockGnubbyAuthHandler* gnubby_auth_handler = new MockGnubbyAuthHandler();
-  client_session_->SetGnubbyAuthHandlerForTesting(gnubby_auth_handler);
-
-  // Host should ignore gnubby messages when gnubby is disabled.
-  protocol::ExtensionMessage message;
-  message.set_type("gnubby-auth");
-  message.set_data("test");
-
-  EXPECT_CALL(*gnubby_auth_handler, DeliverClientMessage(_)).Times(1);
-  client_session_->DeliverClientMessage(message);
-}
-
-// Verifies that the client's video pipeline can be reset mid-session.
-TEST_F(ClientSessionTest, ResetVideoPipeline) {
-  CreateClientSession();
-  ConnectClientSession();
-  NotifyVideoSize();
-
-  client_session_->ResetVideoPipeline();
-}
-
 // Verifies that clients can have extensions registered, resulting in the
 // correct capabilities being reported, and messages delivered correctly.
 // The extension system is tested more extensively in the
@@ -429,9 +390,6 @@ TEST_F(ClientSessionTest, Extensions) {
   FakeExtension extension3("ext3", "cap3");
   extensions_.push_back(&extension3);
 
-  // Set the second extension to request to modify the video pipeline.
-  extension2.set_steal_video_capturer(true);
-
   // Verify that the ClientSession reports the correct capabilities.
   EXPECT_CALL(client_stub_, SetCapabilities(EqCapabilities("cap1 cap3")));
 
@@ -444,11 +402,6 @@ TEST_F(ClientSessionTest, Extensions) {
   protocol::Capabilities capabilities_message;
   capabilities_message.set_capabilities("cap1 cap4 default");
   client_session_->SetCapabilities(capabilities_message);
-
-  // Simulate OnCreateVideoEncoder() which is normally called by the
-  // ConnectionToClient when creating the video stream.
-  scoped_ptr<VideoEncoder> encoder(new VideoEncoderVerbatim());
-  connection_->event_handler()->OnCreateVideoEncoder(&encoder);
 
   // Verify that the correct extension messages are delivered, and dropped.
   protocol::ExtensionMessage message1;
@@ -469,56 +422,13 @@ TEST_F(ClientSessionTest, Extensions) {
   // ext1 was instantiated and sent a message, and did not wrap anything.
   EXPECT_TRUE(extension1.was_instantiated());
   EXPECT_TRUE(extension1.has_handled_message());
-  EXPECT_FALSE(extension1.has_wrapped_video_encoder());
 
   // ext2 was instantiated but not sent a message, and wrapped video encoder.
   EXPECT_TRUE(extension2.was_instantiated());
   EXPECT_FALSE(extension2.has_handled_message());
-  EXPECT_TRUE(extension2.has_wrapped_video_encoder());
 
   // ext3 was sent a message but not instantiated.
   EXPECT_FALSE(extension3.was_instantiated());
-}
-
-// Verifies that an extension can "steal" the video capture, in which case no
-// VideoFramePump is instantiated.
-TEST_F(ClientSessionTest, StealVideoCapturer) {
-  FakeExtension extension("ext1", "cap1");
-  extensions_.push_back(&extension);
-
-  // Verify that the ClientSession reports the correct capabilities.
-  EXPECT_CALL(client_stub_, SetCapabilities(EqCapabilities("cap1")));
-
-  CreateClientSession();
-  ConnectClientSession();
-
-  // Mimic the client reporting an overlapping set of capabilities.
-  protocol::Capabilities capabilities_message;
-  capabilities_message.set_capabilities("cap1");
-  client_session_->SetCapabilities(capabilities_message);
-
-  extension.set_steal_video_capturer(true);
-  client_session_->ResetVideoPipeline();
-
-  base::RunLoop().RunUntilIdle();
-
-  // Verify that video control messages received while there is no video
-  // scheduler active won't crash things.
-  protocol::VideoControl video_control;
-  video_control.set_enable(false);
-  video_control.set_lossless_encode(true);
-  video_control.set_lossless_color(true);
-  client_session_->ControlVideo(video_control);
-
-  // TODO(wez): Find a way to verify that the ClientSession never captures any
-  // frames in this case.
-
-  client_session_->DisconnectSession(protocol::OK);
-  client_session_.reset();
-
-  // ext1 was instantiated and wrapped the video capturer.
-  EXPECT_TRUE(extension.was_instantiated());
-  EXPECT_TRUE(extension.has_wrapped_video_capturer());
 }
 
 }  // namespace remoting

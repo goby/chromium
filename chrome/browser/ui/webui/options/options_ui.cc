@@ -5,19 +5,22 @@
 #include "chrome/browser/ui/webui/options/options_ui.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/memory/singleton.h"
 #include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_about_handler.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/extensions/tab_helper.h"
@@ -51,24 +54,26 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
+#include "chrome/grit/options_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_result.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui.h"
-#include "grit/options_resources.h"
-#include "grit/theme_resources.h"
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/template_expressions.h"
 #include "ui/base/webui/jstemplate_builder.h"
 #include "ui/base/webui/web_ui_util.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/ui/webui/options/supervised_user_create_confirm_handler.h"
 #include "chrome/browser/ui/webui/options/supervised_user_import_handler.h"
 #include "chrome/browser/ui/webui/options/supervised_user_learn_more_handler.h"
@@ -77,12 +82,10 @@
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/browser_process_platform_part.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
-#include "chrome/browser/chromeos/policy/consumer_management_service.h"
 #include "chrome/browser/chromeos/system/pointer_device_observer.h"
 #include "chrome/browser/ui/webui/options/chromeos/accounts_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/bluetooth_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/change_picture_options_handler.h"
-#include "chrome/browser/ui/webui/options/chromeos/consumer_management_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/core_chromeos_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/cros_language_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/date_time_options_handler.h"
@@ -90,10 +93,12 @@
 #include "chrome/browser/ui/webui/options/chromeos/display_overscan_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/internet_options_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/keyboard_handler.h"
+#include "chrome/browser/ui/webui/options/chromeos/options_stylus_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/pointer_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/power_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/proxy_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/stats_options_handler.h"
+#include "chrome/browser/ui/webui/options/chromeos/storage_manager_handler.h"
 #include "chrome/browser/ui/webui/options/chromeos/user_image_source.h"
 #endif
 
@@ -111,6 +116,33 @@ namespace {
 
 const char kLocalizedStringsFile[] = "strings.js";
 const char kOptionsBundleJsFile[]  = "options_bundle.js";
+
+#if defined(OS_CHROMEOS)
+constexpr char kIconsHTMLPath[] = "icons.html";
+constexpr char kPinKeyboardHTMLPath[] = "people_page/pin_keyboard.html";
+constexpr char kPinKeyboardJSPath[] = "people_page/pin_keyboard.js";
+constexpr char kPasswordPromptDialogHTMLPath[] =
+    "people_page/password_prompt_dialog.html";
+constexpr char kPasswordPromptDialogJSPath[] =
+    "people_page/password_prompt_dialog.js";
+constexpr char kLockStateBehaviorHTMLPath[] =
+    "people_page/lock_state_behavior.html";
+constexpr char kLockStateBehaviorJSPath[] =
+    "people_page/lock_state_behavior.js";
+constexpr char kLockScreenHTMLPath[] = "people_page/lock_screen.html";
+constexpr char kLockScreenJSPath[] = "people_page/lock_screen.js";
+constexpr char kSetupPinHTMLPath[] = "people_page/setup_pin_dialog.html";
+constexpr char kSetupPinJSPath[] = "people_page/setup_pin_dialog.js";
+constexpr char kSettingsRouteHTMLPath[] = "route.html";
+constexpr char kSettingsRouteJSPath[] = "route.js";
+constexpr char kSettingsSharedCSSHTMLPath[] = "settings_shared_css.html";
+constexpr char kSettingsVarsCSSHTMLPath[] = "settings_vars_css.html";
+constexpr char kSettingsPrefsBehaviorHTMLPath[] = "prefs/prefs_behavior.html";
+constexpr char kSettingsPrefsBehaviorJSPath[] = "prefs/prefs_behavior.js";
+constexpr char kSettingsPrefsTypesHTMLPath[] = "prefs/prefs_types.html";
+constexpr char kSettingsPrefsTypesJSPath[] = "prefs/prefs_types.js";
+constexpr char kOptionsPolymerHTMLPath[] = "options_polymer.html";
+#endif
 
 }  // namespace
 
@@ -131,17 +163,20 @@ class OptionsUIHTMLSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override;
   bool ShouldDenyXFrameOptions() const override;
 
  private:
   ~OptionsUIHTMLSource() override;
+  void CreateDataSourceMap();
+  void AddReplacements(base::DictionaryValue* localized_strings);
 
   // Localized strings collection.
-  scoped_ptr<base::DictionaryValue> localized_strings_;
+  std::unique_ptr<base::DictionaryValue> localized_strings_;
+  std::map<std::string, int> path_to_idr_map_;
+  ui::TemplateReplacements replacements_;
 
   DISALLOW_COPY_AND_ASSIGN(OptionsUIHTMLSource);
 };
@@ -149,7 +184,9 @@ class OptionsUIHTMLSource : public content::URLDataSource {
 OptionsUIHTMLSource::OptionsUIHTMLSource(
     base::DictionaryValue* localized_strings) {
   DCHECK(localized_strings);
+  AddReplacements(localized_strings);
   localized_strings_.reset(localized_strings);
+  CreateDataSourceMap();
 }
 
 std::string OptionsUIHTMLSource::GetSource() const {
@@ -158,12 +195,14 @@ std::string OptionsUIHTMLSource::GetSource() const {
 
 void OptionsUIHTMLSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   scoped_refptr<base::RefCountedMemory> response_bytes;
   const std::string& app_locale = g_browser_process->GetApplicationLocale();
   webui::SetLoadTimeDataDefaults(app_locale, localized_strings_.get());
+
+  std::map<std::string, int>::iterator result;
+  result = path_to_idr_map_.find(path);
 
   if (path == kLocalizedStringsFile) {
     // Return dynamically-generated strings from memory.
@@ -174,17 +213,30 @@ void OptionsUIHTMLSource::StartDataRequest(
     // Return (and cache) the options javascript code.
     response_bytes = ui::ResourceBundle::GetSharedInstance().
         LoadDataResourceBytes(IDR_OPTIONS_BUNDLE_JS);
+  } else if (result != path_to_idr_map_.end()) {
+    response_bytes =
+        ui::ResourceBundle::GetSharedInstance().LoadDataResourceBytes(
+            result->second);
   } else {
     // Return (and cache) the main options html page as the default.
     response_bytes = ui::ResourceBundle::GetSharedInstance().
         LoadDataResourceBytes(IDR_OPTIONS_HTML);
   }
 
+  // pre-process i18n strings
+  if (GetMimeType(path) == "text/html") {
+    std::string replaced = ui::ReplaceTemplateExpressions(
+        base::StringPiece(response_bytes->front_as<char>(),
+                          response_bytes->size()),
+        replacements_);
+    response_bytes = base::RefCountedString::TakeString(&replaced);
+  }
+
   callback.Run(response_bytes.get());
 }
 
 std::string OptionsUIHTMLSource::GetMimeType(const std::string& path) const {
-  if (path == kLocalizedStringsFile || path == kOptionsBundleJsFile)
+  if (base::EndsWith(path, ".js", base::CompareCase::INSENSITIVE_ASCII))
     return "application/javascript";
 
   return "text/html";
@@ -196,13 +248,54 @@ bool OptionsUIHTMLSource::ShouldDenyXFrameOptions() const {
 
 OptionsUIHTMLSource::~OptionsUIHTMLSource() {}
 
+void OptionsUIHTMLSource::CreateDataSourceMap() {
+#if defined(OS_CHROMEOS)
+  path_to_idr_map_[kIconsHTMLPath] = IDR_OPTIONS_ICONS_HTML;
+  path_to_idr_map_[kPinKeyboardHTMLPath] = IDR_OPTIONS_PIN_KEYBOARD_HTML;
+  path_to_idr_map_[kPinKeyboardJSPath] = IDR_OPTIONS_PIN_KEYBOARD_JS;
+  path_to_idr_map_[kPasswordPromptDialogHTMLPath] =
+      IDR_OPTIONS_PASSWORD_PROMPT_DIALOG_HTML;
+  path_to_idr_map_[kPasswordPromptDialogJSPath] =
+      IDR_OPTIONS_PASSWORD_PROMPT_DIALOG_JS;
+  path_to_idr_map_[kLockStateBehaviorHTMLPath] =
+      IDR_OPTIONS_LOCK_STATE_BEHAVIOR_HTML;
+  path_to_idr_map_[kLockStateBehaviorJSPath] =
+      IDR_OPTIONS_LOCK_STATE_BEHAVIOR_JS;
+  path_to_idr_map_[kLockScreenHTMLPath] = IDR_OPTIONS_LOCK_SCREEN_HTML;
+  path_to_idr_map_[kLockScreenJSPath] = IDR_OPTIONS_LOCK_SCREEN_JS;
+  path_to_idr_map_[kSetupPinHTMLPath] = IDR_OPTIONS_SETUP_PIN_DIALOG_HTML;
+  path_to_idr_map_[kSetupPinJSPath] = IDR_OPTIONS_SETUP_PIN_DIALOG_JS;
+  path_to_idr_map_[kSettingsRouteHTMLPath] = IDR_OPTIONS_ROUTE_HTML;
+  path_to_idr_map_[kSettingsRouteJSPath] = IDR_OPTIONS_ROUTE_JS;
+  path_to_idr_map_[kSettingsSharedCSSHTMLPath] = IDR_SETTINGS_SHARED_CSS_HTML;
+  path_to_idr_map_[kSettingsVarsCSSHTMLPath] = IDR_SETTINGS_VARS_CSS_HTML;
+  path_to_idr_map_[kSettingsPrefsBehaviorHTMLPath] =
+      IDR_SETTINGS_PREFS_BEHAVIOR_HTML;
+  path_to_idr_map_[kSettingsPrefsBehaviorJSPath] =
+      IDR_SETTINGS_PREFS_BEHAVIOR_JS;
+  path_to_idr_map_[kSettingsPrefsTypesHTMLPath] = IDR_SETTINGS_PREFS_TYPES_HTML;
+  path_to_idr_map_[kSettingsPrefsTypesJSPath] = IDR_SETTINGS_PREFS_TYPES_JS;
+  path_to_idr_map_[kOptionsPolymerHTMLPath] = IDR_OPTIONS_POLYMER_ELEMENTS_HTML;
+#endif
+}
+
+void OptionsUIHTMLSource::AddReplacements(
+    base::DictionaryValue* localized_strings) {
+  for (auto it = base::DictionaryValue::Iterator(*localized_strings);
+       !it.IsAtEnd(); it.Advance()) {
+    std::string str_value;
+    if (!it.value().GetAsString(&str_value)) {
+      continue;
+    }
+    replacements_[it.key()] = str_value;
+  }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 //
 // OptionsPageUIHandler
 //
 ////////////////////////////////////////////////////////////////////////////////
-
-const char OptionsPageUIHandler::kSettingsAppKey[] = "settingsApp";
 
 OptionsPageUIHandler::OptionsPageUIHandler() {
 }
@@ -255,9 +348,6 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
       WebContentsObserver(web_ui->GetWebContents()),
       initialized_handlers_(false) {
   base::DictionaryValue* localized_strings = new base::DictionaryValue();
-  localized_strings->Set(OptionsPageUIHandler::kSettingsAppKey,
-                         new base::DictionaryValue());
-
   CoreOptionsHandler* core_handler;
 #if defined(OS_CHROMEOS)
   core_handler = new chromeos::options::CoreChromeOSOptionsHandler();
@@ -301,7 +391,7 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
   AddOptionsPageUIHandler(localized_strings, new SearchEngineManagerHandler());
   AddOptionsPageUIHandler(localized_strings, new ImportDataHandler());
   AddOptionsPageUIHandler(localized_strings, new StartupPagesHandler());
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   AddOptionsPageUIHandler(localized_strings,
                           new SupervisedUserCreateConfirmHandler());
   AddOptionsPageUIHandler(localized_strings, new SupervisedUserImportHandler());
@@ -326,6 +416,8 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
                           new chromeos::options::InternetOptionsHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::KeyboardHandler());
+  AddOptionsPageUIHandler(localized_strings,
+                          new chromeos::options::OptionsStylusHandler());
 
   chromeos::options::PointerHandler* pointer_handler =
       new chromeos::options::PointerHandler();
@@ -338,13 +430,8 @@ OptionsUI::OptionsUI(content::WebUI* web_ui)
       new chromeos::options::ChangePictureOptionsHandler());
   AddOptionsPageUIHandler(localized_strings,
                           new chromeos::options::StatsOptionsHandler());
-
-  policy::ConsumerManagementService* consumer_management =
-      g_browser_process->platform_part()->browser_policy_connector_chromeos()->
-          GetConsumerManagementService();
-  chromeos::options::ConsumerManagementHandler* consumer_management_handler =
-      new chromeos::options::ConsumerManagementHandler(consumer_management);
-  AddOptionsPageUIHandler(localized_strings, consumer_management_handler);
+  AddOptionsPageUIHandler(localized_strings,
+                          new chromeos::options::StorageManagerHandler());
 #endif
 #if defined(USE_NSS_CERTS)
   AddOptionsPageUIHandler(localized_strings,
@@ -388,7 +475,7 @@ OptionsUI::~OptionsUI() {
     handlers_[i]->Uninitialize();
 }
 
-scoped_ptr<OptionsUI::OnFinishedLoadingCallbackList::Subscription>
+std::unique_ptr<OptionsUI::OnFinishedLoadingCallbackList::Subscription>
 OptionsUI::RegisterOnFinishedLoadingCallback(const base::Closure& callback) {
   return on_finished_loading_callbacks_.Add(callback);
 }
@@ -408,32 +495,36 @@ void OptionsUI::ProcessAutocompleteSuggestions(
         type != AutocompleteMatchType::NAVSUGGEST_PERSONALIZED) {
       continue;
     }
-    base::DictionaryValue* entry = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
     entry->SetString("title", match.description);
     entry->SetString("displayURL", match.contents);
     entry->SetString("url", match.destination_url.spec());
-    suggestions->Append(entry);
+    suggestions->Append(std::move(entry));
   }
-}
-
-// static
-base::RefCountedMemory* OptionsUI::GetFaviconResourceBytes(
-      ui::ScaleFactor scale_factor) {
-  return ui::ResourceBundle::GetSharedInstance().
-      LoadDataResourceBytesForScale(IDR_SETTINGS_FAVICON, scale_factor);
 }
 
 void OptionsUI::DidStartProvisionalLoadForFrame(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url,
-    bool is_error_page,
-    bool is_iframe_srcdoc) {
+    bool is_error_page) {
+  load_start_time_ = base::Time::Now();
   if (render_frame_host->GetRenderViewHost() ==
           web_ui()->GetWebContents()->GetRenderViewHost() &&
-      validated_url.host() == chrome::kChromeUISettingsFrameHost) {
+      validated_url.host_piece() == chrome::kChromeUISettingsFrameHost) {
     for (size_t i = 0; i < handlers_.size(); ++i)
       handlers_[i]->PageLoadStarted();
   }
+}
+
+void OptionsUI::DocumentLoadedInFrame(
+    content::RenderFrameHost *render_frame_host) {
+  UMA_HISTOGRAM_TIMES("Settings.LoadDocumentTime",
+                      base::Time::Now() - load_start_time_);
+}
+
+void OptionsUI::DocumentOnLoadCompletedInMainFrame() {
+  UMA_HISTOGRAM_TIMES("Settings.LoadCompletedTime",
+                      base::Time::Now() - load_start_time_);
 }
 
 void OptionsUI::InitializeHandlers() {
@@ -461,7 +552,7 @@ void OptionsUI::InitializeHandlers() {
   for (size_t i = 0; i < handlers_.size(); ++i)
     handlers_[i]->InitializePage();
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "BrowserOptions.notifyInitializationComplete");
 }
 
@@ -472,7 +563,7 @@ void OptionsUI::OnFinishedLoading() {
 void OptionsUI::AddOptionsPageUIHandler(
     base::DictionaryValue* localized_strings,
     OptionsPageUIHandler* handler_raw) {
-  scoped_ptr<OptionsPageUIHandler> handler(handler_raw);
+  std::unique_ptr<OptionsPageUIHandler> handler(handler_raw);
   DCHECK(handler.get());
   // Add only if handler's service is enabled.
   if (handler->IsEnabled()) {

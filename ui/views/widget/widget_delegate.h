@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "ui/accessibility/ax_enums.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/views/view.h"
@@ -18,7 +19,7 @@ class Rect;
 }
 
 namespace views {
-class BubbleDelegateView;
+class BubbleDialogDelegateView;
 class ClientView;
 class DialogDelegate;
 class NonClientFrameView;
@@ -49,7 +50,7 @@ class VIEWS_EXPORT WidgetDelegate {
   // NULL no view is focused.
   virtual View* GetInitiallyFocusedView();
 
-  virtual BubbleDelegateView* AsBubbleDelegate();
+  virtual BubbleDialogDelegateView* AsBubbleDialogDelegate();
   virtual DialogDelegate* AsDialogDelegate();
 
   // Returns true if the window can be resized.
@@ -60,6 +61,9 @@ class VIEWS_EXPORT WidgetDelegate {
 
   // Returns true if the window can be minimized.
   virtual bool CanMinimize() const;
+
+  // Returns a bitmask of ui::mojom::kResizeBehavior values.
+  virtual int32_t GetResizeBehavior() const;
 
   // Returns true if the window can be activated.
   virtual bool CanActivate() const;
@@ -210,6 +214,7 @@ class VIEWS_EXPORT WidgetDelegateView : public WidgetDelegate, public View {
   void DeleteDelegate() override;
   Widget* GetWidget() override;
   const Widget* GetWidget() const override;
+  views::View* GetContentsView() override;
 
   // View:
   const char* GetClassName() const override;

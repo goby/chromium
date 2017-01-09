@@ -5,6 +5,8 @@
 #ifndef PPAPI_UTILITY_WEBSOCKET_WEBSOCKET_API_H_
 #define PPAPI_UTILITY_WEBSOCKET_WEBSOCKET_API_H_
 
+#include <stdint.h>
+
 #include "ppapi/c/ppb_websocket.h"
 
 /// @file
@@ -12,7 +14,6 @@
 
 namespace pp {
 
-class CompletionCallback;
 class Instance;
 class Var;
 

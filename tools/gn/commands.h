@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/strings/string_piece.h"
+#include "base/values.h"
 #include "tools/gn/target.h"
 #include "tools/gn/unique_vector.h"
 
@@ -27,6 +28,11 @@ class Toolchain;
 namespace commands {
 
 typedef int (*CommandRunner)(const std::vector<std::string>&);
+
+extern const char kAnalyze[];
+extern const char kAnalyze_HelpShort[];
+extern const char kAnalyze_Help[];
+int RunAnalyze(const std::vector<std::string>& args);
 
 extern const char kArgs[];
 extern const char kArgs_HelpShort[];
@@ -140,6 +146,12 @@ void FilterTargetsByPatterns(const std::vector<const Target*>& input,
                              const std::vector<LabelPattern>& filter,
                              UniqueVector<const Target*>* output);
 
+// Builds a list of pattern from a semicolon-separated list of labels.
+bool FilterPatternsFromString(const BuildSettings* build_settings,
+                              const std::string& label_list_string,
+                              std::vector<LabelPattern>* filters,
+                              Err* err);
+
 // These are the documentation strings for the command-line flags used by
 // FilterAndPrintTargets. Commands that call that function should incorporate
 // these into their help.
@@ -173,8 +185,16 @@ void FilterTargetsByPatterns(const std::vector<const Target*>& input,
 //
 // The vector will be modified so that only the printed targets will remain.
 void FilterAndPrintTargets(bool indent, std::vector<const Target*>* targets);
+void FilterAndPrintTargets(std::vector<const Target*>* targets,
+                           base::ListValue* out);
+
 void FilterAndPrintTargetSet(bool indent,
                              const std::set<const Target*>& targets);
+void FilterAndPrintTargetSet(const std::set<const Target*>& targets,
+                             base::ListValue* out);
+
+// Extra help from command_check.cc
+extern const char kNoGnCheck_Help[];
 
 }  // namespace commands
 

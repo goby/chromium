@@ -5,35 +5,38 @@
 #ifndef TOOLS_GN_BUILDER_H_
 #define TOOLS_GN_BUILDER_H_
 
+#include <map>
+
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
-#include "base/memory/ref_counted.h"
 #include "tools/gn/builder_record.h"
 #include "tools/gn/label.h"
 #include "tools/gn/label_ptr.h"
 #include "tools/gn/unique_vector.h"
 
-class Config;
 class Err;
 class Loader;
 class ParseNode;
 
-class Builder : public base::RefCountedThreadSafe<Builder> {
+// The builder assembles the dependency tree. It is not threadsafe and runs on
+// the main thread only. See also BuilderRecord.
+class Builder {
  public:
-  typedef base::Callback<void(const BuilderRecord*)> ResolvedCallback;
+  typedef base::Callback<void(const BuilderRecord*)> ResolvedGeneratedCallback;
 
   explicit Builder(Loader* loader);
+  ~Builder();
 
-  // The resolved callback is called whenever a target has been resolved. This
-  // will be executed only on the main thread.
-  void set_resolved_callback(const ResolvedCallback& cb) {
-    resolved_callback_ = cb;
+  // The resolved callback is called when a target has been both resolved and
+  // marked generated. This will be executed only on the main thread.
+  void set_resolved_and_generated_callback(
+      const ResolvedGeneratedCallback& cb) {
+    resolved_and_generated_callback_ = cb;
   }
 
   Loader* loader() const { return loader_; }
 
-  void ItemDefined(scoped_ptr<Item> item);
+  void ItemDefined(std::unique_ptr<Item> item);
 
   // Returns NULL if there is not a thing with the corresponding label.
   const Item* GetItem(const Label& label) const;
@@ -53,10 +56,6 @@ class Builder : public base::RefCountedThreadSafe<Builder> {
   bool CheckForBadItems(Err* err) const;
 
  private:
-  friend class base::RefCountedThreadSafe<Builder>;
-
-  virtual ~Builder();
-
   bool TargetDefined(BuilderRecord* record, Err* err);
   bool ConfigDefined(BuilderRecord* record, Err* err);
   bool ToolchainDefined(BuilderRecord* record, Err* err);
@@ -119,6 +118,7 @@ class Builder : public base::RefCountedThreadSafe<Builder> {
   bool ResolveDeps(LabelTargetVector* deps, Err* err);
   bool ResolveConfigs(UniqueVector<LabelConfigPair>* configs, Err* err);
   bool ResolveToolchain(Target* target, Err* err);
+  bool ResolvePools(Toolchain* toolchain, Err* err);
 
   // Given a list of unresolved records, tries to find any circular
   // dependencies and returns the string describing the problem. If no circular
@@ -130,10 +130,10 @@ class Builder : public base::RefCountedThreadSafe<Builder> {
   Loader* loader_;
 
   // Owning pointers.
-  typedef base::hash_map<Label, BuilderRecord*> RecordMap;
+  typedef std::map<Label, BuilderRecord*> RecordMap;
   RecordMap records_;
 
-  ResolvedCallback resolved_callback_;
+  ResolvedGeneratedCallback resolved_and_generated_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(Builder);
 };

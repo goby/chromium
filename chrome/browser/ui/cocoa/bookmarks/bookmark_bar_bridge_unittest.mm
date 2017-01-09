@@ -5,7 +5,7 @@
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_bridge.h"
 #include "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_controller.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #import "testing/gtest_mac.h"
@@ -41,8 +41,7 @@ typedef std::pair<GURL,WindowOpenDisposition> OpenInfo;
 - (id)initWithBrowser:(Browser*)browser {
   if ((self = [super initWithBrowser:browser
                         initialWidth:100  // arbitrary
-                            delegate:nil
-                      resizeDelegate:nil])) {
+                            delegate:nil])) {
     callbacks_.reset([[NSMutableArray alloc] init]);
   }
   return self;
@@ -101,7 +100,7 @@ class BookmarkBarBridgeTest : public CocoaProfileTest {
 
 // Call all the callbacks; make sure they are all redirected to the objc object.
 TEST_F(BookmarkBarBridgeTest, TestRedirect) {
-  BookmarkModel* model = BookmarkModelFactory::GetForProfile(profile());
+  BookmarkModel* model = BookmarkModelFactory::GetForBrowserContext(profile());
 
   base::scoped_nsobject<NSView> parentView(
       [[NSView alloc] initWithFrame:NSMakeRect(0, 0, 100, 100)]);
@@ -113,9 +112,8 @@ TEST_F(BookmarkBarBridgeTest, TestRedirect) {
   base::scoped_nsobject<FakeBookmarkBarController> controller(
       [[FakeBookmarkBarController alloc] initWithBrowser:browser()]);
   EXPECT_TRUE(controller.get());
-  scoped_ptr<BookmarkBarBridge> bridge(new BookmarkBarBridge(profile(),
-                                                             controller.get(),
-                                                             model));
+  std::unique_ptr<BookmarkBarBridge> bridge(
+      new BookmarkBarBridge(profile(), controller.get(), model));
   EXPECT_TRUE(bridge.get());
 
   bridge->BookmarkModelLoaded(NULL, false);

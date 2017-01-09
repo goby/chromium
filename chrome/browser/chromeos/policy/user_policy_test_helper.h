@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_USER_POLICY_TEST_HELPER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_USER_POLICY_TEST_HELPER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 
 class Profile;
 
@@ -49,6 +49,8 @@ class UserPolicyTestHelper {
                     const base::DictionaryValue& recommended_policy,
                     Profile* profile);
 
+  void DeletePolicyFile();
+
  private:
   void WritePolicyFile(const base::DictionaryValue& mandatory,
                        const base::DictionaryValue& recommended);
@@ -56,7 +58,7 @@ class UserPolicyTestHelper {
 
   const std::string account_id_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<LocalPolicyTestServer> test_server_;
+  std::unique_ptr<LocalPolicyTestServer> test_server_;
 
   DISALLOW_COPY_AND_ASSIGN(UserPolicyTestHelper);
 };

@@ -8,8 +8,8 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/views/view.h"
 
@@ -35,9 +35,6 @@ class CookieInfoView : public views::View {
   // Update the display from the specified CookieNode.
   void SetCookie(const std::string& domain,
                  const net::CanonicalCookie& cookie_node);
-
-  // Update the display from the specified cookie string.
-  void SetCookieString(const GURL& url, const std::string& cookie_line);
 
   // Clears the cookie display to indicate that no or multiple cookies are
   // selected.

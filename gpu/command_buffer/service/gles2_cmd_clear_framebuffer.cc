@@ -4,7 +4,6 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_clear_framebuffer.h"
 
-#include "base/basictypes.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 #include "ui/gfx/geometry/size.h"
@@ -55,6 +54,7 @@ void CompileShader(GLuint shader, const char* shader_source) {
 }  // namespace
 
 namespace gpu {
+namespace gles2 {
 
 ClearFramebufferResourceManager::ClearFramebufferResourceManager(
     const gles2::GLES2Decoder* decoder)
@@ -186,4 +186,5 @@ void ClearFramebufferResourceManager::ClearFramebuffer(
   decoder->RestoreGlobalState();
 }
 
+}  // namespace gles2
 }  // namespace gpu

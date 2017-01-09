@@ -14,6 +14,7 @@
 #include "components/infobars/core/infobar.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/nsview_additions.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
 
 @implementation InfoBarGradientView
@@ -38,16 +39,17 @@
 }
 
 - (void)setInfobarType:(infobars::InfoBarDelegate::Type)infobarType {
-  SkColor topColor = infobars::InfoBar::GetTopColor(infobarType);
-  SkColor bottomColor = infobars::InfoBar::GetBottomColor(infobarType);
+  // TODO(ellyjones): no need to use a gradient here.
+  SkColor topColor = infobars::InfoBar::GetBackgroundColor(infobarType);
+  SkColor bottomColor = topColor;
   base::scoped_nsobject<NSGradient> gradient([[NSGradient alloc]
-      initWithStartingColor:gfx::SkColorToCalibratedNSColor(topColor)
-                endingColor:gfx::SkColorToCalibratedNSColor(bottomColor)]);
+      initWithStartingColor:skia::SkColorToCalibratedNSColor(topColor)
+                endingColor:skia::SkColorToCalibratedNSColor(bottomColor)]);
   [self setGradient:gradient];
 }
 
 - (NSColor*)strokeColor {
-  ui::ThemeProvider* themeProvider = [[self window] themeProvider];
+  const ui::ThemeProvider* themeProvider = [[self window] themeProvider];
   if (!themeProvider)
     return [NSColor blackColor];
 
@@ -60,7 +62,6 @@
 - (void)drawRect:(NSRect)rect {
   NSRect bounds = [self bounds];
   bounds.size.height = InfoBarContainerDelegate::kDefaultBarTargetHeight;
-
   CGFloat tipXOffset = arrowX_ - arrowHalfWidth_;
 
   // Around the bounds of the infobar, continue drawing the path into which the

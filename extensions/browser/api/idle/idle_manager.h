@@ -6,10 +6,12 @@
 #define EXTENSIONS_BROWSER_API_IDLE_IDLE_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/threading/thread_checker.h"
@@ -87,16 +89,18 @@ class IdleManager : public ExtensionRegistryObserver,
   void OnListenerAdded(const EventListenerInfo& details) override;
   void OnListenerRemoved(const EventListenerInfo& details) override;
 
-  void QueryState(int threshold, QueryStateCallback notify);
+  void QueryState(int threshold, const QueryStateCallback& notify);
   void SetThreshold(const std::string& extension_id, int threshold);
-  static base::StringValue* CreateIdleValue(ui::IdleState idle_state);
+  static std::unique_ptr<base::StringValue> CreateIdleValue(
+      ui::IdleState idle_state);
 
   // Override default event class. Callee assumes ownership. Used for testing.
-  void SetEventDelegateForTest(scoped_ptr<EventDelegate> event_delegate);
+  void SetEventDelegateForTest(std::unique_ptr<EventDelegate> event_delegate);
 
   // Override default idle time calculations. Callee assumes ownership. Used
   // for testing.
-  void SetIdleTimeProviderForTest(scoped_ptr<IdleTimeProvider> idle_provider);
+  void SetIdleTimeProviderForTest(
+      std::unique_ptr<IdleTimeProvider> idle_provider);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(IdleTest, ActiveToIdle);
@@ -128,8 +132,8 @@ class IdleManager : public ExtensionRegistryObserver,
 
   base::RepeatingTimer poll_timer_;
 
-  scoped_ptr<IdleTimeProvider> idle_time_provider_;
-  scoped_ptr<EventDelegate> event_delegate_;
+  std::unique_ptr<IdleTimeProvider> idle_time_provider_;
+  std::unique_ptr<EventDelegate> event_delegate_;
 
   base::ThreadChecker thread_checker_;
 

@@ -4,6 +4,7 @@
 
 #include "tools/gn/err.h"
 #include "tools/gn/functions.h"
+#include "tools/gn/parse_node_value_adapter.h"
 #include "tools/gn/parse_tree.h"
 #include "tools/gn/scope.h"
 
@@ -13,40 +14,42 @@ const char kForEach[] = "foreach";
 const char kForEach_HelpShort[] =
     "foreach: Iterate over a list.";
 const char kForEach_Help[] =
-    "foreach: Iterate over a list.\n"
-    "\n"
-    "  foreach(<loop_var>, <list>) {\n"
-    "    <loop contents>\n"
-    "  }\n"
-    "\n"
-    "  Executes the loop contents block over each item in the list,\n"
-    "  assigning the loop_var to each item in sequence.\n"
-    "\n"
-    "  The block does not introduce a new scope, so that variable assignments\n"
-    "  inside the loop will be visible once the loop terminates.\n"
-    "\n"
-    "  The loop variable will temporarily shadow any existing variables with\n"
-    "  the same name for the duration of the loop. After the loop terminates\n"
-    "  the loop variable will no longer be in scope, and the previous value\n"
-    "  (if any) will be restored.\n"
-    "\n"
-    "Example\n"
-    "\n"
-    "  mylist = [ \"a\", \"b\", \"c\" ]\n"
-    "  foreach(i, mylist) {\n"
-    "    print(i)\n"
-    "  }\n"
-    "\n"
-    "  Prints:\n"
-    "  a\n"
-    "  b\n"
-    "  c\n";
+    R"(foreach: Iterate over a list.
+
+    foreach(<loop_var>, <list>) {
+      <loop contents>
+    }
+
+  Executes the loop contents block over each item in the list, assigning the
+  loop_var to each item in sequence. The loop_var will be a copy so assigning
+  to it will not mutate the list.
+
+  The block does not introduce a new scope, so that variable assignments inside
+  the loop will be visible once the loop terminates.
+
+  The loop variable will temporarily shadow any existing variables with the
+  same name for the duration of the loop. After the loop terminates the loop
+  variable will no longer be in scope, and the previous value (if any) will be
+  restored.
+
+Example
+
+  mylist = [ "a", "b", "c" ]
+  foreach(i, mylist) {
+    print(i)
+  }
+
+  Prints:
+  a
+  b
+  c
+)";
 
 Value RunForEach(Scope* scope,
                  const FunctionCallNode* function,
                  const ListNode* args_list,
                  Err* err) {
-  const std::vector<const ParseNode*>& args_vector = args_list->contents();
+  const auto& args_vector = args_list->contents();
   if (args_vector.size() != 2) {
     *err = Err(function, "Wrong number of arguments to foreach().",
                "Expecting exactly two.");
@@ -56,32 +59,17 @@ Value RunForEach(Scope* scope,
   // Extract the loop variable.
   const IdentifierNode* identifier = args_vector[0]->AsIdentifier();
   if (!identifier) {
-    *err = Err(args_vector[0], "Expected an identifier for the loop var.");
+    *err =
+        Err(args_vector[0].get(), "Expected an identifier for the loop var.");
     return Value();
   }
   base::StringPiece loop_var(identifier->value().value());
 
-  // Extract the list, avoid a copy if it's an identifier (common case).
-  Value value_storage_for_exec;  // Backing for list_value when we need to exec.
-  const Value* list_value = nullptr;
-  const IdentifierNode* list_identifier = args_vector[1]->AsIdentifier();
-  if (list_identifier) {
-    list_value = scope->GetValue(list_identifier->value().value(), true);
-    if (!list_value) {
-      *err = Err(args_vector[1], "Undefined identifier.");
-      return Value();
-    }
-  } else {
-    // Not an identifier, evaluate the node to get the result.
-    Scope list_exec_scope(scope);
-    value_storage_for_exec = args_vector[1]->Execute(scope, err);
-    if (err->has_error())
-      return Value();
-    list_value = &value_storage_for_exec;
-  }
-  if (!list_value->VerifyTypeIs(Value::LIST, err))
+  // Extract the list to iterate over.
+  ParseNodeValueAdapter list_adapter;
+  if (!list_adapter.InitForType(scope, args_vector[1].get(), Value::LIST, err))
     return Value();
-  const std::vector<Value>& list = list_value->list_value();
+  const std::vector<Value>& list = list_adapter.get().list_value();
 
   // Block to execute.
   const BlockNode* block = function->block();
@@ -108,7 +96,8 @@ Value RunForEach(Scope* scope,
   if (old_loop_value_ptr) {
     // Put back old value. Use the copy we made, rather than use the pointer,
     // which will probably point to the new value now in the scope.
-    scope->SetValue(loop_var, old_loop_value, old_loop_value.origin());
+    scope->SetValue(loop_var, std::move(old_loop_value),
+                    old_loop_value.origin());
   } else {
     // Loop variable was undefined before loop, delete it.
     scope->RemoveIdentifier(loop_var);

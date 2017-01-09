@@ -14,7 +14,6 @@
 #include "chrome/browser/ui/webui/quota_internals/quota_internals_types.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_ui.h"
-#include "net/base/net_util.h"
 
 using content::BrowserContext;
 
@@ -33,13 +32,13 @@ void QuotaInternalsHandler::RegisterMessages() {
                  base::Unretained(this)));
 }
 
-void QuotaInternalsHandler::ReportAvailableSpace(int64 available_space) {
+void QuotaInternalsHandler::ReportAvailableSpace(int64_t available_space) {
   SendMessage("AvailableSpaceUpdated",
               base::FundamentalValue(static_cast<double>(available_space)));
 }
 
 void QuotaInternalsHandler::ReportGlobalInfo(const GlobalStorageInfo& data) {
-  scoped_ptr<base::Value> value(data.NewValue());
+  std::unique_ptr<base::Value> value(data.NewValue());
   SendMessage("GlobalInfoUpdated", *value);
 }
 
@@ -77,8 +76,8 @@ void QuotaInternalsHandler::ReportStatistics(const Statistics& stats) {
 
 void QuotaInternalsHandler::SendMessage(const std::string& message,
                                         const base::Value& value) {
-  web_ui()->CallJavascriptFunction(
-      "cr.quota.messageHandler", base::StringValue(message), value);
+  web_ui()->CallJavascriptFunctionUnsafe("cr.quota.messageHandler",
+                                         base::StringValue(message), value);
 }
 
 void QuotaInternalsHandler::OnRequestInfo(const base::ListValue*) {

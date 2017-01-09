@@ -5,8 +5,12 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_DESTINATION_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_DESTINATION_HOST_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "content/renderer/media/pepper_to_video_track_adapter.h"
@@ -38,7 +42,7 @@ class CONTENT_EXPORT PepperVideoDestinationHost
                             PP_TimeTicks timestamp);
   int32_t OnHostMsgClose(ppapi::host::HostMessageContext* context);
 
-  scoped_ptr<FrameWriterInterface> frame_writer_;
+  std::unique_ptr<FrameWriterInterface> frame_writer_;
   // Used for checking that timestamps are strictly increasing.
 #if DCHECK_IS_ON()
   bool has_received_frame_;

@@ -6,11 +6,12 @@
 #define CHROME_BROWSER_UI_ASH_MULTI_USER_MULTI_USER_WINDOW_MANAGER_CHROMEOS_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "ash/session/session_state_observer.h"
+#include "ash/common/session/session_state_observer.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "components/signin/core/account_id/account_id.h"
@@ -22,7 +23,6 @@
 class Browser;
 class MultiUserNotificationBlockerChromeOS;
 class MultiUserNotificationBlockerChromeOSTest;
-class Profile;
 
 namespace content {
 class BrowserContext;
@@ -179,6 +179,9 @@ class MultiUserWindowManagerChromeOS
                            bool visible,
                            int animation_time_in_ms);
 
+  // Notify the observers after the user switching animation is finished.
+  void NotifyAfterUserSwitchAnimationFinished();
+
   const WindowToEntryMap& window_to_entry() { return window_to_entry_; }
   MultiUserNotificationBlockerChromeOS* notification_blocker() {
     return notification_blocker_.get();
@@ -223,12 +226,6 @@ class MultiUserWindowManagerChromeOS
   // from the passed |default_time_in_ms|.
   int GetAdjustedAnimationTimeInMS(int default_time_in_ms) const;
 
-  // This is called when KeyedService (for |account_id| and |profile|) is
-  // destroyed, or when MultiUserWindowManagerChromeOS is destroyed.
-  // This happens on shutdown, before profile prefs are stored to
-  // disk.
-  void RemoveUser(const AccountId& account_id, Profile* profile);
-
   // A lookup to see to which user the given window belongs to, where and if it
   // should get shown.
   WindowToEntryMap window_to_entry_;
@@ -249,7 +246,7 @@ class MultiUserWindowManagerChromeOS
 
   // The blocker which controls the desktop notification visibility based on the
   // current multi-user status.
-  scoped_ptr<MultiUserNotificationBlockerChromeOS> notification_blocker_;
+  std::unique_ptr<MultiUserNotificationBlockerChromeOS> notification_blocker_;
 
   // The notification registrar to track the creation of browser windows.
   content::NotificationRegistrar registrar_;
@@ -261,7 +258,7 @@ class MultiUserWindowManagerChromeOS
   AnimationSpeed animation_speed_;
 
   // The animation between users.
-  scoped_ptr<UserSwitchAnimatorChromeOS> animation_;
+  std::unique_ptr<UserSwitchAnimatorChromeOS> animation_;
 
   DISALLOW_COPY_AND_ASSIGN(MultiUserWindowManagerChromeOS);
 };

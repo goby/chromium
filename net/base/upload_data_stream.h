@@ -5,17 +5,19 @@
 #ifndef NET_BASE_UPLOAD_DATA_STREAM_H_
 #define NET_BASE_UPLOAD_DATA_STREAM_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
+#include "net/base/upload_progress.h"
+#include "net/log/net_log_with_source.h"
 
 namespace net {
 
-class DrainableIOBuffer;
 class IOBuffer;
 class UploadElementReader;
 
@@ -42,7 +44,7 @@ class NET_EXPORT UploadDataStream {
   // Returns OK on success. Returns ERR_UPLOAD_FILE_CHANGED if the expected
   // file modification time is set (usually not set, but set for sliced
   // files) and the target file is changed.
-  int Init(const CompletionCallback& callback);
+  int Init(const CompletionCallback& callback, const NetLogWithSource& net_log);
 
   // When possible, reads up to |buf_len| bytes synchronously from the upload
   // data stream to |buf| and returns the number of bytes read; otherwise,
@@ -55,9 +57,6 @@ class NET_EXPORT UploadDataStream {
   // upload data is smaller than size()), zeros are padded to ensure that
   // size() bytes can be read, which can happen for TYPE_FILE payloads.
   //
-  // Reads are currently not allowed to fail - they must either return
-  // a value >= 0 or ERR_IO_PENDING, and call OnReadCompleted with a
-  // value >= 0.
   // TODO(mmenke):  Investigate letting reads fail.
   int Read(IOBuffer* buf, int buf_len, const CompletionCallback& callback);
 
@@ -88,8 +87,13 @@ class NET_EXPORT UploadDataStream {
   virtual bool IsInMemory() const;
 
   // Returns a list of element readers owned by |this|, if it has any.
-  virtual const std::vector<scoped_ptr<UploadElementReader>>*
+  virtual const std::vector<std::unique_ptr<UploadElementReader>>*
   GetElementReaders() const;
+
+  // Returns the upload progress. If the stream was not initialized
+  // successfully, or has been reset and not yet re-initialized, returns an
+  // empty UploadProgress.
+  virtual UploadProgress GetUploadProgress() const;
 
  protected:
   // Must be called by subclasses when InitInternal and ReadInternal complete
@@ -109,7 +113,7 @@ class NET_EXPORT UploadDataStream {
   // See Init(). If it returns ERR_IO_PENDING, OnInitCompleted must be called
   // once it completes. If the upload is not chunked, SetSize must be called
   // before it completes.
-  virtual int InitInternal() = 0;
+  virtual int InitInternal(const NetLogWithSource& net_log) = 0;
 
   // See Read(). For chunked uploads, must call SetIsFinalChunk if this is the
   // final chunk. For non-chunked uploads, the UploadDataStream determins which
@@ -136,6 +140,8 @@ class NET_EXPORT UploadDataStream {
   bool is_eof_;
 
   CompletionCallback callback_;
+
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(UploadDataStream);
 };

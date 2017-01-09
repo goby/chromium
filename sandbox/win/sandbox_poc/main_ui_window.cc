@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "sandbox/win/sandbox_poc/main_ui_window.h"
+
 #include <windows.h>
 #include <CommCtrl.h>
 #include <commdlg.h>
 #include <stdarg.h>
+#include <stddef.h>
 #include <time.h>
 #include <windowsx.h>
 #include <atlbase.h>
@@ -13,7 +16,6 @@
 #include <algorithm>
 #include <sstream>
 
-#include "sandbox/win/sandbox_poc/main_ui_window.h"
 #include "base/logging.h"
 #include "sandbox/win/sandbox_poc/resource.h"
 #include "sandbox/win/src/acl.h"
@@ -511,9 +513,11 @@ bool MainUIWindow::SpawnTarget() {
   policy->AddRule(sandbox::TargetPolicy::SUBSYS_FILES,
                   sandbox::TargetPolicy::FILES_ALLOW_ANY, dll_path_.c_str());
 
-  sandbox::ResultCode result = broker_->SpawnTarget(spawn_target_.c_str(),
-                                                    arguments, policy,
-                                                    &target_);
+  sandbox::ResultCode warning_result = sandbox::SBOX_ALL_OK;
+  DWORD last_error = ERROR_SUCCESS;
+  sandbox::ResultCode result =
+      broker_->SpawnTarget(spawn_target_.c_str(), arguments, policy,
+                           &warning_result, &last_error, &target_);
 
   policy->Release();
   policy = NULL;

@@ -28,27 +28,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "public/platform/WebPrerenderingSupport.h"
 
 namespace blink {
 
 WebPrerenderingSupport* WebPrerenderingSupport::s_platform = 0;
 
-void WebPrerenderingSupport::initialize(WebPrerenderingSupport* platform)
-{
-    s_platform = platform;
+void WebPrerenderingSupport::initialize(WebPrerenderingSupport* platform) {
+  s_platform = platform;
 }
 
-void WebPrerenderingSupport::shutdown()
-{
-    s_platform = 0;
+void WebPrerenderingSupport::shutdown() {
+  s_platform = 0;
 }
 
-WebPrerenderingSupport* WebPrerenderingSupport::current()
-{
-    return s_platform;
+WebPrerenderingSupport* WebPrerenderingSupport::current() {
+  return s_platform;
 }
 
-} // namespace blink
+}  // namespace blink

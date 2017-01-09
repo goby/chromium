@@ -2,24 +2,26 @@ include_rules = [
   "-android_webview",
   "+android_webview/browser",
   "+android_webview/common",
+  "+android_webview/grit",
   "+android_webview/native/public",
   "+android_webview/public/browser",
 
   "+cc",
   "-cc/blink",
 
-  "+components/auto_login_parser",
   "+components/autofill/content/browser",
   "+components/autofill/core/browser",
   "+components/autofill/core/common",
   "+components/cdm/browser",
-  "+components/data_reduction_proxy/core/browser",
+  "+components/crash/content/browser",
   "+components/navigation_interception",
   "+components/policy/core/browser",
   "+components/policy/core/common",
   "+components/pref_registry",
   "+components/printing/browser",
   "+components/printing/common",
+  "+components/spellcheck/browser",
+  "+components/spellcheck/common",
   "+components/url_formatter",
   "+components/user_prefs",
   "+components/visitedlink/browser",
@@ -28,15 +30,19 @@ include_rules = [
   "+content/public/browser",
   "+content/public/test",
 
+  "+device/geolocation",
+
   # Explicitly disallow using SyncMessageFilter to prevent browser from
   # sending synchronous IPC messages on non-UI threads.
   "-ipc/ipc_sync_message_filter.h",
 
   "+media/base/android",
 
-  "+policy/policy_constants.h",
+  "+components/policy/policy_constants.h",
 
   "+printing",
+
+  "+services/service_manager/public/cpp",
 
   "+ui/gfx",
   "+ui/gl",

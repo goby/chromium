@@ -5,20 +5,35 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_PARENT_OUTPUT_SURFACE_H_
 #define ANDROID_WEBVIEW_BROWSER_PARENT_OUTPUT_SURFACE_H_
 
+#include "base/macros.h"
 #include "cc/output/output_surface.h"
 
 namespace android_webview {
+class AwRenderThreadContextProvider;
 
 class ParentOutputSurface : NON_EXPORTED_BASE(public cc::OutputSurface) {
  public:
   explicit ParentOutputSurface(
-      scoped_refptr<cc::ContextProvider> context_provider);
+      scoped_refptr<AwRenderThreadContextProvider> context_provider);
   ~ParentOutputSurface() override;
 
   // OutputSurface overrides.
-  void Reshape(const gfx::Size& size, float scale_factor) override;
-  void SwapBuffers(cc::CompositorFrame* frame) override;
-  using cc::OutputSurface::SetExternalStencilTest;
+  void BindToClient(cc::OutputSurfaceClient* client) override;
+  void EnsureBackbuffer() override;
+  void DiscardBackbuffer() override;
+  void BindFramebuffer() override;
+  void Reshape(const gfx::Size& size,
+               float scale_factor,
+               const gfx::ColorSpace& color_space,
+               bool has_alpha) override;
+  void SwapBuffers(cc::OutputSurfaceFrame frame) override;
+  bool HasExternalStencilTest() const override;
+  void ApplyExternalStencil() override;
+  uint32_t GetFramebufferCopyTextureFormat() override;
+  cc::OverlayCandidateValidator* GetOverlayCandidateValidator() const override;
+  bool IsDisplayedAsOverlayPlane() const override;
+  unsigned GetOverlayTextureId() const override;
+  bool SurfaceIsSuspendForRecycle() const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ParentOutputSurface);

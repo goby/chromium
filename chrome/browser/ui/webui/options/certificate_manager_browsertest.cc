@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/options/options_ui_browsertest.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
@@ -10,11 +12,11 @@
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
+#include "components/policy/policy_constants.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
-#include "policy/policy_constants.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -48,11 +50,9 @@ class CertificateManagerBrowserTest : public options::OptionsUIBrowserTest {
         chromeos::onc::test_utils::ReadTestData(filename);
     policy::PolicyMap policy;
     policy.Set(policy::key::kOpenNetworkConfiguration,
-               policy::POLICY_LEVEL_MANDATORY,
-               policy::POLICY_SCOPE_USER,
+               policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
                policy::POLICY_SOURCE_CLOUD,
-               new base::StringValue(user_policy_blob),
-               NULL);
+               base::MakeUnique<base::StringValue>(user_policy_blob), nullptr);
     provider_.UpdateChromePolicy(policy);
     content::RunAllPendingInMessageLoop();
   }

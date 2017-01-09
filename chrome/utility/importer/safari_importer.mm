@@ -49,7 +49,7 @@ SafariImporter::~SafariImporter() {
 }
 
 void SafariImporter::StartImport(const importer::SourceProfile& source_profile,
-                                 uint16 items,
+                                 uint16_t items,
                                  ImporterBridge* bridge) {
   bridge_ = bridge;
   // The order here is important!
@@ -123,7 +123,7 @@ void SafariImporter::ImportFaviconURLs(sql::Connection* db,
   sql::Statement s(db->GetUniqueStatement(query));
 
   while (s.Step() && !cancelled()) {
-    int64 icon_id = s.ColumnInt64(0);
+    int64_t icon_id = s.ColumnInt64(0);
     GURL url = GURL(s.ColumnString(1));
     (*favicon_map)[icon_id].insert(url);
   }
@@ -294,7 +294,7 @@ void SafariImporter::ImportPasswords() {
   // Safari stores it's passwords in the Keychain, same as us so we don't need
   // to import them.
   // Note: that we don't automatically pick them up, there is some logic around
-  // the user needing to explicitly input his username in a page and blurring
+  // the user needing to explicitly input their username in a page and blurring
   // the field before we pick it up, but the details of that are beyond the
   // scope of this comment.
 }

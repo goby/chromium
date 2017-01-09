@@ -11,16 +11,17 @@
 
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/tracked_objects.h"
 #include "ipc/message_filter.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/pp_module.h"
 #include "ppapi/c/ppp.h"
-#include "ppapi/proxy/proxy_channel.h"
 #include "ppapi/proxy/interface_list.h"
 #include "ppapi/proxy/interface_proxy.h"
 #include "ppapi/proxy/plugin_var_tracker.h"
+#include "ppapi/proxy/proxy_channel.h"
 #include "ppapi/shared_impl/api_id.h"
 
 namespace IPC {
@@ -91,7 +92,7 @@ class PPAPI_PROXY_EXPORT Dispatcher : public ProxyChannel {
   friend class PluginDispatcherTest;
 
   // Lists all lazily-created interface proxies.
-  scoped_ptr<InterfaceProxy> proxies_[API_ID_COUNT];
+  std::unique_ptr<InterfaceProxy> proxies_[API_ID_COUNT];
 
   PP_GetInterface_Func local_get_interface_;
 

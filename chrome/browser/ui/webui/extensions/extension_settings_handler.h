@@ -5,7 +5,8 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_SETTINGS_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_SETTINGS_HANDLER_H_
 
-#include "content/public/browser/navigation_controller.h"
+#include "base/macros.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
@@ -39,7 +40,7 @@ class ExtensionSettingsHandler : public content::WebUIMessageHandler,
   // WebContentsObserver implementation.
   void DidStartNavigationToPendingEntry(
       const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+      content::ReloadType reload_type) override;
 
   // WebUIMessageHandler implementation.
   void RegisterMessages() override;

@@ -23,34 +23,30 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/speech/SpeechRecognitionResult.h"
 
 namespace blink {
 
-SpeechRecognitionResult* SpeechRecognitionResult::create(const HeapVector<Member<SpeechRecognitionAlternative>>& alternatives, bool final)
-{
-    return new SpeechRecognitionResult(alternatives, final);
+SpeechRecognitionResult* SpeechRecognitionResult::create(
+    const HeapVector<Member<SpeechRecognitionAlternative>>& alternatives,
+    bool final) {
+  return new SpeechRecognitionResult(alternatives, final);
 }
 
-SpeechRecognitionAlternative* SpeechRecognitionResult::item(unsigned index)
-{
-    if (index >= m_alternatives.size())
-        return nullptr;
+SpeechRecognitionAlternative* SpeechRecognitionResult::item(unsigned index) {
+  if (index >= m_alternatives.size())
+    return nullptr;
 
-    return m_alternatives[index];
+  return m_alternatives[index];
 }
 
-SpeechRecognitionResult::SpeechRecognitionResult(const HeapVector<Member<SpeechRecognitionAlternative>>& alternatives, bool final)
-    : m_final(final)
-    , m_alternatives(alternatives)
-{
+SpeechRecognitionResult::SpeechRecognitionResult(
+    const HeapVector<Member<SpeechRecognitionAlternative>>& alternatives,
+    bool final)
+    : m_final(final), m_alternatives(alternatives) {}
+
+DEFINE_TRACE(SpeechRecognitionResult) {
+  visitor->trace(m_alternatives);
 }
 
-DEFINE_TRACE(SpeechRecognitionResult)
-{
-    visitor->trace(m_alternatives);
-}
-
-} // namespace blink
+}  // namespace blink

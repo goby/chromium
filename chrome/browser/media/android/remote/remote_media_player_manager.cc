@@ -7,10 +7,13 @@
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/common/chrome_content_client.h"
 #include "content/common/media/media_player_messages_android.h"
+#include "third_party/WebKit/public/platform/modules/remoteplayback/WebRemotePlaybackAvailability.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/android/java_bitmap.h"
 
 using media::MediaPlayerAndroid;
+
+static const int MAX_POSTER_BITMAP_SIZE = 1024 * 1024;
 
 namespace remote_media {
 
@@ -20,17 +23,18 @@ RemoteMediaPlayerManager::RemoteMediaPlayerManager(
       weak_ptr_factory_(this) {
 }
 
-RemoteMediaPlayerManager::~RemoteMediaPlayerManager() {}
+RemoteMediaPlayerManager::~RemoteMediaPlayerManager() {
+  for (MediaPlayerAndroid* player : alternative_players_)
+    player->DeleteOnCorrectThread();
+
+  alternative_players_.weak_clear();
+}
 
 void RemoteMediaPlayerManager::OnStart(int player_id) {
   RemoteMediaPlayerBridge* remote_player = GetRemotePlayer(player_id);
-  if (remote_player) {
-    if (IsPlayingRemotely(player_id)) {
-      remote_player->Start();
-    } else if (remote_player->TakesOverCastDevice()) {
-      return;
-    }
-  }
+  if (remote_player && IsPlayingRemotely(player_id))
+    remote_player->Start();
+
   BrowserMediaPlayerManager::OnStart(player_id);
 }
 
@@ -38,9 +42,9 @@ void RemoteMediaPlayerManager::OnInitialize(
     const MediaPlayerHostMsg_Initialize_Params& media_params) {
   BrowserMediaPlayerManager::OnInitialize(media_params);
 
-  MediaPlayerAndroid* player = GetPlayer(media_params.player_id);
-  if (player) {
-    RemoteMediaPlayerBridge* remote_player = CreateRemoteMediaPlayer(player);
+  if (GetPlayer(media_params.player_id)) {
+    RemoteMediaPlayerBridge* remote_player =
+        CreateRemoteMediaPlayer(media_params.player_id);
     remote_player->OnPlayerCreated();
   }
 }
@@ -49,13 +53,14 @@ void RemoteMediaPlayerManager::OnDestroyPlayer(int player_id) {
   RemoteMediaPlayerBridge* player = GetRemotePlayer(player_id);
   if (player)
     player->OnPlayerDestroyed();
+  poster_urls_.erase(player_id);
   BrowserMediaPlayerManager::OnDestroyPlayer(player_id);
 }
 
-void RemoteMediaPlayerManager::OnReleaseResources(int player_id) {
+void RemoteMediaPlayerManager::OnSuspendAndReleaseResources(int player_id) {
   // We only want to release resources of local players.
   if (!IsPlayingRemotely(player_id))
-    BrowserMediaPlayerManager::OnReleaseResources(player_id);
+    BrowserMediaPlayerManager::OnSuspendAndReleaseResources(player_id);
 }
 
 void RemoteMediaPlayerManager::OnRequestRemotePlayback(int player_id) {
@@ -70,6 +75,16 @@ void RemoteMediaPlayerManager::OnRequestRemotePlaybackControl(int player_id) {
     player->RequestRemotePlaybackControl();
 }
 
+void RemoteMediaPlayerManager::OnRequestRemotePlaybackStop(int player_id) {
+  RemoteMediaPlayerBridge* player = GetRemotePlayer(player_id);
+  if (player)
+    player->RequestRemotePlaybackStop();
+}
+
+bool RemoteMediaPlayerManager::IsPlayingRemotely(int player_id) {
+  return players_playing_remotely_.count(player_id) != 0;
+}
+
 int RemoteMediaPlayerManager::GetTabId() {
   if (!web_contents())
     return -1;
@@ -81,27 +96,36 @@ int RemoteMediaPlayerManager::GetTabId() {
   return tab->GetAndroidId();
 }
 
-void RemoteMediaPlayerManager::OnSetPoster(int player_id, const GURL& url) {
+void RemoteMediaPlayerManager::FetchPosterBitmap(int player_id) {
   RemoteMediaPlayerBridge* player = GetRemotePlayer(player_id);
-
-  if (player && url.is_empty()) {
-    player->SetPosterBitmap(std::vector<SkBitmap>());
-  } else {
-    // TODO(aberent) OnSetPoster is called when the attributes of the video
-    // element are parsed, which may be before OnInitialize is called. We are
-    // here relying on the image fetch taking longer than the delay until
-    // OnInitialize is called, and hence the player is created. This is not
-    // guaranteed.
-    content::WebContents::ImageDownloadCallback callback = base::Bind(
-        &RemoteMediaPlayerManager::DidDownloadPoster,
-        weak_ptr_factory_.GetWeakPtr(), player_id);
-    web_contents()->DownloadImage(
-        url,
-        false,  // is_favicon, false so that cookies will be used.
-        0,  // max_bitmap_size, 0 means no limit.
-        false, // normal cache policy.
-        callback);
+  if (poster_urls_.count(player_id) == 0 ||
+      poster_urls_[player_id].is_empty()) {
+    if (player)
+      player->SetPosterBitmap(std::vector<SkBitmap>());
+    return;
   }
+  content::WebContents::ImageDownloadCallback callback =
+      base::Bind(&RemoteMediaPlayerManager::DidDownloadPoster,
+                 weak_ptr_factory_.GetWeakPtr(), player_id);
+  web_contents()->DownloadImage(
+      poster_urls_[player_id],
+      false,  // is_favicon, false so that cookies will be used.
+      MAX_POSTER_BITMAP_SIZE,  // max_bitmap_size, 0 means no limit.
+      false,                   // normal cache policy.
+      callback);
+}
+
+void RemoteMediaPlayerManager::OnSetPoster(int player_id, const GURL& url) {
+  // OnSetPoster is called when the attibutes of the video element are parsed,
+  // which may be before OnInitialize is called, so we can't assume that the
+  // players wil exist.
+  poster_urls_[player_id] = url;
+}
+
+void RemoteMediaPlayerManager::ReleaseResources(int player_id) {
+  if (IsPlayingRemotely(player_id))
+    return;
+  BrowserMediaPlayerManager::ReleaseResources(player_id);
 }
 
 void RemoteMediaPlayerManager::DidDownloadPoster(
@@ -117,49 +141,47 @@ void RemoteMediaPlayerManager::DidDownloadPoster(
 }
 
 RemoteMediaPlayerBridge* RemoteMediaPlayerManager::CreateRemoteMediaPlayer(
-     MediaPlayerAndroid* local_player) {
-  RemoteMediaPlayerBridge* player = new RemoteMediaPlayerBridge(
-      local_player,
-      GetUserAgent(),
-      false,
-      this);
+    int player_id) {
+  RemoteMediaPlayerBridge* player =
+      new RemoteMediaPlayerBridge(player_id, GetUserAgent(), this);
   alternative_players_.push_back(player);
   player->Initialize();
   return player;
 }
 
-// OnSuspend and OnResume are called when the local player loses or gains
-// audio focus. If we are playing remotely then ignore these.
-void RemoteMediaPlayerManager::OnSuspend(int player_id) {
-  if (!IsPlayingRemotely(player_id))
-    BrowserMediaPlayerManager::OnSuspend(player_id);
-}
-
-void RemoteMediaPlayerManager::OnResume(int player_id) {
-  if (!IsPlayingRemotely(player_id))
-    BrowserMediaPlayerManager::OnResume(player_id);
-}
-
-void RemoteMediaPlayerManager::SwapCurrentPlayer(int player_id) {
-  // Find the remote player
+bool RemoteMediaPlayerManager::SwapCurrentPlayer(int player_id) {
+  // Find the alternative player to swap the current one with.
   auto it = GetAlternativePlayer(player_id);
   if (it == alternative_players_.end())
-    return;
+    return false;
+
   MediaPlayerAndroid* new_player = *it;
-  scoped_ptr<MediaPlayerAndroid> old_player = SwapPlayer(player_id, new_player);
+  std::unique_ptr<MediaPlayerAndroid> old_player =
+      SwapPlayer(player_id, new_player);
+  if (!old_player) {
+    // There's no player to swap with, destroy the alternative player and exit.
+    alternative_players_.erase(it);
+    return false;
+  }
+
   alternative_players_.weak_erase(it);
   alternative_players_.push_back(old_player.release());
+  return true;
 }
 
 void RemoteMediaPlayerManager::SwitchToRemotePlayer(
     int player_id,
     const std::string& casting_message) {
   DCHECK(!IsPlayingRemotely(player_id));
-  SwapCurrentPlayer(player_id);
+  if (!SwapCurrentPlayer(player_id))
+    return;
   players_playing_remotely_.insert(player_id);
   Send(new MediaPlayerMsg_DidMediaPlayerPlay(RoutingID(), player_id));
   Send(new MediaPlayerMsg_ConnectedToRemoteDevice(RoutingID(), player_id,
                                                   casting_message));
+  // The remote player will want the poster bitmap, however, to avoid wasting
+  // memory we don't fetch it until we are likely to need it.
+  FetchPosterBitmap(player_id);
 }
 
 void RemoteMediaPlayerManager::SwitchToLocalPlayer(int player_id) {
@@ -177,8 +199,8 @@ void RemoteMediaPlayerManager::ReplaceRemotePlayerWithLocal(int player_id) {
   Send(new MediaPlayerMsg_DidMediaPlayerPause(RoutingID(), player_id));
   Send(new MediaPlayerMsg_DisconnectedFromRemoteDevice(RoutingID(), player_id));
 
-  SwapCurrentPlayer(player_id);
   GetLocalPlayer(player_id)->SeekTo(remote_player->GetCurrentTime());
+  SwapCurrentPlayer(player_id);
   remote_player->Release();
   players_playing_remotely_.erase(player_id);
 }
@@ -187,16 +209,25 @@ void RemoteMediaPlayerManager::OnRemoteDeviceUnselected(int player_id) {
   ReplaceRemotePlayerWithLocal(player_id);
 }
 
+void RemoteMediaPlayerManager::OnRemotePlaybackStarted(int player_id) {
+  Send(new MediaPlayerMsg_RemotePlaybackStarted(RoutingID(), player_id));
+}
+
 void RemoteMediaPlayerManager::OnRemotePlaybackFinished(int player_id) {
   ReplaceRemotePlayerWithLocal(player_id);
 }
 
 void RemoteMediaPlayerManager::OnRouteAvailabilityChanged(
-    int player_id, bool routes_available) {
-  Send(
-      new MediaPlayerMsg_RemoteRouteAvailabilityChanged(RoutingID(), player_id,
-                                                        routes_available));
+    int player_id, blink::WebRemotePlaybackAvailability availability) {
+  Send(new MediaPlayerMsg_RemoteRouteAvailabilityChanged(
+      RoutingID(), player_id, availability));
 }
+
+void RemoteMediaPlayerManager::OnCancelledRemotePlaybackRequest(int player_id) {
+  Send(new MediaPlayerMsg_CancelledRemotePlaybackRequest(
+      RoutingID(), player_id));
+}
+
 
 void RemoteMediaPlayerManager::ReleaseFullscreenPlayer(
     MediaPlayerAndroid* player) {
@@ -262,9 +293,4 @@ void RemoteMediaPlayerManager::OnMediaMetadataChanged(int player_id,
                                                       width, height, success);
   }
 }
-
-bool RemoteMediaPlayerManager::IsPlayingRemotely(int player_id) {
-  return players_playing_remotely_.count(player_id) != 0;
-}
-
 } // namespace remote_media

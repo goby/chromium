@@ -4,20 +4,21 @@
 
 #include "chrome/utility/extensions/extensions_handler.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/path_service.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_utility_messages.h"
 #include "chrome/common/extensions/chrome_extensions_client.h"
 #include "chrome/common/extensions/chrome_utility_extensions_messages.h"
 #include "chrome/common/media_galleries/metadata_types.h"
 #include "chrome/utility/chrome_content_utility_client.h"
-#include "chrome/utility/media_galleries/image_metadata_extractor.h"
 #include "chrome/utility/media_galleries/ipc_data_source.h"
 #include "chrome/utility/media_galleries/media_metadata_parser.h"
 #include "content/public/common/content_paths.h"
 #include "content/public/utility/utility_thread.h"
 #include "extensions/common/extension.h"
-#include "extensions/common/extension_l10n_util.h"
 #include "extensions/common/extension_utility_messages.h"
 #include "extensions/utility/unpacker.h"
 #include "media/base/media.h"
@@ -28,14 +29,9 @@
 #endif
 
 #if defined(OS_WIN)
-#include "chrome/common/extensions/api/networking_private/networking_private_crypto.h"
 #include "chrome/utility/media_galleries/itunes_pref_parser_win.h"
 #include "components/wifi/wifi_service.h"
 #endif  // defined(OS_WIN)
-
-#if defined(OS_MACOSX)
-#include "chrome/utility/media_galleries/iphoto_library_parser.h"
-#endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
 #include "chrome/utility/media_galleries/iapps_xml_utils.h"
@@ -77,9 +73,6 @@ ExtensionsHandler::~ExtensionsHandler() {
 
 // static
 void ExtensionsHandler::PreSandboxStartup() {
-  // Initialize libexif for image metadata parsing.
-  metadata::ImageMetadataExtractor::InitializeLibrary();
-
   // Initialize media libraries for media file validation.
   media::InitializeMediaLibrary();
 }
@@ -95,11 +88,6 @@ bool ExtensionsHandler::OnMessageReceived(const IPC::Message& message) {
     IPC_MESSAGE_HANDLER(ChromeUtilityMsg_ParseITunesPrefXml,
                         OnParseITunesPrefXml)
 #endif  // defined(OS_WIN)
-
-#if defined(OS_MACOSX)
-    IPC_MESSAGE_HANDLER(ChromeUtilityMsg_ParseIPhotoLibraryXmlFile,
-                        OnParseIPhotoLibraryXmlFile)
-#endif  // defined(OS_MACOSX)
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
     IPC_MESSAGE_HANDLER(ChromeUtilityMsg_ParseITunesLibraryXmlFile,
@@ -121,7 +109,7 @@ bool ExtensionsHandler::OnMessageReceived(const IPC::Message& message) {
 }
 
 void ExtensionsHandler::OnCheckMediaFile(
-    int64 milliseconds_of_decoding,
+    int64_t milliseconds_of_decoding,
     const IPC::PlatformFileForTransit& media_file) {
 #if !defined(MEDIA_DISABLE_FFMPEG)
   media::MediaFileChecker checker(
@@ -135,14 +123,15 @@ void ExtensionsHandler::OnCheckMediaFile(
   ReleaseProcessIfNeeded();
 }
 
-void ExtensionsHandler::OnParseMediaMetadata(
-    const std::string& mime_type, int64 total_size, bool get_attached_images) {
+void ExtensionsHandler::OnParseMediaMetadata(const std::string& mime_type,
+                                             int64_t total_size,
+                                             bool get_attached_images) {
   // Only one IPCDataSource may be created and added to the list of handlers.
-  scoped_ptr<metadata::IPCDataSource> source(
+  std::unique_ptr<metadata::IPCDataSource> source(
       new metadata::IPCDataSource(total_size));
   metadata::MediaMetadataParser* parser = new metadata::MediaMetadataParser(
       source.get(), mime_type, get_attached_images);
-  utility_client_->AddHandler(source.Pass());
+  utility_client_->AddHandler(std::move(source));
   parser->Start(base::Bind(&FinishParseMediaMetadata, base::Owned(parser)));
 }
 
@@ -156,23 +145,12 @@ void ExtensionsHandler::OnParseITunesPrefXml(
 }
 #endif  // defined(OS_WIN)
 
-#if defined(OS_MACOSX)
-void ExtensionsHandler::OnParseIPhotoLibraryXmlFile(
-    const IPC::PlatformFileForTransit& iphoto_library_file) {
-  iphoto::IPhotoLibraryParser parser;
-  base::File file = IPC::PlatformFileForTransitToFile(iphoto_library_file);
-  bool result = parser.Parse(iapps::ReadFileAsString(file.Pass()));
-  Send(new ChromeUtilityHostMsg_GotIPhotoLibrary(result, parser.library()));
-  ReleaseProcessIfNeeded();
-}
-#endif  // defined(OS_MACOSX)
-
 #if defined(OS_WIN) || defined(OS_MACOSX)
 void ExtensionsHandler::OnParseITunesLibraryXmlFile(
     const IPC::PlatformFileForTransit& itunes_library_file) {
   itunes::ITunesLibraryParser parser;
   base::File file = IPC::PlatformFileForTransitToFile(itunes_library_file);
-  bool result = parser.Parse(iapps::ReadFileAsString(file.Pass()));
+  bool result = parser.Parse(iapps::ReadFileAsString(std::move(file)));
   Send(new ChromeUtilityHostMsg_GotITunesLibrary(result, parser.library()));
   ReleaseProcessIfNeeded();
 }
@@ -195,7 +173,7 @@ void ExtensionsHandler::OnParsePicasaPMPDatabase(
   files.uid_file =
       IPC::PlatformFileForTransitToFile(album_table_files.uid_file);
 
-  picasa::PicasaAlbumTableReader reader(files.Pass());
+  picasa::PicasaAlbumTableReader reader(std::move(files));
   bool parse_success = reader.Init();
   Send(new ChromeUtilityHostMsg_ParsePicasaPMPDatabase_Finished(
       parse_success, reader.albums(), reader.folders()));
@@ -216,7 +194,7 @@ void ExtensionsHandler::OnIndexPicasaAlbumsContents(
 
 #if defined(OS_WIN)
 void ExtensionsHandler::OnGetWiFiCredentials(const std::string& network_guid) {
-  scoped_ptr<wifi::WiFiService> wifi_service(wifi::WiFiService::Create());
+  std::unique_ptr<wifi::WiFiService> wifi_service(wifi::WiFiService::Create());
   wifi_service->Initialize(NULL);
 
   std::string key_data;

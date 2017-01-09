@@ -1,28 +1,24 @@
-<html>
-    <head>
-        <script src=media-file.js></script>
-        <script src=video-test.js></script>
-        <script>
+<!DOCTYPE html>
+<title>Verify media element's "src" attribute on "loadstart" event.</title>
+<script src="../resources/testharness.js"></script>
+<script src="../resources/testharnessreport.js"></script>
+<script src="media-file.js"></script>
+<video></video>
+<script>
+async_test(function(t) {
+    var video = document.querySelector("video");
+    var mediaFile = findMediaFile("video", "content/test");
 
-            function test()
-            {
-                video = mediaElement = document.getElementsByTagName('video')[0];
-                var mediaFile = findMediaFile("video", "content/test");
-            
-                waitForEvent("loadstart", function () {
-                    testExpected("stripExtension(relativeURL(video.currentSrc))", stripExtension(mediaFile));
-                    testExpected("stripExtension(relativeURL(video.src))", stripExtension(mediaFile));
-                    testExpected("stripExtension(video.getAttribute('src'))", stripExtension(mediaFile));
-                    endTest();
-                });
-            
-                video.src = mediaFile;
-            }
-        </script>
-    </head>
+    video.onloadstart = t.step_func_done(function () {
+        var url = video.currentSrc;
+        assert_equals(url.substr(url.lastIndexOf("/media/")+7), mediaFile);
 
-    <body onload="setTimeout(test, 100)">
-        <video controls></video>
-    </body>
-</html>
+        url = video.src;
+        assert_equals(url.substr(url.lastIndexOf("/media/")+7), mediaFile);
 
+        assert_equals(video.getAttribute("src"), mediaFile);
+    });
+
+    video.src = mediaFile;
+});
+</script>

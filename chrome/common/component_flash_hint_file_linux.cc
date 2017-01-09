@@ -5,7 +5,11 @@
 #include "chrome/common/component_flash_hint_file_linux.h"
 
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <sys/mman.h>
+
+#include <memory>
 
 #include "base/base64.h"
 #include "base/files/file_path.h"
@@ -62,7 +66,7 @@ void SHA256Hash(const base::MemoryMappedFile& mapped_file,
                 void* result,
                 size_t len) {
   CHECK_EQ(crypto::kSHA256Length, len);
-  scoped_ptr<crypto::SecureHash> secure_hash(
+  std::unique_ptr<crypto::SecureHash> secure_hash(
       crypto::SecureHash::Create(crypto::SecureHash::SHA256));
   secure_hash->Update(mapped_file.data(), mapped_file.length());
   secure_hash->Finish(result, len);
@@ -114,7 +118,7 @@ bool TestExecutableMapping(const base::FilePath& path) {
     return false;
   const size_t map_size = sizeof(uint8_t);
   const MmapDeleter deleter(map_size);
-  scoped_ptr<uint8_t, MmapDeleter> buf_ptr(
+  std::unique_ptr<uint8_t, MmapDeleter> buf_ptr(
       reinterpret_cast<uint8_t*>(mmap(nullptr, map_size, PROT_READ | PROT_EXEC,
                                       MAP_PRIVATE, fd.get(), 0)),
       deleter);
@@ -129,7 +133,7 @@ bool RecordFlashUpdate(const base::FilePath& unpacked_plugin,
     return false;
 
   std::string hash(crypto::kSHA256Length, 0);
-  SHA256Hash(mapped_file, string_as_array(&hash), hash.size());
+  SHA256Hash(mapped_file, base::string_as_array(&hash), hash.size());
 
   return WriteToDisk(kCurrentHintFileVersion,
                      crypto::SecureHash::Algorithm::SHA256, hash, moved_plugin,
@@ -156,7 +160,7 @@ bool VerifyAndReturnFlashLocation(base::FilePath* path,
   int error_code;
   std::string error_message;
   JSONStringValueDeserializer deserializer(json_string);
-  const scoped_ptr<base::Value> value =
+  const std::unique_ptr<base::Value> value =
       deserializer.Deserialize(&error_code, &error_message);
 
   if (!value) {
@@ -205,7 +209,8 @@ bool VerifyAndReturnFlashLocation(base::FilePath* path,
 
   std::vector<uint8_t> file_hash(crypto::kSHA256Length, 0);
   SHA256Hash(plugin_file, &file_hash[0], file_hash.size());
-  if (!crypto::SecureMemEqual(&file_hash[0], string_as_array(&decoded_hash),
+  if (!crypto::SecureMemEqual(&file_hash[0],
+                              base::string_as_array(&decoded_hash),
                               crypto::kSHA256Length)) {
     LOG(ERROR)
         << "The hash recorded in the component flash hint file does not "

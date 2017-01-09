@@ -5,17 +5,26 @@
 #include "ui/aura/mus/mus_util.h"
 
 #include "ui/aura/window.h"
+#include "ui/aura/window_property.h"
 
 namespace aura {
+namespace {
 
-mus::Window* GetMusWindow(Window* window) {
+// This code uses Set/GetNativeWindowProperty instead of Set/GetProperty to
+// avoid a dependency on mus.
+const char kMusWindowKey[] = "mus";
+
+}  // namespace
+
+ui::Window* GetMusWindow(Window* window) {
   if (!window)
     return nullptr;
-  return static_cast<mus::Window*>(window->GetNativeWindowProperty("mus"));
+  return static_cast<ui::Window*>(
+      window->GetNativeWindowProperty(kMusWindowKey));
 }
 
-void SetMusWindow(Window* window, mus::Window* mus_window) {
-  window->SetNativeWindowProperty("mus", mus_window);
+void SetMusWindow(Window* window, ui::Window* mus_window) {
+  window->SetNativeWindowProperty(kMusWindowKey, mus_window);
 }
 
 }  // namespace aura

@@ -2,13 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
-#include "base/location.h"
-#include "base/prefs/pref_service.h"
-#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/devtools/device/devtools_android_bridge.h"
 #include "chrome/browser/devtools/device/tcp_device_provider.h"
 #include "chrome/browser/devtools/remote_debugging_server.h"
@@ -19,6 +18,7 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/browser_test_utils.h"
@@ -174,13 +174,16 @@ IN_PROC_BROWSER_TEST_F(PortForwardingDisconnectTest, DisconnectOnRelease) {
       forwarding_port, original_url.host() + ":" + original_url.port());
   prefs->Set(prefs::kDevToolsPortForwardingConfig, config);
 
-  scoped_ptr<Listener> wait_for_port_forwarding(new Listener(profile));
+  std::unique_ptr<Listener> wait_for_port_forwarding(new Listener(profile));
   content::RunMessageLoop();
 
+  base::RunLoop run_loop;
+
   self_provider->set_release_callback_for_test(
-      base::Bind(&base::MessageLoop::PostTask,
-                 base::Unretained(base::MessageLoop::current()), FROM_HERE,
-                 base::MessageLoop::QuitWhenIdleClosure()));
+      base::Bind(base::IgnoreResult(&base::SingleThreadTaskRunner::PostTask),
+                 base::ThreadTaskRunnerHandle::Get(), FROM_HERE,
+                 run_loop.QuitWhenIdleClosure()));
   wait_for_port_forwarding.reset();
-  content::RunMessageLoop();
+
+  content::RunThisRunLoop(&run_loop);
 }

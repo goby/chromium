@@ -5,8 +5,10 @@
 #include "chrome/browser/chromeos/extensions/device_local_account_management_policy_provider.h"
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "base/values.h"
@@ -208,6 +210,24 @@ TEST(DeviceLocalAccountManagementPolicyProviderTest, PublicSession) {
     error.clear();
   }
 
+  // Verify that a platform app with an unsafe manifest entry cannot be
+  // installed.  Since the program logic is based entirely on whitelists, there
+  // is no significant advantage in testing all unsafe manifest entries
+  // individually.
+  {
+    base::DictionaryValue values;
+    values.Set("chrome_settings_overrides", new base::DictionaryValue());
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
   // Verify that a platform app with an unknown manifest entry under "app"
   // cannot be installed.
   {
@@ -224,11 +244,84 @@ TEST(DeviceLocalAccountManagementPolicyProviderTest, PublicSession) {
     error.clear();
   }
 
-  // Verify that a platform app with an unsafe permission entry cannot be
+  // Verify that a platform app with a safe manifest entry under "app" can be
+  // installed.
+  {
+    base::DictionaryValue values;
+    values.SetString("app.content_security_policy", "something2");
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a hosted app with a safe manifest entry under "app" can be
+  // installed.
+  {
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kApp, new base::DictionaryValue);
+    values.Set(extensions::manifest_keys::kWebURLs, new base::ListValue);
+    values.SetString("app.content_security_policy", "something2");
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a theme with a safe manifest entry under "app" cannot be
+  // installed.
+  {
+    base::DictionaryValue values;
+    values.Set("theme", new base::DictionaryValue());
+    values.SetString("app.content_security_policy", "something2");
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with an unknown permission entry cannot be
   // installed.
   {
     base::ListValue* const permissions = new base::ListValue();
-    permissions->AppendString("audioCapture");
+    permissions->AppendString("not_whitelisted_permission");
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with an unsafe permission entry cannot be
+  // installed.  Since the program logic is based entirely on whitelists, there
+  // is no significant advantage in testing all unsafe permissions individually.
+  {
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->AppendString("experimental");
     base::DictionaryValue values;
     values.Set(extensions::manifest_keys::kPermissions, permissions);
 
@@ -247,7 +340,7 @@ TEST(DeviceLocalAccountManagementPolicyProviderTest, PublicSession) {
   // be installed.
   {
     base::ListValue* const permissions = new base::ListValue();
-    permissions->AppendString("audioCapture");
+    permissions->AppendString("experimental");
     base::DictionaryValue values;
     values.Set(extensions::manifest_keys::kOptionalPermissions, permissions);
 
@@ -299,6 +392,175 @@ TEST(DeviceLocalAccountManagementPolicyProviderTest, PublicSession) {
 
     EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
     EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with remote URL permissions can be installed.
+  {
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->AppendString("https://example.com/");
+    permissions->AppendString("http://example.com/");
+    permissions->AppendString("ftp://example.com/");
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that an extension with remote URL permissions cannot be installed.
+  {
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->AppendString("https://example.com/");
+    permissions->AppendString("http://example.com/");
+    permissions->AppendString("ftp://example.com/");
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with a local URL permission cannot be installed.
+  {
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->AppendString("file:///some/where");
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with socket dictionary permission can be
+  // installed.
+  {
+    auto socket = base::MakeUnique<base::DictionaryValue>();
+    base::ListValue* const tcp_list = new base::ListValue();
+    tcp_list->AppendString("tcp-connect");
+    socket->Set("socket", tcp_list);
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->Append(std::move(socket));
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a platform app with unknown dictionary permission cannot be
+  // installed.
+  {
+    auto socket = base::MakeUnique<base::DictionaryValue>();
+    base::ListValue* const tcp_list = new base::ListValue();
+    tcp_list->AppendString("unknown_value");
+    socket->Set("unknown_key", tcp_list);
+    base::ListValue* const permissions = new base::ListValue();
+    permissions->Append(std::move(socket));
+    base::DictionaryValue values;
+    values.Set(extensions::manifest_keys::kPermissions, permissions);
+
+    extension = CreatePlatformAppWithExtraValues(
+        &values,
+        extensions::Manifest::EXTERNAL_POLICY,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that an extension can be installed.
+  {
+    base::DictionaryValue values;
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a shared_module can be installed.
+  {
+    base::DictionaryValue values;
+    values.Set("export.whitelist", new base::ListValue());
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a theme can be installed.
+  {
+    base::DictionaryValue values;
+    values.Set("theme", new base::DictionaryValue());
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_TRUE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_EQ(base::string16(), error);
+    error.clear();
+  }
+
+  // Verify that a legacy_packaged_app cannot be installed and that it cannot
+  // have an "app" manifest entry.
+  {
+    base::DictionaryValue values;
+    values.SetString("app.launch.local_path", "something");
+    extension = CreateExtensionFromValues(
+        std::string(),
+        extensions::Manifest::EXTERNAL_POLICY,
+        &values,
+        extensions::Extension::NO_FLAGS);
+    ASSERT_TRUE(extension);
+
+    EXPECT_FALSE(provider.UserMayLoad(extension.get(), &error));
+    EXPECT_NE(base::string16(), error);
     error.clear();
   }
 }

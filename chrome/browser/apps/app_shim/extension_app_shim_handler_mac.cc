@@ -8,11 +8,14 @@
 #include "apps/launcher.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "chrome/browser/apps/app_shim/app_shim_host_manager_mac.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/launch_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_window.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -138,7 +141,7 @@ class EnableViaPrompt : public ExtensionEnableFlowDelegate {
   Profile* profile_;
   std::string extension_id_;
   base::Callback<void()> callback_;
-  scoped_ptr<ExtensionEnableFlow> flow_;
+  std::unique_ptr<ExtensionEnableFlow> flow_;
 
   DISALLOW_COPY_AND_ASSIGN(EnableViaPrompt);
 };
@@ -153,8 +156,9 @@ bool ExtensionAppShimHandler::Delegate::ProfileExistsForPath(
   // Check for the profile name in the profile info cache to ensure that we
   // never access any directory that isn't a known profile.
   base::FilePath full_path = profile_manager->user_data_dir().Append(path);
-  ProfileInfoCache& cache = profile_manager->GetProfileInfoCache();
-  return cache.GetIndexOfProfileWithPath(full_path) != std::string::npos;
+  ProfileAttributesEntry* entry;
+  return profile_manager->GetProfileAttributesStorage().
+      GetProfileAttributesWithPath(full_path, &entry);
 }
 
 Profile* ExtensionAppShimHandler::Delegate::ProfileForPath(
@@ -211,9 +215,9 @@ void ExtensionAppShimHandler::Delegate::LaunchApp(
   extensions::RecordAppLaunchType(
       extension_misc::APP_LAUNCH_CMD_LINE_APP, extension->GetType());
   if (extension->is_hosted_app()) {
-    AppLaunchParams launch_params(profile, extension, NEW_FOREGROUND_TAB,
-                                  extensions::SOURCE_COMMAND_LINE);
-    OpenApplication(launch_params);
+    OpenApplication(CreateAppLaunchParamsUserContainer(
+        profile, extension, WindowOpenDisposition::NEW_FOREGROUND_TAB,
+        extensions::SOURCE_COMMAND_LINE));
     return;
   }
   if (files.empty()) {

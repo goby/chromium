@@ -24,7 +24,8 @@ cr.define('cr.ui.login.ResourceLoader', function() {
    * @param {Array=} desc.css URLs containing CSS rules.
    * @param {Array<Object>=} desc.html Descriptors for HTML fragments,
    * each of which has a 'url' property and a 'targetID' property that
-   * specifies the node under which the HTML should be appended.
+   * specifies the node under which the HTML should be appended. If 'targetID'
+   * is null, then the fetched body will be appended to document.body.
    *
    * Example:
    *   ResourceLoader.registerAssets({
@@ -118,15 +119,18 @@ cr.define('cr.ui.login.ResourceLoader', function() {
    * @param {string} id Identifier of the page's asset bundle.
    * @param {Object} html Descriptor of the HTML to fetch.
    * @param {string} html.url The URL resolving to some HTML.
-   * @param {string} html.targetID The element ID to which the retrieved
-   * HTML nodes should be appended.
+   * @param {string?} html.targetID The element ID to which the retrieved
+   * HTML nodes should be appended. If null, then the elements will be appended
+   * to document.body instead.
    */
   function loadHTML(id, html) {
     var xhr = new XMLHttpRequest();
     xhr.open('GET', html.url);
     xhr.onreadystatechange = function() {
       if (isSuccessful(html.url, xhr)) {
-        moveNodes(this.responseXML.body, $(html.targetID));
+        moveNodes(this.responseXML.head, document.head);
+        moveNodes(this.responseXML.body, $(html.targetID) || document.body);
+
         resourceLoaded(id);
       }
     };
@@ -153,7 +157,7 @@ cr.define('cr.ui.login.ResourceLoader', function() {
    */
   function finishedLoading(id) {
     var assets = ASSETS[id];
-    console.log('Finished loading asset bundle', id);
+    console.log('Finished loading asset bundle ' + id);
     assets.loaded = true;
     window.setTimeout(function() {
       assets.callback();
@@ -169,7 +173,7 @@ cr.define('cr.ui.login.ResourceLoader', function() {
   function loadAssets(id, callback) {
     var assets = ASSETS[id];
     assets.callback = callback || function() {};
-    console.log('Loading asset bundle', id);
+    console.log('Loading asset bundle ' + id);
     if (alreadyLoadedAssets(id))
       console.warn('asset bundle', id, 'already loaded!');
     if (assets.count == 0) {
@@ -181,10 +185,64 @@ cr.define('cr.ui.login.ResourceLoader', function() {
     }
   }
 
+  /**
+   * Load an asset bundle after the document has been loaded and Chrome is idle.
+   * @param {string} id Identifier for the asset bundle to load.
+   * @param {function()=} callback Function to invoke when done loading.
+   * @param {number=} opt_idleTimeoutMs The maximum amount of time to wait for
+   * an idle notification.
+   */
+  function loadAssetsOnIdle(id, callback, opt_idleTimeoutMs) {
+    opt_idleTimeoutMs = opt_idleTimeoutMs || 250;
+
+    var loadOnIdle = function() {
+      window.requestIdleCallback(function() {
+        loadAssets(id, callback);
+      }, { timeout: opt_idleTimeoutMs });
+    };
+
+    if (document.readyState == 'loading') {
+      window.addEventListener('DOMContentLoaded', loadOnIdle);
+    } else {
+      // DOMContentLoaded has already been called if document.readyState is
+      // 'interactive' or 'complete', so invoke the callback immediately.
+      loadOnIdle();
+    }
+  }
+
+  /**
+   * Wait until the element with the given |id| has finished its layout,
+   * specifically, after it has an offsetHeight > 0.
+   * @param {string|function()} selector Identifier of the element to wait
+   * or a callback function to obtain element to wait for.
+   * @param {function()} callback Function to invoke when done loading.
+   */
+  function waitUntilLayoutComplete(selector, callback) {
+    if (typeof selector == 'string') {
+      var id = selector;
+      selector = function() { return $(id) };
+    }
+
+    var doWait = function() {
+      var element = selector();
+
+      if (!element || !element.offsetHeight) {
+        requestAnimationFrame(doWait);
+        return;
+      }
+
+      callback(element);
+    };
+
+    requestAnimationFrame(doWait);
+  }
+
   return {
     alreadyLoadedAssets: alreadyLoadedAssets,
     hasDeferredAssets: hasDeferredAssets,
     loadAssets: loadAssets,
+    loadAssetsOnIdle: loadAssetsOnIdle,
+    waitUntilLayoutComplete: waitUntilLayoutComplete,
     registerAssets: registerAssets
   };
 });

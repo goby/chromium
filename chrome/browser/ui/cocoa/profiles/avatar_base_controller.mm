@@ -5,10 +5,10 @@
 #import "chrome/browser/ui/cocoa/profiles/avatar_base_controller.h"
 
 #include "base/mac/foundation_util.h"
+#include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_window.h"
@@ -19,16 +19,16 @@
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/profiles/avatar_menu_bubble_controller.h"
+#include "chrome/browser/ui/cocoa/l10n_util.h"
 #import "chrome/browser/ui/cocoa/profiles/profile_chooser_controller.h"
-#include "components/signin/core/browser/signin_error_controller.h"
 #include "components/signin/core/common/profile_management_switches.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 
 // Space between the avatar icon and the avatar menu bubble.
 const CGFloat kMenuYOffsetAdjust = 1.0;
 // Offset needed to align the edge of the avatar bubble with the edge of the
 // avatar button.
-const CGFloat kMenuXOffsetAdjust = 2.0;
+const CGFloat kMenuXOffsetAdjust = 1.0;
 
 @interface AvatarBaseController (Private)
 // Shows the avatar bubble.
@@ -43,84 +43,68 @@ const CGFloat kMenuXOffsetAdjust = 2.0;
 - (void)updateAvatarButtonAndLayoutParent:(BOOL)layoutParent;
 
 // Displays an error icon if any accounts associated with this profile have an
-// auth error.
-- (void)updateErrorStatus:(BOOL)hasError;
+// auth error or sync error.
+- (void)setErrorStatus:(BOOL)hasError;
 @end
 
-class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
-                                  public SigninErrorController::Observer {
- public:
-  ProfileInfoUpdateObserver(Profile* profile,
-                            AvatarBaseController* avatarController)
-      : profile_(profile),
-        avatarController_(avatarController) {
-    g_browser_process->profile_manager()->
-        GetProfileInfoCache().AddObserver(this);
+ProfileUpdateObserver::ProfileUpdateObserver(
+    Profile* profile,
+    AvatarBaseController* avatarController)
+    : errorController_(this, profile),
+      profile_(profile),
+      avatarController_(avatarController) {
+  g_browser_process->profile_manager()
+      ->GetProfileAttributesStorage()
+      .AddObserver(this);
+}
 
-    // Subscribe to authentication error changes so that the avatar button
-    // can update itself.
-    SigninErrorController* errorController =
-        profiles::GetSigninErrorController(profile_);
-    if (errorController)
-      errorController->AddObserver(this);
-  }
+ProfileUpdateObserver::~ProfileUpdateObserver() {
+  g_browser_process->profile_manager()
+      ->GetProfileAttributesStorage()
+      .RemoveObserver(this);
+}
 
-  ~ProfileInfoUpdateObserver() override {
-    g_browser_process->profile_manager()->
-        GetProfileInfoCache().RemoveObserver(this);
-    SigninErrorController* errorController =
-        profiles::GetSigninErrorController(profile_);
-    if (errorController)
-      errorController->RemoveObserver(this);
-  }
+void ProfileUpdateObserver::OnProfileAdded(const base::FilePath& profile_path) {
+  [avatarController_ updateAvatarButtonAndLayoutParent:YES];
+}
 
-  // ProfileInfoCacheObserver:
-  void OnProfileAdded(const base::FilePath& profile_path) override {
+void ProfileUpdateObserver::OnProfileWasRemoved(
+    const base::FilePath& profile_path,
+    const base::string16& profile_name) {
+  // If deleting the active profile, don't bother updating the avatar
+  // button, as the browser window is being closed anyway.
+  if (profile_->GetPath() != profile_path)
     [avatarController_ updateAvatarButtonAndLayoutParent:YES];
-  }
+}
 
-  void OnProfileWasRemoved(const base::FilePath& profile_path,
-                           const base::string16& profile_name) override {
-    // If deleting the active profile, don't bother updating the avatar
-    // button, as the browser window is being closed anyway.
-    if (profile_->GetPath() != profile_path)
-      [avatarController_ updateAvatarButtonAndLayoutParent:YES];
-  }
+void ProfileUpdateObserver::OnProfileNameChanged(
+    const base::FilePath& profile_path,
+    const base::string16& old_profile_name) {
+  if (profile_->GetPath() == profile_path)
+    [avatarController_ updateAvatarButtonAndLayoutParent:YES];
+}
 
-  void OnProfileNameChanged(const base::FilePath& profile_path,
-                            const base::string16& old_profile_name) override {
-    if (profile_->GetPath() == profile_path)
-      [avatarController_ updateAvatarButtonAndLayoutParent:YES];
-  }
+void ProfileUpdateObserver::OnProfileSupervisedUserIdChanged(
+    const base::FilePath& profile_path) {
+  if (profile_->GetPath() == profile_path)
+    [avatarController_ updateAvatarButtonAndLayoutParent:YES];
+}
 
-  void OnProfileSupervisedUserIdChanged(
-      const base::FilePath& profile_path) override {
-    if (profile_->GetPath() == profile_path)
-      [avatarController_ updateAvatarButtonAndLayoutParent:YES];
-  }
+void ProfileUpdateObserver::OnAvatarErrorChanged() {
+  [avatarController_ setErrorStatus:errorController_.HasAvatarError()];
+}
 
-  // SigninErrorController::Observer:
-  void OnErrorChanged() override {
-    SigninErrorController* errorController =
-        profiles::GetSigninErrorController(profile_);
-    if (errorController)
-      [avatarController_ updateErrorStatus:errorController->HasError()];
-  }
-
- private:
-  Profile* profile_;
-  AvatarBaseController* avatarController_;  // Weak; owns this.
-
-  DISALLOW_COPY_AND_ASSIGN(ProfileInfoUpdateObserver);
-};
+bool ProfileUpdateObserver::HasAvatarError() {
+  return errorController_.HasAvatarError();
+}
 
 @implementation AvatarBaseController
 
 - (id)initWithBrowser:(Browser*)browser {
   if ((self = [super init])) {
     browser_ = browser;
-    profileInfoObserver_.reset(
-        new ProfileInfoUpdateObserver(browser_->profile(), self));
+    profileObserver_.reset(
+        new ProfileUpdateObserver(browser_->profile(), self));
   }
   return self;
 }
@@ -145,7 +129,8 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
 
 - (void)showAvatarBubbleAnchoredAt:(NSView*)anchor
                           withMode:(BrowserWindow::AvatarBubbleMode)mode
-                   withServiceType:(signin::GAIAServiceType)serviceType {
+                   withServiceType:(signin::GAIAServiceType)serviceType
+                   fromAccessPoint:(signin_metrics::AccessPoint)accessPoint {
   if (menuController_) {
     profiles::BubbleViewMode viewMode;
     profiles::TutorialMode tutorialMode;
@@ -167,16 +152,19 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
       [browser_->window()->GetNativeWindow() windowController];
   if ([wc isKindOfClass:[BrowserWindowController class]]) {
     [static_cast<BrowserWindowController*>(wc)
-        lockBarVisibilityForOwner:self withAnimation:NO delay:NO];
+        lockToolbarVisibilityForOwner:self
+                        withAnimation:NO];
   }
 
   // The new avatar bubble does not have an arrow, and it should be anchored
   // to the edge of the avatar button.
-  int anchorX = NSMaxX([anchor bounds]) - kMenuXOffsetAdjust;
+  int anchorX = cocoa_l10n_util::ShouldFlipWindowControlsInRTL()
+                    ? NSMinX([anchor bounds]) + kMenuXOffsetAdjust
+                    : NSMaxX([anchor bounds]) - kMenuXOffsetAdjust;
   NSPoint point = NSMakePoint(anchorX,
                               NSMaxY([anchor bounds]) + kMenuYOffsetAdjust);
   point = [anchor convertPoint:point toView:nil];
-  point = [[anchor window] convertBaseToScreen:point];
+  point = ui::ConvertPointFromWindowToScreen([anchor window], point);
 
   // |menuController_| will automatically release itself on close.
   profiles::BubbleViewMode viewMode;
@@ -196,7 +184,8 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
                                              anchoredAt:point
                                                viewMode:viewMode
                                            tutorialMode:tutorialMode
-                                            serviceType:serviceType];
+                                            serviceType:serviceType
+                                            accessPoint:accessPoint];
 
   [[NSNotificationCenter defaultCenter]
       addObserver:self
@@ -220,7 +209,9 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
 
   [self showAvatarBubbleAnchoredAt:button_
                           withMode:mode
-                   withServiceType:signin::GAIA_SERVICE_TYPE_NONE];
+                   withServiceType:signin::GAIA_SERVICE_TYPE_NONE
+                   fromAccessPoint:signin_metrics::AccessPoint::
+                                       ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN];
 }
 
 - (IBAction)buttonRightClicked:(id)sender {
@@ -229,7 +220,9 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
 
   [self showAvatarBubbleAnchoredAt:button_
                           withMode:mode
-                   withServiceType:signin::GAIA_SERVICE_TYPE_NONE];
+                   withServiceType:signin::GAIA_SERVICE_TYPE_NONE
+                   fromAccessPoint:signin_metrics::AccessPoint::
+                                       ACCESS_POINT_AVATAR_BUBBLE_SIGN_IN];
 }
 
 - (void)bubbleWillClose:(NSNotification*)notif {
@@ -237,7 +230,8 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
       [browser_->window()->GetNativeWindow() windowController];
   if ([wc isKindOfClass:[BrowserWindowController class]]) {
     [static_cast<BrowserWindowController*>(wc)
-        releaseBarVisibilityForOwner:self withAnimation:YES delay:NO];
+        releaseToolbarVisibilityForOwner:self
+                           withAnimation:YES];
   }
   menuController_ = nil;
 }
@@ -246,7 +240,7 @@ class ProfileInfoUpdateObserver : public ProfileInfoCacheObserver,
   NOTREACHED();
 }
 
-- (void)updateErrorStatus:(BOOL)hasError {
+- (void)setErrorStatus:(BOOL)hasError {
 }
 
 - (BaseBubbleController*)menuController {

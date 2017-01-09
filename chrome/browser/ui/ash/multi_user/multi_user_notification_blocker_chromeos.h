@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 
+#include "base/macros.h"
 #include "components/signin/core/account_id/account_id.h"
 #include "ui/message_center/notification_blocker.h"
 
@@ -27,9 +28,9 @@ class MultiUserNotificationBlockerChromeOS
 
   // message_center::NotificationBlocker overrides:
   bool ShouldShowNotification(
-      const message_center::NotifierId& notifier_id) const override;
+      const message_center::Notification& notification) const override;
   bool ShouldShowNotificationAsPopup(
-      const message_center::NotifierId& notifier_id) const override;
+      const message_center::Notification& notification) const override;
 
  private:
   // Returns true if this blocker is actively working.

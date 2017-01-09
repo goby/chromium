@@ -4,29 +4,32 @@
 
 #include "chrome/browser/ui/webui/media/webrtc_logs_ui.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/i18n/time_formatting.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/media/webrtc_log_list.h"
+#include "chrome/browser/media/webrtc/webrtc_log_list.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/upload_list/upload_list.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/settings/cros_settings.h"
@@ -149,7 +152,7 @@ void WebRtcLogsDOMHandler::UpdateUI() {
   for (std::vector<UploadList::UploadInfo>::iterator i = uploads.begin();
        i != uploads.end();
        ++i) {
-    scoped_ptr<base::DictionaryValue> upload(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> upload(new base::DictionaryValue());
     upload->SetString("id", i->upload_id);
 
     base::string16 value_w;
@@ -178,9 +181,12 @@ void WebRtcLogsDOMHandler::UpdateUI() {
       double seconds_since_epoch;
       if (base::StringToDouble(i->local_id, &seconds_since_epoch)) {
         base::Time capture_time = base::Time::FromDoubleT(seconds_since_epoch);
-        base::Time::Exploded lower_limit = {2012, 1, 0, 1, 0, 0, 0, 0};
-        if (capture_time > base::Time::FromUTCExploded(lower_limit) &&
-            capture_time < base::Time::Now()) {
+        const base::Time::Exploded lower_limit = {2012, 1, 0, 1, 0, 0, 0, 0};
+        base::Time out_time;
+        bool conversion_success =
+            base::Time::FromUTCExploded(lower_limit, &out_time);
+        DCHECK(conversion_success);
+        if (capture_time > out_time && capture_time < base::Time::Now()) {
           value_w = base::TimeFormatFriendlyDateAndTime(capture_time);
         }
       }
@@ -192,13 +198,13 @@ void WebRtcLogsDOMHandler::UpdateUI() {
       value_w = base::string16(base::ASCIIToUTF16("(unknown time)"));
     upload->SetString("capture_time", value_w);
 
-    upload_list.Append(upload.Pass());
+    upload_list.Append(std::move(upload));
   }
 
   base::StringValue version(version_info::GetVersionNumber());
 
-  web_ui()->CallJavascriptFunction("updateWebRtcLogsList", upload_list,
-                                   version);
+  web_ui()->CallJavascriptFunctionUnsafe("updateWebRtcLogsList", upload_list,
+                                         version);
 }
 
 }  // namespace

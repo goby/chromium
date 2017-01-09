@@ -9,12 +9,12 @@
 #include <stdlib.h>
 
 #include <map>
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
@@ -70,25 +70,38 @@ class TestURLRequestContext : public URLRequestContext {
     client_socket_factory_ = factory;
   }
 
-  void set_http_network_session_params(
-      scoped_ptr<HttpNetworkSession::Params> params) {
-    http_network_session_params_ = params.Pass();
+  ProxyDelegate* proxy_delegate() { return proxy_delegate_; }
+
+  void set_proxy_delegate(ProxyDelegate* proxy_delegate) {
+    proxy_delegate_ = proxy_delegate;
   }
 
-  void SetSdchManager(scoped_ptr<SdchManager> sdch_manager) {
-    context_storage_.set_sdch_manager(sdch_manager.Pass());
+  void set_http_network_session_params(
+      std::unique_ptr<HttpNetworkSession::Params> params) {
+    http_network_session_params_ = std::move(params);
+  }
+
+  void SetSdchManager(std::unique_ptr<SdchManager> sdch_manager) {
+    context_storage_.set_sdch_manager(std::move(sdch_manager));
+  }
+
+  void SetCTPolicyEnforcer(
+      std::unique_ptr<CTPolicyEnforcer> ct_policy_enforcer) {
+    context_storage_.set_ct_policy_enforcer(std::move(ct_policy_enforcer));
   }
 
  private:
-  bool initialized_;
+  bool initialized_ = false;
 
   // Optional parameters to override default values.  Note that values that
   // point to other objects the TestURLRequestContext creates will be
   // overwritten.
-  scoped_ptr<HttpNetworkSession::Params> http_network_session_params_;
+  std::unique_ptr<HttpNetworkSession::Params> http_network_session_params_;
 
   // Not owned:
-  ClientSocketFactory* client_socket_factory_;
+  ClientSocketFactory* client_socket_factory_ = nullptr;
+
+  ProxyDelegate* proxy_delegate_ = nullptr;
 
  protected:
   URLRequestContextStorage context_storage_;
@@ -107,7 +120,7 @@ class TestURLRequestContextGetter : public URLRequestContextGetter {
   // Use to pass a pre-initialized |context|.
   TestURLRequestContextGetter(
       const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner,
-      scoped_ptr<TestURLRequestContext> context);
+      std::unique_ptr<TestURLRequestContext> context);
 
   // URLRequestContextGetter implementation.
   TestURLRequestContext* GetURLRequestContext() override;
@@ -119,7 +132,7 @@ class TestURLRequestContextGetter : public URLRequestContextGetter {
 
  private:
   const scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
-  scoped_ptr<TestURLRequestContext> context_;
+  std::unique_ptr<TestURLRequestContext> context_;
 };
 
 //-----------------------------------------------------------------------------
@@ -141,10 +154,6 @@ class TestDelegate : public URLRequest::Delegate {
   // Enables quitting the message loop in response to auth requests, as opposed
   // to returning credentials or cancelling the request.
   void set_quit_on_auth_required(bool val) { quit_on_auth_required_ = val; }
-  void set_quit_on_network_start(bool val) {
-    quit_on_before_network_start_ = val;
-  }
-
   void set_allow_certificate_errors(bool val) {
     allow_certificate_errors_ = val;
   }
@@ -156,10 +165,8 @@ class TestDelegate : public URLRequest::Delegate {
   const std::string& data_received() const { return data_received_; }
   int bytes_received() const { return static_cast<int>(data_received_.size()); }
   int response_started_count() const { return response_started_count_; }
+  int received_bytes_count() const { return received_bytes_count_; }
   int received_redirect_count() const { return received_redirect_count_; }
-  int received_before_network_start_count() const {
-    return received_before_network_start_count_;
-  }
   bool received_data_before_response() const {
     return received_data_before_response_;
   }
@@ -170,16 +177,17 @@ class TestDelegate : public URLRequest::Delegate {
   }
   bool auth_required_called() const { return auth_required_; }
   bool have_full_request_headers() const { return have_full_request_headers_; }
+  bool response_completed() const { return response_completed_; }
   const HttpRequestHeaders& full_request_headers() const {
     return full_request_headers_;
   }
   void ClearFullRequestHeaders();
+  int request_status() const { return request_status_; }
 
   // URLRequest::Delegate:
   void OnReceivedRedirect(URLRequest* request,
                           const RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
-  void OnBeforeNetworkStart(URLRequest* request, bool* defer) override;
   void OnAuthRequired(URLRequest* request,
                       AuthChallengeInfo* auth_info) override;
   // NOTE: |fatal| causes |certificate_errors_are_fatal_| to be set to true.
@@ -188,7 +196,7 @@ class TestDelegate : public URLRequest::Delegate {
   void OnSSLCertificateError(URLRequest* request,
                              const SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int bytes_read) override;
 
  private:
@@ -204,7 +212,6 @@ class TestDelegate : public URLRequest::Delegate {
   bool quit_on_complete_;
   bool quit_on_redirect_;
   bool quit_on_auth_required_;
-  bool quit_on_before_network_start_;
   bool allow_certificate_errors_;
   AuthCredentials credentials_;
 
@@ -212,7 +219,6 @@ class TestDelegate : public URLRequest::Delegate {
   int response_started_count_;
   int received_bytes_count_;
   int received_redirect_count_;
-  int received_before_network_start_count_;
   bool received_data_before_response_;
   bool request_failed_;
   bool have_certificate_errors_;
@@ -221,6 +227,10 @@ class TestDelegate : public URLRequest::Delegate {
   std::string data_received_;
   bool have_full_request_headers_;
   HttpRequestHeaders full_request_headers_;
+  bool response_completed_;
+
+  // tracks status of request
+  int request_status_;
 
   // our read buffer
   scoped_refptr<IOBuffer> buf_;
@@ -281,10 +291,13 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
     cancel_request_with_policy_violating_referrer_ = val;
   }
 
-  int observed_before_proxy_headers_sent_callbacks() const {
-    return observed_before_proxy_headers_sent_callbacks_;
+  int before_send_headers_with_proxy_count() const {
+    return before_send_headers_with_proxy_count_;
   }
-  int before_send_headers_count() const { return before_send_headers_count_; }
+  int before_start_transaction_count() const {
+    return before_start_transaction_count_;
+  }
+
   int headers_received_count() const { return headers_received_count_; }
   int64_t total_network_bytes_received() const {
     return total_network_bytes_received_;
@@ -300,19 +313,24 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
     will_be_intercepted_on_next_error_ = can_be_intercepted_on_error;
   }
 
+  void set_before_start_transaction_fails() {
+    before_start_transaction_fails_ = true;
+  }
+
  protected:
   // NetworkDelegate:
   int OnBeforeURLRequest(URLRequest* request,
                          const CompletionCallback& callback,
                          GURL* new_url) override;
-  int OnBeforeSendHeaders(URLRequest* request,
-                          const CompletionCallback& callback,
-                          HttpRequestHeaders* headers) override;
-  void OnBeforeSendProxyHeaders(URLRequest* request,
-                                const ProxyInfo& proxy_info,
-                                HttpRequestHeaders* headers) override;
-  void OnSendHeaders(URLRequest* request,
-                     const HttpRequestHeaders& headers) override;
+  int OnBeforeStartTransaction(URLRequest* request,
+                               const CompletionCallback& callback,
+                               HttpRequestHeaders* headers) override;
+  void OnBeforeSendHeaders(URLRequest* request,
+                           const ProxyInfo& proxy_info,
+                           const ProxyRetryInfoMap& proxy_retry_info,
+                           HttpRequestHeaders* headers) override;
+  void OnStartTransaction(URLRequest* request,
+                          const HttpRequestHeaders& headers) override;
   int OnHeadersReceived(
       URLRequest* request,
       const CompletionCallback& callback,
@@ -320,11 +338,11 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
       scoped_refptr<HttpResponseHeaders>* override_response_headers,
       GURL* allowed_unsafe_redirect_url) override;
   void OnBeforeRedirect(URLRequest* request, const GURL& new_location) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnNetworkBytesReceived(URLRequest* request,
                               int64_t bytes_received) override;
   void OnNetworkBytesSent(URLRequest* request, int64_t bytes_sent) override;
-  void OnCompleted(URLRequest* request, bool started) override;
+  void OnCompleted(URLRequest* request, bool started, int net_error) override;
   void OnURLRequestDestroyed(URLRequest* request) override;
   void OnPACScriptError(int line_number, const base::string16& error) override;
   NetworkDelegate::AuthRequiredResponse OnAuthRequired(
@@ -340,6 +358,7 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   bool OnCanAccessFile(const URLRequest& request,
                        const base::FilePath& path) const override;
   bool OnAreExperimentalCookieFeaturesEnabled() const override;
+  bool OnAreStrictSecureCookiesEnabled() const override;
   bool OnCancelURLRequestWithPolicyViolatingReferrerHeader(
       const URLRequest& request,
       const GURL& target_url,
@@ -361,8 +380,8 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   int blocked_get_cookies_count_;
   int blocked_set_cookie_count_;
   int set_cookie_count_;
-  int observed_before_proxy_headers_sent_callbacks_;
-  int before_send_headers_count_;
+  int before_send_headers_with_proxy_count_;
+  int before_start_transaction_count_;
   int headers_received_count_;
   int64_t total_network_bytes_received_;
   int64_t total_network_bytes_sent_;
@@ -370,7 +389,7 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   HostPortPair last_observed_proxy_;
 
   // NetworkDelegate callbacks happen in a particular order (e.g.
-  // OnBeforeURLRequest is always called before OnBeforeSendHeaders).
+  // OnBeforeURLRequest is always called before OnBeforeStartTransaction).
   // This bit-set indicates for each request id (key) what events may be sent
   // next.
   std::map<int, int> next_states_;
@@ -389,6 +408,7 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
   bool experimental_cookie_features_enabled_;           // false by default
   bool cancel_request_with_policy_violating_referrer_;  // false by default
   bool will_be_intercepted_on_next_error_;
+  bool before_start_transaction_fails_;
 };
 
 //-----------------------------------------------------------------------------
@@ -397,14 +417,15 @@ class TestNetworkDelegate : public NetworkDelegateImpl {
 class TestJobInterceptor : public URLRequestJobFactory::ProtocolHandler {
  public:
   TestJobInterceptor();
+  ~TestJobInterceptor() override;
 
   URLRequestJob* MaybeCreateJob(
       URLRequest* request,
       NetworkDelegate* network_delegate) const override;
-  void set_main_intercept_job(URLRequestJob* job);
+  void set_main_intercept_job(std::unique_ptr<URLRequestJob> job);
 
  private:
-  mutable URLRequestJob* main_intercept_job_;
+  mutable std::unique_ptr<URLRequestJob> main_intercept_job_;
 };
 
 }  // namespace net

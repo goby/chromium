@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
+#include "base/test/user_action_tester.h"
+#include "build/build_config.h"
 #include "components/autofill/core/browser/autofill_manager.h"
 #include "components/autofill/core/browser/autofill_metrics.h"
+#include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
 #include "components/autofill/core/browser/suggestion_test_helpers.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
@@ -73,6 +78,10 @@ class MockAutofillClient : public TestAutofillClient {
 
   MOCK_METHOD0(HideAutofillPopup, void());
 
+  MOCK_METHOD0(StartSigninFlow, void());
+
+  MOCK_METHOD0(ShowHttpNotSecureExplanation, void());
+
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAutofillClient);
 };
@@ -88,6 +97,9 @@ class MockAutofillManager : public AutofillManager {
   MOCK_METHOD2(ShouldShowScanCreditCard,
                bool(const FormData& form, const FormFieldData& field));
 
+  MOCK_METHOD2(ShouldShowCreditCardSigninPromo,
+               bool(const FormData& form, const FormFieldData& field));
+
   MOCK_METHOD5(FillOrPreviewForm,
                void(AutofillDriver::RendererFormDataAction action,
                     int query_id,
@@ -95,11 +107,12 @@ class MockAutofillManager : public AutofillManager {
                     const FormFieldData& field,
                     int unique_id));
 
-  MOCK_METHOD4(FillCreditCardForm,
+  MOCK_METHOD5(FillCreditCardForm,
                void(int query_id,
                     const FormData& form,
                     const FormFieldData& field,
-                    const CreditCard& credit_card));
+                    const CreditCard& credit_card,
+                    const base::string16& cvc));
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MockAutofillManager);
@@ -132,9 +145,8 @@ class AutofillExternalDelegateUnitTest : public testing::Test {
     FormFieldData field;
     field.is_focusable = true;
     field.should_autocomplete = true;
-    const gfx::RectF element_bounds;
 
-    external_delegate_->OnQuery(query_id, form, field, element_bounds);
+    external_delegate_->OnQuery(query_id, form, field, gfx::RectF());
   }
 
   void IssueOnSuggestionsReturned() {
@@ -145,9 +157,9 @@ class AutofillExternalDelegateUnitTest : public testing::Test {
   }
 
   testing::NiceMock<MockAutofillClient> autofill_client_;
-  scoped_ptr<testing::NiceMock<MockAutofillDriver>> autofill_driver_;
-  scoped_ptr<MockAutofillManager> autofill_manager_;
-  scoped_ptr<AutofillExternalDelegate> external_delegate_;
+  std::unique_ptr<testing::NiceMock<MockAutofillDriver>> autofill_driver_;
+  std::unique_ptr<MockAutofillManager> autofill_manager_;
+  std::unique_ptr<AutofillExternalDelegate> external_delegate_;
 
   base::MessageLoop message_loop_;
 };
@@ -183,6 +195,80 @@ TEST_F(AutofillExternalDelegateUnitTest, TestExternalDelegateVirtualCalls) {
   external_delegate_->DidAcceptSuggestion(autofill_item[0].value,
                                           autofill_item[0].frontend_id,
                                           0);
+}
+
+// Test that our external delegate does not add the signin promo and its
+// separator in the popup items when there are suggestions.
+TEST_F(AutofillExternalDelegateUnitTest,
+       TestSigninPromoIsNotAdded_WithSuggestions) {
+  EXPECT_CALL(*autofill_manager_, ShouldShowCreditCardSigninPromo(_, _))
+      .WillOnce(testing::Return(true));
+
+  IssueOnQuery(kQueryId);
+
+  // The enums must be cast to ints to prevent compile errors on linux_rel.
+  auto element_ids =
+      testing::ElementsAre(kAutofillProfileId,
+#if !defined(OS_ANDROID)
+                           static_cast<int>(POPUP_ITEM_ID_SEPARATOR),
+#endif
+                           static_cast<int>(POPUP_ITEM_ID_AUTOFILL_OPTIONS));
+
+  EXPECT_CALL(autofill_client_,
+              ShowAutofillPopup(_, _, SuggestionVectorIdsAre(element_ids), _));
+
+  base::UserActionTester user_action_tester;
+
+  // This should call ShowAutofillPopup.
+  std::vector<Suggestion> autofill_item;
+  autofill_item.push_back(Suggestion());
+  autofill_item[0].frontend_id = kAutofillProfileId;
+  external_delegate_->OnSuggestionsReturned(kQueryId, autofill_item);
+  EXPECT_EQ(0, user_action_tester.GetActionCount(
+                   "Signin_Impression_FromAutofillDropdown"));
+
+  EXPECT_CALL(
+      *autofill_manager_,
+      FillOrPreviewForm(AutofillDriver::FORM_DATA_ACTION_FILL, _, _, _, _));
+  EXPECT_CALL(autofill_client_, HideAutofillPopup());
+
+  // This should trigger a call to hide the popup since we've selected an
+  // option.
+  external_delegate_->DidAcceptSuggestion(autofill_item[0].value,
+                                          autofill_item[0].frontend_id, 0);
+}
+
+// Test that our external delegate properly adds the signin promo and no
+// separator in the dropdown, when there are no suggestions.
+TEST_F(AutofillExternalDelegateUnitTest,
+       TestSigninPromoIsAdded_WithNoSuggestions) {
+  EXPECT_CALL(*autofill_manager_, ShouldShowCreditCardSigninPromo(_, _))
+      .WillOnce(testing::Return(true));
+
+  IssueOnQuery(kQueryId);
+
+  // The enums must be cast to ints to prevent compile errors on linux_rel.
+  auto element_ids = testing::ElementsAre(
+      static_cast<int>(POPUP_ITEM_ID_CREDIT_CARD_SIGNIN_PROMO));
+
+  EXPECT_CALL(autofill_client_,
+              ShowAutofillPopup(_, _, SuggestionVectorIdsAre(element_ids), _));
+
+  base::UserActionTester user_action_tester;
+
+  // This should call ShowAutofillPopup.
+  std::vector<Suggestion> items;
+  external_delegate_->OnSuggestionsReturned(kQueryId, items);
+  EXPECT_EQ(1, user_action_tester.GetActionCount(
+                   "Signin_Impression_FromAutofillDropdown"));
+
+  EXPECT_CALL(autofill_client_, StartSigninFlow());
+  EXPECT_CALL(autofill_client_, HideAutofillPopup());
+
+  // This should trigger a call to start the signin flow and hide the popup
+  // since we've selected the sign-in promo option.
+  external_delegate_->DidAcceptSuggestion(
+      base::string16(), POPUP_ITEM_ID_CREDIT_CARD_SIGNIN_PROMO, 0);
 }
 
 // Test that data list elements for a node will appear in the Autofill popup.
@@ -327,7 +413,6 @@ TEST_F(AutofillExternalDelegateUnitTest, DuplicateAutofillDatalistValues) {
   autofill_item.push_back(Suggestion());
   autofill_item[0].value = ASCIIToUTF16("Rick");
   autofill_item[0].frontend_id = kAutofillProfileId;
-  ;
   external_delegate_->OnSuggestionsReturned(kQueryId, autofill_item);
 }
 
@@ -380,17 +465,43 @@ TEST_F(AutofillExternalDelegateUnitTest, AutofillWarnings) {
   EXPECT_CALL(
       autofill_client_,
       ShowAutofillPopup(
-          _,
-          _,
-          SuggestionVectorIdsAre(testing::ElementsAre(
-              static_cast<int>(POPUP_ITEM_ID_WARNING_MESSAGE))),
+          _, _, SuggestionVectorIdsAre(testing::ElementsAre(static_cast<int>(
+                    POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE))),
           _));
 
   // This should call ShowAutofillPopup.
   std::vector<Suggestion> autofill_item;
   autofill_item.push_back(Suggestion());
-  autofill_item[0].frontend_id = POPUP_ITEM_ID_WARNING_MESSAGE;
+  autofill_item[0].frontend_id =
+      POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE;
   external_delegate_->OnSuggestionsReturned(kQueryId, autofill_item);
+}
+
+// Test that Autofill warnings are removed if there are also autocomplete
+// entries in the vector.
+TEST_F(AutofillExternalDelegateUnitTest,
+       AutofillWarningsNotShown_WithSuggestions) {
+  IssueOnQuery(kQueryId);
+
+  // The enums must be cast to ints to prevent compile errors on linux_rel.
+  EXPECT_CALL(
+      autofill_client_,
+      ShowAutofillPopup(
+          _, _, SuggestionVectorIdsAre(testing::ElementsAre(
+                    static_cast<int>(POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY))),
+          _));
+
+  // This should call ShowAutofillPopup.
+  std::vector<Suggestion> suggestions;
+  suggestions.push_back(Suggestion());
+  suggestions[0].frontend_id = POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE;
+  suggestions.push_back(Suggestion());
+  suggestions[1].frontend_id =
+      POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE;
+  suggestions.push_back(Suggestion());
+  suggestions[2].value = ASCIIToUTF16("Rick");
+  suggestions[2].frontend_id = POPUP_ITEM_ID_AUTOCOMPLETE_ENTRY;
+  external_delegate_->OnSuggestionsReturned(kQueryId, suggestions);
 }
 
 // Test that the Autofill delegate doesn't try and fill a form with a
@@ -553,18 +664,36 @@ TEST_F(AutofillExternalDelegateUnitTest, ScanCreditCardPromptMetricsTest) {
   }
 }
 
+// Test that autofill client will start the signin flow after the user accepted
+// the suggestion to sign in.
+TEST_F(AutofillExternalDelegateUnitTest, SigninPromoMenuItem) {
+  EXPECT_CALL(autofill_client_, StartSigninFlow());
+  EXPECT_CALL(autofill_client_, HideAutofillPopup());
+  external_delegate_->DidAcceptSuggestion(
+      base::string16(), POPUP_ITEM_ID_CREDIT_CARD_SIGNIN_PROMO, 0);
+}
+
+// Test that autofill client will open the security indicator help center url
+// after the user accepted the http warning message suggestion item.
+TEST_F(AutofillExternalDelegateUnitTest, HttpWarningMessageItem) {
+  EXPECT_CALL(autofill_client_, ShowHttpNotSecureExplanation());
+  EXPECT_CALL(autofill_client_, HideAutofillPopup());
+  external_delegate_->DidAcceptSuggestion(
+      base::string16(), POPUP_ITEM_ID_HTTP_NOT_SECURE_WARNING_MESSAGE, 0);
+}
+
+MATCHER_P(CreditCardMatches, card, "") {
+  return !arg.Compare(card);
+}
+
 // Test that autofill manager will fill the credit card form after user scans a
 // credit card.
 TEST_F(AutofillExternalDelegateUnitTest, FillCreditCardForm) {
-  base::string16 card_number = base::ASCIIToUTF16("test");
-  int expiration_month = 1;
-  int expiration_year = 3000;
-  EXPECT_CALL(
-      *autofill_manager_,
-      FillCreditCardForm(
-          _, _, _, CreditCard(card_number, expiration_month, expiration_year)));
-  external_delegate_->OnCreditCardScanned(card_number, expiration_month,
-                                          expiration_year);
+  CreditCard card;
+  test::SetCreditCardInfo(&card, "Alice", "4111", "1", "3000");
+  EXPECT_CALL(*autofill_manager_,
+      FillCreditCardForm(_, _, _, CreditCardMatches(card), base::string16()));
+  external_delegate_->OnCreditCardScanned(card);
 }
 
 TEST_F(AutofillExternalDelegateUnitTest, IgnoreAutocompleteOffForAutofill) {
@@ -572,9 +701,8 @@ TEST_F(AutofillExternalDelegateUnitTest, IgnoreAutocompleteOffForAutofill) {
   FormFieldData field;
   field.is_focusable = true;
   field.should_autocomplete = false;
-  const gfx::RectF element_bounds;
 
-  external_delegate_->OnQuery(kQueryId, form, field, element_bounds);
+  external_delegate_->OnQuery(kQueryId, form, field, gfx::RectF());
 
   std::vector<Suggestion> autofill_items;
   autofill_items.push_back(Suggestion());

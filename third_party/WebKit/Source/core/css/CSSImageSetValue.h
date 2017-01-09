@@ -27,62 +27,62 @@
 #define CSSImageSetValue_h
 
 #include "core/css/CSSValueList.h"
-#include "core/fetch/ResourceLoaderOptions.h"
+#include "platform/CrossOriginAttributeValue.h"
 #include "platform/weborigin/Referrer.h"
 #include "wtf/Allocator.h"
 
 namespace blink {
 
 class Document;
-class StyleFetchedImageSet;
+class StyleImage;
 
 class CSSImageSetValue : public CSSValueList {
-public:
+ public:
+  static CSSImageSetValue* create() { return new CSSImageSetValue(); }
+  ~CSSImageSetValue();
 
-    static PassRefPtrWillBeRawPtr<CSSImageSetValue> create()
-    {
-        return adoptRefWillBeNoop(new CSSImageSetValue());
-    }
-    ~CSSImageSetValue();
+  bool isCachePending(float deviceScaleFactor) const;
+  StyleImage* cachedImage(float deviceScaleFactor) const;
+  StyleImage* cacheImage(
+      const Document&,
+      float deviceScaleFactor,
+      CrossOriginAttributeValue = CrossOriginAttributeNotSet);
 
-    bool isCachePending(float deviceScaleFactor) const;
-    StyleFetchedImageSet* cachedImageSet(float deviceScaleFactor) const;
-    StyleFetchedImageSet* cacheImageSet(Document*, float deviceScaleFactor, const ResourceLoaderOptions&);
-    StyleFetchedImageSet* cacheImageSet(Document*, float deviceScaleFactor);
+  String customCSSText() const;
 
-    String customCSSText() const;
+  struct ImageWithScale {
+    DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+    String imageURL;
+    Referrer referrer;
+    float scaleFactor;
+  };
 
-    struct ImageWithScale {
-        DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
-        String imageURL;
-        Referrer referrer;
-        float scaleFactor;
-    };
+  CSSImageSetValue* valueWithURLsMadeAbsolute();
 
-    PassRefPtrWillBeRawPtr<CSSImageSetValue> valueWithURLsMadeAbsolute();
+  bool hasFailedOrCanceledSubresources() const;
 
-    bool hasFailedOrCanceledSubresources() const;
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+ protected:
+  ImageWithScale bestImageForScaleFactor(float scaleFactor);
 
-protected:
-    ImageWithScale bestImageForScaleFactor(float scaleFactor);
+ private:
+  CSSImageSetValue();
 
-private:
-    CSSImageSetValue();
+  void fillImageSet();
+  static inline bool compareByScaleFactor(ImageWithScale first,
+                                          ImageWithScale second) {
+    return first.scaleFactor < second.scaleFactor;
+  }
 
-    void fillImageSet();
-    static inline bool compareByScaleFactor(ImageWithScale first, ImageWithScale second) { return first.scaleFactor < second.scaleFactor; }
+  float m_cachedScaleFactor;
+  Member<StyleImage> m_cachedImage;
 
-    bool m_isCachePending;
-    float m_cachedScaleFactor;
-    RefPtrWillBeMember<StyleFetchedImageSet> m_cachedImageSet;
-
-    Vector<ImageWithScale> m_imagesInSet;
+  Vector<ImageWithScale> m_imagesInSet;
 };
 
 DEFINE_CSS_VALUE_TYPE_CASTS(CSSImageSetValue, isImageSetValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSImageSetValue_h
+#endif  // CSSImageSetValue_h

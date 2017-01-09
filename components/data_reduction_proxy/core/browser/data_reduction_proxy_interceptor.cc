@@ -9,6 +9,8 @@
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_config_service_client.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_creator.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
+#include "net/base/load_timing_info.h"
+#include "net/http/http_request_headers.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -36,6 +38,8 @@ DataReductionProxyInterceptor::~DataReductionProxyInterceptor() {
 net::URLRequestJob* DataReductionProxyInterceptor::MaybeInterceptRequest(
     net::URLRequest* request,
     net::NetworkDelegate* network_delegate) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   return nullptr;
 }
 
@@ -43,12 +47,16 @@ net::URLRequestJob* DataReductionProxyInterceptor::MaybeInterceptRedirect(
     net::URLRequest* request,
     net::NetworkDelegate* network_delegate,
     const GURL& location) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   return MaybeInterceptResponseOrRedirect(request, network_delegate);
 }
 
 net::URLRequestJob* DataReductionProxyInterceptor::MaybeInterceptResponse(
     net::URLRequest* request,
     net::NetworkDelegate* network_delegate) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   return MaybeInterceptResponseOrRedirect(request, network_delegate);
 }
 
@@ -56,6 +64,8 @@ net::URLRequestJob*
 DataReductionProxyInterceptor::MaybeInterceptResponseOrRedirect(
     net::URLRequest* request,
     net::NetworkDelegate* network_delegate) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   DCHECK(request);
   if (request->response_info().was_cached)
     return nullptr;
@@ -66,8 +76,14 @@ DataReductionProxyInterceptor::MaybeInterceptResponseOrRedirect(
     const net::HttpResponseHeaders* response_headers =
         request->response_info().headers.get();
     if (response_headers) {
-      should_retry = config_service_client_->ShouldRetryDueToAuthFailure(
-          response_headers, request->proxy_server());
+      net::HttpRequestHeaders request_headers;
+      net::LoadTimingInfo load_timing_info;
+      request->GetLoadTimingInfo(&load_timing_info);
+      if (request->GetFullRequestHeaders(&request_headers)) {
+        should_retry = config_service_client_->ShouldRetryDueToAuthFailure(
+            request_headers, response_headers, request->proxy_server(),
+            load_timing_info);
+      }
     }
   }
 
@@ -99,6 +115,8 @@ void DataReductionProxyInterceptor::MaybeAddBypassEvent(
     const DataReductionProxyInfo& data_reduction_proxy_info,
     DataReductionProxyBypassType bypass_type,
     bool should_retry) const {
+  DCHECK(thread_checker_.CalledOnValidThread());
+
   if (data_reduction_proxy_info.bypass_action != BYPASS_ACTION_TYPE_NONE) {
     event_creator_->AddBypassActionEvent(
         request->net_log(), data_reduction_proxy_info.bypass_action,

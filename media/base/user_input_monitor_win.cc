@@ -4,9 +4,14 @@
 
 #include "media/base/user_input_monitor.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
@@ -64,8 +69,8 @@ class UserInputMonitorWinCore
       UserInputMonitor::MouseEventListener>> mouse_listeners_;
 
   // These members are only accessed on the UI thread.
-  scoped_ptr<base::win::MessageWindow> window_;
-  uint8 events_monitored_;
+  std::unique_ptr<base::win::MessageWindow> window_;
+  uint8_t events_monitored_;
   KeyboardEventCounter counter_;
 
   DISALLOW_COPY_AND_ASSIGN(UserInputMonitorWinCore);
@@ -135,7 +140,8 @@ void UserInputMonitorWinCore::StartMonitor(EventBitMask type) {
   }
 
   // Register to receive raw mouse and/or keyboard input.
-  scoped_ptr<RAWINPUTDEVICE> device(GetRawInputDevices(type, RIDEV_INPUTSINK));
+  std::unique_ptr<RAWINPUTDEVICE> device(
+      GetRawInputDevices(type, RIDEV_INPUTSINK));
   if (!RegisterRawInputDevices(device.get(), 1, sizeof(*device))) {
     PLOG(ERROR) << "RegisterRawInputDevices() failed for RIDEV_INPUTSINK";
     window_.reset();
@@ -158,7 +164,8 @@ void UserInputMonitorWinCore::StopMonitor(EventBitMask type) {
 
   // Stop receiving raw input.
   DCHECK(window_);
-  scoped_ptr<RAWINPUTDEVICE> device(GetRawInputDevices(type, RIDEV_REMOVE));
+  std::unique_ptr<RAWINPUTDEVICE> device(
+      GetRawInputDevices(type, RIDEV_REMOVE));
 
   if (!RegisterRawInputDevices(device.get(), 1, sizeof(*device))) {
     PLOG(INFO) << "RegisterRawInputDevices() failed for RIDEV_REMOVE";
@@ -180,18 +187,18 @@ LRESULT UserInputMonitorWinCore::OnInput(HRAWINPUT input_handle) {
   UINT size = 0;
   UINT result = GetRawInputData(
       input_handle, RID_INPUT, NULL, &size, sizeof(RAWINPUTHEADER));
-  if (result == -1) {
+  if (result == static_cast<UINT>(-1)) {
     PLOG(ERROR) << "GetRawInputData() failed";
     return 0;
   }
   DCHECK_EQ(0u, result);
 
   // Retrieve the input record itself.
-  scoped_ptr<uint8[]> buffer(new uint8[size]);
+  std::unique_ptr<uint8_t[]> buffer(new uint8_t[size]);
   RAWINPUT* input = reinterpret_cast<RAWINPUT*>(buffer.get());
   result = GetRawInputData(
       input_handle, RID_INPUT, buffer.get(), &size, sizeof(RAWINPUTHEADER));
-  if (result == -1) {
+  if (result == static_cast<UINT>(-1)) {
     PLOG(ERROR) << "GetRawInputData() failed";
     return 0;
   }
@@ -240,7 +247,7 @@ RAWINPUTDEVICE* UserInputMonitorWinCore::GetRawInputDevices(EventBitMask event,
                                                             DWORD flags) {
   DCHECK(ui_task_runner_->BelongsToCurrentThread());
 
-  scoped_ptr<RAWINPUTDEVICE> device(new RAWINPUTDEVICE());
+  std::unique_ptr<RAWINPUTDEVICE> device(new RAWINPUTDEVICE());
   if (event == MOUSE_EVENT_MASK) {
     device->dwFlags = flags;
     device->usUsagePage = kGenericDesktopPage;
@@ -308,10 +315,10 @@ void UserInputMonitorWin::StopMouseMonitoring() {
 
 }  // namespace
 
-scoped_ptr<UserInputMonitor> UserInputMonitor::Create(
+std::unique_ptr<UserInputMonitor> UserInputMonitor::Create(
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& ui_task_runner) {
-  return scoped_ptr<UserInputMonitor>(new UserInputMonitorWin(ui_task_runner));
+  return base::WrapUnique(new UserInputMonitorWin(ui_task_runner));
 }
 
 }  // namespace media

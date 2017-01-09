@@ -4,17 +4,19 @@
 
 #include "chrome/browser/ui/zoom/chrome_zoom_level_prefs.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
-#include "base/prefs/json_pref_store.h"
-#include "base/prefs/pref_filter.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service_factory.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
-#include "components/ui/zoom/zoom_event_manager.h"
+#include "components/prefs/json_pref_store.h"
+#include "components/prefs/pref_filter.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service_factory.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/common/page_zoom.h"
@@ -32,7 +34,7 @@ ChromeZoomLevelPrefs::ChromeZoomLevelPrefs(
     PrefService* pref_service,
     const base::FilePath& profile_path,
     const base::FilePath& partition_path,
-    base::WeakPtr<ui_zoom::ZoomEventManager> zoom_event_manager)
+    base::WeakPtr<zoom::ZoomEventManager> zoom_event_manager)
     : pref_service_(pref_service),
       zoom_event_manager_(zoom_event_manager),
       host_zoom_map_(nullptr) {
@@ -82,7 +84,7 @@ double ChromeZoomLevelPrefs::GetDefaultZoomLevelPref() const {
   return default_zoom_level;
 }
 
-scoped_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
+std::unique_ptr<ChromeZoomLevelPrefs::DefaultZoomLevelSubscription>
 ChromeZoomLevelPrefs::RegisterDefaultZoomLevelCallback(
     const base::Closure& callback) {
   return default_zoom_changed_callbacks_.Add(callback);
@@ -126,7 +128,7 @@ void ChromeZoomLevelPrefs::ExtractPerHostZoomLevels(
     const base::DictionaryValue* host_zoom_dictionary,
     bool sanitize_partition_host_zoom_levels) {
   std::vector<std::string> keys_to_remove;
-  scoped_ptr<base::DictionaryValue> host_zoom_dictionary_copy =
+  std::unique_ptr<base::DictionaryValue> host_zoom_dictionary_copy =
       host_zoom_dictionary->DeepCopyWithoutEmptyChildren();
   for (base::DictionaryValue::Iterator i(*host_zoom_dictionary_copy);
        !i.IsAtEnd();

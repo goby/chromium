@@ -5,17 +5,16 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTERNAL_INSTALL_ERROR_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTERNAL_INSTALL_ERROR_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/extensions/webstore_data_fetcher_delegate.h"
 
 class Browser;
 class ExtensionInstallPromptShowParams;
-class ExtensionInstallUI;
 class GlobalError;
 class GlobalErrorService;
 
@@ -33,8 +32,7 @@ class WebstoreDataFetcher;
 // possible) and will handle adding itself to the GlobalErrorService when
 // initialized and removing itself from the GlobalErrorService upon
 // destruction.
-class ExternalInstallError : public ExtensionInstallPrompt::Delegate,
-                             public WebstoreDataFetcherDelegate {
+class ExternalInstallError : public WebstoreDataFetcherDelegate {
  public:
   // The possible types of errors to show. A menu alert adds a menu item to the
   // wrench, which spawns an extension install dialog when clicked. The bubble
@@ -51,9 +49,10 @@ class ExternalInstallError : public ExtensionInstallPrompt::Delegate,
                        ExternalInstallManager* manager);
   ~ExternalInstallError() override;
 
-  // ExtensionInstallPrompt::Delegate implementation.
-  void InstallUIProceed() override;
-  void InstallUIAbort(bool user_initiated) override;
+  void OnInstallPromptDone(ExtensionInstallPrompt::Result result);
+
+  void DidOpenBubbleView();
+  void DidCloseBubbleView();
 
   // Show the associated dialog. This should only be called once the dialog is
   // ready.
@@ -69,7 +68,7 @@ class ExternalInstallError : public ExtensionInstallPrompt::Delegate,
   // WebstoreDataFetcherDelegate implementation.
   void OnWebstoreRequestFailure() override;
   void OnWebstoreResponseParseSuccess(
-      scoped_ptr<base::DictionaryValue> webstore_data) override;
+      std::unique_ptr<base::DictionaryValue> webstore_data) override;
   void OnWebstoreResponseParseFailure(const std::string& error) override;
 
   // Called when data fetching has completed (either successfully or not).
@@ -78,8 +77,11 @@ class ExternalInstallError : public ExtensionInstallPrompt::Delegate,
   // Called when the dialog has been successfully populated, and is ready to be
   // shown.
   void OnDialogReady(ExtensionInstallPromptShowParams* show_params,
-                     ExtensionInstallPrompt::Delegate* prompt_delegate,
-                     scoped_refptr<ExtensionInstallPrompt::Prompt> prompt);
+                     const ExtensionInstallPrompt::DoneCallback& done_callback,
+                     std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt);
+
+  // Removes the error.
+  void RemoveError();
 
   // The associated BrowserContext.
   content::BrowserContext* browser_context_;
@@ -97,17 +99,17 @@ class ExternalInstallError : public ExtensionInstallPrompt::Delegate,
   GlobalErrorService* error_service_;
 
   // The UI for showing the error.
-  scoped_ptr<ExtensionInstallPrompt> install_ui_;
-  scoped_ptr<ExtensionInstallPromptShowParams> install_ui_show_params_;
-  scoped_refptr<ExtensionInstallPrompt::Prompt> prompt_;
+  std::unique_ptr<ExtensionInstallPrompt> install_ui_;
+  std::unique_ptr<ExtensionInstallPromptShowParams> install_ui_show_params_;
+  std::unique_ptr<ExtensionInstallPrompt::Prompt> prompt_;
 
   // The UI for the given error, which will take the form of either a menu
   // alert or a bubble alert (depending on the |alert_type_|.
-  scoped_ptr<GlobalError> global_error_;
+  std::unique_ptr<GlobalError> global_error_;
 
   // The WebstoreDataFetcher to use in order to populate the error with webstore
   // information of the extension.
-  scoped_ptr<WebstoreDataFetcher> webstore_data_fetcher_;
+  std::unique_ptr<WebstoreDataFetcher> webstore_data_fetcher_;
 
   base::WeakPtrFactory<ExternalInstallError> weak_factory_;
 

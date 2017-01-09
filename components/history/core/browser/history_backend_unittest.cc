@@ -4,31 +4,34 @@
 
 #include "components/history/core/browser/history_backend.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_base.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/statistics_recorder.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/histogram_tester.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "components/favicon_base/favicon_usage_data.h"
 #include "components/history/core/browser/history_backend_client.h"
 #include "components/history/core/browser/history_constants.h"
@@ -39,10 +42,10 @@
 #include "components/history/core/browser/in_memory_history_backend.h"
 #include "components/history/core/browser/keyword_search_term.h"
 #include "components/history/core/browser/visit_delegate.h"
-#include "components/history/core/browser/visit_filter.h"
 #include "components/history/core/test/database_test_utils.h"
 #include "components/history/core/test/history_client_fake_bookmarks.h"
 #include "components/history/core/test/test_history_database.h"
+#include "components/prefs/pref_service.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -62,8 +65,6 @@ using base::HistogramBase;
 const int kTinyEdgeSize = 10;
 const int kSmallEdgeSize = 16;
 const int kLargeEdgeSize = 32;
-
-const char kAcceptLanguagesForTest[] = "en-US,en";
 
 const gfx::Size kTinySize = gfx::Size(kTinyEdgeSize, kTinyEdgeSize);
 const gfx::Size kSmallSize = gfx::Size(kSmallEdgeSize, kSmallEdgeSize);
@@ -120,8 +121,10 @@ class HistoryBackendTestDelegate : public HistoryBackend::Delegate {
   explicit HistoryBackendTestDelegate(HistoryBackendTestBase* test)
       : test_(test) {}
 
-  void NotifyProfileError(sql::InitStatus init_status) override {}
-  void SetInMemoryBackend(scoped_ptr<InMemoryHistoryBackend> backend) override;
+  void NotifyProfileError(sql::InitStatus init_status,
+                          const std::string& diagnostics) override {}
+  void SetInMemoryBackend(
+      std::unique_ptr<InMemoryHistoryBackend> backend) override;
   void NotifyFaviconsChanged(const std::set<GURL>& page_urls,
                              const GURL& icon_url) override;
   void NotifyURLVisited(ui::PageTransition transition,
@@ -241,7 +244,7 @@ class HistoryBackendTestBase : public testing::Test {
 
   history::HistoryClientFakeBookmarks history_client_;
   scoped_refptr<HistoryBackend> backend_;  // Will be NULL on init failure.
-  scoped_ptr<InMemoryHistoryBackend> mem_backend_;
+  std::unique_ptr<InMemoryHistoryBackend> mem_backend_;
   bool loaded_;
 
  private:
@@ -255,8 +258,7 @@ class HistoryBackendTestBase : public testing::Test {
     backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                   history_client_.CreateBackendClient(),
                                   base::ThreadTaskRunnerHandle::Get());
-    backend_->Init(std::string(), false,
-                   TestHistoryDatabaseParamsForPath(test_dir_));
+    backend_->Init(false, TestHistoryDatabaseParamsForPath(test_dir_));
   }
 
   void TearDown() override {
@@ -269,7 +271,7 @@ class HistoryBackendTestBase : public testing::Test {
     history_client_.ClearAllBookmarks();
   }
 
-  void SetInMemoryBackend(scoped_ptr<InMemoryHistoryBackend> backend) {
+  void SetInMemoryBackend(std::unique_ptr<InMemoryHistoryBackend> backend) {
     mem_backend_.swap(backend);
   }
 
@@ -287,8 +289,8 @@ class HistoryBackendTestBase : public testing::Test {
 };
 
 void HistoryBackendTestDelegate::SetInMemoryBackend(
-    scoped_ptr<InMemoryHistoryBackend> backend) {
-  test_->SetInMemoryBackend(backend.Pass());
+    std::unique_ptr<InMemoryHistoryBackend> backend) {
+  test_->SetInMemoryBackend(std::move(backend));
 }
 
 void HistoryBackendTestDelegate::NotifyFaviconsChanged(
@@ -355,7 +357,7 @@ class HistoryBackendTest : public HistoryBackendTestBase {
     history::HistoryAddPageArgs request(
         redirects.back(), time, context_id, nav_entry_id, GURL(),
         redirects, transition, history::SOURCE_BROWSED,
-        true);
+        true, true);
     backend_->AddPage(request);
   }
 
@@ -381,7 +383,7 @@ class HistoryBackendTest : public HistoryBackendTestBase {
     HistoryAddPageArgs request(
         url2, time, dummy_context_id, 0, url1,
         redirects, ui::PAGE_TRANSITION_CLIENT_REDIRECT,
-        history::SOURCE_BROWSED, did_replace);
+        history::SOURCE_BROWSED, did_replace, true);
     backend_->AddPage(request);
 
     *transition1 = GetTransition(url1);
@@ -777,7 +779,7 @@ TEST_F(HistoryBackendTest, DeleteAllThenAddData) {
   HistoryAddPageArgs request(url, visit_time, NULL, 0, GURL(),
                              history::RedirectList(),
                              ui::PAGE_TRANSITION_KEYWORD_GENERATED,
-                             history::SOURCE_BROWSED, false);
+                             history::SOURCE_BROWSED, false, true);
   backend_->AddPage(request);
 
   // Check that a row was added.
@@ -919,7 +921,7 @@ TEST_F(HistoryBackendTest, KeywordGenerated) {
   HistoryAddPageArgs request(url, visit_time, NULL, 0, GURL(),
                              history::RedirectList(),
                              ui::PAGE_TRANSITION_KEYWORD_GENERATED,
-                             history::SOURCE_BROWSED, false);
+                             history::SOURCE_BROWSED, false, true);
   backend_->AddPage(request);
 
   // A row should have been added for the url.
@@ -951,7 +953,7 @@ TEST_F(HistoryBackendTest, KeywordGenerated) {
       ui::PAGE_TRANSITION_TYPED | ui::PAGE_TRANSITION_FORWARD_BACK);
   HistoryAddPageArgs back_request(url, visit_time, NULL, 0, GURL(),
                                   history::RedirectList(), back_transition,
-                                  history::SOURCE_BROWSED, false);
+                                  history::SOURCE_BROWSED, false, true);
   backend_->AddPage(back_request);
   url_id = backend_->db()->GetRowForURL(url, &row);
   ASSERT_NE(0, url_id);
@@ -1480,19 +1482,19 @@ TEST_F(HistoryBackendTest, AddPageArgsSource) {
   HistoryAddPageArgs request1(url, base::Time::Now(), NULL, 0, GURL(),
                              history::RedirectList(),
                              ui::PAGE_TRANSITION_KEYWORD_GENERATED,
-                             history::SOURCE_BROWSED, false);
+                             history::SOURCE_BROWSED, false, true);
   backend_->AddPage(request1);
   // Assume this page is synced.
   HistoryAddPageArgs request2(url, base::Time::Now(), NULL, 0, GURL(),
                              history::RedirectList(),
                              ui::PAGE_TRANSITION_LINK,
-                             history::SOURCE_SYNCED, false);
+                             history::SOURCE_SYNCED, false, true);
   backend_->AddPage(request2);
   // Assume this page is browsed again.
   HistoryAddPageArgs request3(url, base::Time::Now(), NULL, 0, GURL(),
                              history::RedirectList(),
                              ui::PAGE_TRANSITION_TYPED,
-                             history::SOURCE_BROWSED, false);
+                             history::SOURCE_BROWSED, false, true);
   backend_->AddPage(request3);
 
   // Three visits should be added with proper sources.
@@ -1705,8 +1707,7 @@ TEST_F(HistoryBackendTest, MigrationVisitSource) {
   backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                 history_client_.CreateBackendClient(),
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
-                 TestHistoryDatabaseParamsForPath(new_history_path));
+  backend_->Init(false, TestHistoryDatabaseParamsForPath(new_history_path));
   backend_->Closing();
   backend_ = NULL;
 
@@ -3014,165 +3015,18 @@ TEST_F(HistoryBackendTest, UpdateFaviconMappingsAndFetchNoDB) {
   EXPECT_TRUE(bitmap_results.empty());
 }
 
-TEST_F(HistoryBackendTest, QueryFilteredURLs) {
-  const char* google = "http://www.google.com/";
-  const char* yahoo = "http://www.yahoo.com/";
-  const char* yahoo_sports = "http://sports.yahoo.com/";
-  const char* yahoo_sports_with_article1 =
-      "http://sports.yahoo.com/article1.htm";
-  const char* yahoo_sports_with_article2 =
-      "http://sports.yahoo.com/article2.htm";
-  const char* yahoo_sports_soccer = "http://sports.yahoo.com/soccer";
-  const char* apple = "http://www.apple.com/";
-
-  // Clear all history.
-  backend_->DeleteAllHistory();
-
-  base::Time tested_time = base::Time::Now().LocalMidnight() +
-                     base::TimeDelta::FromHours(4);
-  base::TimeDelta half_an_hour = base::TimeDelta::FromMinutes(30);
-  base::TimeDelta one_hour = base::TimeDelta::FromHours(1);
-  base::TimeDelta one_day = base::TimeDelta::FromDays(1);
-
-  const ui::PageTransition kTypedTransition =
-      ui::PAGE_TRANSITION_TYPED;
-  const ui::PageTransition kKeywordGeneratedTransition =
-      ui::PAGE_TRANSITION_KEYWORD_GENERATED;
-
-  const char* redirect_sequence[2];
-  redirect_sequence[1] = NULL;
-
-  redirect_sequence[0] = google;
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kTypedTransition,
-      tested_time - one_day - half_an_hour * 2);
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0,
-      kTypedTransition, tested_time - one_day);
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0,
-      kTypedTransition, tested_time - half_an_hour / 2);
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0,
-      kTypedTransition, tested_time);
-
-  // Add a visit with a transition that will make sure that no segment gets
-  // created for this page (so the subsequent entries will have different URLIDs
-  // and SegmentIDs).
-  redirect_sequence[0] = apple;
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kKeywordGeneratedTransition,
-      tested_time - one_day + one_hour * 6);
-
-  redirect_sequence[0] = yahoo;
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kTypedTransition,
-      tested_time - one_day + half_an_hour);
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kTypedTransition,
-      tested_time - one_day + half_an_hour * 2);
-
-  redirect_sequence[0] = yahoo_sports;
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kTypedTransition,
-      tested_time - one_day - half_an_hour * 2);
-  AddRedirectChainWithTransitionAndTime(
-      redirect_sequence, 0, kTypedTransition,
-      tested_time - one_day);
-  int transition1, transition2;
-  AddClientRedirect(GURL(yahoo_sports), GURL(yahoo_sports_with_article1), false,
-                    tested_time - one_day + half_an_hour,
-                    &transition1, &transition2);
-  AddClientRedirect(GURL(yahoo_sports_with_article1),
-                    GURL(yahoo_sports_with_article2),
-                    false,
-                    tested_time - one_day + half_an_hour * 2,
-                    &transition1, &transition2);
-
-  redirect_sequence[0] = yahoo_sports_soccer;
-  AddRedirectChainWithTransitionAndTime(redirect_sequence, 0,
-                                        kTypedTransition,
-                                        tested_time - half_an_hour);
-  backend_->Commit();
-
-  VisitFilter filter;
-  FilteredURLList filtered_list;
-  // Time limit is |tested_time| +/- 45 min.
-  base::TimeDelta three_quarters_of_an_hour = base::TimeDelta::FromMinutes(45);
-  filter.SetFilterTime(tested_time);
-  filter.SetFilterWidth(three_quarters_of_an_hour);
-  backend_->QueryFilteredURLs(100, filter, false, &filtered_list);
-
-  ASSERT_EQ(4U, filtered_list.size());
-  EXPECT_EQ(std::string(google), filtered_list[0].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports_soccer), filtered_list[1].url.spec());
-  EXPECT_EQ(std::string(yahoo), filtered_list[2].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports), filtered_list[3].url.spec());
-
-  // Time limit is between |tested_time| and |tested_time| + 2 hours.
-  filter.SetFilterTime(tested_time + one_hour);
-  filter.SetFilterWidth(one_hour);
-  backend_->QueryFilteredURLs(100, filter, false, &filtered_list);
-
-  ASSERT_EQ(3U, filtered_list.size());
-  EXPECT_EQ(std::string(google), filtered_list[0].url.spec());
-  EXPECT_EQ(std::string(yahoo), filtered_list[1].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports), filtered_list[2].url.spec());
-
-  // Time limit is between |tested_time| - 2 hours and |tested_time|.
-  filter.SetFilterTime(tested_time - one_hour);
-  filter.SetFilterWidth(one_hour);
-  backend_->QueryFilteredURLs(100, filter, false, &filtered_list);
-
-  ASSERT_EQ(3U, filtered_list.size());
-  EXPECT_EQ(std::string(google), filtered_list[0].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports_soccer), filtered_list[1].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports), filtered_list[2].url.spec());
-
-  filter.ClearFilters();
-  base::Time::Exploded exploded_time;
-  tested_time.LocalExplode(&exploded_time);
-
-  // Today.
-  filter.SetFilterTime(tested_time);
-  filter.SetDayOfTheWeekFilter(static_cast<int>(exploded_time.day_of_week));
-  backend_->QueryFilteredURLs(100, filter, false, &filtered_list);
-
-  ASSERT_EQ(2U, filtered_list.size());
-  EXPECT_EQ(std::string(google), filtered_list[0].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports_soccer), filtered_list[1].url.spec());
-
-  // Today + time limit - only yahoo_sports_soccer should fit.
-  filter.SetFilterTime(tested_time - base::TimeDelta::FromMinutes(40));
-  filter.SetFilterWidth(base::TimeDelta::FromMinutes(20));
-  backend_->QueryFilteredURLs(100, filter, false, &filtered_list);
-
-  ASSERT_EQ(1U, filtered_list.size());
-  EXPECT_EQ(std::string(yahoo_sports_soccer), filtered_list[0].url.spec());
-
-  // Make sure we get debug data if we request it.
-  filter.SetFilterTime(tested_time);
-  filter.SetFilterWidth(one_hour * 2);
-  backend_->QueryFilteredURLs(100, filter, true, &filtered_list);
-
-  // If the SegmentID is used by QueryFilteredURLs when generating the debug
-  // data instead of the URLID, the |total_visits| for the |yahoo_sports_soccer|
-  // entry will be zero instead of 1.
-  ASSERT_GE(filtered_list.size(), 2U);
-  EXPECT_EQ(std::string(google), filtered_list[0].url.spec());
-  EXPECT_EQ(std::string(yahoo_sports_soccer), filtered_list[1].url.spec());
-  EXPECT_EQ(4U, filtered_list[0].extended_info.total_visits);
-  EXPECT_EQ(1U, filtered_list[1].extended_info.total_visits);
-}
-
 TEST_F(HistoryBackendTest, TopHosts) {
   std::vector<GURL> urls;
   urls.push_back(GURL("http://cnn.com/us"));
   urls.push_back(GURL("http://cnn.com/intl"));
   urls.push_back(GURL("http://dogtopia.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_THAT(backend_->TopHosts(3),
@@ -3186,8 +3040,12 @@ TEST_F(HistoryBackendTest, TopHosts_ElidePortAndScheme) {
   urls.push_back(GURL("https://cnn.com/intl"));
   urls.push_back(GURL("http://cnn.com:567/sports"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_THAT(backend_->TopHosts(3), ElementsAre(std::make_pair("cnn.com", 3)));
@@ -3199,8 +3057,12 @@ TEST_F(HistoryBackendTest, TopHosts_ElideWWW) {
   urls.push_back(GURL("http://cnn.com/intl"));
   urls.push_back(GURL("http://www.dogtopia.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_THAT(backend_->TopHosts(3),
@@ -3214,12 +3076,20 @@ TEST_F(HistoryBackendTest, TopHosts_OnlyLast30Days) {
   urls.push_back(GURL("http://cnn.com/intl"));
   urls.push_back(GURL("http://dogtopia.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
-  backend_->AddPageVisit(GURL("http://www.oracle.com/"),
-                         base::Time::Now() - base::TimeDelta::FromDays(31), 0,
-                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(
+      GURL("http://www.oracle.com/"),
+      base::Time::Now() - base::TimeDelta::FromDays(31), 0,
+      ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                ui::PAGE_TRANSITION_CHAIN_START |
+                                ui::PAGE_TRANSITION_CHAIN_END),
+      history::SOURCE_BROWSED);
 
   EXPECT_THAT(backend_->TopHosts(3),
               ElementsAre(std::make_pair("cnn.com", 2),
@@ -3235,8 +3105,12 @@ TEST_F(HistoryBackendTest, TopHosts_MaxNumHosts) {
   urls.push_back(GURL("http://dogtopia.com/webcam"));
   urls.push_back(GURL("http://www.gardenweb.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_THAT(backend_->TopHosts(2),
@@ -3253,14 +3127,31 @@ TEST_F(HistoryBackendTest, TopHosts_IgnoreUnusualURLs) {
       GURL("chrome-extension://nghiiepjnjgjeolabmjjceablnkpkjde/options.html"));
   urls.push_back(GURL("file:///home/foobar/tmp/baz.html"));
   urls.push_back(GURL("data:text/plain,Hello%20world%21"));
-  urls.push_back(GURL("chrome://memory"));
+  urls.push_back(GURL("chrome://version"));
   urls.push_back(GURL("about:mammon"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_THAT(backend_->TopHosts(5), ElementsAre(std::make_pair("cnn.com", 3)));
+}
+
+TEST_F(HistoryBackendTest, TopHosts_IgnoreRedirects) {
+  const char* redirect1[] = {"http://foo.com/page1.html",
+                             "http://mobile.foo.com/page1.html", NULL};
+  const char* redirect2[] = {"http://bar.com/page1.html",
+                             "https://bar.com/page1.html",
+                             "https://mobile.bar.com/page1.html", NULL};
+  AddRedirectChain(redirect1, 0);
+  AddRedirectChain(redirect2, 1);
+  EXPECT_THAT(backend_->TopHosts(5),
+              ElementsAre(std::make_pair("mobile.bar.com", 1),
+                          std::make_pair("mobile.foo.com", 1)));
 }
 
 TEST_F(HistoryBackendTest, HostRankIfAvailable) {
@@ -3269,8 +3160,12 @@ TEST_F(HistoryBackendTest, HostRankIfAvailable) {
   urls.push_back(GURL("http://cnn.com/intl"));
   urls.push_back(GURL("http://dogtopia.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   EXPECT_EQ(kMaxTopHosts,
@@ -3293,8 +3188,12 @@ TEST_F(HistoryBackendTest, RecordTopHostsMetrics) {
   urls.push_back(GURL("http://cnn.com/intl"));
   urls.push_back(GURL("http://dogtopia.com/"));
   for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
+    backend_->AddPageVisit(
+        url, base::Time::Now(), 0,
+        ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                  ui::PAGE_TRANSITION_CHAIN_START |
+                                  ui::PAGE_TRANSITION_CHAIN_END),
+        history::SOURCE_BROWSED);
   }
 
   // Compute host_ranks_ for RecordTopHostsMetrics.
@@ -3316,33 +3215,49 @@ TEST_F(HistoryBackendTest, RecordTopHostsMetrics) {
               ElementsAre(base::Bucket(1, 1), base::Bucket(51, 1)));
 }
 
-TEST_F(HistoryBackendTest, GetCountsForOrigins) {
-  std::vector<GURL> urls;
-  urls.push_back(GURL("http://cnn.com/us"));
-  urls.push_back(GURL("http://cnn.com/intl"));
-  urls.push_back(GURL("https://cnn.com/intl"));
-  urls.push_back(GURL("http://cnn.com:8080/path"));
-  urls.push_back(GURL("http://dogtopia.com/pups?q=poods"));
-  for (const GURL& url : urls) {
-    backend_->AddPageVisit(url, base::Time::Now(), 0, ui::PAGE_TRANSITION_LINK,
-                           history::SOURCE_BROWSED);
-  }
+TEST_F(HistoryBackendTest, GetCountsAndLastVisitForOrigins) {
+  base::Time now = base::Time::Now();
+  base::Time tomorrow = now + base::TimeDelta::FromDays(1);
+  base::Time yesterday = now - base::TimeDelta::FromDays(1);
+  base::Time last_week = now - base::TimeDelta::FromDays(7);
+
+  backend_->AddPageVisit(GURL("http://cnn.com/intl"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com/us"), last_week, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com/ny"), now, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("https://cnn.com/intl"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://cnn.com:8080/path"), yesterday, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+  backend_->AddPageVisit(GURL("http://dogtopia.com/pups?q=poods"), now, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
 
   std::set<GURL> origins;
   origins.insert(GURL("http://cnn.com/"));
-  EXPECT_THAT(backend_->GetCountsForOrigins(origins),
-              ElementsAre(std::make_pair(GURL("http://cnn.com/"), 2)));
+  EXPECT_THAT(backend_->GetCountsAndLastVisitForOrigins(origins),
+              ElementsAre(std::make_pair(GURL("http://cnn.com/"),
+                                         std::make_pair(3, now))));
 
   origins.insert(GURL("http://dogtopia.com/"));
   origins.insert(GURL("http://cnn.com:8080/"));
   origins.insert(GURL("https://cnn.com/"));
   origins.insert(GURL("http://notpresent.com/"));
-  EXPECT_THAT(backend_->GetCountsForOrigins(origins),
-              ElementsAre(std::make_pair(GURL("http://cnn.com/"), 2),
-                          std::make_pair(GURL("http://cnn.com:8080/"), 1),
-                          std::make_pair(GURL("http://dogtopia.com/"), 1),
-                          std::make_pair(GURL("http://notpresent.com/"), 0),
-                          std::make_pair(GURL("https://cnn.com/"), 1)));
+  backend_->AddPageVisit(GURL("http://cnn.com/"), tomorrow, 0,
+                         ui::PAGE_TRANSITION_LINK, history::SOURCE_BROWSED);
+
+  EXPECT_THAT(
+      backend_->GetCountsAndLastVisitForOrigins(origins),
+      ElementsAre(
+          std::make_pair(GURL("http://cnn.com/"), std::make_pair(4, tomorrow)),
+          std::make_pair(GURL("http://cnn.com:8080/"),
+                         std::make_pair(1, yesterday)),
+          std::make_pair(GURL("http://dogtopia.com/"), std::make_pair(1, now)),
+          std::make_pair(GURL("http://notpresent.com/"),
+                         std::make_pair(0, base::Time())),
+          std::make_pair(GURL("https://cnn.com/"),
+                         std::make_pair(1, yesterday))));
 }
 
 TEST_F(HistoryBackendTest, UpdateVisitDuration) {
@@ -3415,8 +3330,7 @@ TEST_F(HistoryBackendTest, MigrationVisitDuration) {
   backend_ = new HistoryBackend(new HistoryBackendTestDelegate(this),
                                 history_client_.CreateBackendClient(),
                                 base::ThreadTaskRunnerHandle::Get());
-  backend_->Init(std::string(), false,
-                 TestHistoryDatabaseParamsForPath(new_history_path));
+  backend_->Init(false, TestHistoryDatabaseParamsForPath(new_history_path));
   backend_->Closing();
   backend_ = NULL;
 
@@ -3639,12 +3553,11 @@ TEST_F(HistoryBackendTest, RemoveNotification) {
 
   // Add a URL.
   GURL url("http://www.google.com");
-  scoped_ptr<HistoryService> service(
-      new HistoryService(make_scoped_ptr(new HistoryClientFakeBookmarks),
-                         scoped_ptr<history::VisitDelegate>()));
-  EXPECT_TRUE(
-      service->Init(kAcceptLanguagesForTest,
-                    TestHistoryDatabaseParamsForPath(scoped_temp_dir.path())));
+  std::unique_ptr<HistoryService> service(
+      new HistoryService(base::WrapUnique(new HistoryClientFakeBookmarks),
+                         std::unique_ptr<history::VisitDelegate>()));
+  EXPECT_TRUE(service->Init(
+      TestHistoryDatabaseParamsForPath(scoped_temp_dir.GetPath())));
 
   service->AddPage(
       url, base::Time::Now(), NULL, 1, GURL(), RedirectList(),
@@ -3891,6 +3804,36 @@ TEST_F(InMemoryHistoryBackendTest, OnURLsDeletedWithSearchTerms) {
   EXPECT_EQ(0u, GetNumberOfMatchingSearchTerms(kTestKeywordId, term2));
   EXPECT_TRUE(mem_backend_->db()->GetKeywordSearchTermRow(row1.id(), NULL));
   EXPECT_FALSE(mem_backend_->db()->GetKeywordSearchTermRow(row2.id(), NULL));
+}
+
+TEST_F(HistoryBackendTest, QueryMostVisitedURLs) {
+  ASSERT_TRUE(backend_.get());
+
+  // Pairs from page transitions to consider_for_ntp_most_visited.
+  std::vector<std::pair<ui::PageTransition, bool>> pages;
+  pages.emplace_back(ui::PAGE_TRANSITION_AUTO_BOOKMARK, true);   // good.
+  pages.emplace_back(ui::PAGE_TRANSITION_AUTO_BOOKMARK, false);  // bad.
+  pages.emplace_back(ui::PAGE_TRANSITION_LINK, true);            // bad.
+  pages.emplace_back(ui::PAGE_TRANSITION_TYPED, false);          // bad.
+  pages.emplace_back(ui::PAGE_TRANSITION_TYPED, true);           // good.
+
+  for (size_t i = 0; i < pages.size(); ++i) {
+    HistoryAddPageArgs args;
+    args.url = GURL("http://example" + base::SizeTToString(i + 1) + ".com");
+    args.time = base::Time::Now() - base::TimeDelta::FromDays(i + 1);
+    args.transition = pages[i].first;
+    args.consider_for_ntp_most_visited = pages[i].second;
+    backend_->AddPage(args);
+  }
+
+  MostVisitedURLList most_visited;
+  backend_->QueryMostVisitedURLs(100, 100, &most_visited);
+
+  const base::string16 kSomeTitle;  // Ignored by equality operator.
+  EXPECT_THAT(
+      most_visited,
+      ElementsAre(MostVisitedURL(GURL("http://example1.com"), kSomeTitle),
+                  MostVisitedURL(GURL("http://example5.com"), kSomeTitle)));
 }
 
 }  // namespace history

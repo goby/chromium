@@ -4,14 +4,15 @@
 
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 
-#include "base/basictypes.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/cloud_policy_refresh_scheduler.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_store.h"
 #include "components/policy/core/common/policy_pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/testing_pref_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -82,7 +83,8 @@ TEST_F(CloudPolicyCoreTest, ConnectAndDisconnect) {
   EXPECT_FALSE(core_.refresh_scheduler());
 
   // Connect() brings up client and service.
-  core_.Connect(scoped_ptr<CloudPolicyClient>(new MockCloudPolicyClient()));
+  core_.Connect(
+      std::unique_ptr<CloudPolicyClient>(new MockCloudPolicyClient()));
   EXPECT_TRUE(core_.client());
   EXPECT_TRUE(core_.service());
   EXPECT_FALSE(core_.refresh_scheduler());
@@ -112,19 +114,22 @@ TEST_F(CloudPolicyCoreTest, ConnectAndDisconnect) {
 
 TEST_F(CloudPolicyCoreTest, RefreshScheduler) {
   EXPECT_FALSE(core_.refresh_scheduler());
-  core_.Connect(scoped_ptr<CloudPolicyClient>(new MockCloudPolicyClient()));
+  core_.Connect(
+      std::unique_ptr<CloudPolicyClient>(new MockCloudPolicyClient()));
   core_.StartRefreshScheduler();
   ASSERT_TRUE(core_.refresh_scheduler());
 
-  int default_refresh_delay = core_.refresh_scheduler()->refresh_delay();
+  int default_refresh_delay =
+      core_.refresh_scheduler()->GetActualRefreshDelay();
 
   const int kRefreshRate = 1000 * 60 * 60;
   prefs_.SetInteger(policy_prefs::kUserPolicyRefreshRate, kRefreshRate);
   core_.TrackRefreshDelayPref(&prefs_, policy_prefs::kUserPolicyRefreshRate);
-  EXPECT_EQ(kRefreshRate, core_.refresh_scheduler()->refresh_delay());
+  EXPECT_EQ(kRefreshRate, core_.refresh_scheduler()->GetActualRefreshDelay());
 
   prefs_.ClearPref(policy_prefs::kUserPolicyRefreshRate);
-  EXPECT_EQ(default_refresh_delay, core_.refresh_scheduler()->refresh_delay());
+  EXPECT_EQ(default_refresh_delay,
+            core_.refresh_scheduler()->GetActualRefreshDelay());
 
   EXPECT_EQ(1, core_connected_callback_count_);
   EXPECT_EQ(1, refresh_scheduler_started_callback_count_);

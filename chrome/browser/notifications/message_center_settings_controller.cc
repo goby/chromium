@@ -5,46 +5,32 @@
 #include "chrome/browser/notifications/message_center_settings_controller.h"
 
 #include <algorithm>
+#include <string>
+#include <utility>
 
 #include "base/command_line.h"
 #include "base/i18n/string_compare.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task/cancelable_task_tracker.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/content_settings/host_content_settings_map_factory.h"
-#include "chrome/browser/extensions/app_icon_loader_impl.h"
-#include "chrome/browser/favicon/favicon_service_factory.h"
-#include "chrome/browser/notifications/desktop_notification_profile_util.h"
-#include "chrome/browser/notifications/notifier_state_tracker.h"
-#include "chrome/browser/notifications/notifier_state_tracker_factory.h"
+#include "chrome/browser/notifications/application_notifier_source.h"
+#include "chrome/browser/notifications/web_page_notifier_source.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/common/extensions/api/notifications.h"
-#include "chrome/common/extensions/extension_constants.h"
-#include "components/content_settings/core/browser/host_content_settings_map.h"
-#include "components/favicon/core/favicon_service.h"
-#include "components/favicon_base/favicon_types.h"
-#include "components/history/core/browser/history_types.h"
 #include "content/public/browser/notification_service.h"
-#include "content/public/browser/notification_source.h"
 #include "extensions/browser/event_router.h"
-#include "extensions/browser/extension_registry.h"
-#include "extensions/common/constants.h"
-#include "extensions/common/extension.h"
-#include "extensions/common/permissions/permissions_data.h"
-#include "grit/theme_resources.h"
-#include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/image/image.h"
 #include "ui/message_center/message_center_style.h"
-#include "ui/strings/grit/ui_strings.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/system_notifier.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
+#include "chrome/browser/notifications/arc_application_notifier_source_chromeos.h"
+#include "chrome/browser/notifications/system_component_notifier_source_chromeos.h"
 #endif
 
 using message_center::Notifier;
@@ -54,15 +40,11 @@ namespace message_center {
 
 class ProfileNotifierGroup : public message_center::NotifierGroup {
  public:
-  ProfileNotifierGroup(const gfx::Image& icon,
-                       const base::string16& display_name,
+  ProfileNotifierGroup(const base::string16& display_name,
                        const base::string16& login_info,
-                       size_t index,
                        const base::FilePath& profile_path);
-  ProfileNotifierGroup(const gfx::Image& icon,
-                       const base::string16& display_name,
+  ProfileNotifierGroup(const base::string16& display_name,
                        const base::string16& login_info,
-                       size_t index,
                        Profile* profile);
   virtual ~ProfileNotifierGroup() {}
 
@@ -72,30 +54,25 @@ class ProfileNotifierGroup : public message_center::NotifierGroup {
   Profile* profile_;
 };
 
-ProfileNotifierGroup::ProfileNotifierGroup(const gfx::Image& icon,
-                                           const base::string16& display_name,
+ProfileNotifierGroup::ProfileNotifierGroup(const base::string16& display_name,
                                            const base::string16& login_info,
-                                           size_t index,
                                            const base::FilePath& profile_path)
-    : message_center::NotifierGroup(icon, display_name, login_info, index),
-      profile_(NULL) {
+    : message_center::NotifierGroup(display_name, login_info), profile_(NULL) {
   // Try to get the profile
   profile_ =
       g_browser_process->profile_manager()->GetProfileByPath(profile_path);
 }
 
-ProfileNotifierGroup::ProfileNotifierGroup(const gfx::Image& icon,
-                                           const base::string16& display_name,
+ProfileNotifierGroup::ProfileNotifierGroup(const base::string16& display_name,
                                            const base::string16& login_info,
-                                           size_t index,
                                            Profile* profile)
-    : message_center::NotifierGroup(icon, display_name, login_info, index),
-      profile_(profile) {
-}
+    : message_center::NotifierGroup(display_name, login_info),
+      profile_(profile) {}
 
 }  // namespace message_center
 
 namespace {
+
 class NotifierComparator {
  public:
   explicit NotifierComparator(icu::Collator* collator) : collator_(collator) {}
@@ -118,11 +95,10 @@ class NotifierComparator {
 }  // namespace
 
 MessageCenterSettingsController::MessageCenterSettingsController(
-    ProfileInfoCache* profile_info_cache)
+    ProfileAttributesStorage& profile_attributes_storage)
     : current_notifier_group_(0),
-      profile_info_cache_(profile_info_cache),
+      profile_attributes_storage_(profile_attributes_storage),
       weak_factory_(this) {
-  DCHECK(profile_info_cache_);
   // The following events all represent changes that may need to be reflected in
   // the profile selector context menu, so listen for them all.  We'll just
   // rebuild the list when we get any of them.
@@ -135,19 +111,34 @@ MessageCenterSettingsController::MessageCenterSettingsController(
   registrar_.Add(this,
                  chrome::NOTIFICATION_PROFILE_DESTROYED,
                  content::NotificationService::AllBrowserContextsAndSources());
-  g_browser_process->profile_manager()->GetProfileInfoCache().AddObserver(this);
+  profile_attributes_storage_.AddObserver(this);
   RebuildNotifierGroups(false);
+
+  sources_.insert(std::make_pair(
+      NotifierId::APPLICATION,
+      std::unique_ptr<NotifierSource>(new ApplicationNotifierSource(this))));
+  sources_.insert(std::make_pair(
+      NotifierId::WEB_PAGE,
+      std::unique_ptr<NotifierSource>(new WebPageNotifiereSource(this))));
 
 #if defined(OS_CHROMEOS)
   // UserManager may not exist in some tests.
   if (user_manager::UserManager::IsInitialized())
     user_manager::UserManager::Get()->AddSessionStateObserver(this);
+  // For system components.
+  sources_.insert(
+      std::make_pair(NotifierId::SYSTEM_COMPONENT,
+                     std::unique_ptr<NotifierSource>(
+                         new SystemComponentNotifierSourceChromeOS(this))));
+  sources_.insert(
+      std::make_pair(NotifierId::ARC_APPLICATION,
+                     std::unique_ptr<NotifierSource>(
+                         new arc::ArcApplicationNotifierSourceChromeOS(this))));
 #endif
 }
 
 MessageCenterSettingsController::~MessageCenterSettingsController() {
-  g_browser_process->profile_manager()->
-      GetProfileInfoCache().RemoveObserver(this);
+  profile_attributes_storage_.RemoveObserver(this);
 #if defined(OS_CHROMEOS)
   // UserManager may not exist in some tests.
   if (user_manager::UserManager::IsInitialized())
@@ -192,9 +183,7 @@ void MessageCenterSettingsController::SwitchToNotifierGroup(size_t index) {
     return;
 
   current_notifier_group_ = index;
-  FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                    observers_,
-                    NotifierGroupChanged());
+  DispatchNotifierGroupChanged();
 }
 
 void MessageCenterSettingsController::GetNotifierList(
@@ -206,96 +195,16 @@ void MessageCenterSettingsController::GetNotifierList(
   // the default profile is not loaded.
   Profile* profile = notifier_groups_[current_notifier_group_]->profile();
 
-  NotifierStateTracker* notifier_state_tracker =
-      NotifierStateTrackerFactory::GetForProfile(profile);
-
-  const extensions::ExtensionSet& extension_set =
-      extensions::ExtensionRegistry::Get(profile)->enabled_extensions();
-  // The extension icon size has to be 32x32 at least to load bigger icons if
-  // the icon doesn't exist for the specified size, and in that case it falls
-  // back to the default icon. The fetched icon will be resized in the settings
-  // dialog. See chrome/browser/extensions/extension_icon_image.cc and
-  // crbug.com/222931
-  app_icon_loader_.reset(new extensions::AppIconLoaderImpl(
-      profile, extension_misc::EXTENSION_ICON_SMALL, this));
-  for (extensions::ExtensionSet::const_iterator iter = extension_set.begin();
-       iter != extension_set.end();
-       ++iter) {
-    const extensions::Extension* extension = iter->get();
-    if (!extension->permissions_data()->HasAPIPermission(
-            extensions::APIPermission::kNotifications)) {
-      continue;
+  for (auto& source : sources_) {
+    auto source_notifiers = source.second->GetNotifierList(profile);
+    for (auto& notifier : source_notifiers) {
+      notifiers->push_back(notifier.release());
     }
-
-    // Hosted apps are no longer able to affect the notifications permission
-    // state for web notifications.
-    // TODO(dewittj): Deprecate the 'notifications' permission for hosted apps.
-    if (extension->is_hosted_app())
-      continue;
-
-    NotifierId notifier_id(NotifierId::APPLICATION, extension->id());
-    notifiers->push_back(new Notifier(
-        notifier_id,
-        base::UTF8ToUTF16(extension->name()),
-        notifier_state_tracker->IsNotifierEnabled(notifier_id)));
-    app_icon_loader_->FetchImage(extension->id());
   }
-
-  ContentSettingsForOneType settings;
-  DesktopNotificationProfileUtil::GetNotificationsSettings(profile, &settings);
-
-  favicon::FaviconService* favicon_service =
-      FaviconServiceFactory::GetForProfile(profile,
-                                           ServiceAccessType::EXPLICIT_ACCESS);
-  favicon_tracker_.reset(new base::CancelableTaskTracker());
-  patterns_.clear();
-  for (ContentSettingsForOneType::const_iterator iter = settings.begin();
-       iter != settings.end(); ++iter) {
-    if (iter->primary_pattern == ContentSettingsPattern::Wildcard() &&
-        iter->secondary_pattern == ContentSettingsPattern::Wildcard() &&
-        iter->source != "preference") {
-      continue;
-    }
-
-    std::string url_pattern = iter->primary_pattern.ToString();
-    base::string16 name = base::UTF8ToUTF16(url_pattern);
-    GURL url(url_pattern);
-    NotifierId notifier_id(url);
-    notifiers->push_back(new Notifier(
-        notifier_id,
-        name,
-        notifier_state_tracker->IsNotifierEnabled(notifier_id)));
-    patterns_[name] = iter->primary_pattern;
-    // Note that favicon service obtains the favicon from history. This means
-    // that it will fail to obtain the image if there are no history data for
-    // that URL.
-    favicon_service->GetFaviconImageForPageURL(
-        url,
-        base::Bind(&MessageCenterSettingsController::OnFaviconLoaded,
-                   base::Unretained(this),
-                   url),
-        favicon_tracker_.get());
-  }
-
-  // Screenshot notification feature is only for ChromeOS. See crbug.com/238358
-#if defined(OS_CHROMEOS)
-  const base::string16 screenshot_name =
-      l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_NOTIFIER_SCREENSHOT_NAME);
-  NotifierId screenshot_notifier_id(
-      NotifierId::SYSTEM_COMPONENT, ash::system_notifier::kNotifierScreenshot);
-  Notifier* const screenshot_notifier = new Notifier(
-      screenshot_notifier_id,
-      screenshot_name,
-      notifier_state_tracker->IsNotifierEnabled(screenshot_notifier_id));
-  screenshot_notifier->icon =
-      ui::ResourceBundle::GetSharedInstance().GetImageNamed(
-          IDR_SCREENSHOT_NOTIFICATION_ICON);
-  notifiers->push_back(screenshot_notifier);
-#endif
 
   UErrorCode error = U_ZERO_ERROR;
-  scoped_ptr<icu::Collator> collator(icu::Collator::createInstance(error));
-  scoped_ptr<NotifierComparator> comparator(
+  std::unique_ptr<icu::Collator> collator(icu::Collator::createInstance(error));
+  std::unique_ptr<NotifierComparator> comparator(
       new NotifierComparator(U_SUCCESS(error) ? collator.get() : NULL));
 
   std::sort(notifiers->begin(), notifiers->end(), *comparator);
@@ -307,67 +216,19 @@ void MessageCenterSettingsController::SetNotifierEnabled(
   DCHECK_LT(current_notifier_group_, notifier_groups_.size());
   Profile* profile = notifier_groups_[current_notifier_group_]->profile();
 
-  if (notifier.notifier_id.type == NotifierId::WEB_PAGE) {
-    // WEB_PAGE notifier cannot handle in DesktopNotificationService
-    // since it has the exact URL pattern.
-    // TODO(mukai): fix this.
-    ContentSetting default_setting =
-        HostContentSettingsMapFactory::GetForProfile(profile)
-          ->GetDefaultContentSetting(CONTENT_SETTINGS_TYPE_NOTIFICATIONS, NULL);
-
-    DCHECK(default_setting == CONTENT_SETTING_ALLOW ||
-           default_setting == CONTENT_SETTING_BLOCK ||
-           default_setting == CONTENT_SETTING_ASK);
-
-    // The content setting for notifications needs to clear when it changes to
-    // the default value or get explicitly set when it differs from the default.
-    bool differs_from_default_value =
-        (default_setting != CONTENT_SETTING_ALLOW && enabled) ||
-        (default_setting == CONTENT_SETTING_ALLOW && !enabled);
-
-    if (differs_from_default_value) {
-      if (notifier.notifier_id.url.is_valid()) {
-        if (enabled) {
-          DesktopNotificationProfileUtil::GrantPermission(
-              profile, notifier.notifier_id.url);
-        } else {
-          DesktopNotificationProfileUtil::DenyPermission(
-              profile, notifier.notifier_id.url);
-        }
-      } else {
-        LOG(ERROR) << "Invalid url pattern: "
-                   << notifier.notifier_id.url.spec();
-      }
-    } else {
-      ContentSettingsPattern pattern;
-
-      const auto& iter = patterns_.find(notifier.name);
-      if (iter != patterns_.end()) {
-        pattern = iter->second;
-      } else if (notifier.notifier_id.url.is_valid()) {
-        pattern =
-            ContentSettingsPattern::FromURLNoWildcard(notifier.notifier_id.url);
-      } else {
-        LOG(ERROR) << "Invalid url pattern: "
-                   << notifier.notifier_id.url.spec();
-      }
-
-      if (pattern.IsValid())
-        DesktopNotificationProfileUtil::ClearSetting(profile, pattern);
-    }
-  } else {
-    NotifierStateTrackerFactory::GetForProfile(profile)
-        ->SetNotifierEnabled(notifier.notifier_id, enabled);
+  if (!sources_.count(notifier.notifier_id.type)) {
+    NOTREACHED();
+    return;
   }
-  FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                    observers_,
-                    NotifierEnabledChanged(notifier.notifier_id, enabled));
+
+  sources_[notifier.notifier_id.type]->SetNotifierEnabled(profile, notifier,
+                                                          enabled);
 }
 
 void MessageCenterSettingsController::OnNotifierSettingsClosing() {
-  DCHECK(favicon_tracker_.get());
-  favicon_tracker_->TryCancelAll();
-  patterns_.clear();
+  for (auto& source : sources_) {
+    source.second->OnNotifierSettingsClosing();
+  }
 }
 
 bool MessageCenterSettingsController::NotifierHasAdvancedSettings(
@@ -404,22 +265,14 @@ void MessageCenterSettingsController::OnNotifierAdvancedSettingsRequested(
   Profile* profile = notifier_groups_[current_notifier_group_]->profile();
 
   extensions::EventRouter* event_router = extensions::EventRouter::Get(profile);
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
 
-  scoped_ptr<extensions::Event> event(new extensions::Event(
+  std::unique_ptr<extensions::Event> event(new extensions::Event(
       extensions::events::NOTIFICATIONS_ON_SHOW_SETTINGS,
-      extensions::api::notifications::OnShowSettings::kEventName, args.Pass()));
-  event_router->DispatchEventToExtension(extension_id, event.Pass());
+      extensions::api::notifications::OnShowSettings::kEventName,
+      std::move(args)));
+  event_router->DispatchEventToExtension(extension_id, std::move(event));
 }
-
-void MessageCenterSettingsController::OnFaviconLoaded(
-    const GURL& url,
-    const favicon_base::FaviconImageResult& favicon_result) {
-  FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                    observers_,
-                    UpdateIconImage(NotifierId(url), favicon_result.image));
-}
-
 
 #if defined(OS_CHROMEOS)
 void MessageCenterSettingsController::ActiveUserChanged(
@@ -427,14 +280,6 @@ void MessageCenterSettingsController::ActiveUserChanged(
   RebuildNotifierGroups(false);
 }
 #endif
-
-void MessageCenterSettingsController::SetAppImage(const std::string& id,
-                                                  const gfx::ImageSkia& image) {
-  FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                    observers_,
-                    UpdateIconImage(NotifierId(NotifierId::APPLICATION, id),
-                                    gfx::Image(image)));
-}
 
 void MessageCenterSettingsController::Observe(
     int type,
@@ -469,6 +314,25 @@ void MessageCenterSettingsController::OnProfileAuthInfoChanged(
   RebuildNotifierGroups(true);
 }
 
+void MessageCenterSettingsController::OnIconImageUpdated(
+    const message_center::NotifierId& id,
+    const gfx::Image& image) {
+  for (message_center::NotifierSettingsObserver& observer : observers_)
+    observer.UpdateIconImage(id, image);
+}
+
+void MessageCenterSettingsController::OnNotifierEnabledChanged(
+    const message_center::NotifierId& id,
+    bool enabled) {
+  for (message_center::NotifierSettingsObserver& observer : observers_)
+    observer.NotifierEnabledChanged(id, enabled);
+}
+
+void MessageCenterSettingsController::DispatchNotifierGroupChanged() {
+  for (message_center::NotifierSettingsObserver& observer : observers_)
+    observer.NotifierGroupChanged();
+}
+
 #if defined(OS_CHROMEOS)
 void MessageCenterSettingsController::CreateNotifierGroupForGuestLogin() {
   // Already created.
@@ -485,18 +349,12 @@ void MessageCenterSettingsController::CreateNotifierGroupForGuestLogin() {
       chromeos::ProfileHelper::Get()->GetProfileByUserUnsafe(user);
   DCHECK(profile);
 
-  scoped_ptr<message_center::ProfileNotifierGroup> group(
-      new message_center::ProfileNotifierGroup(gfx::Image(user->GetImage()),
-                                               user->GetDisplayName(),
-                                               user->GetDisplayName(),
-                                               0,
-                                               profile));
+  std::unique_ptr<message_center::ProfileNotifierGroup> group(
+      new message_center::ProfileNotifierGroup(
+          user->GetDisplayName(), user->GetDisplayName(), profile));
 
-  notifier_groups_.push_back(group.Pass());
-
-  FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                    observers_,
-                    NotifierGroupChanged());
+  notifier_groups_.push_back(std::move(group));
+  DispatchNotifierGroupChanged();
 }
 #endif
 
@@ -504,15 +362,12 @@ void MessageCenterSettingsController::RebuildNotifierGroups(bool notify) {
   notifier_groups_.clear();
   current_notifier_group_ = 0;
 
-  const size_t count = profile_info_cache_->GetNumberOfProfiles();
-  for (size_t i = 0; i < count; ++i) {
-    scoped_ptr<message_center::ProfileNotifierGroup> group(
+  std::vector<ProfileAttributesEntry*> entries =
+      profile_attributes_storage_.GetAllProfilesAttributes();
+  for (auto* entry : entries) {
+    std::unique_ptr<message_center::ProfileNotifierGroup> group(
         new message_center::ProfileNotifierGroup(
-            profile_info_cache_->GetAvatarIconOfProfileAtIndex(i),
-            profile_info_cache_->GetNameOfProfileAtIndex(i),
-            profile_info_cache_->GetUserNameOfProfileAtIndex(i),
-            i,
-            profile_info_cache_->GetPathOfProfileAtIndex(i)));
+            entry->GetName(), entry->GetUserName(), entry->GetPath()));
     if (group->profile() == NULL)
       continue;
 
@@ -535,7 +390,7 @@ void MessageCenterSettingsController::RebuildNotifierGroups(bool notify) {
       continue;
 #endif
 
-    notifier_groups_.push_back(group.Pass());
+    notifier_groups_.push_back(std::move(group));
   }
 
 #if defined(OS_CHROMEOS)
@@ -558,9 +413,6 @@ void MessageCenterSettingsController::RebuildNotifierGroups(bool notify) {
   }
 #endif
 
-  if (notify) {
-    FOR_EACH_OBSERVER(message_center::NotifierSettingsObserver,
-                      observers_,
-                      NotifierGroupChanged());
-  }
+  if (notify)
+    DispatchNotifierGroupChanged();
 }

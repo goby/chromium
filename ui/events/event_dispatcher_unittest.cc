@@ -4,6 +4,7 @@
 
 #include "ui/events/event_dispatcher.h"
 
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
 #include "ui/events/event_dispatcher.h"
@@ -45,7 +46,7 @@ class TestTarget : public EventTarget,
 
   EventTarget* GetParentTarget() override { return parent_; }
 
-  scoped_ptr<EventTargetIterator> GetChildIterator() const override {
+  std::unique_ptr<EventTargetIterator> GetChildIterator() const override {
     return nullptr;
   }
 

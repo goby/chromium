@@ -5,12 +5,14 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_HEADER_PAINTER_ASH_H_
 #define CHROME_BROWSER_UI_VIEWS_FRAME_BROWSER_HEADER_PAINTER_ASH_H_
 
-#include "ash/frame/header_painter.h"
-#include "base/basictypes.h"
+#include <memory>
+
+#include "ash/common/frame/header_painter.h"
 #include "base/compiler_specific.h"  // override
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gfx/animation/animation_delegate.h"
 
+class BrowserNonClientFrameViewAsh;
 class BrowserView;
 
 namespace ash {
@@ -18,7 +20,6 @@ class FrameCaptionButtonContainerView;
 }
 
 namespace gfx {
-class ImageSkia;
 class Rect;
 class SlideAnimation;
 }
@@ -35,12 +36,11 @@ class BrowserHeaderPainterAsh : public ash::HeaderPainter,
   ~BrowserHeaderPainterAsh() override;
 
   // BrowserHeaderPainterAsh does not take ownership of any of the parameters.
-  void Init(
-    views::Widget* frame,
-    BrowserView* browser_view,
-    views::View* header_view,
-    views::View* window_icon,
-    ash::FrameCaptionButtonContainerView* caption_button_container);
+  void Init(views::Widget* frame,
+            BrowserView* browser_view,
+            BrowserNonClientFrameViewAsh* header_view,
+            views::View* window_icon,
+            ash::FrameCaptionButtonContainerView* caption_button_container);
 
   // ash::HeaderPainter overrides:
   int GetMinimumHeaderWidth() const override;
@@ -50,39 +50,21 @@ class BrowserHeaderPainterAsh : public ash::HeaderPainter,
   int GetHeaderHeightForPainting() const override;
   void SetHeaderHeightForPainting(int height) override;
   void SchedulePaintForTitle() override;
-  void UpdateLeftViewXInset(int left_view_x_inset) override;
 
  private:
   // gfx::AnimationDelegate override:
   void AnimationProgressed(const gfx::Animation* animation) override;
 
-  // Paints highlight around the edge of the header for restored windows.
-  void PaintHighlightForRestoredWindow(gfx::Canvas* canvas);
+  // Paints the frame image for the |active| state based on the current value of
+  // the activation animation.
+  void PaintFrameImages(gfx::Canvas* canvas, bool active);
 
   // Paints the title bar, primarily the title string.
   void PaintTitleBar(gfx::Canvas* canvas);
 
-  // Sets |frame_image| and |frame_overlay_image| to the frame image and the
-  // frame overlay image respectivately which should be used to paint the
-  // header.
-  void GetFrameImages(Mode mode,
-                      gfx::ImageSkia* frame_image,
-                      gfx::ImageSkia* frame_overlay_image) const;
-
-  // Sets |frame_image| and |frame_overlay_image| to the frame image and the
-  // frame overlay image respectively that should be used to paint the header
-  // for tabbed browser windows.
-  void GetFrameImagesForTabbedBrowser(
-      Mode mode,
-      gfx::ImageSkia* frame_image,
-      gfx::ImageSkia* frame_overlay_image) const;
-
-  // Returns the frame image which should be used to paint the header for popup
-  // browser windows and for hosted app windows which show the toolbar.
-  gfx::ImageSkia GetFrameImageForNonTabbedBrowser(Mode mode) const;
-
-  // Updates the images used for the minimize, restore and close buttons.
-  void UpdateCaptionButtonImages();
+  // Updates the size and icons used for the minimize, restore, and close
+  // buttons.
+  void UpdateCaptionButtons();
 
   // Returns bounds of the region in |view_| which is painted with the header
   // images. The region is assumed to start at the top left corner of |view_|
@@ -101,10 +83,9 @@ class BrowserHeaderPainterAsh : public ash::HeaderPainter,
   bool is_incognito_;
 
   // The header view.
-  views::View* view_;
+  BrowserNonClientFrameViewAsh* view_;
 
   views::View* window_icon_;
-  int window_icon_x_inset_;
   ash::FrameCaptionButtonContainerView* caption_button_container_;
   int painted_height_;
 
@@ -114,7 +95,7 @@ class BrowserHeaderPainterAsh : public ash::HeaderPainter,
   // Whether the header should be painted as active.
   Mode mode_;
 
-  scoped_ptr<gfx::SlideAnimation> activation_animation_;
+  std::unique_ptr<gfx::SlideAnimation> activation_animation_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserHeaderPainterAsh);
 };

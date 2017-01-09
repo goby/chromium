@@ -2,30 +2,41 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
 #include "base/message_loop/message_loop_test.h"
 #include "base/pending_task.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
+#if defined(OS_ANDROID)
+#include "base/android/jni_android.h"
+#include "base/test/android/java_handler_thread_for_testing.h"
+#endif
+
 #if defined(OS_WIN)
-#include "base/message_loop/message_pump_dispatcher.h"
 #include "base/message_loop/message_pump_win.h"
 #include "base/process/memory.h"
 #include "base/strings/string16.h"
+#include "base/win/current_module.h"
 #include "base/win/scoped_handle.h"
 #endif
 
@@ -36,15 +47,15 @@ namespace base {
 
 namespace {
 
-scoped_ptr<MessagePump> TypeDefaultMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeDefaultMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_DEFAULT);
 }
 
-scoped_ptr<MessagePump> TypeIOMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeIOMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_IO);
 }
 
-scoped_ptr<MessagePump> TypeUIMessagePumpFactory() {
+std::unique_ptr<MessagePump> TypeUIMessagePumpFactory() {
   return MessageLoop::CreateMessagePumpForType(MessageLoop::TYPE_UI);
 }
 
@@ -69,6 +80,53 @@ class Foo : public RefCounted<Foo> {
   int test_count_;
   std::string result_;
 };
+
+#if defined(OS_ANDROID)
+void AbortMessagePump() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  jclass exception = env->FindClass(
+      "org/chromium/base/TestSystemMessageHandler$TestException");
+
+  env->ThrowNew(exception,
+                "This is a test exception that should be caught in "
+                "TestSystemMessageHandler.handleMessage");
+  static_cast<base::MessageLoopForUI*>(base::MessageLoop::current())->Abort();
+}
+
+void RunTest_AbortDontRunMoreTasks(bool delayed) {
+  MessageLoop loop(MessageLoop::TYPE_JAVA);
+
+  WaitableEvent test_done_event(WaitableEvent::ResetPolicy::MANUAL,
+                                WaitableEvent::InitialState::NOT_SIGNALED);
+
+  std::unique_ptr<android::JavaHandlerThreadForTesting> java_thread;
+  java_thread.reset(new android::JavaHandlerThreadForTesting(
+      "JavaHandlerThreadForTesting from AbortDontRunMoreTasks",
+      &test_done_event));
+  java_thread->Start();
+
+  if (delayed) {
+    java_thread->message_loop()->task_runner()->PostDelayedTask(
+        FROM_HERE, Bind(&AbortMessagePump), TimeDelta::FromMilliseconds(10));
+  } else {
+    java_thread->message_loop()->task_runner()->PostTask(
+        FROM_HERE, Bind(&AbortMessagePump));
+  }
+
+  // Wait to ensure we catch the correct exception (and don't crash)
+  test_done_event.Wait();
+
+  java_thread->Stop();
+  java_thread.reset();
+}
+
+TEST(MessageLoopTest, JavaExceptionAbort) {
+  RunTest_AbortDontRunMoreTasks(false);
+}
+TEST(MessageLoopTest, DelayedJavaExceptionAbort) {
+  RunTest_AbortDontRunMoreTasks(true);
+}
+#endif  // defined(OS_ANDROID)
 
 #if defined(OS_WIN)
 
@@ -101,7 +159,7 @@ void SubPumpFunc() {
 }
 
 void RunTest_PostDelayedTask_SharedTimer_SubPump() {
-  MessageLoop loop(MessageLoop::TYPE_UI);
+  MessageLoop message_loop(MessageLoop::TYPE_UI);
 
   // Test that the interval of the timer, used to run the next delayed task, is
   // set to a value corresponding to when the next delayed task should run.
@@ -111,23 +169,20 @@ void RunTest_PostDelayedTask_SharedTimer_SubPump() {
   int num_tasks = 1;
   Time run_time;
 
-  loop.PostTask(FROM_HERE, Bind(&SubPumpFunc));
+  message_loop.task_runner()->PostTask(FROM_HERE, Bind(&SubPumpFunc));
 
   // This very delayed task should never run.
-  loop.PostDelayedTask(
-      FROM_HERE,
-      Bind(&RecordRunTimeFunc, &run_time, &num_tasks),
+  message_loop.task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&RecordRunTimeFunc, &run_time, &num_tasks),
       TimeDelta::FromSeconds(1000));
 
   // This slightly delayed task should run from within SubPumpFunc.
-  loop.PostDelayedTask(
-      FROM_HERE,
-      Bind(&PostQuitMessage, 0),
-      TimeDelta::FromMilliseconds(10));
+  message_loop.task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&PostQuitMessage, 0), TimeDelta::FromMilliseconds(10));
 
   Time start_time = Time::Now();
 
-  loop.Run();
+  RunLoop().Run();
   EXPECT_EQ(1, num_tasks);
 
   // Ensure that we ran in far less time than the slower timer.
@@ -254,7 +309,7 @@ void RecursiveFunc(TaskList* order, int cookie, int depth,
   if (depth > 0) {
     if (is_reentrant)
       MessageLoop::current()->SetNestableTasksAllowed(true);
-    MessageLoop::current()->PostTask(
+    ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
         Bind(&RecursiveFunc, order, cookie, depth - 1, is_reentrant));
   }
@@ -267,27 +322,25 @@ void QuitFunc(TaskList* order, int cookie) {
   order->RecordEnd(QUITMESSAGELOOP, cookie);
 }
 
-void RecursiveFuncWin(MessageLoop* target,
+void RecursiveFuncWin(scoped_refptr<SingleThreadTaskRunner> task_runner,
                       HANDLE event,
                       bool expect_window,
                       TaskList* order,
                       bool is_reentrant) {
-  target->PostTask(FROM_HERE,
-                   Bind(&RecursiveFunc, order, 1, 2, is_reentrant));
-  target->PostTask(FROM_HERE,
-                   Bind(&MessageBoxFunc, order, 2, is_reentrant));
-  target->PostTask(FROM_HERE,
-                   Bind(&RecursiveFunc, order, 3, 2, is_reentrant));
+  task_runner->PostTask(FROM_HERE,
+                        Bind(&RecursiveFunc, order, 1, 2, is_reentrant));
+  task_runner->PostTask(FROM_HERE,
+                        Bind(&MessageBoxFunc, order, 2, is_reentrant));
+  task_runner->PostTask(FROM_HERE,
+                        Bind(&RecursiveFunc, order, 3, 2, is_reentrant));
   // The trick here is that for recursive task processing, this task will be
   // ran _inside_ the MessageBox message loop, dismissing the MessageBox
   // without a chance.
   // For non-recursive task processing, this will be executed _after_ the
   // MessageBox will have been dismissed by the code below, where
   // expect_window_ is true.
-  target->PostTask(FROM_HERE,
-                   Bind(&EndDialogFunc, order, 4));
-  target->PostTask(FROM_HERE,
-                   Bind(&QuitFunc, order, 5));
+  task_runner->PostTask(FROM_HERE, Bind(&EndDialogFunc, order, 4));
+  task_runner->PostTask(FROM_HERE, Bind(&QuitFunc, order, 5));
 
   // Enforce that every tasks are sent before starting to run the main thread
   // message loop.
@@ -325,18 +378,14 @@ void RunTest_RecursiveDenial2(MessageLoop::Type message_loop_type) {
   ASSERT_EQ(true, worker.StartWithOptions(options));
   TaskList order;
   win::ScopedHandle event(CreateEvent(NULL, FALSE, FALSE, NULL));
-  worker.message_loop()->PostTask(FROM_HERE,
-                                  Bind(&RecursiveFuncWin,
-                                             MessageLoop::current(),
-                                             event.Get(),
-                                             true,
-                                             &order,
-                                             false));
+  worker.task_runner()->PostTask(
+      FROM_HERE, Bind(&RecursiveFuncWin, ThreadTaskRunnerHandle::Get(),
+                      event.Get(), true, &order, false));
   // Let the other thread execute.
   WaitForSingleObject(event.Get(), INFINITE);
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 
-  ASSERT_EQ(order.Size(), 17);
+  ASSERT_EQ(17u, order.Size());
   EXPECT_EQ(order.Get(0), TaskItem(RECURSIVE, 1, true));
   EXPECT_EQ(order.Get(1), TaskItem(RECURSIVE, 1, false));
   EXPECT_EQ(order.Get(2), TaskItem(MESSAGEBOX, 2, true));
@@ -369,18 +418,14 @@ void RunTest_RecursiveSupport2(MessageLoop::Type message_loop_type) {
   ASSERT_EQ(true, worker.StartWithOptions(options));
   TaskList order;
   win::ScopedHandle event(CreateEvent(NULL, FALSE, FALSE, NULL));
-  worker.message_loop()->PostTask(FROM_HERE,
-                                  Bind(&RecursiveFuncWin,
-                                             MessageLoop::current(),
-                                             event.Get(),
-                                             false,
-                                             &order,
-                                             true));
+  worker.task_runner()->PostTask(
+      FROM_HERE, Bind(&RecursiveFuncWin, ThreadTaskRunnerHandle::Get(),
+                      event.Get(), false, &order, true));
   // Let the other thread execute.
   WaitForSingleObject(event.Get(), INFINITE);
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 
-  ASSERT_EQ(order.Size(), 18);
+  ASSERT_EQ(18u, order.Size());
   EXPECT_EQ(order.Get(0), TaskItem(RECURSIVE, 1, true));
   EXPECT_EQ(order.Get(1), TaskItem(RECURSIVE, 1, false));
   EXPECT_EQ(order.Get(2), TaskItem(MESSAGEBOX, 2, true));
@@ -411,79 +456,14 @@ void RunTest_RecursiveSupport2(MessageLoop::Type message_loop_type) {
 
 void PostNTasksThenQuit(int posts_remaining) {
   if (posts_remaining > 1) {
-    MessageLoop::current()->PostTask(
-        FROM_HERE,
-        Bind(&PostNTasksThenQuit, posts_remaining - 1));
+    ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, Bind(&PostNTasksThenQuit, posts_remaining - 1));
   } else {
     MessageLoop::current()->QuitWhenIdle();
   }
 }
 
 #if defined(OS_WIN)
-
-class DispatcherImpl : public MessagePumpDispatcher {
- public:
-  DispatcherImpl() : dispatch_count_(0) {}
-
-  uint32_t Dispatch(const NativeEvent& msg) override {
-    ::TranslateMessage(&msg);
-    ::DispatchMessage(&msg);
-    // Do not count WM_TIMER since it is not what we post and it will cause
-    // flakiness.
-    if (msg.message != WM_TIMER)
-      ++dispatch_count_;
-    // We treat WM_LBUTTONUP as the last message.
-    return msg.message == WM_LBUTTONUP ? POST_DISPATCH_QUIT_LOOP
-                                       : POST_DISPATCH_NONE;
-  }
-
-  int dispatch_count_;
-};
-
-void MouseDownUp() {
-  PostMessage(NULL, WM_LBUTTONDOWN, 0, 0);
-  PostMessage(NULL, WM_LBUTTONUP, 'A', 0);
-}
-
-void RunTest_Dispatcher(MessageLoop::Type message_loop_type) {
-  MessageLoop loop(message_loop_type);
-
-  MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      Bind(&MouseDownUp),
-      TimeDelta::FromMilliseconds(100));
-  DispatcherImpl dispatcher;
-  RunLoop run_loop(&dispatcher);
-  run_loop.Run();
-  ASSERT_EQ(2, dispatcher.dispatch_count_);
-}
-
-LRESULT CALLBACK MsgFilterProc(int code, WPARAM wparam, LPARAM lparam) {
-  if (code == MessagePumpForUI::kMessageFilterCode) {
-    MSG* msg = reinterpret_cast<MSG*>(lparam);
-    if (msg->message == WM_LBUTTONDOWN)
-      return TRUE;
-  }
-  return FALSE;
-}
-
-void RunTest_DispatcherWithMessageHook(MessageLoop::Type message_loop_type) {
-  MessageLoop loop(message_loop_type);
-
-  MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      Bind(&MouseDownUp),
-      TimeDelta::FromMilliseconds(100));
-  HHOOK msg_hook = SetWindowsHookEx(WH_MSGFILTER,
-                                    MsgFilterProc,
-                                    NULL,
-                                    GetCurrentThreadId());
-  DispatcherImpl dispatcher;
-  RunLoop run_loop(&dispatcher);
-  run_loop.Run();
-  ASSERT_EQ(1, dispatcher.dispatch_count_);
-  UnhookWindowsHookEx(msg_hook);
-}
 
 class TestIOHandler : public MessageLoopForIO::IOHandler {
  public:
@@ -509,8 +489,6 @@ class TestIOHandler : public MessageLoopForIO::IOHandler {
 TestIOHandler::TestIOHandler(const wchar_t* name, HANDLE signal, bool wait)
     : signal_(signal), wait_(wait) {
   memset(buffer_, 0, sizeof(buffer_));
-  memset(&context_, 0, sizeof(context_));
-  context_.handler = this;
 
   file_.Set(CreateFile(name, GENERIC_READ, 0, NULL, OPEN_EXISTING,
                        FILE_FLAG_OVERLAPPED, NULL));
@@ -522,7 +500,7 @@ void TestIOHandler::Init() {
 
   DWORD read;
   EXPECT_FALSE(ReadFile(file_.Get(), buffer_, size(), &read, context()));
-  EXPECT_EQ(ERROR_IO_PENDING, GetLastError());
+  EXPECT_EQ(static_cast<DWORD>(ERROR_IO_PENDING), GetLastError());
   if (wait_)
     WaitForIO();
 }
@@ -552,12 +530,9 @@ void RunTest_IOHandler() {
   options.message_loop_type = MessageLoop::TYPE_IO;
   ASSERT_TRUE(thread.StartWithOptions(options));
 
-  MessageLoop* thread_loop = thread.message_loop();
-  ASSERT_TRUE(NULL != thread_loop);
-
   TestIOHandler handler(kPipeName, callback_called.Get(), false);
-  thread_loop->PostTask(FROM_HERE, Bind(&TestIOHandler::Init,
-                                              Unretained(&handler)));
+  thread.task_runner()->PostTask(
+      FROM_HERE, Bind(&TestIOHandler::Init, Unretained(&handler)));
   // Make sure the thread runs and sleeps for lack of work.
   PlatformThread::Sleep(TimeDelta::FromMilliseconds(100));
 
@@ -593,19 +568,16 @@ void RunTest_WaitForIO() {
   options.message_loop_type = MessageLoop::TYPE_IO;
   ASSERT_TRUE(thread.StartWithOptions(options));
 
-  MessageLoop* thread_loop = thread.message_loop();
-  ASSERT_TRUE(NULL != thread_loop);
-
   TestIOHandler handler1(kPipeName1, callback1_called.Get(), false);
   TestIOHandler handler2(kPipeName2, callback2_called.Get(), true);
-  thread_loop->PostTask(FROM_HERE, Bind(&TestIOHandler::Init,
-                                              Unretained(&handler1)));
+  thread.task_runner()->PostTask(
+      FROM_HERE, Bind(&TestIOHandler::Init, Unretained(&handler1)));
   // TODO(ajwong): Do we really need such long Sleeps in this function?
   // Make sure the thread runs and sleeps for lack of work.
   TimeDelta delay = TimeDelta::FromMilliseconds(100);
   PlatformThread::Sleep(delay);
-  thread_loop->PostTask(FROM_HERE, Bind(&TestIOHandler::Init,
-                                              Unretained(&handler2)));
+  thread.task_runner()->PostTask(
+      FROM_HERE, Bind(&TestIOHandler::Init, Unretained(&handler2)));
   PlatformThread::Sleep(delay);
 
   // At this time handler1 is waiting to be called, and the thread is waiting
@@ -615,8 +587,9 @@ void RunTest_WaitForIO() {
   DWORD written;
   EXPECT_TRUE(WriteFile(server1.Get(), buffer, sizeof(buffer), &written, NULL));
   PlatformThread::Sleep(2 * delay);
-  EXPECT_EQ(WAIT_TIMEOUT, WaitForSingleObject(callback1_called.Get(), 0)) <<
-      "handler1 has not been called";
+  EXPECT_EQ(static_cast<DWORD>(WAIT_TIMEOUT),
+            WaitForSingleObject(callback1_called.Get(), 0))
+      << "handler1 has not been called";
 
   EXPECT_TRUE(WriteFile(server2.Get(), buffer, sizeof(buffer), &written, NULL));
 
@@ -641,6 +614,9 @@ RUN_MESSAGE_LOOP_TESTS(UI, &TypeUIMessagePumpFactory);
 RUN_MESSAGE_LOOP_TESTS(IO, &TypeIOMessagePumpFactory);
 
 #if defined(OS_WIN)
+// Additional set of tests for GPU version of UI message loop.
+RUN_MESSAGE_LOOP_TESTS(GPU, &MessagePumpForGpu::CreateMessagePumpForGpu);
+
 TEST(MessageLoopTest, PostDelayedTask_SharedTimer_SubPump) {
   RunTest_PostDelayedTask_SharedTimer_SubPump();
 }
@@ -696,8 +672,8 @@ TEST(MessageLoopTest, TaskObserver) {
 
   MessageLoop loop;
   loop.AddTaskObserver(&observer);
-  loop.PostTask(FROM_HERE, Bind(&PostNTasksThenQuit, kNumPosts));
-  loop.Run();
+  loop.task_runner()->PostTask(FROM_HERE, Bind(&PostNTasksThenQuit, kNumPosts));
+  RunLoop().Run();
   loop.RemoveTaskObserver(&observer);
 
   EXPECT_EQ(kNumPosts, observer.num_tasks_started());
@@ -705,16 +681,6 @@ TEST(MessageLoopTest, TaskObserver) {
 }
 
 #if defined(OS_WIN)
-TEST(MessageLoopTest, Dispatcher) {
-  // This test requires a UI loop
-  RunTest_Dispatcher(MessageLoop::TYPE_UI);
-}
-
-TEST(MessageLoopTest, DispatcherWithMessageHook) {
-  // This test requires a UI loop
-  RunTest_DispatcherWithMessageHook(MessageLoop::TYPE_UI);
-}
-
 TEST(MessageLoopTest, IOHandler) {
   RunTest_IOHandler();
 }
@@ -724,26 +690,26 @@ TEST(MessageLoopTest, WaitForIO) {
 }
 
 TEST(MessageLoopTest, HighResolutionTimer) {
-  MessageLoop loop;
+  MessageLoop message_loop;
   Time::EnableHighResolutionTimer(true);
 
   const TimeDelta kFastTimer = TimeDelta::FromMilliseconds(5);
   const TimeDelta kSlowTimer = TimeDelta::FromMilliseconds(100);
 
-  EXPECT_FALSE(loop.HasHighResolutionTasks());
+  EXPECT_FALSE(message_loop.HasHighResolutionTasks());
   // Post a fast task to enable the high resolution timers.
-  loop.PostDelayedTask(FROM_HERE, Bind(&PostNTasksThenQuit, 1),
-                       kFastTimer);
-  EXPECT_TRUE(loop.HasHighResolutionTasks());
-  loop.Run();
-  EXPECT_FALSE(loop.HasHighResolutionTasks());
+  message_loop.task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&PostNTasksThenQuit, 1), kFastTimer);
+  EXPECT_TRUE(message_loop.HasHighResolutionTasks());
+  RunLoop().Run();
+  EXPECT_FALSE(message_loop.HasHighResolutionTasks());
   EXPECT_FALSE(Time::IsHighResolutionTimerInUse());
   // Check that a slow task does not trigger the high resolution logic.
-  loop.PostDelayedTask(FROM_HERE, Bind(&PostNTasksThenQuit, 1),
-                       kSlowTimer);
-  EXPECT_FALSE(loop.HasHighResolutionTasks());
-  loop.Run();
-  EXPECT_FALSE(loop.HasHighResolutionTasks());
+  message_loop.task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&PostNTasksThenQuit, 1), kSlowTimer);
+  EXPECT_FALSE(message_loop.HasHighResolutionTasks());
+  RunLoop().Run();
+  EXPECT_FALSE(message_loop.HasHighResolutionTasks());
   Time::EnableHighResolutionTimer(false);
 }
 
@@ -882,11 +848,10 @@ TEST(MessageLoopTest, DestructionObserverTest) {
 
   MLDestructionObserver observer(&task_destroyed, &destruction_observer_called);
   loop->AddDestructionObserver(&observer);
-  loop->PostDelayedTask(
-      FROM_HERE,
-      Bind(&DestructionObserverProbe::Run,
-                 new DestructionObserverProbe(&task_destroyed,
-                                              &destruction_observer_called)),
+  loop->task_runner()->PostDelayedTask(
+      FROM_HERE, Bind(&DestructionObserverProbe::Run,
+                      new DestructionObserverProbe(
+                          &task_destroyed, &destruction_observer_called)),
       kDelay);
   delete loop;
   EXPECT_TRUE(observer.task_destroyed_before_message_loop());
@@ -904,15 +869,15 @@ TEST(MessageLoopTest, ThreadMainTaskRunner) {
   scoped_refptr<Foo> foo(new Foo());
   std::string a("a");
   ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, Bind(
-      &Foo::Test1ConstRef, foo.get(), a));
+      &Foo::Test1ConstRef, foo, a));
 
   // Post quit task;
-  MessageLoop::current()->PostTask(
+  ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       Bind(&MessageLoop::QuitWhenIdle, Unretained(MessageLoop::current())));
 
   // Now kick things off
-  MessageLoop::current()->Run();
+  RunLoop().Run();
 
   EXPECT_EQ(foo->test_count(), 1);
   EXPECT_EQ(foo->result(), "a");
@@ -929,8 +894,10 @@ TEST(MessageLoopTest, IsType) {
 void EmptyFunction() {}
 
 void PostMultipleTasks() {
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(&EmptyFunction));
-  MessageLoop::current()->PostTask(FROM_HERE, base::Bind(&EmptyFunction));
+  ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                          base::Bind(&EmptyFunction));
+  ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                          base::Bind(&EmptyFunction));
 }
 
 static const int kSignalMsg = WM_USER + 2;
@@ -958,19 +925,20 @@ LRESULT CALLBACK TestWndProcThunk(HWND hwnd, UINT message,
     // First, we post a task that will post multiple no-op tasks to make sure
     // that the pump's incoming task queue does not become empty during the
     // test.
-    MessageLoop::current()->PostTask(FROM_HERE, base::Bind(&PostMultipleTasks));
+    ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                            base::Bind(&PostMultipleTasks));
     // Next, we post a task that posts a windows message to trigger the second
     // stage of the test.
-    MessageLoop::current()->PostTask(FROM_HERE,
-                                     base::Bind(&PostWindowsMessage, hwnd));
+    ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&PostWindowsMessage, hwnd));
     break;
   case 2:
     // Since we're about to enter a modal loop, tell the message loop that we
     // intend to nest tasks.
     MessageLoop::current()->SetNestableTasksAllowed(true);
     bool did_run = false;
-    MessageLoop::current()->PostTask(FROM_HERE,
-                                     base::Bind(&EndTest, &did_run, hwnd));
+    ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(&EndTest, &did_run, hwnd));
     // Run a nested windows-style message loop and verify that our task runs. If
     // it doesn't, then we'll loop here until the test times out.
     MSG msg;
@@ -992,7 +960,7 @@ LRESULT CALLBACK TestWndProcThunk(HWND hwnd, UINT message,
 
 TEST(MessageLoopTest, AlwaysHaveUserMessageWhenNesting) {
   MessageLoop loop(MessageLoop::TYPE_UI);
-  HINSTANCE instance = GetModuleFromAddress(&TestWndProcThunk);
+  HINSTANCE instance = CURRENT_MODULE();
   WNDCLASSEX wc = {0};
   wc.cbSize = sizeof(wc);
   wc.lpfnWndProc = TestWndProcThunk;
@@ -1007,7 +975,7 @@ TEST(MessageLoopTest, AlwaysHaveUserMessageWhenNesting) {
 
   ASSERT_TRUE(PostMessage(message_hwnd, kSignalMsg, 0, 1));
 
-  loop.Run();
+  RunLoop().Run();
 
   ASSERT_TRUE(UnregisterClass(MAKEINTATOM(atom), instance));
 }
@@ -1030,9 +998,36 @@ TEST(MessageLoopTest, OriginalRunnerWorks) {
 
   scoped_refptr<Foo> foo(new Foo());
   original_runner->PostTask(FROM_HERE,
-                            Bind(&Foo::Test1ConstRef, foo.get(), "a"));
-  loop.RunUntilIdle();
+                            Bind(&Foo::Test1ConstRef, foo, "a"));
+  RunLoop().RunUntilIdle();
   EXPECT_EQ(1, foo->test_count());
+}
+
+TEST(MessageLoopTest, DeleteUnboundLoop) {
+  // It should be possible to delete an unbound message loop on a thread which
+  // already has another active loop. This happens when thread creation fails.
+  MessageLoop loop;
+  std::unique_ptr<MessageLoop> unbound_loop(MessageLoop::CreateUnbound(
+      MessageLoop::TYPE_DEFAULT, MessageLoop::MessagePumpFactoryCallback()));
+  unbound_loop.reset();
+  EXPECT_EQ(&loop, MessageLoop::current());
+  EXPECT_EQ(loop.task_runner(), ThreadTaskRunnerHandle::Get());
+}
+
+TEST(MessageLoopTest, ThreadName) {
+  {
+    std::string kThreadName("foo");
+    MessageLoop loop;
+    PlatformThread::SetName(kThreadName);
+    EXPECT_EQ(kThreadName, loop.GetThreadName());
+  }
+
+  {
+    std::string kThreadName("bar");
+    base::Thread thread(kThreadName);
+    ASSERT_TRUE(thread.StartAndWaitForTesting());
+    EXPECT_EQ(kThreadName, thread.message_loop()->GetThreadName());
+  }
 }
 
 }  // namespace base

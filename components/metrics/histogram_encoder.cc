@@ -4,10 +4,9 @@
 
 #include "components/metrics/histogram_encoder.h"
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_samples.h"
 #include "base/metrics/metrics_hashes.h"
@@ -26,10 +25,11 @@ void EncodeHistogramDelta(const std::string& histogram_name,
 
   HistogramEventProto* histogram_proto = uma_proto->add_histogram_event();
   histogram_proto->set_name_hash(base::HashMetricName(histogram_name));
-  histogram_proto->set_sum(snapshot.sum());
+  if (snapshot.sum() != 0)
+    histogram_proto->set_sum(snapshot.sum());
 
-  for (scoped_ptr<SampleCountIterator> it = snapshot.Iterator(); !it->Done();
-       it->Next()) {
+  for (std::unique_ptr<SampleCountIterator> it = snapshot.Iterator();
+       !it->Done(); it->Next()) {
     base::Histogram::Sample min;
     base::Histogram::Sample max;
     base::Histogram::Count count;
@@ -37,7 +37,9 @@ void EncodeHistogramDelta(const std::string& histogram_name,
     HistogramEventProto::Bucket* bucket = histogram_proto->add_bucket();
     bucket->set_min(min);
     bucket->set_max(max);
-    bucket->set_count(count);
+    // Note: The default for count is 1 in the proto, so omit it in that case.
+    if (count != 1)
+      bucket->set_count(count);
   }
 
   // Omit fields to save space (see rules in histogram_event.proto comments).

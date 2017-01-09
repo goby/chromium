@@ -4,19 +4,23 @@
 
 #include "ui/gl/gl_implementation.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <string>
 
 #include "base/at_exit.h"
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_gl_api_implementation.h"
 #include "ui/gl/gl_version_info.h"
 
-namespace gfx {
+namespace gl {
 
 namespace {
 
@@ -49,29 +53,21 @@ void CleanupNativeLibraries(void* unused) {
   }
 }
 
-}
+}  // namespace
 
 base::ThreadLocalPointer<GLApi>* g_current_gl_context_tls = NULL;
 OSMESAApi* g_current_osmesa_context;
 
+#if defined(USE_EGL)
+EGLApi* g_current_egl_context;
+#endif
+
 #if defined(OS_WIN)
-
-EGLApi* g_current_egl_context;
 WGLApi* g_current_wgl_context;
+#endif
 
-#elif defined(USE_X11)
-
-EGLApi* g_current_egl_context;
+#if defined(USE_GLX)
 GLXApi* g_current_glx_context;
-
-#elif defined(USE_OZONE)
-
-EGLApi* g_current_egl_context;
-
-#elif defined(OS_ANDROID)
-
-EGLApi* g_current_egl_context;
-
 #endif
 
 GLImplementation GetNamedGLImplementation(const std::string& name) {
@@ -209,10 +205,26 @@ bool WillUseGLGetStringForExtensions() {
   const char* version_str =
       reinterpret_cast<const char*>(glGetString(GL_VERSION));
   unsigned major_version, minor_version;
-  bool is_es, is_es3;
-  gfx::GLVersionInfo::ParseVersionString(
-      version_str, &major_version, &minor_version, &is_es, &is_es3);
+  bool is_es, is_es2, is_es3;
+  GLVersionInfo::ParseVersionString(version_str, &major_version, &minor_version,
+                                    &is_es, &is_es2, &is_es3);
   return is_es || major_version < 3;
 }
 
-}  // namespace gfx
+base::NativeLibrary LoadLibraryAndPrintError(
+    const base::FilePath::CharType* filename) {
+  return LoadLibraryAndPrintError(base::FilePath(filename));
+}
+
+base::NativeLibrary LoadLibraryAndPrintError(const base::FilePath& filename) {
+  base::NativeLibraryLoadError error;
+  base::NativeLibrary library = base::LoadNativeLibrary(filename, &error);
+  if (!library) {
+    LOG(ERROR) << "Failed to load " << filename.MaybeAsASCII() << ": "
+               << error.ToString();
+    return NULL;
+  }
+  return library;
+}
+
+}  // namespace gl

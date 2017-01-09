@@ -5,9 +5,15 @@
 #ifndef CHROME_BROWSER_RENDERER_HOST_PEPPER_PEPPER_PLATFORM_VERIFICATION_MESSAGE_FILTER_H_
 #define CHROME_BROWSER_RENDERER_HOST_PEPPER_PEPPER_PLATFORM_VERIFICATION_MESSAGE_FILTER_H_
 
-#include "chrome/browser/chromeos/attestation/platform_verification_flow.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/host/resource_message_filter.h"
+
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/chromeos/attestation/platform_verification_flow.h"
+#endif
 
 namespace content {
 class BrowserPpapiHost;
@@ -41,7 +47,7 @@ class PepperPlatformVerificationMessageFilter
   int32_t OnChallengePlatform(ppapi::host::HostMessageContext* context,
                               const std::string& service_id,
                               const std::vector<uint8_t>& challenge);
-
+#if defined(OS_CHROMEOS)
   // PlatformVerificationFlow callbacks.
   void ChallengePlatformCallback(
       ppapi::host::ReplyMessageContext reply_context,
@@ -49,13 +55,16 @@ class PepperPlatformVerificationMessageFilter
       const std::string& signed_data,
       const std::string& signature,
       const std::string& platform_key_certificate);
+#endif
 
   // Used to lookup the WebContents associated with this PP_Instance.
   int render_process_id_;
   int render_frame_id_;
 
+#if defined(OS_CHROMEOS)
   // Must only be accessed on the UI thread.
   scoped_refptr<chromeos::attestation::PlatformVerificationFlow> pv_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(PepperPlatformVerificationMessageFilter);
 };

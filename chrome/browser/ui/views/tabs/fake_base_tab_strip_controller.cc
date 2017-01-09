@@ -23,9 +23,18 @@ void FakeBaseTabStripController::AddTab(int index, bool is_active) {
     active_index_ = index;
 }
 
+void FakeBaseTabStripController::AddPinnedTab(int index, bool is_active) {
+  TabRendererData data;
+  data.pinned = true;
+  num_tabs_++;
+  tab_strip_->AddTabAt(index, data, is_active);
+  if (is_active)
+    active_index_ = index;
+}
+
 void FakeBaseTabStripController::RemoveTab(int index) {
   num_tabs_--;
-  tab_strip_->RemoveTabAt(index);
+  tab_strip_->RemoveTabAt(nullptr, index);
   if (active_index_ == index)
     active_index_ = -1;
 }
@@ -61,14 +70,14 @@ bool FakeBaseTabStripController::IsTabPinned(int index) const {
   return false;
 }
 
-bool FakeBaseTabStripController::IsNewTabPage(int index) const {
-  return false;
-}
-
 void FakeBaseTabStripController::SelectTab(int index) {
-  if (!IsValidIndex(index))
+  if (!IsValidIndex(index) || active_index_ == index)
     return;
+  ui::ListSelectionModel old_selection_model;
+  old_selection_model.SetSelectedIndex(active_index_);
   active_index_ = index;
+  selection_model_.SetSelectedIndex(active_index_);
+  tab_strip_->SetSelection(old_selection_model, selection_model_);
 }
 
 void FakeBaseTabStripController::ExtendSelectionTo(int index) {
@@ -134,4 +143,8 @@ void FakeBaseTabStripController::OnStoppedDraggingTabs() {
 
 void FakeBaseTabStripController::CheckFileSupported(const GURL& url) {
   tab_strip_->FileSupported(url, true);
+}
+
+SkColor FakeBaseTabStripController::GetToolbarTopSeparatorColor() const {
+  return SK_ColorBLACK;
 }

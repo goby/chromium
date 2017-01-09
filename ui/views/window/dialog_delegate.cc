@@ -4,14 +4,20 @@
 
 #include "ui/views/window/dialog_delegate.h"
 
+#include <utility>
+
 #include "base/logging.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "build/build_config.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/color_palette.h"
 #include "ui/strings/grit/ui_strings.h"
 #include "ui/views/bubble/bubble_border.h"
 #include "ui/views/bubble/bubble_frame_view.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/layout/layout_constants.h"
+#include "ui/views/style/platform_style.h"
+#include "ui/views/views_delegate.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_observer.h"
 #include "ui/views/window/dialog_client_view.h"
@@ -25,25 +31,27 @@ namespace views {
 ////////////////////////////////////////////////////////////////////////////////
 // DialogDelegate:
 
-DialogDelegate::DialogDelegate() : supports_new_style_(true) {
-}
+DialogDelegate::DialogDelegate() : supports_custom_frame_(true) {}
 
-DialogDelegate::~DialogDelegate() {
-}
+DialogDelegate::~DialogDelegate() {}
 
 // static
 Widget* DialogDelegate::CreateDialogWidget(WidgetDelegate* delegate,
                                            gfx::NativeWindow context,
                                            gfx::NativeView parent) {
-  return CreateDialogWidgetWithBounds(delegate, context, parent, gfx::Rect());
+  views::Widget* widget = new views::Widget;
+  views::Widget::InitParams params =
+      GetDialogWidgetInitParams(delegate, context, parent, gfx::Rect());
+  widget->Init(params);
+  return widget;
 }
 
 // static
-Widget* DialogDelegate::CreateDialogWidgetWithBounds(WidgetDelegate* delegate,
-                                                     gfx::NativeWindow context,
-                                                     gfx::NativeView parent,
-                                                     const gfx::Rect& bounds) {
-  views::Widget* widget = new views::Widget;
+Widget::InitParams DialogDelegate::GetDialogWidgetInitParams(
+    WidgetDelegate* delegate,
+    gfx::NativeWindow context,
+    gfx::NativeView parent,
+    const gfx::Rect& bounds) {
   views::Widget::InitParams params;
   params.delegate = delegate;
   params.bounds = bounds;
@@ -52,14 +60,14 @@ Widget* DialogDelegate::CreateDialogWidgetWithBounds(WidgetDelegate* delegate,
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   // The new style doesn't support unparented dialogs on Linux desktop.
   if (dialog)
-    dialog->supports_new_style_ &= parent != NULL;
+    dialog->supports_custom_frame_ &= parent != NULL;
 #elif defined(OS_WIN)
   // The new style doesn't support unparented dialogs on Windows Classic themes.
   if (dialog && !ui::win::IsAeroGlassEnabled())
-    dialog->supports_new_style_ &= parent != NULL;
+    dialog->supports_custom_frame_ &= parent != NULL;
 #endif
 
-  if (!dialog || dialog->UseNewStyleForThisDialog()) {
+  if (!dialog || dialog->ShouldUseCustomFrame()) {
     params.opacity = Widget::InitParams::TRANSLUCENT_WINDOW;
     params.remove_standard_frame = true;
 #if !defined(OS_MACOSX)
@@ -78,8 +86,7 @@ Widget* DialogDelegate::CreateDialogWidgetWithBounds(WidgetDelegate* delegate,
   // method behaviors.
   params.child = parent && (delegate->GetModalType() == ui::MODAL_TYPE_CHILD);
 #endif
-  widget->Init(params);
-  return widget;
+  return params;
 }
 
 View* DialogDelegate::CreateExtraView() {
@@ -90,20 +97,12 @@ bool DialogDelegate::GetExtraViewPadding(int* padding) {
   return false;
 }
 
-View* DialogDelegate::CreateTitlebarExtraView() {
-  return NULL;
-}
-
 View* DialogDelegate::CreateFootnoteView() {
   return NULL;
 }
 
 bool DialogDelegate::Cancel() {
   return true;
-}
-
-bool DialogDelegate::Accept(bool window_closing) {
-  return Accept();
 }
 
 bool DialogDelegate::Accept() {
@@ -116,11 +115,18 @@ bool DialogDelegate::Close() {
       (buttons == ui::DIALOG_BUTTON_NONE)) {
     return Cancel();
   }
-  return Accept(true);
+  return Accept();
 }
 
-base::string16 DialogDelegate::GetDialogTitle() const {
-  return GetWindowTitle();
+void DialogDelegate::UpdateButton(LabelButton* button, ui::DialogButton type) {
+  button->SetText(GetDialogButtonLabel(type));
+  button->SetEnabled(IsDialogButtonEnabled(type));
+  bool is_default = type == GetDefaultDialogButton();
+  if (!PlatformStyle::kDialogDefaultButtonCanBeCancel &&
+      type == ui::DIALOG_BUTTON_CANCEL) {
+    is_default = false;
+  }
+  button->SetIsDefault(is_default);
 }
 
 int DialogDelegate::GetDialogButtons() const {
@@ -185,35 +191,31 @@ ClientView* DialogDelegate::CreateClientView(Widget* widget) {
 }
 
 NonClientFrameView* DialogDelegate::CreateNonClientFrameView(Widget* widget) {
-  if (UseNewStyleForThisDialog())
-    return CreateDialogFrameView(widget);
+  if (ShouldUseCustomFrame())
+    return CreateDialogFrameView(widget, gfx::Insets());
   return WidgetDelegate::CreateNonClientFrameView(widget);
 }
 
 // static
-NonClientFrameView* DialogDelegate::CreateDialogFrameView(Widget* widget) {
-  BubbleFrameView* frame = new BubbleFrameView(gfx::Insets());
-#if defined(OS_MACOSX)
-  // On Mac, dialogs have no border stroke and use a shadow provided by the OS.
-  const BubbleBorder::Shadow kShadow = BubbleBorder::NO_ASSETS;
-#else
+NonClientFrameView* DialogDelegate::CreateDialogFrameView(
+    Widget* widget,
+    const gfx::Insets& content_margins) {
+  BubbleFrameView* frame = new BubbleFrameView(
+      ViewsDelegate::GetInstance()->GetDialogFrameViewInsets(),
+      content_margins);
   const BubbleBorder::Shadow kShadow = BubbleBorder::SMALL_SHADOW;
-#endif
-  scoped_ptr<BubbleBorder> border(
+  std::unique_ptr<BubbleBorder> border(
       new BubbleBorder(BubbleBorder::FLOAT, kShadow, gfx::kPlaceholderColor));
   border->set_use_theme_background_color(true);
-  frame->SetBubbleBorder(border.Pass());
+  frame->SetBubbleBorder(std::move(border));
   DialogDelegate* delegate = widget->widget_delegate()->AsDialogDelegate();
-  if (delegate) {
-    View* titlebar_view = delegate->CreateTitlebarExtraView();
-    if (titlebar_view)
-      frame->SetTitlebarExtraView(titlebar_view);
-  }
+  if (delegate)
+    frame->SetFootnoteView(delegate->CreateFootnoteView());
   return frame;
 }
 
-bool DialogDelegate::UseNewStyleForThisDialog() const {
-  return supports_new_style_;
+bool DialogDelegate::ShouldUseCustomFrame() const {
+  return supports_custom_frame_;
 }
 
 const DialogClientView* DialogDelegate::GetDialogClientView() const {
@@ -254,9 +256,9 @@ View* DialogDelegateView::GetContentsView() {
   return this;
 }
 
-void DialogDelegateView::GetAccessibleState(ui::AXViewState* state) {
-  state->name = GetDialogTitle();
-  state->role = ui::AX_ROLE_DIALOG;
+void DialogDelegateView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->SetName(GetWindowTitle());
+  node_data->role = ui::AX_ROLE_DIALOG;
 }
 
 void DialogDelegateView::ViewHierarchyChanged(

@@ -29,12 +29,37 @@ promise_test(function(t) {
           assert_equals(response.headers.get('Content-Type'),
                         'text/plain;charset=US-ASCII');
           assert_equals(size(response.headers), 1);
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                ['data:,Foobar']);
+          }
           return response.text();
         })
       .then(function(text) {
           assert_equals(text, 'Foobar');
         });
   }, 'fetch data: URL');
+
+promise_test(function(t) {
+    return fetch('data:,Foobar',
+                 {
+                   method: 'POST',
+                   body: 'Test'
+                 })
+      .then(function(response) {
+          assert_equals(response.status, 200);
+          assert_equals(response.statusText, 'OK');
+          assert_equals(response.headers.get('Content-Type'),
+                        'text/plain;charset=US-ASCII');
+          assert_equals(size(response.headers), 1);
+          return response.text();
+        })
+      .then(function(text) {
+          assert_equals(text, 'Foobar');
+        });
+  }, 'fetch data: URL with the POST method');
 
 promise_test(function(t) {
     return fetch('data:text/html;charset=utf-8;base64,5paH5a2X')
@@ -44,6 +69,12 @@ promise_test(function(t) {
           assert_equals(response.headers.get('Content-Type'),
                         'text/html;charset=utf-8');
           assert_equals(size(response.headers), 1);
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                ['data:text/html;charset=utf-8;base64,5paH5a2X']);
+          }
           return response.text();
         })
       .then(function(text) {
@@ -58,30 +89,38 @@ promise_test(function(t) {
         function() {});
   }, 'fetch invalid data: URL');
 
-// Tests for blob: scheme.
-promise_test(function(t) {
-    var url = URL.createObjectURL(new Blob(['fox'], {type: 'text/fox'}));
-    return fetch(url)
-      .then(function(response) {
-          assert_equals(response.status, 200);
-          assert_equals(response.statusText, 'OK');
-          assert_equals(response.headers.get('Content-Type'), 'text/fox');
-          assert_equals(response.headers.get('Content-Length'), '3');
-          assert_equals(size(response.headers), 2);
-          return response.text();
-        })
-      .then(function(text) {
-          assert_equals(text, 'fox');
-        });
-  }, 'fetch blob: URL');
+// Only [Exposed=(Window,DedicatedWorker,SharedWorker)].
+if ('createObjectURL' in URL) {
+  // Tests for blob: scheme.
+  promise_test(function(t) {
+      var url = URL.createObjectURL(new Blob(['fox'], {type: 'text/fox'}));
+      return fetch(url)
+        .then(function(response) {
+            assert_equals(response.status, 200);
+            assert_equals(response.statusText, 'OK');
+            assert_equals(response.headers.get('Content-Type'), 'text/fox');
+            assert_equals(response.headers.get('Content-Length'), '3');
+            assert_equals(size(response.headers), 2);
+            assert_false(response.redirected);
+            if (self.internals) {
+              assert_array_equals(
+                  self.internals.getInternalResponseURLList(response), [url]);
+            }
+            return response.text();
+          })
+        .then(function(text) {
+            assert_equals(text, 'fox');
+          });
+    }, 'fetch blob: URL');
 
-promise_test(function(t) {
-    var url = URL.createObjectURL(new Blob(['fox'], {type: 'text/fox'}));
-    return fetch(url + 'invalid')
-      .then(
-        t.unreached_func('fetching non-existent blob: URL must fail'),
-        function() {});
-  }, 'fetch non-existent blob: URL');
+  promise_test(function(t) {
+      var url = URL.createObjectURL(new Blob(['fox'], {type: 'text/fox'}));
+      return fetch(url + 'invalid')
+        .then(
+          t.unreached_func('fetching non-existent blob: URL must fail'),
+          function() {});
+    }, 'fetch non-existent blob: URL');
+}
 
 // https://fetch.spec.whatwg.org/#concept-basic-fetch
 // The last statement:
@@ -95,18 +134,32 @@ promise_test(function(t) {
   }, 'fetch of scheme not listed in basic fetch spec');
 
 promise_test(function(t) {
-    return fetch('/fetch/resources/fetch-status.php?status=200')
+    var request = new Request('/fetch/resources/fetch-status.php?status=200');
+    return fetch(request)
       .then(function(response) {
           assert_equals(response.status, 200);
           assert_equals(response.statusText, 'OK');
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                [request.url]);
+          }
         });
   }, 'Fetch result of 200 response');
 
 promise_test(function(t) {
-    return fetch('/fetch/resources/fetch-status.php?status=404')
+    var request = new Request('/fetch/resources/fetch-status.php?status=404');
+    return fetch(request)
       .then(function(response) {
           assert_equals(response.status, 404);
           assert_equals(response.statusText, 'Not Found');
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                [request.url]);
+          }
         });
   }, 'Fetch result of 404 response');
 
@@ -127,8 +180,14 @@ promise_test(function(t) {
           // if response's url is null and response's url,
           // serialized with the exclude fragment flag set, otherwise.
           assert_equals(response.url,
-            BASE_ORIGIN +
-            '/fetch/resources/fetch-status.php?status=200');
+            BASE_ORIGIN + '/fetch/resources/fetch-status.php?status=200');
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                [BASE_ORIGIN +
+                 '/fetch/resources/fetch-status.php?status=200#fragment']);
+          }
         });
   }, 'Request/response url attribute getter with fragment');
 
@@ -152,6 +211,12 @@ promise_test(function(t) {
             'Response\'s url is locationURL');
           assert_equals(request.url, redirect_original_url,
             'Request\'s url remains the original URL');
+          assert_true(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                [request.url, response.url]);
+          }
         });
   }, 'Request/response url attribute getter with redirect');
 
@@ -171,7 +236,13 @@ promise_test(function(t) {
       .then(function(response) {
           assert_equals(response.status, 0);
           assert_equals(response.type, 'opaqueredirect');
-          assert_equals(response.url, '');
+          assert_equals(response.url, request.url);
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response),
+                [redirect_original_url]);
+          }
         });
   }, 'Manual redirect fetch returns opaque redirect response');
 
@@ -222,6 +293,11 @@ promise_test(function(test) {
           assert_equals(response.status, 200);
           assert_equals(response.statusText, 'OK');
           assert_equals(response.url, url);
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response), [url]);
+          }
           return response.text();
         })
       .then(function(text) { assert_equals(text, '<!DOCTYPE html>\n'); })
@@ -234,6 +310,11 @@ promise_test(function(test) {
           assert_equals(response.status, 200);
           assert_equals(response.statusText, 'OK');
           assert_equals(response.url, url);
+          assert_false(response.redirected);
+          if (self.internals) {
+            assert_array_equals(
+                self.internals.getInternalResponseURLList(response), [url]);
+          }
           return response.text();
         })
       .then(function(text) { assert_equals(text, '<!DOCTYPE html>\n'); })

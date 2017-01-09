@@ -4,8 +4,13 @@
 
 #include "content/browser/accessibility/accessibility_tree_formatter.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/pattern.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
@@ -17,48 +22,35 @@
 #include "content/public/browser/web_contents.h"
 
 namespace content {
+
 namespace {
+
 const char kIndentSymbol = '+';
 const int kIndentSymbolCount = 2;
-const char* kSkipString = "@NO_DUMP";
-const char* kSkipChildren = "@NO_CHILDREN_DUMP";
-const char* kChildrenDictAttr = "children";
+const char kSkipString[] = "@NO_DUMP";
+const char kSkipChildren[] = "@NO_CHILDREN_DUMP";
+const char kChildrenDictAttr[] = "children";
+
+}  // namespace
+
+AccessibilityTreeFormatter::AccessibilityTreeFormatter()
+    : show_ids_(false) {
 }
-
-AccessibilityTreeFormatter::AccessibilityTreeFormatter(
-    BrowserAccessibility* root)
-    : root_(root),
-      show_ids_(false) {
-  Initialize();
-}
-
-// static
-AccessibilityTreeFormatter* AccessibilityTreeFormatter::Create(
-    WebContents* web_contents) {
-  BrowserAccessibilityManager* manager =
-      static_cast<WebContentsImpl*>(web_contents)->
-          GetRootBrowserAccessibilityManager();
-  if (!manager)
-    return NULL;
-
-  BrowserAccessibility* root = manager->GetRoot();
-  return new AccessibilityTreeFormatter(root);
-}
-
 
 AccessibilityTreeFormatter::~AccessibilityTreeFormatter() {
 }
 
-scoped_ptr<base::DictionaryValue>
-AccessibilityTreeFormatter::BuildAccessibilityTree() {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
-  RecursiveBuildAccessibilityTree(*root_, dict.get());
-  return dict.Pass();
+std::unique_ptr<base::DictionaryValue>
+AccessibilityTreeFormatter::BuildAccessibilityTree(BrowserAccessibility* root) {
+  CHECK(root);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  RecursiveBuildAccessibilityTree(*root, dict.get());
+  return dict;
 }
 
 void AccessibilityTreeFormatter::FormatAccessibilityTree(
-    base::string16* contents) {
-  scoped_ptr<base::DictionaryValue> dict = BuildAccessibilityTree();
+    BrowserAccessibility* root, base::string16* contents) {
+  std::unique_ptr<base::DictionaryValue> dict = BuildAccessibilityTree(root);
   RecursiveFormatAccessibilityTree(*(dict.get()), contents);
 }
 
@@ -69,11 +61,12 @@ void AccessibilityTreeFormatter::RecursiveBuildAccessibilityTree(
   base::ListValue* children = new base::ListValue;
   dict->Set(kChildrenDictAttr, children);
 
-  for (size_t i = 0; i < node.PlatformChildCount(); ++i) {
-    BrowserAccessibility* child_node = node.PlatformGetChild(i);
-    base::DictionaryValue* child_dict = new base::DictionaryValue;
-    children->Append(child_dict);
-    RecursiveBuildAccessibilityTree(*child_node, child_dict);
+  for (size_t i = 0; i < ChildCount(node); ++i) {
+    BrowserAccessibility* child_node = GetChild(node, i);
+    std::unique_ptr<base::DictionaryValue> child_dict(
+        new base::DictionaryValue);
+    RecursiveBuildAccessibilityTree(*child_node, child_dict.get());
+    children->Append(std::move(child_dict));
   }
 }
 
@@ -84,6 +77,12 @@ void AccessibilityTreeFormatter::RecursiveFormatAccessibilityTree(
   base::string16 line = indent + ToString(dict);
   if (line.find(base::ASCIIToUTF16(kSkipString)) != base::string16::npos)
     return;
+
+  // Replace literal newlines with "<newline>"
+  base::ReplaceChars(line,
+                     base::ASCIIToUTF16("\n"),
+                     base::ASCIIToUTF16("<newline>"),
+                     &line);
 
   *contents += line + base::ASCIIToUTF16("\n");
   if (line.find(base::ASCIIToUTF16(kSkipChildren)) != base::string16::npos)
@@ -98,52 +97,20 @@ void AccessibilityTreeFormatter::RecursiveFormatAccessibilityTree(
   }
 }
 
-#if !defined(PLATFORM_HAS_NATIVE_ACCESSIBILITY_IMPL)
-void AccessibilityTreeFormatter::AddProperties(const BrowserAccessibility& node,
-                                               base::DictionaryValue* dict) {
-  dict->SetInteger("id", node.GetId());
-}
-
-base::string16 AccessibilityTreeFormatter::ToString(
-    const base::DictionaryValue& node) {
-  int id_value;
-  node.GetInteger("id", &id_value);
-  return base::IntToString16(id_value);
-}
-
-void AccessibilityTreeFormatter::Initialize() {}
-
-// static
-const base::FilePath::StringType
-AccessibilityTreeFormatter::GetActualFileSuffix() {
-  return base::FilePath::StringType();
-}
-
-// static
-const base::FilePath::StringType
-AccessibilityTreeFormatter::GetExpectedFileSuffix() {
-  return base::FilePath::StringType();
-}
-
-// static
-const std::string AccessibilityTreeFormatter::GetAllowEmptyString() {
-  return std::string();
-}
-
-// static
-const std::string AccessibilityTreeFormatter::GetAllowString() {
-  return std::string();
-}
-
-// static
-const std::string AccessibilityTreeFormatter::GetDenyString() {
-  return std::string();
-}
-#endif  // PLATFORM_HAS_NATIVE_ACCESSIBILITY_IMPL
-
 void AccessibilityTreeFormatter::SetFilters(
     const std::vector<Filter>& filters) {
   filters_ = filters;
+}
+
+uint32_t AccessibilityTreeFormatter::ChildCount(
+    const BrowserAccessibility& node) const {
+  return node.PlatformChildCount();
+}
+
+BrowserAccessibility* AccessibilityTreeFormatter::GetChild(
+    const BrowserAccessibility& node,
+    uint32_t i) const {
+  return node.PlatformGetChild(i);
 }
 
 // static

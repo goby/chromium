@@ -5,11 +5,12 @@
 #ifndef UI_TOUCH_SELECTION_TOUCH_SELECTION_CONTROLLER_H_
 #define UI_TOUCH_SELECTION_TOUCH_SELECTION_CONTROLLER_H_
 
+#include "base/macros.h"
 #include "base/time/time.h"
-#include "ui/base/touch/selection_bound.h"
 #include "ui/gfx/geometry/point_f.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/vector2d_f.h"
+#include "ui/gfx/selection_bound.h"
 #include "ui/touch_selection/longpress_drag_selector.h"
 #include "ui/touch_selection/selection_event_type.h"
 #include "ui/touch_selection/touch_handle.h"
@@ -32,7 +33,7 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionControllerClient {
   virtual void SelectBetweenCoordinates(const gfx::PointF& base,
                                         const gfx::PointF& extent) = 0;
   virtual void OnSelectionEvent(SelectionEventType event) = 0;
-  virtual scoped_ptr<TouchHandleDrawable> CreateDrawable() = 0;
+  virtual std::unique_ptr<TouchHandleDrawable> CreateDrawable() = 0;
 };
 
 // Controller for manipulating text selection via touch input.
@@ -63,12 +64,6 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
     // Controls whether drag selection after a longpress is enabled.
     // Defaults to false.
     bool enable_longpress_drag_selection;
-
-    // Controls whether an insertion handle is shown on a tap for an empty
-    // editable text. Defauls to false.
-    // TODO(mohsen): This flag used to be set to |true| on Aura. That's not the
-    // case anymore and it is always |false|. Consider removing it.
-    bool show_on_tap_for_empty_editable;
   };
 
   TouchSelectionController(TouchSelectionControllerClient* client,
@@ -78,8 +73,8 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   // To be called when the selection bounds have changed.
   // Note that such updates will trigger handle updates only if preceded
   // by an appropriate call to allow automatic showing.
-  void OnSelectionBoundsChanged(const SelectionBound& start,
-                                const SelectionBound& end);
+  void OnSelectionBoundsChanged(const gfx::SelectionBound& start,
+                                const gfx::SelectionBound& end);
 
   // To be called when the viewport rect has been changed. This is used for
   // setting the state of the handles.
@@ -100,6 +95,10 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   // showing the selection or insertion handles from subsequent bounds changes.
   bool WillHandleLongPressEvent(base::TimeTicks event_time,
                                 const gfx::PointF& location);
+
+  // To be called before forwarding a gesture scroll begin event to prevent
+  // long-press drag.
+  void OnScrollBeginEvent();
 
   // Allow showing the selection handles from the most recent selection bounds
   // update (if valid), or a future valid bounds update.
@@ -137,15 +136,21 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   const gfx::PointF& GetStartPosition() const;
   const gfx::PointF& GetEndPosition() const;
 
-  const SelectionBound& start() const { return start_; }
-  const SelectionBound& end() const { return end_; }
+  const gfx::SelectionBound& start() const { return start_; }
+  const gfx::SelectionBound& end() const { return end_; }
 
   ActiveStatus active_status() const { return active_status_; }
+
+  bool insertion_active_or_requested() const {
+    return activate_insertion_automatically_;
+  }
 
  private:
   friend class TouchSelectionControllerTestApi;
 
   enum InputEventType { TAP, REPEATED_TAP, LONG_PRESS, INPUT_EVENT_TYPE_NONE };
+
+  bool WillHandleTouchEventImpl(const MotionEvent& event);
 
   // TouchHandleClient implementation.
   void OnDragBegin(const TouchSelectionDraggable& draggable,
@@ -156,7 +161,7 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   bool IsWithinTapSlop(const gfx::Vector2dF& delta) const override;
   void OnHandleTapped(const TouchHandle& handle) override;
   void SetNeedsAnimate() override;
-  scoped_ptr<TouchHandleDrawable> CreateDrawable() override;
+  std::unique_ptr<TouchHandleDrawable> CreateDrawable() override;
   base::TimeDelta GetMaxTapDuration() const override;
   bool IsAdaptiveHandleOrientationEnabled() const override;
 
@@ -202,18 +207,18 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
 
   InputEventType response_pending_input_event_;
 
-  SelectionBound start_;
-  SelectionBound end_;
+  gfx::SelectionBound start_;
+  gfx::SelectionBound end_;
   TouchHandleOrientation start_orientation_;
   TouchHandleOrientation end_orientation_;
 
   ActiveStatus active_status_;
 
-  scoped_ptr<TouchHandle> insertion_handle_;
+  std::unique_ptr<TouchHandle> insertion_handle_;
   bool activate_insertion_automatically_;
 
-  scoped_ptr<TouchHandle> start_selection_handle_;
-  scoped_ptr<TouchHandle> end_selection_handle_;
+  std::unique_ptr<TouchHandle> start_selection_handle_;
+  std::unique_ptr<TouchHandle> end_selection_handle_;
   bool activate_selection_automatically_;
 
   bool selection_empty_;
@@ -236,6 +241,9 @@ class UI_TOUCH_SELECTION_EXPORT TouchSelectionController
   // Whether a selection handle was dragged during the current 'selection
   // session' - i.e. since the current selection has been activated.
   bool selection_handle_dragged_;
+
+  // Determines whether the entire touch sequence should be consumed or not.
+  bool consume_touch_sequence_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionController);
 };

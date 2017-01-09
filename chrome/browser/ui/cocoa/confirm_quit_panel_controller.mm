@@ -9,8 +9,8 @@
 
 #include "base/logging.h"
 #include "base/mac/scoped_nsobject.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_registry_simple.h"
+#import "base/mac/sdk_forward_declarations.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,6 +19,7 @@
 #include "chrome/browser/ui/cocoa/confirm_quit.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_registry_simple.h"
 #import "ui/base/accelerators/platform_accelerator_cocoa.h"
 #include "ui/base/l10n/l10n_util_mac.h"
 
@@ -169,13 +170,13 @@ void RegisterLocalState(PrefRegistrySimple* registry) {
 
 // Private Interface ///////////////////////////////////////////////////////////
 
-@interface ConfirmQuitPanelController (Private)
+@interface ConfirmQuitPanelController (Private) <CAAnimationDelegate>
 - (void)animateFadeOut;
 - (NSEvent*)pumpEventQueueForKeyUp:(NSApplication*)app untilDate:(NSDate*)date;
 - (void)hideAllWindowsForApplication:(NSApplication*)app
                         withDuration:(NSTimeInterval)duration;
 // Returns the Accelerator for the Quit menu item.
-+ (scoped_ptr<ui::PlatformAcceleratorCocoa>)quitAccelerator;
++ (std::unique_ptr<ui::PlatformAcceleratorCocoa>)quitAccelerator;
 @end
 
 ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
@@ -226,7 +227,7 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
   ui::PlatformAcceleratorCocoa eventAccelerator(
       [event charactersIgnoringModifiers],
       [event modifierFlags] & NSDeviceIndependentModifierFlagsMask);
-  scoped_ptr<ui::PlatformAcceleratorCocoa> quitAccelerator(
+  std::unique_ptr<ui::PlatformAcceleratorCocoa> quitAccelerator(
       [self quitAccelerator]);
   return quitAccelerator->Equals(eventAccelerator);
 }
@@ -355,6 +356,10 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
   [[window animator] setAlphaValue:0.0];
 }
 
+- (void)animationDidStart:(CAAnimation*)theAnimation {
+  // CAAnimationDelegate method added on OSX 10.12.
+}
+
 - (void)animationDidStop:(CAAnimation*)theAnimation finished:(BOOL)finished {
   [self close];
 }
@@ -363,7 +368,8 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
 // key combination for quit. It then gets the modifiers and builds a string
 // to display them.
 + (NSString*)keyCommandString {
-  scoped_ptr<ui::PlatformAcceleratorCocoa> accelerator([self quitAccelerator]);
+  std::unique_ptr<ui::PlatformAcceleratorCocoa> accelerator(
+      [self quitAccelerator]);
   return [[self class] keyCombinationForAccelerator:*accelerator];
 }
 
@@ -388,20 +394,20 @@ ConfirmQuitPanelController* g_confirmQuitPanelController = nil;
 // This looks at the Main Menu and determines what the user has set as the
 // key combination for quit. It then gets the modifiers and builds an object
 // to hold the data.
-+ (scoped_ptr<ui::PlatformAcceleratorCocoa>)quitAccelerator {
++ (std::unique_ptr<ui::PlatformAcceleratorCocoa>)quitAccelerator {
   NSMenu* mainMenu = [NSApp mainMenu];
   // Get the application menu (i.e. Chromium).
   NSMenu* appMenu = [[mainMenu itemAtIndex:0] submenu];
   for (NSMenuItem* item in [appMenu itemArray]) {
     // Find the Quit item.
     if ([item action] == @selector(terminate:)) {
-      return scoped_ptr<ui::PlatformAcceleratorCocoa>(
+      return std::unique_ptr<ui::PlatformAcceleratorCocoa>(
           new ui::PlatformAcceleratorCocoa([item keyEquivalent],
                                            [item keyEquivalentModifierMask]));
     }
   }
   // Default to Cmd+Q.
-  return scoped_ptr<ui::PlatformAcceleratorCocoa>(
+  return std::unique_ptr<ui::PlatformAcceleratorCocoa>(
       new ui::PlatformAcceleratorCocoa(@"q", NSCommandKeyMask));
 }
 

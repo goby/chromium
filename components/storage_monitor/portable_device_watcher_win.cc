@@ -415,7 +415,7 @@ bool EnumerateAttachedDevicesOnBlockingThread(
   if (FAILED(hr))
     return false;
 
-  scoped_ptr<base::char16*[]> pnp_device_ids(
+  std::unique_ptr<base::char16*[]> pnp_device_ids(
       new base::char16*[pnp_device_count]);
   hr = portable_device_mgr->GetDevices(pnp_device_ids.get(), &pnp_device_count);
   if (FAILED(hr))
@@ -480,6 +480,9 @@ PortableDeviceWatcherWin::DeviceStorageObject::DeviceStorageObject(
 
 PortableDeviceWatcherWin::DeviceDetails::DeviceDetails() {
 }
+
+PortableDeviceWatcherWin::DeviceDetails::DeviceDetails(
+    const DeviceDetails& other) = default;
 
 PortableDeviceWatcherWin::DeviceDetails::~DeviceDetails() {
 }
@@ -623,11 +626,11 @@ void PortableDeviceWatcherWin::OnDidHandleDeviceAttachEvent(
   const StorageObjects& storage_objects = device_details->storage_objects;
   const base::string16& name = device_details->name;
   const base::string16& location = device_details->location;
-  DCHECK(!ContainsKey(device_map_, location));
+  DCHECK(!base::ContainsKey(device_map_, location));
   for (StorageObjects::const_iterator storage_iter = storage_objects.begin();
        storage_iter != storage_objects.end(); ++storage_iter) {
     const std::string& storage_id = storage_iter->object_persistent_id;
-    DCHECK(!ContainsKey(storage_map_, storage_id));
+    DCHECK(!base::ContainsKey(storage_map_, storage_id));
 
     // Keep track of storage id and storage name to see how often we receive
     // empty values.

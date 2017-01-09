@@ -6,12 +6,13 @@
 #define CHROMEOS_NETWORK_FIREWALL_HOLE_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/files/scoped_file.h"
 #include "chromeos/chromeos_export.h"
-#include "dbus/file_descriptor.h"
 
 namespace chromeos {
 
@@ -24,7 +25,7 @@ class CHROMEOS_EXPORT FirewallHole {
     TCP,
   };
 
-  typedef base::Callback<void(scoped_ptr<FirewallHole>)> OpenCallback;
+  typedef base::Callback<void(std::unique_ptr<FirewallHole>)> OpenCallback;
 
   // Opens a port on the system firewall for the given network interface (or all
   // interfaces if |interface| is ""). The hole will be closed when the object
@@ -37,31 +38,24 @@ class CHROMEOS_EXPORT FirewallHole {
   ~FirewallHole();
 
  private:
-  static void RequestPortAccess(PortType type,
-                                uint16_t port,
-                                const std::string& interface,
-                                dbus::ScopedFileDescriptor lifeline_local,
-                                dbus::ScopedFileDescriptor lifeline_remote,
-                                const OpenCallback& callback);
-
   static void PortAccessGranted(PortType type,
                                 uint16_t port,
                                 const std::string& interface,
-                                dbus::ScopedFileDescriptor lifeline_fd,
+                                base::ScopedFD lifeline_fd,
                                 const FirewallHole::OpenCallback& callback,
                                 bool success);
 
   FirewallHole(PortType type,
                uint16_t port,
                const std::string& interface,
-               dbus::ScopedFileDescriptor lifeline_fd);
+               base::ScopedFD lifeline_fd);
 
   const PortType type_;
   const uint16_t port_;
   const std::string interface_;
 
   // A file descriptor used by firewalld to track the lifetime of this process.
-  dbus::ScopedFileDescriptor lifeline_fd_;
+  base::ScopedFD lifeline_fd_;
 };
 
 }  // namespace chromeos

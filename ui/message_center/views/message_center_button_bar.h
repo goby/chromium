@@ -5,6 +5,9 @@
 #ifndef UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUTTON_BAR_H_
 #define UI_MESSAGE_CENTER_VIEWS_MESSAGE_CENTER_BUTTON_BAR_H_
 
+#include "base/macros.h"
+#include "build/build_config.h"
+#include "ui/message_center/message_center_export.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/view.h"
@@ -15,9 +18,7 @@ class Label;
 
 namespace message_center {
 
-class ButtonBarSettingsLabel;
 class MessageCenter;
-class MessageCenterTray;
 class MessageCenterView;
 class NotificationCenterButton;
 class NotifierSettingsProvider;
@@ -36,13 +37,18 @@ class MessageCenterButtonBar : public views::View,
 
   // Enables or disables all of the buttons in the center.  This is used to
   // prevent user clicks during the close-all animation.
-  virtual void SetAllButtonsEnabled(bool enabled);
+  void SetSettingsAndQuietModeButtonsEnabled(bool enabled);
 
   // Sometimes we shouldn't see the close-all button.
   void SetCloseAllButtonEnabled(bool enabled);
 
+  MESSAGE_CENTER_EXPORT views::Button* GetCloseAllButtonForTest() const;
+
   // Sometimes we shouldn't see the back arrow (not in settings).
   void SetBackArrowVisible(bool visible);
+
+  // Update the label of the title.
+  void SetTitle(const base::string16& title);
 
  private:
   // Updates the layout manager which can have differing configuration

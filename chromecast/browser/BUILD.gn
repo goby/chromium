@@ -2,12 +2,21 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/config/ui.gni")
 import("//chromecast/chromecast.gni")
-import("//media/media_options.gni")
 import("//testing/test.gni")
+import("//tools/grit/grit_rule.gni")
+
+if (is_android) {
+  import("//build/config/android/rules.gni")
+}
 
 source_set("browser") {
   sources = [
+    "android/cast_window_android.cc",
+    "android/cast_window_android.h",
+    "android/cast_window_manager.cc",
+    "android/cast_window_manager.h",
     "cast_browser_context.cc",
     "cast_browser_context.h",
     "cast_browser_main_parts.cc",
@@ -22,6 +31,8 @@ source_set("browser") {
     "cast_download_manager_delegate.h",
     "cast_http_user_agent_settings.cc",
     "cast_http_user_agent_settings.h",
+    "cast_media_blocker.cc",
+    "cast_media_blocker.h",
     "cast_net_log.cc",
     "cast_net_log.h",
     "cast_network_delegate.cc",
@@ -32,12 +43,14 @@ source_set("browser") {
     "cast_quota_permission_context.h",
     "cast_resource_dispatcher_host_delegate.cc",
     "cast_resource_dispatcher_host_delegate.h",
-    "devtools/cast_dev_tools_delegate.cc",
-    "devtools/cast_dev_tools_delegate.h",
+    "devtools/cast_devtools_manager_delegate.cc",
+    "devtools/cast_devtools_manager_delegate.h",
     "devtools/remote_debugging_server.cc",
     "devtools/remote_debugging_server.h",
     "geolocation/cast_access_token_store.cc",
     "geolocation/cast_access_token_store.h",
+    "media/media_caps_impl.cc",
+    "media/media_caps_impl.h",
     "metrics/cast_metrics_prefs.cc",
     "metrics/cast_metrics_prefs.h",
     "metrics/cast_metrics_service_client.cc",
@@ -63,21 +76,25 @@ source_set("browser") {
   deps = [
     "//base",
     "//base:i18n",
-    "//base:prefs",
     "//cc",
+    "//chromecast:chromecast_features",
+    "//chromecast/app:cast_crash_client",
     "//chromecast/app:chromecast_settings",
     "//chromecast/app:resources",
     "//chromecast/base",
     "//chromecast/base:cast_sys_info",
     "//chromecast/base:cast_version",
+    "//chromecast/browser:resources",
     "//chromecast/common",
+    "//chromecast/common/media",
+    "//chromecast/common/media:interfaces",
     "//chromecast/graphics",
     "//chromecast/media",
+    "//chromecast/media/service",
     "//chromecast/net",
     "//chromecast/service",
     "//components/crash/content/app",
     "//components/crash/content/browser",
-    "//components/devtools_http_handler:devtools_http_handler",
     "//components/metrics",
     "//components/metrics:gpu",
     "//components/metrics:net",
@@ -87,92 +104,123 @@ source_set("browser") {
     # isn't needed. crbug.com/541577
     "//components/metrics:ui",
     "//components/network_hints/browser",
+    "//components/prefs",
     "//content",
     "//content/public/browser",
     "//content/public/common",
+    "//content/public/common:service_names",
     "//content/public/utility",
+    "//device/geolocation",
     "//gpu",
     "//ipc",
     "//media",
     "//net",
-    "//ui/aura",
     "//ui/base",
     "//ui/compositor",
+    "//ui/display",
     "//ui/gl",
   ]
 
-  if (!is_android) {
+  if (is_linux) {
     sources += [
+      "cast_memory_pressure_monitor.cc",
+      "cast_memory_pressure_monitor.h",
       "metrics/external_metrics.cc",
       "metrics/external_metrics.h",
-    ]
-
-    public_deps = [
-      "//chromecast/browser/media",
     ]
 
     deps += [
       "//build/linux:fontconfig",
       "//components/metrics:serialization",
+      "//ui/aura",
     ]
+  } else if (is_android) {
+    deps += [ ":jni_headers" ]
   }
 
-  if (enable_mojo_media != "none") {
-    configs += [ "//media/mojo/services:enable_mojo_media_config" ]
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
   }
+}
 
-  if (enable_mojo_media == "utility") {
-    deps += [ "//media/mojo/services:application" ]
-  }
+grit("resources") {
+  visibility = [
+    ":browser",
+    "//chromecast:cast_shell_pak",
+  ]
+  source = "cast_browser_resources.grd"
+  use_qualified_include = true
+  output_dir = "$root_gen_dir/chromecast/browser"
+  outputs = [
+    "grit/cast_browser_resources.h",
+    "cast_browser_resources.pak",
+  ]
 }
 
 source_set("test_support") {
   testonly = true
-
   sources = [
-    "test/chromecast_browser_test.cc",
-    "test/chromecast_browser_test.h",
-    "test/chromecast_browser_test_runner.cc",
+    "test/cast_browser_test.cc",
+    "test/cast_browser_test.h",
   ]
 
   public_deps = [
     ":browser",
-    "//chromecast:cast_shell_common",
+    "//content/test:test_support",
   ]
 
   deps = [
     "//base",
-    "//chromecast/app",
     "//chromecast/base",
     "//content/public/browser",
     "//content/public/common",
-    "//content/test:test_support",
     "//testing/gtest",
   ]
 }
 
-config("browser_test_config") {
-  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
-}
-
-test("cast_shell_browser_test") {
+source_set("browsertests") {
+  testonly = true
   sources = [
-    "test/chromecast_shell_browser_test.cc",
+    "cast_media_blocker_browsertest.cc",
+    "test/cast_navigation_browsertest.cc",
   ]
 
-  configs += [ ":browser_test_config" ]
+  defines = [ "HAS_OUT_OF_PROC_TEST_RUNNER" ]
 
   deps = [
     ":test_support",
-    "//base",
-    "//content/test:test_support",
+    "//chromecast:chromecast_features",
     "//media/base:test_support",
-    "//testing/gtest",
-    "//url",
+  ]
+}
+
+source_set("unittests") {
+  testonly = true
+
+  sources = [
+    "cast_media_blocker_unittest.cc",
+    "devtools/cast_devtools_manager_delegate_unittest.cc",
   ]
 
-  # TODO(slan): Find a better way to do this.
-  if (chromecast_branding != "public") {
-    deps += [ "//chromecast/internal:cast_shell_internal" ]
+  deps = [
+    ":browser",
+    "//base",
+    "//chromecast/base",
+    "//content/public/browser",
+    "//content/test:test_support",
+  ]
+}
+
+if (is_android) {
+  generate_jni("jni_headers") {
+    sources = [
+      "android/apk/src/org/chromium/chromecast/shell/CastCrashHandler.java",
+      "android/apk/src/org/chromium/chromecast/shell/CastMetricsHelper.java",
+      "android/apk/src/org/chromium/chromecast/shell/CastSysInfoAndroid.java",
+      "android/apk/src/org/chromium/chromecast/shell/CastWindowAndroid.java",
+      "android/apk/src/org/chromium/chromecast/shell/CastWindowManager.java",
+    ]
+
+    jni_package = "chromecast"
   }
 }

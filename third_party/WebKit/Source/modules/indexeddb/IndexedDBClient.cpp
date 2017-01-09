@@ -2,24 +2,45 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/indexeddb/IndexedDBClient.h"
+
+#include "core/dom/Document.h"
+#include "core/dom/ExecutionContext.h"
+#include "core/frame/LocalFrame.h"
+#include "core/workers/WorkerClients.h"
+#include "core/workers/WorkerGlobalScope.h"
 
 namespace blink {
 
-static CreateIndexedDBClient* idbClientCreateFunction = nullptr;
+IndexedDBClient::IndexedDBClient() {}
 
-void setIndexedDBClientCreateFunction(CreateIndexedDBClient createFunction)
-{
-    idbClientCreateFunction = createFunction;
+IndexedDBClient* IndexedDBClient::from(ExecutionContext* context) {
+  if (context->isDocument())
+    return static_cast<IndexedDBClient*>(Supplement<LocalFrame>::from(
+        toDocument(*context).frame(), supplementName()));
+
+  WorkerClients* clients = toWorkerGlobalScope(*context).clients();
+  ASSERT(clients);
+  return static_cast<IndexedDBClient*>(
+      Supplement<WorkerClients>::from(clients, supplementName()));
 }
 
-IndexedDBClient* IndexedDBClient::create()
-{
-    ASSERT(idbClientCreateFunction);
-    // There's no reason why we need to allocate a new proxy each time, but
-    // there's also no strong reason not to.
-    return idbClientCreateFunction();
+const char* IndexedDBClient::supplementName() {
+  return "IndexedDBClient";
 }
 
-} // namespace blink
+DEFINE_TRACE(IndexedDBClient) {
+  Supplement<LocalFrame>::trace(visitor);
+  Supplement<WorkerClients>::trace(visitor);
+}
+
+void provideIndexedDBClientTo(LocalFrame& frame, IndexedDBClient* client) {
+  frame.provideSupplement(IndexedDBClient::supplementName(), client);
+}
+
+void provideIndexedDBClientToWorker(WorkerClients* clients,
+                                    IndexedDBClient* client) {
+  clients->provideSupplement(IndexedDBClient::supplementName(), client);
+}
+
+}  // namespace blink

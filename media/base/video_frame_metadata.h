@@ -5,10 +5,15 @@
 #ifndef MEDIA_BASE_VIDEO_FRAME_METADATA_H_
 #define MEDIA_BASE_VIDEO_FRAME_METADATA_H_
 
+#include <memory>
+#include <string>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "media/base/media_export.h"
+#include "media/base/video_rotation.h"
 
 namespace media {
 
@@ -31,6 +36,18 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // GetInteger()/SetInteger() and ColorSpace enumeration.
     COLOR_SPACE,
 
+    // Indicates that this frame must be copied to a new texture before use,
+    // rather than being used directly. Specifically this is required for
+    // WebView because of limitations about sharing surface textures between GL
+    // contexts.
+    COPY_REQUIRED,
+
+    // Indicates that the frame is owned by the decoder and that destroying the
+    // decoder will make the frame unrenderable. TODO(sandersd): Remove once OSX
+    // and Windows hardware decoders support frames which outlive the decoder.
+    // http://crbug.com/595716 and http://crbug.com/602708.
+    DECODER_OWNS_FRAME,
+
     // Indicates if the current frame is the End of its current Stream. Use
     // Get/SetBoolean() for this Key.
     END_OF_STREAM,
@@ -49,6 +66,14 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // same for all frames in the same session.  Use Get/SetDouble() for this
     // key.
     FRAME_RATE,
+
+    // This is a boolean that signals that the video capture engine detects
+    // interactive content. One possible optimization that this signal can help
+    // with is remote content: adjusting end-to-end latency down to help the
+    // user better coordinate their actions.
+    //
+    // Use Get/SetBoolean for this key.
+    INTERACTIVE_CONTENT,
 
     // This field represents the local time at which either: 1) the frame was
     // generated, if it was done so locally; or 2) the targeted play-out time
@@ -77,6 +102,24 @@ class MEDIA_EXPORT VideoFrameMetadata {
     // measurements would be used as feedback.
     RESOURCE_UTILIZATION,
 
+    // Sources of VideoFrames use this marker to indicate that an instance of
+    // VideoFrameExternalResources produced from the associated video frame
+    // should use read lock fences.
+    READ_LOCK_FENCES_ENABLED,
+
+    // Indicates that the frame is rotated.
+    ROTATION,
+
+    // Android only: if set, then this frame is not suitable for overlay, even
+    // if ALLOW_OVERLAY is set.  However, it allows us to process the overlay
+    // to see if it would have been promoted, if it were backed by a SurfaceView
+    // instead.  This lets us figure out when SurfaceViews are appropriate.
+    SURFACE_TEXTURE,
+
+    // Android only: if set, then this frame's resource would like to be
+    // notified about its promotability to an overlay.
+    WANTS_PROMOTION_HINT,
+
     NUM_KEYS
   };
 
@@ -91,15 +134,17 @@ class MEDIA_EXPORT VideoFrameMetadata {
   void SetBoolean(Key key, bool value);
   void SetInteger(Key key, int value);
   void SetDouble(Key key, double value);
+  void SetRotation(Key key, VideoRotation value);
   void SetString(Key key, const std::string& value);
   void SetTimeDelta(Key key, const base::TimeDelta& value);
   void SetTimeTicks(Key key, const base::TimeTicks& value);
-  void SetValue(Key key, scoped_ptr<base::Value> value);
+  void SetValue(Key key, std::unique_ptr<base::Value> value);
 
   // Getters.  Returns true if |key| is present, and its value has been set.
   bool GetBoolean(Key key, bool* value) const WARN_UNUSED_RESULT;
   bool GetInteger(Key key, int* value) const WARN_UNUSED_RESULT;
   bool GetDouble(Key key, double* value) const WARN_UNUSED_RESULT;
+  bool GetRotation(Key key, VideoRotation* value) const WARN_UNUSED_RESULT;
   bool GetString(Key key, std::string* value) const WARN_UNUSED_RESULT;
   bool GetTimeDelta(Key key, base::TimeDelta* value) const WARN_UNUSED_RESULT;
   bool GetTimeTicks(Key key, base::TimeTicks* value) const WARN_UNUSED_RESULT;
@@ -113,6 +158,9 @@ class MEDIA_EXPORT VideoFrameMetadata {
   // For serialization.
   void MergeInternalValuesInto(base::DictionaryValue* out) const;
   void MergeInternalValuesFrom(const base::DictionaryValue& in);
+
+  // Merges internal values from |metadata_source|.
+  void MergeMetadataFrom(const VideoFrameMetadata* metadata_source);
 
  private:
   const base::BinaryValue* GetBinaryValue(Key key) const;

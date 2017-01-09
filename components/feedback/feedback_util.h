@@ -7,21 +7,15 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 
 #if defined(OS_MACOSX)
 #include "base/sys_info.h"
 #elif defined(OS_WIN)
 #include "base/win/windows_version.h"
 #endif
-
-class Profile;
-
-namespace content {
-class WebContents;
-}
 
 namespace chrome {
 extern const char kAppLauncherCategoryTag[];

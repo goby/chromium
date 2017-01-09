@@ -4,15 +4,20 @@
 
 #include "chrome/browser/ui/webui/options/supervised_user_import_handler.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
+#include <utility>
+#include <vector>
 
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/signin/signin_error_controller_factory.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
@@ -23,30 +28,30 @@
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_error_controller.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "content/public/browser/web_ui.h"
-#include "grit/theme_resources.h"
 
 namespace {
 
-scoped_ptr<base::ListValue> GetAvatarIcons() {
-  scoped_ptr<base::ListValue> avatar_icons(new base::ListValue);
+std::unique_ptr<base::ListValue> GetAvatarIcons() {
+  std::unique_ptr<base::ListValue> avatar_icons(new base::ListValue);
   for (size_t i = 0; i < profiles::GetDefaultAvatarIconCount(); ++i) {
     std::string avatar_url = profiles::GetDefaultAvatarIconUrl(i);
-    avatar_icons->Append(new base::StringValue(avatar_url));
+    avatar_icons->AppendString(avatar_url);
   }
 
-  return avatar_icons.Pass();
+  return avatar_icons;
 }
 
 bool ProfileIsLegacySupervised(const base::FilePath& profile_path) {
-  const ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  size_t index = cache.GetIndexOfProfileWithPath(profile_path);
-  if (index == std::string::npos)
-    return false;
-  return cache.ProfileIsLegacySupervisedAtIndex(index);
+  ProfileAttributesEntry* entry;
+
+  return g_browser_process->profile_manager()->GetProfileAttributesStorage().
+      GetProfileAttributesWithPath(profile_path, &entry) &&
+      entry->IsLegacySupervised();
 }
 
 }  // namespace
@@ -98,7 +103,7 @@ void SupervisedUserImportHandler::InitializeHandler() {
   Profile* profile = Profile::FromWebUI(web_ui());
   if (!profile->IsSupervised()) {
     profile_observer_.Add(
-        &g_browser_process->profile_manager()->GetProfileInfoCache());
+        &g_browser_process->profile_manager()->GetProfileAttributesStorage());
     SupervisedUserSyncService* sync_service =
         SupervisedUserSyncServiceFactory::GetForProfile(profile);
     if (sync_service) {
@@ -164,7 +169,7 @@ void SupervisedUserImportHandler::OnSupervisedUsersChanged() {
 }
 
 void SupervisedUserImportHandler::FetchSupervisedUsers() {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.SupervisedUserListData.resetPromise");
   RequestSupervisedUserImportUpdate(NULL);
 }
@@ -191,17 +196,17 @@ void SupervisedUserImportHandler::RequestSupervisedUserImportUpdate(
 void SupervisedUserImportHandler::SendExistingSupervisedUsers(
     const base::DictionaryValue* dict) {
   DCHECK(dict);
-  const ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
+  std::vector<ProfileAttributesEntry*> entries =
+      g_browser_process->profile_manager()->
+      GetProfileAttributesStorage().GetAllProfilesAttributes();
 
   // Collect the ids of local supervised user profiles.
   std::set<std::string> supervised_user_ids;
-  for (size_t i = 0; i < cache.GetNumberOfProfiles(); ++i) {
+  for (const ProfileAttributesEntry* entry : entries) {
     // Filter out omitted profiles. These are currently being imported, and
     // shouldn't show up as "already on this device" just yet.
-    if (cache.ProfileIsLegacySupervisedAtIndex(i) &&
-        !cache.IsOmittedProfileAtIndex(i)) {
-      supervised_user_ids.insert(cache.GetSupervisedUserIdOfProfileAtIndex(i));
+    if (entry->IsLegacySupervised() && !entry->IsOmitted()) {
+      supervised_user_ids.insert(entry->GetSupervisedUserId());
     }
   }
 
@@ -216,7 +221,8 @@ void SupervisedUserImportHandler::SendExistingSupervisedUsers(
     std::string name;
     value->GetString(SupervisedUserSyncService::kName, &name);
 
-    base::DictionaryValue* supervised_user = new base::DictionaryValue;
+    std::unique_ptr<base::DictionaryValue> supervised_user(
+        new base::DictionaryValue);
     supervised_user->SetString("id", it.key());
     supervised_user->SetString("name", name);
 
@@ -249,16 +255,16 @@ void SupervisedUserImportHandler::SendExistingSupervisedUsers(
         supervised_user_ids.find(it.key()) != supervised_user_ids.end();
     supervised_user->SetBoolean("onCurrentDevice", on_current_device);
 
-    supervised_users.Append(supervised_user);
+    supervised_users.Append(std::move(supervised_user));
   }
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.SupervisedUserListData.receiveExistingSupervisedUsers",
       supervised_users);
 }
 
 void SupervisedUserImportHandler::ClearSupervisedUsersAndShowError() {
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.SupervisedUserListData.onSigninError");
 }
 

@@ -31,24 +31,23 @@
 namespace blink {
 
 class AppendNodeCommand final : public SimpleEditCommand {
-public:
-    static PassRefPtrWillBeRawPtr<AppendNodeCommand> create(PassRefPtrWillBeRawPtr<ContainerNode> parent, PassRefPtrWillBeRawPtr<Node> node)
-    {
-        return adoptRefWillBeNoop(new AppendNodeCommand(parent, node));
-    }
+ public:
+  static AppendNodeCommand* create(ContainerNode* parent, Node* node) {
+    return new AppendNodeCommand(parent, node);
+  }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    AppendNodeCommand(PassRefPtrWillBeRawPtr<ContainerNode> parent, PassRefPtrWillBeRawPtr<Node>);
+ private:
+  AppendNodeCommand(ContainerNode* parent, Node*);
 
-    void doApply() override;
-    void doUnapply() override;
+  void doApply(EditingState*) override;
+  void doUnapply() override;
 
-    RefPtrWillBeMember<ContainerNode> m_parent;
-    RefPtrWillBeMember<Node> m_node;
+  Member<ContainerNode> m_parent;
+  Member<Node> m_node;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // AppendNodeCommand_h
+#endif  // AppendNodeCommand_h

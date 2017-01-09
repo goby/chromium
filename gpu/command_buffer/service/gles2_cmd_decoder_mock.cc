@@ -4,6 +4,8 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder_mock.h"
 
+#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+
 namespace gpu {
 namespace gles2 {
 
@@ -18,7 +20,7 @@ MockGLES2Decoder::MockGLES2Decoder()
 MockGLES2Decoder::~MockGLES2Decoder() {}
 
 error::Error MockGLES2Decoder::FakeDoCommands(unsigned int num_commands,
-                                              const void* buffer,
+                                              const volatile void* buffer,
                                               int num_entries,
                                               int* entries_processed) {
   return AsyncAPIInterface::DoCommands(

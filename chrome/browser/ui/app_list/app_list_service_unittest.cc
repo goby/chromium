@@ -2,21 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/app_list/app_list_service.h"
+
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/pref_service_factory.h"
-#include "base/prefs/testing_pref_store.h"
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/browser/ui/app_list/app_list_service.h"
 #include "chrome/browser/ui/app_list/app_list_service_impl.h"
 #include "chrome/browser/ui/app_list/test/fake_profile.h"
 #include "chrome/browser/ui/app_list/test/fake_profile_store.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/pref_service_factory.h"
+#include "components/prefs/testing_pref_store.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/app_list/app_list_switches.h"
 
@@ -24,8 +28,8 @@ class TestingAppListServiceImpl : public AppListServiceImpl {
  public:
   TestingAppListServiceImpl(const base::CommandLine& command_line,
                             PrefService* local_state,
-                            scoped_ptr<ProfileStore> profile_store)
-      : AppListServiceImpl(command_line, local_state, profile_store.Pass()),
+                            std::unique_ptr<ProfileStore> profile_store)
+      : AppListServiceImpl(command_line, local_state, std::move(profile_store)),
         showing_for_profile_(NULL),
         destroy_app_list_call_count_(0) {}
 
@@ -96,15 +100,14 @@ class AppListServiceUnitTest : public testing::Test {
     AppListService::RegisterPrefs(pref_registry);
     profiles::RegisterPrefs(pref_registry);
 
-    base::PrefServiceFactory factory;
+    PrefServiceFactory factory;
     factory.set_user_prefs(make_scoped_refptr(new TestingPrefStore));
-    local_state_ = factory.Create(pref_registry).Pass();
+    local_state_ = factory.Create(pref_registry);
 
     profile_store_ = new FakeProfileStore(user_data_dir_, local_state_.get());
     service_.reset(new TestingAppListServiceImpl(
-        command_line,
-        local_state_.get(),
-        scoped_ptr<ProfileStore>(profile_store_)));
+        command_line, local_state_.get(),
+        std::unique_ptr<ProfileStore>(profile_store_)));
   }
 
   void EnableAppList() {
@@ -113,11 +116,11 @@ class AppListServiceUnitTest : public testing::Test {
   }
 
   base::FilePath user_data_dir_;
-  scoped_ptr<PrefService> local_state_;
+  std::unique_ptr<PrefService> local_state_;
   FakeProfileStore* profile_store_;
-  scoped_ptr<TestingAppListServiceImpl> service_;
-  scoped_ptr<FakeProfile> profile1_;
-  scoped_ptr<FakeProfile> profile2_;
+  std::unique_ptr<TestingAppListServiceImpl> service_;
+  std::unique_ptr<FakeProfile> profile1_;
+  std::unique_ptr<FakeProfile> profile2_;
 
   DISALLOW_COPY_AND_ASSIGN(AppListServiceUnitTest);
 };

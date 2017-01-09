@@ -8,11 +8,16 @@
 
 namespace metrics {
 
+void TestMetricsProvider::Init() {
+  init_called_ = true;
+}
+
 void TestMetricsProvider::OnRecordingDisabled() {
   on_recording_disabled_called_ = true;
 }
 
 bool TestMetricsProvider::HasInitialStabilityMetrics() {
+  has_initial_stability_metrics_called_ = true;
   return has_initial_stability_metrics_;
 }
 

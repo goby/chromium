@@ -10,17 +10,13 @@
 #include "chrome/browser/extensions/extension_uninstall_dialog.h"
 #include "extensions/browser/api/management/management_api_delegate.h"
 
-namespace favicon_base {
-struct FaviconImageResult;
-}  // namespace favicon_base
-
 class ChromeManagementAPIDelegate : public extensions::ManagementAPIDelegate {
  public:
   ChromeManagementAPIDelegate();
   ~ChromeManagementAPIDelegate() override;
 
   // ManagementAPIDelegate.
-  bool LaunchAppFunctionDelegate(
+  void LaunchAppFunctionDelegate(
       const extensions::Extension* extension,
       content::BrowserContext* context) const override;
   GURL GetFullLaunchURL(const extensions::Extension* extension) const override;
@@ -30,19 +26,24 @@ class ChromeManagementAPIDelegate : public extensions::ManagementAPIDelegate {
   void GetPermissionWarningsByManifestFunctionDelegate(
       extensions::ManagementGetPermissionWarningsByManifestFunction* function,
       const std::string& manifest_str) const override;
-  scoped_ptr<extensions::InstallPromptDelegate> SetEnabledFunctionDelegate(
-      extensions::ManagementSetEnabledFunction* function,
-      const extensions::Extension* extension) const override;
-  scoped_ptr<extensions::RequirementsChecker> CreateRequirementsChecker()
+  std::unique_ptr<extensions::InstallPromptDelegate> SetEnabledFunctionDelegate(
+      content::WebContents* web_contents,
+      content::BrowserContext* browser_context,
+      const extensions::Extension* extension,
+      const base::Callback<void(bool)>& callback) const override;
+  std::unique_ptr<extensions::RequirementsChecker> CreateRequirementsChecker()
       const override;
-  scoped_ptr<extensions::UninstallDialogDelegate> UninstallFunctionDelegate(
+  std::unique_ptr<extensions::UninstallDialogDelegate>
+  UninstallFunctionDelegate(
       extensions::ManagementUninstallFunctionBase* function,
       const extensions::Extension* target_extension,
       bool show_programmatic_uninstall_ui) const override;
   bool CreateAppShortcutFunctionDelegate(
       extensions::ManagementCreateAppShortcutFunction* function,
-      const extensions::Extension* extension) const override;
-  scoped_ptr<extensions::AppForLinkDelegate> GenerateAppForLinkFunctionDelegate(
+      const extensions::Extension* extension,
+      std::string* error) const override;
+  std::unique_ptr<extensions::AppForLinkDelegate>
+  GenerateAppForLinkFunctionDelegate(
       extensions::ManagementGenerateAppForLinkFunction* function,
       content::BrowserContext* context,
       const std::string& title,

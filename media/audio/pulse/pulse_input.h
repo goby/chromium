@@ -6,14 +6,16 @@
 #define MEDIA_AUDIO_PULSE_PULSE_INPUT_H_
 
 #include <pulse/pulseaudio.h>
+#include <stddef.h>
 #include <string>
 
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "media/audio/agc_audio_stream.h"
 #include "media/audio/audio_device_name.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_block_fifo.h"
+#include "media/base/audio_parameters.h"
 
 namespace media {
 

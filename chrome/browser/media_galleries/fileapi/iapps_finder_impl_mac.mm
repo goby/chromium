@@ -4,6 +4,8 @@
 
 #include "chrome/browser/media_galleries/fileapi/iapps_finder_impl.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
@@ -33,7 +35,7 @@ void FindMostRecentDatabase(
     const IAppsFinderCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
 
-  scoped_ptr<MacPreferences> real_preferences;
+  std::unique_ptr<MacPreferences> real_preferences;
   MacPreferences* prefs = g_test_mac_preferences;
   if (!prefs) {
     real_preferences.reset(new MacPreferences());
@@ -72,15 +74,6 @@ void FindMostRecentDatabase(
   callback.Run(most_recent_db_path.value());
 }
 
-base::FilePath ExtractIPhotoPath(NSString* path_ns) {
-  NSURL* url = [NSURL URLWithString:path_ns];
-  if (![url isFileURL])
-    return base::FilePath();
-
-  NSString* expanded_path_ns = [url path];
-  return base::mac::NSStringToFilePath(expanded_path_ns);
-}
-
 base::FilePath ExtractITunesPath(NSString* path_ns) {
   NSString* expanded_path_ns = [path_ns stringByExpandingTildeInPath];
   return base::mac::NSStringToFilePath(expanded_path_ns);
@@ -88,17 +81,7 @@ base::FilePath ExtractITunesPath(NSString* path_ns) {
 
 }  // namespace
 
-NSString* const kIPhotoRecentDatabasesKey = @"iPhotoRecentDatabases";
 NSString* const kITunesRecentDatabasePathsKey = @"iTunesRecentDatabasePaths";
-
-void FindIPhotoLibrary(const IAppsFinderCallback& callback) {
-  FindIAppsOnFileThread(
-      storage_monitor::StorageInfo::IPHOTO,
-      base::Bind(&FindMostRecentDatabase,
-                 base::scoped_nsobject<NSString>(kIPhotoRecentDatabasesKey),
-                 base::Bind(&ExtractIPhotoPath)),
-      callback);
-}
 
 void FindITunesLibrary(const IAppsFinderCallback& callback) {
   FindIAppsOnFileThread(

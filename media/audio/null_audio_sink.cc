@@ -75,14 +75,25 @@ bool NullAudioSink::SetVolume(double volume) {
   return volume == 0.0;
 }
 
-OutputDevice* NullAudioSink::GetOutputDevice() {
-  return nullptr;
+OutputDeviceInfo NullAudioSink::GetOutputDeviceInfo() {
+  return OutputDeviceInfo(OUTPUT_DEVICE_STATUS_OK);
+}
+
+bool NullAudioSink::CurrentThreadIsRenderingThread() {
+  return task_runner_->BelongsToCurrentThread();
+}
+
+void NullAudioSink::SwitchOutputDevice(const std::string& device_id,
+                                       const url::Origin& security_origin,
+                                       const OutputDeviceStatusCB& callback) {
+  callback.Run(OUTPUT_DEVICE_STATUS_ERROR_INTERNAL);
 }
 
 void NullAudioSink::CallRender() {
   DCHECK(task_runner_->BelongsToCurrentThread());
 
-  int frames_received = callback_->Render(audio_bus_.get(), 0);
+  int frames_received = callback_->Render(
+      base::TimeDelta(), base::TimeTicks::Now(), 0, audio_bus_.get());
   if (!audio_hash_ || frames_received <= 0)
     return;
 

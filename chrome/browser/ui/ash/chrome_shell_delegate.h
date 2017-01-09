@@ -5,43 +5,24 @@
 #ifndef CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 #define CHROME_BROWSER_UI_ASH_CHROME_SHELL_DELEGATE_H_
 
+#include <memory>
 #include <string>
 
-#include "ash/shelf/shelf_item_types.h"
-#include "ash/shell_delegate.h"
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/observer_list.h"
-#include "chrome/browser/ui/ash/metrics/chrome_user_metrics_recorder.h"
+#include "ash/common/shell_delegate.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
-#if defined(OS_CHROMEOS)
-#include "ash/shell_observer.h"
-#endif
-
-class Browser;
-
-namespace ash {
-class ShelfItemDelegate;
-}
-
-namespace content {
-class WebContents;
+namespace chromeos {
+class DisplayConfigurationObserver;
 }
 
 namespace keyboard {
 class KeyboardUI;
 }
 
-#if defined(OS_CHROMEOS)
-namespace chromeos {
-class DisplayConfigurationObserver;
-}
-#endif
-
-class ChromeLauncherController;
+class ChromeLauncherControllerImpl;
 
 class ChromeShellDelegate : public ash::ShellDelegate,
                             public content::NotificationObserver {
@@ -49,41 +30,37 @@ class ChromeShellDelegate : public ash::ShellDelegate,
   ChromeShellDelegate();
   ~ChromeShellDelegate() override;
 
-  static ChromeShellDelegate* instance() { return instance_; }
-
   // ash::ShellDelegate overrides;
-  bool IsFirstRunAfterBoot() const override;
+  service_manager::Connector* GetShellConnector() const override;
   bool IsMultiProfilesEnabled() const override;
   bool IsIncognitoAllowed() const override;
   bool IsRunningInForcedAppMode() const override;
-  bool CanShowWindowForUser(aura::Window* window) const override;
+  bool CanShowWindowForUser(ash::WmWindow* window) const override;
   bool IsForceMaximizeOnFirstRun() const override;
   void PreInit() override;
   void PreShutdown() override;
   void Exit() override;
   keyboard::KeyboardUI* CreateKeyboardUI() override;
-  void VirtualKeyboardActivated(bool activated) override;
-  void AddVirtualKeyboardStateObserver(
-      ash::VirtualKeyboardStateObserver* observer) override;
-  void RemoveVirtualKeyboardStateObserver(
-      ash::VirtualKeyboardStateObserver* observer) override;
-  app_list::AppListViewDelegate* GetAppListViewDelegate() override;
+  void OpenUrlFromArc(const GURL& url) override;
+  app_list::AppListPresenter* GetAppListPresenter() override;
   ash::ShelfDelegate* CreateShelfDelegate(ash::ShelfModel* model) override;
   ash::SystemTrayDelegate* CreateSystemTrayDelegate() override;
-  ash::UserWallpaperDelegate* CreateUserWallpaperDelegate() override;
+  std::unique_ptr<ash::WallpaperDelegate> CreateWallpaperDelegate() override;
   ash::SessionStateDelegate* CreateSessionStateDelegate() override;
   ash::AccessibilityDelegate* CreateAccessibilityDelegate() override;
-  ash::NewWindowDelegate* CreateNewWindowDelegate() override;
   ash::MediaDelegate* CreateMediaDelegate() override;
-  ui::MenuModel* CreateContextMenu(aura::Window* root,
-                                   ash::ShelfItemDelegate* item_delegate,
-                                   ash::ShelfItem* item) override;
+  std::unique_ptr<ash::PaletteDelegate> CreatePaletteDelegate() override;
+  ui::MenuModel* CreateContextMenu(ash::WmShelf* wm_shelf,
+                                   const ash::ShelfItem* item) override;
   ash::GPUSupport* CreateGPUSupport() override;
   base::string16 GetProductName() const override;
   void OpenKeyboardShortcutHelpPage() const override;
   gfx::Image GetDeprecatedAcceleratorImage() const override;
+  bool IsTouchscreenEnabledInPrefs(bool use_local_state) const override;
+  void SetTouchscreenEnabledInPrefs(bool enabled,
+                                    bool use_local_state) override;
+  void UpdateTouchscreenStatusFromPrefs() override;
   void ToggleTouchpad() override;
-  void ToggleTouchscreen() override;
 
   // content::NotificationObserver override:
   void Observe(int type,
@@ -91,42 +68,14 @@ class ChromeShellDelegate : public ash::ShellDelegate,
                const content::NotificationDetails& details) override;
 
  private:
-#if defined(OS_CHROMEOS)
-  // An Observer to track session state and start/stop ARC accordingly.
-  class ArcSessionObserver : public ash::ShellObserver {
-   public:
-    ArcSessionObserver();
-    ~ArcSessionObserver() override;
-
-    // ash::ShellObserver overrides:
-    void OnLoginStateChanged(ash::user::LoginStatus status) override;
-
-   private:
-    DISALLOW_COPY_AND_ASSIGN(ArcSessionObserver);
-  };
-#endif
-
   void PlatformInit();
-
-  static ChromeShellDelegate* instance_;
 
   content::NotificationRegistrar registrar_;
 
-  ChromeLauncherController* shelf_delegate_;
+  ChromeLauncherControllerImpl* shelf_delegate_;
 
-  base::ObserverList<ash::VirtualKeyboardStateObserver>
-      keyboard_state_observer_list_;
-
-  // Proxies events from chrome/browser to ash::UserMetricsRecorder.
-  scoped_ptr<ChromeUserMetricsRecorder> chrome_user_metrics_recorder_;
-
-#if defined(OS_CHROMEOS)
-  scoped_ptr<chromeos::DisplayConfigurationObserver>
+  std::unique_ptr<chromeos::DisplayConfigurationObserver>
       display_configuration_observer_;
-
-  // An Observer to track session state and start/stop ARC accordingly.
-  scoped_ptr<ArcSessionObserver> arc_session_observer_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(ChromeShellDelegate);
 };

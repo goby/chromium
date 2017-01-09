@@ -4,16 +4,23 @@
 
 #include "content/browser/service_worker/service_worker_context_core.h"
 
+#include <limits>
+#include <set>
+#include <utility>
+
 #include "base/barrier_closure.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/service_worker/embedded_worker_registry.h"
+#include "content/browser/service_worker/embedded_worker_status.h"
 #include "content/browser/service_worker/service_worker_context_observer.h"
 #include "content/browser/service_worker/service_worker_context_wrapper.h"
 #include "content/browser/service_worker/service_worker_database_task_manager.h"
@@ -69,7 +76,7 @@ bool IsSameOriginWindowProviderHost(const GURL& origin,
 // Returns true if any of the frames specified by |frames| is a top-level frame.
 // |frames| is a vector of (render process id, frame id) pairs.
 bool FrameListContainsMainFrameOnUI(
-    scoped_ptr<std::vector<std::pair<int, int>>> frames) {
+    std::unique_ptr<std::vector<std::pair<int, int>>> frames) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   for (const auto& frame : *frames) {
@@ -99,17 +106,18 @@ class ClearAllServiceWorkersHelper
 
   void DidGetAllRegistrations(
       const base::WeakPtr<ServiceWorkerContextCore>& context,
+      ServiceWorkerStatusCode status,
       const std::vector<ServiceWorkerRegistrationInfo>& registrations) {
-    if (!context)
+    if (!context || status != SERVICE_WORKER_OK)
       return;
     // Make a copy of live versions map because StopWorker() removes the version
     // from it when we were starting up and don't have a process yet.
-    const std::map<int64, ServiceWorkerVersion*> live_versions_copy =
+    const std::map<int64_t, ServiceWorkerVersion*> live_versions_copy =
         context->GetLiveVersions();
     for (const auto& version_itr : live_versions_copy) {
       ServiceWorkerVersion* version(version_itr.second);
-      if (version->running_status() == ServiceWorkerVersion::STARTING ||
-          version->running_status() == ServiceWorkerVersion::RUNNING) {
+      if (version->running_status() == EmbeddedWorkerStatus::STARTING ||
+          version->running_status() == EmbeddedWorkerStatus::RUNNING) {
         version->StopWorker(
             base::Bind(&ClearAllServiceWorkersHelper::OnResult, this));
       }
@@ -205,7 +213,7 @@ bool ServiceWorkerContextCore::ProviderHostIterator::
 
 ServiceWorkerContextCore::ServiceWorkerContextCore(
     const base::FilePath& path,
-    scoped_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
+    std::unique_ptr<ServiceWorkerDatabaseTaskManager> database_task_manager,
     const scoped_refptr<base::SingleThreadTaskRunner>& disk_cache_thread,
     storage::QuotaManagerProxy* quota_manager_proxy,
     storage::SpecialStoragePolicy* special_storage_policy,
@@ -214,6 +222,7 @@ ServiceWorkerContextCore::ServiceWorkerContextCore(
     : wrapper_(wrapper),
       providers_(new ProcessToProviderMap),
       provider_by_uuid_(new ProviderByClientUUIDMap),
+      force_update_on_page_load_(false),
       next_handle_id_(0),
       next_registration_handle_id_(0),
       was_service_worker_registered_(false),
@@ -221,12 +230,9 @@ ServiceWorkerContextCore::ServiceWorkerContextCore(
       weak_factory_(this) {
   // These get a WeakPtr from weak_factory_, so must be set after weak_factory_
   // is initialized.
-  storage_ = ServiceWorkerStorage::Create(path,
-                                          AsWeakPtr(),
-                                          database_task_manager.Pass(),
-                                          disk_cache_thread,
-                                          quota_manager_proxy,
-                                          special_storage_policy);
+  storage_ = ServiceWorkerStorage::Create(
+      path, AsWeakPtr(), std::move(database_task_manager), disk_cache_thread,
+      quota_manager_proxy, special_storage_policy);
   embedded_worker_registry_ = EmbeddedWorkerRegistry::Create(AsWeakPtr());
   job_coordinator_.reset(new ServiceWorkerJobCoordinator(AsWeakPtr()));
 }
@@ -271,14 +277,15 @@ ServiceWorkerProviderHost* ServiceWorkerContextCore::GetProviderHost(
 }
 
 void ServiceWorkerContextCore::AddProviderHost(
-    scoped_ptr<ServiceWorkerProviderHost> host) {
-  ServiceWorkerProviderHost* host_ptr = host.release();   // we take ownership
-  ProviderMap* map = GetProviderMapForProcess(host_ptr->process_id());
+    std::unique_ptr<ServiceWorkerProviderHost> host) {
+  int process_id = host->process_id();
+  int provider_id = host->provider_id();
+  ProviderMap* map = GetProviderMapForProcess(process_id);
   if (!map) {
-    map = new ProviderMap;
-    providers_->AddWithID(map, host_ptr->process_id());
+    providers_->AddWithID(base::MakeUnique<ProviderMap>(), process_id);
+    map = GetProviderMapForProcess(process_id);
   }
-  map->AddWithID(host_ptr, host_ptr->provider_id());
+  map->AddWithID(std::move(host), provider_id);
 }
 
 void ServiceWorkerContextCore::RemoveProviderHost(
@@ -294,15 +301,15 @@ void ServiceWorkerContextCore::RemoveAllProviderHostsForProcess(
     providers_->Remove(process_id);
 }
 
-scoped_ptr<ServiceWorkerContextCore::ProviderHostIterator>
+std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator>
 ServiceWorkerContextCore::GetProviderHostIterator() {
-  return make_scoped_ptr(new ProviderHostIterator(
+  return base::WrapUnique(new ProviderHostIterator(
       providers_.get(), ProviderHostIterator::ProviderHostPredicate()));
 }
 
-scoped_ptr<ServiceWorkerContextCore::ProviderHostIterator>
+std::unique_ptr<ServiceWorkerContextCore::ProviderHostIterator>
 ServiceWorkerContextCore::GetClientProviderHostIterator(const GURL& origin) {
-  return make_scoped_ptr(new ProviderHostIterator(
+  return base::WrapUnique(new ProviderHostIterator(
       providers_.get(), base::Bind(IsSameOriginClientProviderHost, origin)));
 }
 
@@ -319,7 +326,7 @@ void ServiceWorkerContextCore::HasMainFrameProviderHost(
     return;
   }
 
-  scoped_ptr<std::vector<std::pair<int, int>>> render_frames(
+  std::unique_ptr<std::vector<std::pair<int, int>>> render_frames(
       new std::vector<std::pair<int, int>>());
 
   while (!provider_host_iterator.IsAtEnd()) {
@@ -333,7 +340,7 @@ void ServiceWorkerContextCore::HasMainFrameProviderHost(
   BrowserThread::PostTaskAndReplyWithResult(
       BrowserThread::UI, FROM_HERE,
       base::Bind(&FrameListContainsMainFrameOnUI,
-                 base::Passed(render_frames.Pass())),
+                 base::Passed(std::move(render_frames))),
       callback);
 }
 
@@ -365,12 +372,6 @@ void ServiceWorkerContextCore::RegisterServiceWorker(
     const RegistrationCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   was_service_worker_registered_ = true;
-  if (storage()->IsDisabled()) {
-    callback.Run(SERVICE_WORKER_ERROR_ABORT, std::string(),
-                 kInvalidServiceWorkerRegistrationId);
-    return;
-  }
-
   job_coordinator_->Register(
       pattern,
       script_url,
@@ -385,9 +386,6 @@ void ServiceWorkerContextCore::UpdateServiceWorker(
     ServiceWorkerRegistration* registration,
     bool force_bypass_cache) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (storage()->IsDisabled())
-    return;
-
   job_coordinator_->Update(registration, force_bypass_cache);
 }
 
@@ -398,44 +396,16 @@ void ServiceWorkerContextCore::UpdateServiceWorker(
     ServiceWorkerProviderHost* provider_host,
     const UpdateCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (storage()->IsDisabled()) {
-    callback.Run(SERVICE_WORKER_ERROR_ABORT, std::string(),
-                 kInvalidServiceWorkerRegistrationId);
-    return;
-  }
-
   job_coordinator_->Update(registration, force_bypass_cache,
                            skip_script_comparison, provider_host,
                            base::Bind(&ServiceWorkerContextCore::UpdateComplete,
                                       AsWeakPtr(), callback));
 }
 
-void ServiceWorkerContextCore::SetForceUpdateOnPageLoad(
-    int64_t registration_id,
-    bool force_update_on_page_load) {
-  ServiceWorkerRegistration* registration =
-      GetLiveRegistration(registration_id);
-  if (!registration)
-    return;
-  registration->set_force_update_on_page_load(force_update_on_page_load);
-
-  if (observer_list_.get()) {
-    observer_list_->Notify(
-        FROM_HERE,
-        &ServiceWorkerContextObserver::OnForceUpdateOnPageLoadChanged,
-        registration_id, force_update_on_page_load);
-  }
-}
-
 void ServiceWorkerContextCore::UnregisterServiceWorker(
     const GURL& pattern,
     const UnregistrationCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (storage()->IsDisabled()) {
-    callback.Run(SERVICE_WORKER_ERROR_ABORT);
-    return;
-  }
-
   job_coordinator_->Unregister(
       pattern,
       base::Bind(&ServiceWorkerContextCore::UnregistrationComplete,
@@ -448,12 +418,6 @@ void ServiceWorkerContextCore::UnregisterServiceWorkers(
     const GURL& origin,
     const UnregistrationCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  if (storage()->IsDisabled()) {
-    // Not posting as new task to match implementations above.
-    callback.Run(SERVICE_WORKER_ERROR_ABORT);
-    return;
-  }
-
   storage()->GetAllRegistrationsInfos(base::Bind(
       &ServiceWorkerContextCore::DidGetAllRegistrationsForUnregisterForOrigin,
       AsWeakPtr(), callback, origin));
@@ -462,7 +426,12 @@ void ServiceWorkerContextCore::UnregisterServiceWorkers(
 void ServiceWorkerContextCore::DidGetAllRegistrationsForUnregisterForOrigin(
     const UnregistrationCallback& result,
     const GURL& origin,
+    ServiceWorkerStatusCode status,
     const std::vector<ServiceWorkerRegistrationInfo>& registrations) {
+  if (status != SERVICE_WORKER_OK) {
+    result.Run(status);
+    return;
+  }
   std::set<GURL> scopes;
   for (const auto& registration_info : registrations) {
     if (origin == registration_info.pattern.GetOrigin()) {
@@ -523,7 +492,7 @@ void ServiceWorkerContextCore::UpdateComplete(
 void ServiceWorkerContextCore::UnregistrationComplete(
     const GURL& pattern,
     const ServiceWorkerContextCore::UnregistrationCallback& callback,
-    int64 registration_id,
+    int64_t registration_id,
     ServiceWorkerStatusCode status) {
   callback.Run(status);
   if (status == SERVICE_WORKER_OK && observer_list_.get()) {
@@ -534,14 +503,16 @@ void ServiceWorkerContextCore::UnregistrationComplete(
 }
 
 ServiceWorkerRegistration* ServiceWorkerContextCore::GetLiveRegistration(
-    int64 id) {
+    int64_t id) {
   RegistrationsMap::iterator it = live_registrations_.find(id);
   return (it != live_registrations_.end()) ? it->second : NULL;
 }
 
 void ServiceWorkerContextCore::AddLiveRegistration(
     ServiceWorkerRegistration* registration) {
-  DCHECK(!GetLiveRegistration(registration->id()));
+  // TODO(nhiroki): Change CHECK to DCHECK after https://crbug.com/619294 is
+  // fixed.
+  CHECK(!GetLiveRegistration(registration->id()));
   live_registrations_[registration->id()] = registration;
   if (observer_list_.get()) {
     observer_list_->Notify(FROM_HERE,
@@ -550,12 +521,11 @@ void ServiceWorkerContextCore::AddLiveRegistration(
   }
 }
 
-void ServiceWorkerContextCore::RemoveLiveRegistration(int64 id) {
+void ServiceWorkerContextCore::RemoveLiveRegistration(int64_t id) {
   live_registrations_.erase(id);
 }
 
-ServiceWorkerVersion* ServiceWorkerContextCore::GetLiveVersion(
-    int64 id) {
+ServiceWorkerVersion* ServiceWorkerContextCore::GetLiveVersion(int64_t id) {
   VersionMap::iterator it = live_versions_.find(id);
   return (it != live_versions_.end()) ? it->second : NULL;
 }
@@ -594,24 +564,23 @@ void ServiceWorkerContextCore::AddLiveVersion(ServiceWorkerVersion* version) {
   live_versions_[version->version_id()] = version;
   version->AddListener(this);
   if (observer_list_.get()) {
+    ServiceWorkerVersionInfo version_info = version->GetInfo();
     observer_list_->Notify(FROM_HERE,
                            &ServiceWorkerContextObserver::OnNewLiveVersion,
-                           version->version_id(), version->registration_id(),
-                           version->script_url());
+                           version_info);
   }
 }
 
-void ServiceWorkerContextCore::RemoveLiveVersion(int64 id) {
+void ServiceWorkerContextCore::RemoveLiveVersion(int64_t id) {
   live_versions_.erase(id);
 }
 
 std::vector<ServiceWorkerRegistrationInfo>
 ServiceWorkerContextCore::GetAllLiveRegistrationInfo() {
   std::vector<ServiceWorkerRegistrationInfo> infos;
-  for (std::map<int64, ServiceWorkerRegistration*>::const_iterator iter =
+  for (std::map<int64_t, ServiceWorkerRegistration*>::const_iterator iter =
            live_registrations_.begin();
-       iter != live_registrations_.end();
-       ++iter) {
+       iter != live_registrations_.end(); ++iter) {
     infos.push_back(iter->second->GetInfo());
   }
   return infos;
@@ -620,10 +589,9 @@ ServiceWorkerContextCore::GetAllLiveRegistrationInfo() {
 std::vector<ServiceWorkerVersionInfo>
 ServiceWorkerContextCore::GetAllLiveVersionInfo() {
   std::vector<ServiceWorkerVersionInfo> infos;
-  for (std::map<int64, ServiceWorkerVersion*>::const_iterator iter =
+  for (std::map<int64_t, ServiceWorkerVersion*>::const_iterator iter =
            live_versions_.begin();
-       iter != live_versions_.end();
-       ++iter) {
+       iter != live_versions_.end(); ++iter) {
     infos.push_back(iter->second->GetInfo());
   }
   return infos;
@@ -636,7 +604,7 @@ void ServiceWorkerContextCore::ProtectVersion(
   protected_versions_[version->version_id()] = version;
 }
 
-void ServiceWorkerContextCore::UnprotectVersion(int64 version_id) {
+void ServiceWorkerContextCore::UnprotectVersion(int64_t version_id) {
   DCHECK(protected_versions_.find(version_id) != protected_versions_.end());
   protected_versions_.erase(version_id);
 }
@@ -662,26 +630,27 @@ void ServiceWorkerContextCore::DeleteAndStartOver(
   storage_->DeleteAndStartOver(callback);
 }
 
-scoped_ptr<ServiceWorkerProviderHost>
-ServiceWorkerContextCore::TransferProviderHostOut(
-    int process_id, int provider_id) {
+std::unique_ptr<ServiceWorkerProviderHost>
+ServiceWorkerContextCore::TransferProviderHostOut(int process_id,
+                                                  int provider_id) {
   ProviderMap* map = GetProviderMapForProcess(process_id);
   ServiceWorkerProviderHost* transferee = map->Lookup(provider_id);
-  ServiceWorkerProviderHost* replacement =
-      new ServiceWorkerProviderHost(process_id,
-                                    transferee->frame_id(),
-                                    provider_id,
-                                    transferee->provider_type(),
-                                    AsWeakPtr(),
-                                    transferee->dispatcher_host());
-  map->Replace(provider_id, replacement);
+  std::unique_ptr<ServiceWorkerProviderHost> replacement =
+      base::MakeUnique<ServiceWorkerProviderHost>(
+          process_id, transferee->frame_id(), provider_id,
+          transferee->provider_type(),
+          transferee->is_parent_frame_secure()
+              ? ServiceWorkerProviderHost::FrameSecurityLevel::SECURE
+              : ServiceWorkerProviderHost::FrameSecurityLevel::INSECURE,
+          AsWeakPtr(), transferee->dispatcher_host());
   transferee->PrepareForCrossSiteTransfer();
-  return make_scoped_ptr(transferee);
+  return map->Replace(provider_id, std::move(replacement));
 }
 
 void ServiceWorkerContextCore::TransferProviderHostIn(
-    int new_process_id, int new_provider_id,
-    scoped_ptr<ServiceWorkerProviderHost> transferee) {
+    int new_process_id,
+    int new_provider_id,
+    std::unique_ptr<ServiceWorkerProviderHost> transferee) {
   ProviderMap* map = GetProviderMapForProcess(new_process_id);
   ServiceWorkerProviderHost* temp = map->Lookup(new_provider_id);
   if (!temp)
@@ -693,8 +662,7 @@ void ServiceWorkerContextCore::TransferProviderHostIn(
                                         new_provider_id,
                                         temp->provider_type(),
                                         temp->dispatcher_host());
-  map->Replace(new_provider_id, transferee.release());
-  delete temp;
+  map->Replace(new_provider_id, std::move(transferee));
 }
 
 void ServiceWorkerContextCore::ClearAllServiceWorkersForTest(
@@ -721,6 +689,47 @@ void ServiceWorkerContextCore::CheckHasServiceWorker(
                       AsWeakPtr(), other_url, callback));
 }
 
+void ServiceWorkerContextCore::UpdateVersionFailureCount(
+    int64_t version_id,
+    ServiceWorkerStatusCode status) {
+  // Don't count these, they aren't start worker failures.
+  if (status == SERVICE_WORKER_ERROR_DISALLOWED)
+    return;
+
+  auto it = failure_counts_.find(version_id);
+  if (it != failure_counts_.end()) {
+    ServiceWorkerMetrics::RecordStartStatusAfterFailure(it->second.count,
+                                                        status);
+  }
+
+  if (status == SERVICE_WORKER_OK) {
+    if (it != failure_counts_.end())
+      failure_counts_.erase(it);
+    return;
+  }
+
+  if (it != failure_counts_.end()) {
+    FailureInfo& info = it->second;
+    DCHECK_GT(info.count, 0);
+    if (info.count < std::numeric_limits<int>::max()) {
+      ++info.count;
+      info.last_failure = status;
+    }
+  } else {
+    FailureInfo info;
+    info.count = 1;
+    info.last_failure = status;
+    failure_counts_[version_id] = info;
+  }
+}
+
+int ServiceWorkerContextCore::GetVersionFailureCount(int64_t version_id) {
+  auto it = failure_counts_.find(version_id);
+  if (it == failure_counts_.end())
+    return 0;
+  return it->second.count;
+}
+
 void ServiceWorkerContextCore::OnRunningStateChanged(
     ServiceWorkerVersion* version) {
   if (!observer_list_)
@@ -737,6 +746,17 @@ void ServiceWorkerContextCore::OnVersionStateChanged(
   observer_list_->Notify(FROM_HERE,
                          &ServiceWorkerContextObserver::OnVersionStateChanged,
                          version->version_id(), version->status());
+}
+
+void ServiceWorkerContextCore::OnDevToolsRoutingIdChanged(
+    ServiceWorkerVersion* version) {
+  if (!observer_list_ || !version->embedded_worker())
+    return;
+  observer_list_->Notify(
+      FROM_HERE,
+      &ServiceWorkerContextObserver::OnVersionDevToolsRoutingIdChanged,
+      version->version_id(), version->embedded_worker()->process_id(),
+      version->embedded_worker()->worker_devtools_agent_route_id());
 }
 
 void ServiceWorkerContextCore::OnMainScriptHttpResponseInfoSet(
@@ -816,7 +836,7 @@ void ServiceWorkerContextCore::DidFindRegistrationForCheckHasServiceWorker(
     const GURL& other_url,
     const ServiceWorkerContext::CheckHasServiceWorkerCallback callback,
     ServiceWorkerStatusCode status,
-    const scoped_refptr<ServiceWorkerRegistration>& registration) {
+    scoped_refptr<ServiceWorkerRegistration> registration) {
   if (status != SERVICE_WORKER_OK) {
     callback.Run(false);
     return;
@@ -845,7 +865,7 @@ void ServiceWorkerContextCore::DidFindRegistrationForCheckHasServiceWorker(
 
 void ServiceWorkerContextCore::OnRegistrationFinishedForCheckHasServiceWorker(
     const ServiceWorkerContext::CheckHasServiceWorkerCallback callback,
-    const scoped_refptr<ServiceWorkerRegistration>& registration) {
+    scoped_refptr<ServiceWorkerRegistration> registration) {
   callback.Run(registration->active_version() ||
                registration->waiting_version());
 }

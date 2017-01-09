@@ -5,7 +5,8 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_TOUCH_EVDEV_TYPES_H_
 #define UI_EVENTS_OZONE_EVDEV_TOUCH_EVDEV_TYPES_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "ui/events/event_constants.h"
 #include "ui/events/ozone/evdev/events_ozone_evdev_export.h"
 
@@ -18,6 +19,7 @@ const int kNumTouchEvdevSlots = 20;
 // Contains information about an in progress touch.
 struct EVENTS_OZONE_EVDEV_EXPORT InProgressTouchEvdev {
   InProgressTouchEvdev();
+  InProgressTouchEvdev(const InProgressTouchEvdev& other);
   ~InProgressTouchEvdev();
 
   // Whether there is new information for the touch.
@@ -25,6 +27,9 @@ struct EVENTS_OZONE_EVDEV_EXPORT InProgressTouchEvdev {
 
   // Whether the touch was cancelled. Touch events should be ignored till a
   // new touch is initiated.
+  bool was_cancelled = false;
+
+  // Whether the touch is going to be canceled.
   bool cancelled = false;
 
   bool was_touching = false;
@@ -36,6 +41,17 @@ struct EVENTS_OZONE_EVDEV_EXPORT InProgressTouchEvdev {
   float radius_x = 0;
   float radius_y = 0;
   float pressure = 0;
+  int tool_code = 0;
+  ui::EventPointerType reported_tool_type =
+      ui::EventPointerType::POINTER_TYPE_TOUCH;
+
+  struct ButtonState {
+    bool down = false;
+    bool changed = false;
+  };
+  ButtonState btn_left;
+  ButtonState btn_right;
+  ButtonState btn_middle;
 };
 
 }  // namespace ui

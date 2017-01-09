@@ -4,6 +4,8 @@
 
 #include "chromeos/network/network_ui_data.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/values.h"
 
@@ -87,8 +89,9 @@ NetworkUIData::NetworkUIData(const base::DictionaryValue& dict) {
 NetworkUIData::~NetworkUIData() {
 }
 
-void NetworkUIData::set_user_settings(scoped_ptr<base::DictionaryValue> dict) {
-  user_settings_ = dict.Pass();
+void NetworkUIData::set_user_settings(
+    std::unique_ptr<base::DictionaryValue> dict) {
+  user_settings_ = std::move(dict);
 }
 
 std::string NetworkUIData::GetONCSourceAsString() const {
@@ -108,13 +111,13 @@ void NetworkUIData::FillDictionary(base::DictionaryValue* dict) const {
 }
 
 // static
-scoped_ptr<NetworkUIData> NetworkUIData::CreateFromONC(
+std::unique_ptr<NetworkUIData> NetworkUIData::CreateFromONC(
     ::onc::ONCSource onc_source) {
-  scoped_ptr<NetworkUIData> ui_data(new NetworkUIData());
+  std::unique_ptr<NetworkUIData> ui_data(new NetworkUIData());
 
   ui_data->onc_source_ = onc_source;
 
-  return ui_data.Pass();
+  return ui_data;
 }
 
 }  // namespace chromeos

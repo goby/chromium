@@ -5,22 +5,22 @@
 #ifndef COMPONENTS_TEST_RUNNER_TEST_PLUGIN_H_
 #define COMPONENTS_TEST_RUNNER_TEST_PLUGIN_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "cc/layers/texture_layer.h"
 #include "cc/layers/texture_layer_client.h"
-#include "third_party/WebKit/public/platform/WebExternalTextureLayer.h"
-#include "third_party/WebKit/public/platform/WebExternalTextureLayerClient.h"
-#include "third_party/WebKit/public/platform/WebExternalTextureMailbox.h"
 #include "third_party/WebKit/public/platform/WebLayer.h"
+#include "third_party/WebKit/public/web/WebDocument.h"
+#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebPlugin.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
+#include "third_party/khronos/GLES2/gl2.h"
 
 namespace blink {
 class WebFrame;
-class WebGraphicsContext3D;
+class WebGraphicsContext3DProvider;
 class WebLayer;
 struct WebPluginParams;
 }
@@ -29,15 +29,21 @@ namespace cc {
 class SharedBitmap;
 }
 
+namespace gpu {
+namespace gles2 {
+class GLES2Interface;
+}
+}
+
 namespace test_runner {
 
 class WebTestDelegate;
 
 // A fake implemention of blink::WebPlugin for testing purposes.
 //
-// It uses WebGraphicsContext3D to paint a scene consisiting of a primitive
-// over a background. The primitive and background can be customized using
-// the following plugin parameters:
+// It uses GL to paint a scene consisiting of a primitive over a background. The
+// primitive and background can be customized using the following plugin
+// parameters.
 // primitive: none (default), triangle.
 // background-color: black (default), red, green, blue.
 // primitive-color: black (default), red, green, blue.
@@ -60,10 +66,10 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   // WebPlugin methods:
   bool initialize(blink::WebPluginContainer* container) override;
   void destroy() override;
-  NPObject* scriptableObject() override;
+  blink::WebPluginContainer* container() const override;
   bool canProcessDrag() const override;
   bool supportsKeyboardFocus() const override;
-  void layoutIfNeeded() override {}
+  void updateAllLifecyclePhases() override {}
   void paint(blink::WebCanvas* canvas, const blink::WebRect& rect) override {}
   void updateGeometry(const blink::WebRect& window_rect,
                       const blink::WebRect& clip_rect,
@@ -72,7 +78,6 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
                       bool is_visible) override;
   void updateFocus(bool focus, blink::WebFocusType focus_type) override {}
   void updateVisibility(bool visibility) override {}
-  bool acceptsInputEvents() override;
   blink::WebInputEventResult handleInputEvent(
       const blink::WebInputEvent& event,
       blink::WebCursorInfo& info) override;
@@ -90,8 +95,7 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   // cc::TextureLayerClient methods:
   bool PrepareTextureMailbox(
       cc::TextureMailbox* mailbox,
-      scoped_ptr<cc::SingleReleaseCallback>* release_callback,
-      bool use_shared_memory) override;
+      std::unique_ptr<cc::SingleReleaseCallback>* release_callback) override;
 
  private:
   TestPlugin(blink::WebFrame* frame,
@@ -102,12 +106,12 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
 
   struct Scene {
     Primitive primitive;
-    unsigned background_color[3];
-    unsigned primitive_color[3];
+    uint8_t background_color[3];
+    uint8_t primitive_color[3];
     float opacity;
 
-    unsigned vbo;
-    unsigned program;
+    GLuint vbo;
+    GLuint program;
     int color_location;
     int position_location;
 
@@ -126,7 +130,7 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
 
   // Functions for parsing plugin parameters.
   Primitive ParsePrimitive(const blink::WebString& string);
-  void ParseColor(const blink::WebString& string, unsigned color[3]);
+  void ParseColor(const blink::WebString& string, uint8_t color[3]);
   float ParseOpacity(const blink::WebString& string);
   bool ParseBoolean(const blink::WebString& string);
 
@@ -137,9 +141,9 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   bool InitProgram();
   bool InitPrimitive();
   void DrawPrimitive();
-  unsigned LoadShader(unsigned type, const std::string& source);
-  unsigned LoadProgram(const std::string& vertex_source,
-                       const std::string& fragment_source);
+  GLuint LoadShader(GLenum type, const std::string& source);
+  GLuint LoadProgram(const std::string& vertex_source,
+                     const std::string& fragment_source);
 
   // Functions for drawing scene in Software.
   void DrawSceneSoftware(void* memory);
@@ -149,15 +153,16 @@ class TestPlugin : public blink::WebPlugin, public cc::TextureLayerClient {
   blink::WebPluginContainer* container_;
 
   blink::WebRect rect_;
-  blink::WebGraphicsContext3D* context_;
-  unsigned color_texture_;
+  std::unique_ptr<blink::WebGraphicsContext3DProvider> context_provider_;
+  gpu::gles2::GLES2Interface* gl_;
+  GLuint color_texture_;
   cc::TextureMailbox texture_mailbox_;
-  scoped_ptr<cc::SharedBitmap> shared_bitmap_;
+  std::unique_ptr<cc::SharedBitmap> shared_bitmap_;
   bool mailbox_changed_;
-  unsigned framebuffer_;
+  GLuint framebuffer_;
   Scene scene_;
   scoped_refptr<cc::TextureLayer> layer_;
-  scoped_ptr<blink::WebLayer> web_layer_;
+  std::unique_ptr<blink::WebLayer> web_layer_;
 
   blink::WebPluginContainer::TouchEventRequestType touch_event_request_;
   // Requests touch events from the WebPluginContainerImpl multiple times to

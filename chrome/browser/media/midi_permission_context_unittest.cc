@@ -5,6 +5,8 @@
 #include "chrome/browser/media/midi_permission_context.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/permissions/permission_request_id.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
@@ -20,7 +22,7 @@
 #if defined(OS_ANDROID)
 #include "chrome/browser/infobars/infobar_service.h"
 #else
-#include "chrome/browser/ui/website_settings/permission_bubble_manager.h"
+#include "chrome/browser/permissions/permission_request_manager.h"
 #endif
 
 namespace {
@@ -78,7 +80,7 @@ class MidiPermissionContextTests : public ChromeRenderViewHostTestHarness {
 #if defined(OS_ANDROID)
     InfoBarService::CreateForWebContents(web_contents());
 #else
-    PermissionBubbleManager::CreateForWebContents(web_contents());
+    PermissionRequestManager::CreateForWebContents(web_contents());
 #endif
   }
 

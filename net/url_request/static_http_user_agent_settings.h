@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/url_request/http_user_agent_settings.h"
 
@@ -36,4 +36,3 @@ class NET_EXPORT StaticHttpUserAgentSettings : public HttpUserAgentSettings {
 }  // namespace net
 
 #endif  // NET_URL_REQUEST_STATIC_HTTP_USER_AGENT_SETTINGS_H_
-

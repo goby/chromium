@@ -7,9 +7,11 @@
 #include <algorithm>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "components/metrics/proto/omnibox_input_type.pb.h"
 #include "components/omnibox/browser/autocomplete_match.h"
 #include "components/omnibox/browser/autocomplete_provider_client.h"
@@ -21,7 +23,6 @@
 #include "components/search_engines/template_url_service.h"
 #include "grit/components_strings.h"
 #include "net/base/escape.h"
-#include "net/base/net_util.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
@@ -187,7 +188,7 @@ base::string16 KeywordProvider::GetKeywordForText(
     return base::string16();
 
   // Don't provide a keyword for inactive/disabled extension keywords.
-  if ((template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION) &&
+  if ((template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION) &&
       extensions_delegate_ &&
       !extensions_delegate_->IsEnabledExtension(template_url->GetExtensionId()))
     return base::string16();
@@ -208,6 +209,7 @@ AutocompleteMatch KeywordProvider::CreateVerbatimMatch(
 
 void KeywordProvider::Start(const AutocompleteInput& input,
                             bool minimal_changes) {
+  TRACE_EVENT0("omnibox", "KeywordProvider::Start");
   // This object ensures we end keyword mode if we exit the function without
   // toggling keyword mode to on.
   ScopedEndExtensionKeywordMode keyword_mode_toggle(extensions_delegate_.get());
@@ -263,7 +265,7 @@ void KeywordProvider::Start(const AutocompleteInput& input,
 
     // Prune any extension keywords that are disallowed in incognito mode (if
     // we're incognito), or disabled.
-    if (template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION &&
+    if (template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION &&
         extensions_delegate_ &&
         !extensions_delegate_->IsEnabledExtension(
             template_url->GetExtensionId())) {
@@ -294,7 +296,7 @@ void KeywordProvider::Start(const AutocompleteInput& input,
     const TemplateURL* template_url = matches.front().first;
     const size_t meaningful_keyword_length = matches.front().second;
     const bool is_extension_keyword =
-        template_url->GetType() == TemplateURL::OMNIBOX_API_EXTENSION;
+        template_url->type() == TemplateURL::OMNIBOX_API_EXTENSION;
 
     // Only create an exact match if |remaining_input| is empty or if
     // this is an extension keyword.  If |remaining_input| is a
@@ -357,8 +359,7 @@ KeywordProvider::~KeywordProvider() {}
 bool KeywordProvider::ExtractKeywordFromInput(const AutocompleteInput& input,
                                               base::string16* keyword,
                                               base::string16* remaining_input) {
-  if ((input.type() == metrics::OmniboxInputType::INVALID) ||
-      (input.type() == metrics::OmniboxInputType::FORCED_QUERY))
+  if ((input.type() == metrics::OmniboxInputType::INVALID))
     return false;
 
   *keyword = TemplateURLService::CleanUserInputKeyword(
@@ -449,24 +450,21 @@ void KeywordProvider::FillInURLAndContents(
   DCHECK(!element->short_name().empty());
   const TemplateURLRef& element_ref = element->url_ref();
   DCHECK(element_ref.IsValid(GetTemplateURLService()->search_terms_data()));
-  int message_id = (element->GetType() == TemplateURL::OMNIBOX_API_EXTENSION) ?
-      IDS_EXTENSION_KEYWORD_COMMAND : IDS_KEYWORD_SEARCH;
   if (remaining_input.empty()) {
     // Allow extension keyword providers to accept empty string input. This is
     // useful to allow extensions to do something in the case where no input is
     // entered.
     if (element_ref.SupportsReplacement(
             GetTemplateURLService()->search_terms_data()) &&
-        (element->GetType() != TemplateURL::OMNIBOX_API_EXTENSION)) {
+        (element->type() != TemplateURL::OMNIBOX_API_EXTENSION)) {
       // No query input; return a generic, no-destination placeholder.
       match->contents.assign(
-          l10n_util::GetStringFUTF16(message_id,
-              element->AdjustedShortNameForLocaleDirection(),
-              l10n_util::GetStringUTF16(IDS_EMPTY_KEYWORD_VALUE)));
+          l10n_util::GetStringUTF16(IDS_EMPTY_KEYWORD_VALUE));
       match->contents_class.push_back(
           ACMatchClassification(0, ACMatchClassification::DIM));
     } else {
-      // Keyword that has no replacement text (aka a shorthand for a URL).
+      // Keyword or extension that has no replacement text (aka a shorthand for
+      // a URL).
       match->destination_url = GURL(element->url());
       match->contents.assign(element->short_name());
       AutocompleteMatch::ClassifyLocationInString(0, match->contents.length(),
@@ -485,15 +483,9 @@ void KeywordProvider::FillInURLAndContents(
         element == GetTemplateURLService()->GetDefaultSearchProvider();
     match->destination_url = GURL(element_ref.ReplaceSearchTerms(
         search_terms_args, GetTemplateURLService()->search_terms_data()));
-    std::vector<size_t> content_param_offsets;
-    match->contents.assign(l10n_util::GetStringFUTF16(message_id,
-                                                      element->short_name(),
-                                                      remaining_input,
-                                                      &content_param_offsets));
-    DCHECK_EQ(2U, content_param_offsets.size());
-    AutocompleteMatch::ClassifyLocationInString(content_param_offsets[1],
-        remaining_input.length(), match->contents.length(),
-        ACMatchClassification::NONE, &match->contents_class);
+    match->contents = remaining_input;
+    match->contents_class.push_back(
+        ACMatchClassification(0, ACMatchClassification::NONE));
   }
 }
 

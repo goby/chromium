@@ -4,15 +4,71 @@
 
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "chromeos/dbus/cryptohome/key.pb.h"
+#include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/known_user.h"
 
 namespace cryptohome {
+namespace {
 
-Identification::Identification(const std::string& user_id) : user_id(user_id) {
+// Subsystem name for GaiaId migration status.
+const char kCryptohome[] = "cryptohome";
+
+const std::string GetCryptohomeId(const AccountId& account_id) {
+  // Guest/kiosk/managed/public accounts have empty GaiaId. Default to email.
+  if (account_id.GetGaiaId().empty())
+    return account_id.GetUserEmail();  // Migrated
+
+  if (GetGaiaIdMigrationStatus(account_id))
+    return account_id.GetAccountIdKey();
+
+  return account_id.GetUserEmail();  // Migrated
+}
+
+}  //  anonymous namespace
+
+Identification::Identification() {}
+
+Identification::Identification(const AccountId& account_id)
+    : id_(GetCryptohomeId(account_id)) {}
+
+Identification::Identification(const std::string& id) : id_(id) {}
+
+Identification Identification::FromString(const std::string& id) {
+  return Identification(id);
 }
 
 bool Identification::operator==(const Identification& other) const {
-  return user_id == other.user_id;
+  return id_ == other.id_;
+}
+
+bool Identification::operator<(const Identification& right) const {
+  return id_ < right.id_;
+}
+
+AccountId Identification::GetAccountId() const {
+  const std::vector<AccountId> known_account_ids =
+      user_manager::known_user::GetKnownAccountIds();
+
+  // A LOT of tests start with --login_user <user>, and not registing this user
+  // before. So we might have "known_user" entry without gaia_id.
+  for (const AccountId& known_id : known_account_ids) {
+    if (!known_id.GetGaiaId().empty() && known_id.GetAccountIdKey() == id_) {
+      return known_id;
+    }
+  }
+
+  for (const AccountId& known_id : known_account_ids) {
+    if (known_id.GetUserEmail() == id_) {
+      return known_id;
+    }
+  }
+
+  return user_manager::known_user::GetAccountId(id_,
+                                                std::string() /* gaia_id */);
 }
 
 KeyDefinition::AuthorizationData::Secret::Secret() : encrypt(false),
@@ -56,6 +112,8 @@ KeyDefinition::AuthorizationData::AuthorizationData(
                              false /* wrapped */));
 }
 
+KeyDefinition::AuthorizationData::AuthorizationData(
+    const AuthorizationData& other) = default;
 
 KeyDefinition::AuthorizationData::~AuthorizationData() {
 }
@@ -81,15 +139,14 @@ KeyDefinition::ProviderData::ProviderData(const std::string& name)
 KeyDefinition::ProviderData::ProviderData(const ProviderData& other)
     : name(other.name) {
   if (other.number)
-    number.reset(new int64(*other.number));
+    number.reset(new int64_t(*other.number));
   if (other.bytes)
     bytes.reset(new std::string(*other.bytes));
 }
 
-KeyDefinition::ProviderData::ProviderData(const std::string& name, int64 number)
-    : name(name),
-      number(new int64(number)) {
-}
+KeyDefinition::ProviderData::ProviderData(const std::string& name,
+                                          int64_t number)
+    : name(name), number(new int64_t(number)) {}
 
 KeyDefinition::ProviderData::ProviderData(const std::string& name,
                                           const std::string& bytes)
@@ -99,7 +156,7 @@ KeyDefinition::ProviderData::ProviderData(const std::string& name,
 
 void KeyDefinition::ProviderData::operator=(const ProviderData& other) {
   name = other.name;
-  number.reset(other.number ? new int64(*other.number) : NULL);
+  number.reset(other.number ? new int64_t(*other.number) : NULL);
   bytes.reset(other.bytes ? new std::string(*other.bytes) : NULL);
 }
 
@@ -107,10 +164,10 @@ KeyDefinition::ProviderData::~ProviderData() {
 }
 
 bool KeyDefinition::ProviderData::operator==(const ProviderData& other) const {
-  const bool has_number = number;
-  const bool other_has_number = other.number;
-  const bool has_bytes = bytes;
-  const bool other_has_bytes = other.bytes;
+  const bool has_number = number != nullptr;
+  const bool other_has_number = other.number != nullptr;
+  const bool has_bytes = bytes != nullptr;
+  const bool other_has_bytes = other.bytes != nullptr;
   return name == other.name &&
          has_number == other_has_number &&
          has_bytes == other_has_bytes &&
@@ -132,6 +189,8 @@ KeyDefinition::KeyDefinition(const std::string& secret,
       revision(0),
       secret(secret) {
 }
+
+KeyDefinition::KeyDefinition(const KeyDefinition& other) = default;
 
 KeyDefinition::~KeyDefinition() {
 }
@@ -174,6 +233,8 @@ bool Authorization::operator==(const Authorization& other) const {
 MountParameters::MountParameters(bool ephemeral) : ephemeral(ephemeral) {
 }
 
+MountParameters::MountParameters(const MountParameters& other) = default;
+
 bool MountParameters::operator==(const MountParameters& other) const {
   return ephemeral == other.ephemeral && create_keys == other.create_keys;
 }
@@ -181,4 +242,23 @@ bool MountParameters::operator==(const MountParameters& other) const {
 MountParameters::~MountParameters() {
 }
 
+bool GetGaiaIdMigrationStatus(const AccountId& account_id) {
+  return user_manager::known_user::GetGaiaIdMigrationStatus(account_id,
+                                                            kCryptohome);
+}
+
+void SetGaiaIdMigrationStatusDone(const AccountId& account_id) {
+  user_manager::known_user::SetGaiaIdMigrationStatusDone(account_id,
+                                                         kCryptohome);
+}
+
 }  // namespace cryptohome
+
+namespace BASE_HASH_NAMESPACE {
+
+std::size_t hash<cryptohome::Identification>::operator()(
+    const cryptohome::Identification& cryptohome_id) const {
+  return hash<std::string>()(cryptohome_id.id());
+}
+
+}  // namespace BASE_HASH_NAMESPACE

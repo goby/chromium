@@ -15,7 +15,6 @@
 #include "base/files/file_util.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "net/base/net_util.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/host/branding.h"
 #include "remoting/host/chromoting_messages.h"
@@ -80,7 +79,7 @@ void DaemonProcess::RemoveStatusObserver(HostStatusObserver* observer) {
   status_observers_.RemoveObserver(observer);
 }
 
-void DaemonProcess::OnChannelConnected(int32 peer_pid) {
+void DaemonProcess::OnChannelConnected(int32_t peer_pid) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
   VLOG(1) << "IPC: daemon <- network (" << peer_pid << ")";
@@ -183,6 +182,9 @@ DaemonProcess::DaemonProcess(
       stopped_callback_(stopped_callback),
       weak_factory_(this) {
   DCHECK(caller_task_runner->BelongsToCurrentThread());
+  // TODO(sammc): On OSX, mojo::edk::SetMachPortProvider() should be called with
+  // a base::PortProvider implementation. Add it here when this code is used on
+  // OSX.
 }
 
 void DaemonProcess::CreateDesktopSession(int terminal_id,
@@ -203,8 +205,8 @@ void DaemonProcess::CreateDesktopSession(int terminal_id,
   next_terminal_id_ = std::max(next_terminal_id_, terminal_id + 1);
 
   // Create the desktop session.
-  scoped_ptr<DesktopSession> session = DoCreateDesktopSession(
-      terminal_id, resolution, virtual_terminal);
+  std::unique_ptr<DesktopSession> session =
+      DoCreateDesktopSession(terminal_id, resolution, virtual_terminal);
   if (!session) {
     LOG(ERROR) << "Failed to create a desktop session.";
     SendToNetwork(
@@ -297,28 +299,29 @@ bool DaemonProcess::WasTerminalIdAllocated(int terminal_id) {
 void DaemonProcess::OnAccessDenied(const std::string& jid) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_, OnAccessDenied(jid));
+  for (auto& observer : status_observers_)
+    observer.OnAccessDenied(jid);
 }
 
 void DaemonProcess::OnClientAuthenticated(const std::string& jid) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_,
-                    OnClientAuthenticated(jid));
+  for (auto& observer : status_observers_)
+    observer.OnClientAuthenticated(jid);
 }
 
 void DaemonProcess::OnClientConnected(const std::string& jid) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_,
-                    OnClientConnected(jid));
+  for (auto& observer : status_observers_)
+    observer.OnClientConnected(jid);
 }
 
 void DaemonProcess::OnClientDisconnected(const std::string& jid) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_,
-                    OnClientDisconnected(jid));
+  for (auto& observer : status_observers_)
+    observer.OnClientDisconnected(jid);
 }
 
 void DaemonProcess::OnClientRouteChange(const std::string& jid,
@@ -326,50 +329,33 @@ void DaemonProcess::OnClientRouteChange(const std::string& jid,
                                         const SerializedTransportRoute& route) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  // Validate |route|.
-  if (route.type != protocol::TransportRoute::DIRECT &&
-      route.type != protocol::TransportRoute::STUN &&
-      route.type != protocol::TransportRoute::RELAY) {
-    LOG(ERROR) << "An invalid RouteType " << route.type << " passed.";
-    CrashNetworkProcess(FROM_HERE);
-    return;
-  }
-  if (route.remote_address.size() != net::kIPv4AddressSize &&
-      route.remote_address.size() != net::kIPv6AddressSize) {
-    LOG(ERROR) << "An invalid net::IPAddressNumber size "
-               << route.remote_address.size() << " passed.";
-    CrashNetworkProcess(FROM_HERE);
-    return;
-  }
-  if (route.local_address.size() != net::kIPv4AddressSize &&
-      route.local_address.size() != net::kIPv6AddressSize) {
-    LOG(ERROR) << "An invalid net::IPAddressNumber size "
-               << route.local_address.size() << " passed.";
-    CrashNetworkProcess(FROM_HERE);
-    return;
-  }
-
   protocol::TransportRoute parsed_route;
-  parsed_route.type =
-      static_cast<protocol::TransportRoute::RouteType>(route.type);
-  parsed_route.remote_address =
-      net::IPEndPoint(route.remote_address, route.remote_port);
-  parsed_route.local_address =
-      net::IPEndPoint(route.local_address, route.local_port);
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_,
-                    OnClientRouteChange(jid, channel_name, parsed_route));
+  parsed_route.type = route.type;
+
+  net::IPAddress remote_ip(route.remote_ip);
+  CHECK(remote_ip.empty() || remote_ip.IsValid());
+  parsed_route.remote_address = net::IPEndPoint(remote_ip, route.remote_port);
+
+  net::IPAddress local_ip(route.local_ip);
+  CHECK(local_ip.empty() || local_ip.IsValid());
+  parsed_route.local_address = net::IPEndPoint(local_ip, route.local_port);
+
+  for (auto& observer : status_observers_)
+    observer.OnClientRouteChange(jid, channel_name, parsed_route);
 }
 
 void DaemonProcess::OnHostStarted(const std::string& xmpp_login) {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_, OnStart(xmpp_login));
+  for (auto& observer : status_observers_)
+    observer.OnStart(xmpp_login);
 }
 
 void DaemonProcess::OnHostShutdown() {
   DCHECK(caller_task_runner()->BelongsToCurrentThread());
 
-  FOR_EACH_OBSERVER(HostStatusObserver, status_observers_, OnShutdown());
+  for (auto& observer : status_observers_)
+    observer.OnShutdown();
 }
 
 void DaemonProcess::DeleteAllDesktopSessions() {

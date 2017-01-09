@@ -5,25 +5,31 @@
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/client/cursor_client.h"
-#include "ui/aura/client/window_tree_client.h"
+#include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/test/test_window_delegate.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/display/screen.h"
 #include "ui/events/event_processor.h"
 #include "ui/events/event_utils.h"
 #include "ui/events/test/event_generator.h"
-#include "ui/gfx/screen.h"
+#include "ui/views/test/native_widget_factory.h"
 #include "ui/views/test/test_views.h"
 #include "ui/views/test/test_views_delegate.h"
 #include "ui/views/test/views_test_base.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
-#include "ui/wm/public/dispatcher_client.h"
 
 #if defined(OS_WIN)
+#include "ui/base/view_prop.h"
+#include "ui/base/win/window_event_target.h"
 #include "ui/views/win/hwnd_util.h"
 #endif
 
@@ -35,7 +41,7 @@ typedef ViewsTestBase DesktopNativeWidgetAuraTest;
 // Verifies creating a Widget with a parent that is not in a RootWindow doesn't
 // crash.
 TEST_F(DesktopNativeWidgetAuraTest, CreateWithParentNotInRootWindow) {
-  scoped_ptr<aura::Window> window(new aura::Window(NULL));
+  std::unique_ptr<aura::Window> window(new aura::Window(NULL));
   window->Init(ui::LAYER_NOT_DRAWN);
   Widget widget;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
@@ -94,6 +100,21 @@ TEST_F(DesktopNativeWidgetAuraTest, NativeViewInitiallyHidden) {
   init_params.native_widget = new DesktopNativeWidgetAura(&widget);
   widget.Init(init_params);
   EXPECT_FALSE(widget.GetNativeView()->IsVisible());
+}
+
+// Verifies that if the DesktopWindowTreeHost is already shown, the native view
+// still reports not visible as we haven't shown the content window.
+TEST_F(DesktopNativeWidgetAuraTest, WidgetNotVisibleOnlyWindowTreeHostShown) {
+  Widget widget;
+  Widget::InitParams init_params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW);
+  init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  init_params.native_widget = new DesktopNativeWidgetAura(&widget);
+  widget.Init(init_params);
+  DesktopNativeWidgetAura* desktop_native_widget_aura =
+      static_cast<DesktopNativeWidgetAura*>(widget.native_widget());
+  desktop_native_widget_aura->host()->Show();
+  EXPECT_FALSE(widget.IsVisible());
 }
 
 // Verify that the cursor state is shared between two native widgets.
@@ -214,14 +235,14 @@ TEST_F(DesktopNativeWidgetAuraTest, DontAccessContentWindowDuringDestruction) {
   }
 }
 
-void QuitNestedLoopAndCloseWidget(scoped_ptr<Widget> widget,
+void QuitNestedLoopAndCloseWidget(std::unique_ptr<Widget> widget,
                                   base::Closure* quit_runloop) {
   quit_runloop->Run();
 }
 
 // Verifies that a widget can be destroyed when running a nested message-loop.
 TEST_F(DesktopNativeWidgetAuraTest, WidgetCanBeDestroyedFromNestedLoop) {
-  scoped_ptr<Widget> widget(new Widget);
+  std::unique_ptr<Widget> widget(new Widget);
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
   params.bounds = gfx::Rect(0, 0, 200, 200);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -229,20 +250,15 @@ TEST_F(DesktopNativeWidgetAuraTest, WidgetCanBeDestroyedFromNestedLoop) {
   widget->Init(params);
   widget->Show();
 
-  aura::Window* window = widget->GetNativeView();
-  aura::Window* root = window->GetRootWindow();
-  aura::client::DispatcherClient* client =
-      aura::client::GetDispatcherClient(root);
-
   // Post a task that terminates the nested loop and destroyes the widget. This
   // task will be executed from the nested loop initiated with the call to
   // |RunWithDispatcher()| below.
-  aura::client::DispatcherRunLoop run_loop(client, NULL);
+  base::RunLoop run_loop;
   base::Closure quit_runloop = run_loop.QuitClosure();
-  message_loop()->PostTask(FROM_HERE,
-                           base::Bind(&QuitNestedLoopAndCloseWidget,
-                                      base::Passed(&widget),
-                                      base::Unretained(&quit_runloop)));
+  message_loop()->task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&QuitNestedLoopAndCloseWidget, base::Passed(&widget),
+                 base::Unretained(&quit_runloop)));
   run_loop.Run();
 }
 
@@ -433,8 +449,7 @@ TEST_F(DesktopAuraWidgetTest, TopLevelOwnedPopupRepositionTest) {
   gfx::Rect new_pos(10, 10, 400, 400);
   popup_window.owned_window()->SetBoundsInScreen(
       new_pos,
-      gfx::Screen::GetScreenFor(
-          popup_window.owned_window())->GetDisplayNearestPoint(gfx::Point()));
+      display::Screen::GetScreen()->GetDisplayNearestPoint(gfx::Point()));
 
   EXPECT_EQ(new_pos,
             popup_window.top_level_widget()->GetWindowBoundsInScreen());
@@ -491,7 +506,8 @@ void RunCloseWidgetDuringDispatchTest(WidgetTest* test,
   Widget* widget = new Widget;
   Widget::InitParams params =
       test->CreateParams(Widget::InitParams::TYPE_POPUP);
-  params.native_widget = new PlatformDesktopNativeWidget(widget);
+  params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(params, widget, nullptr);
   params.bounds = gfx::Rect(0, 0, 50, 100);
   widget->Init(params);
   widget->SetContentsView(new CloseWidgetView(last_event_type));
@@ -509,6 +525,8 @@ TEST_F(DesktopAuraWidgetTest, CloseWidgetDuringMouseReleased) {
   RunCloseWidgetDuringDispatchTest(this, ui::ET_MOUSE_RELEASED);
 }
 
+namespace {
+
 // Provides functionality to create a window modal dialog.
 class ModalDialogDelegate : public DialogDelegateView {
  public:
@@ -522,6 +540,8 @@ class ModalDialogDelegate : public DialogDelegateView {
   DISALLOW_COPY_AND_ASSIGN(ModalDialogDelegate);
 };
 
+}  // namespace
+
 // This test verifies that whether mouse events when a modal dialog is
 // displayed are eaten or recieved by the dialog.
 TEST_F(WidgetTest, WindowMouseModalityTest) {
@@ -533,8 +553,8 @@ TEST_F(WidgetTest, WindowMouseModalityTest) {
   gfx::Rect initial_bounds(0, 0, 500, 500);
   init_params.bounds = initial_bounds;
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  init_params.native_widget =
-      new PlatformDesktopNativeWidget(&top_level_widget);
+  init_params.native_widget = CreatePlatformDesktopNativeWidgetImpl(
+      init_params, &top_level_widget, nullptr);
   top_level_widget.Init(init_params);
   top_level_widget.Show();
   EXPECT_TRUE(top_level_widget.IsVisible());
@@ -597,7 +617,8 @@ TEST_F(WidgetTest, WindowMouseModalityTest) {
 #if defined(OS_WIN)
 // Tests whether we can activate the top level widget when a modal dialog is
 // active.
-TEST_F(WidgetTest, WindowModalityActivationTest) {
+// Flaky: crbug.com/613428
+TEST_F(WidgetTest, DISABLED_WindowModalityActivationTest) {
   TestDesktopWidgetDelegate widget_delegate;
   widget_delegate.InitWidget(CreateParams(Widget::InitParams::TYPE_WINDOW));
 
@@ -630,6 +651,32 @@ TEST_F(WidgetTest, WindowModalityActivationTest) {
 
   modal_dialog_widget->CloseNow();
 }
+
+// This test validates that sending WM_CHAR/WM_SYSCHAR/WM_SYSDEADCHAR
+// messages via the WindowEventTarget interface implemented by the
+// HWNDMessageHandler class does not cause a crash due to an unprocessed
+// event
+TEST_F(WidgetTest, CharMessagesAsKeyboardMessagesDoesNotCrash) {
+  Widget widget;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(params, &widget, nullptr);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget.Init(params);
+  widget.Show();
+
+  ui::WindowEventTarget* target =
+      reinterpret_cast<ui::WindowEventTarget*>(ui::ViewProp::GetValue(
+          widget.GetNativeWindow()->GetHost()->GetAcceleratedWidget(),
+          ui::WindowEventTarget::kWin32InputEventTarget));
+  ASSERT_NE(nullptr, target);
+  bool handled = false;
+  target->HandleKeyboardMessage(WM_CHAR, 0, 0, &handled);
+  target->HandleKeyboardMessage(WM_SYSCHAR, 0, 0, &handled);
+  target->HandleKeyboardMessage(WM_SYSDEADCHAR, 0, 0, &handled);
+  widget.CloseNow();
+}
+
 #endif  // defined(OS_WIN)
 
 }  // namespace test

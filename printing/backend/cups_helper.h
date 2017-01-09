@@ -6,9 +6,9 @@
 #define PRINTING_BACKEND_CUPS_HELPER_H_
 
 #include <cups/cups.h>
+#include <cups/ppd.h>
 
-#include <string>
-
+#include "base/strings/string_piece.h"
 #include "printing/printing_export.h"
 
 class GURL;
@@ -37,8 +37,8 @@ class PRINTING_EXPORT HttpConnectionCUPS {
 // Helper function to parse and convert PPD capabilitites to
 // semantic options.
 PRINTING_EXPORT bool ParsePpdCapabilities(
-    const std::string& printer_name,
-    const std::string& printer_capabilities,
+    base::StringPiece printer_name,
+    base::StringPiece printer_capabilities,
     PrinterSemanticCapsAndDefaults* printer_info);
 
 }  // namespace printing

@@ -5,11 +5,13 @@
 #ifndef UI_EVENTS_OZONE_EVDEV_INPUT_DEVICE_FACTORY_PROXY_EVDEV_H_
 #define UI_EVENTS_OZONE_EVDEV_INPUT_DEVICE_FACTORY_PROXY_EVDEV_H_
 
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
@@ -21,8 +23,9 @@ enum class DomCode;
 class InputDeviceFactoryEvdev;
 struct InputDeviceSettingsEvdev;
 
-typedef base::Callback<void(scoped_ptr<std::string>)> GetTouchDeviceStatusReply;
-typedef base::Callback<void(scoped_ptr<std::vector<base::FilePath>>)>
+typedef base::Callback<void(std::unique_ptr<std::string>)>
+    GetTouchDeviceStatusReply;
+typedef base::Callback<void(std::unique_ptr<std::vector<base::FilePath>>)>
     GetTouchEventLogReply;
 
 // Thread safe proxy for InputDeviceFactoryEvdev.

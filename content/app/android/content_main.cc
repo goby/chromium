@@ -4,6 +4,8 @@
 
 #include "content/app/android/content_main.h"
 
+#include <memory>
+
 #include "base/at_exit.h"
 #include "base/base_switches.h"
 #include "base/command_line.h"
@@ -16,14 +18,15 @@
 #include "jni/ContentMain_jni.h"
 
 using base::LazyInstance;
+using base::android::JavaParamRef;
 
 namespace content {
 
 namespace {
-LazyInstance<scoped_ptr<ContentMainRunner> > g_content_runner =
+LazyInstance<std::unique_ptr<ContentMainRunner>> g_content_runner =
     LAZY_INSTANCE_INITIALIZER;
 
-LazyInstance<scoped_ptr<ContentMainDelegate> > g_content_main_delegate =
+LazyInstance<std::unique_ptr<ContentMainDelegate>> g_content_main_delegate =
     LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace

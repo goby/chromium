@@ -4,12 +4,15 @@
 
 #include "base/sys_info.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/environment.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_split.h"
@@ -57,7 +60,7 @@ class ChromeOSVersionInfo {
     is_running_on_chromeos_ = false;
 
     std::string lsb_release, lsb_release_time_str;
-    scoped_ptr<Environment> env(Environment::Create());
+    std::unique_ptr<Environment> env(Environment::Create());
     bool parsed_from_env =
         env->GetVar(kLsbReleaseKey, &lsb_release) &&
         env->GetVar(kLsbReleaseTimeKey, &lsb_release_time_str);
@@ -90,9 +93,9 @@ class ChromeOSVersionInfo {
     return true;
   }
 
-  void GetVersionNumbers(int32* major_version,
-                         int32* minor_version,
-                         int32* bugfix_version) {
+  void GetVersionNumbers(int32_t* major_version,
+                         int32_t* minor_version,
+                         int32_t* bugfix_version) {
     *major_version = major_version_;
     *minor_version = minor_version_;
     *bugfix_version = bugfix_version_;
@@ -154,13 +157,13 @@ class ChromeOSVersionInfo {
 
   Time lsb_release_time_;
   SysInfo::LsbReleaseMap lsb_release_map_;
-  int32 major_version_;
-  int32 minor_version_;
-  int32 bugfix_version_;
+  int32_t major_version_;
+  int32_t minor_version_;
+  int32_t bugfix_version_;
   bool is_running_on_chromeos_;
 };
 
-static LazyInstance<ChromeOSVersionInfo>
+static LazyInstance<ChromeOSVersionInfo>::Leaky
     g_chrome_os_version_info = LAZY_INSTANCE_INITIALIZER;
 
 ChromeOSVersionInfo& GetChromeOSVersionInfo() {
@@ -170,9 +173,9 @@ ChromeOSVersionInfo& GetChromeOSVersionInfo() {
 }  // namespace
 
 // static
-void SysInfo::OperatingSystemVersionNumbers(int32* major_version,
-                                            int32* minor_version,
-                                            int32* bugfix_version) {
+void SysInfo::OperatingSystemVersionNumbers(int32_t* major_version,
+                                            int32_t* minor_version,
+                                            int32_t* bugfix_version) {
   return GetChromeOSVersionInfo().GetVersionNumbers(
       major_version, minor_version, bugfix_version);
 }
@@ -197,6 +200,16 @@ std::string SysInfo::GetLsbReleaseBoard() {
 }
 
 // static
+std::string SysInfo::GetStrippedReleaseBoard() {
+  std::string board = GetLsbReleaseBoard();
+  const size_t index = board.find("-signed-");
+  if (index != std::string::npos)
+    board.resize(index);
+
+  return base::ToLowerASCII(board);
+}
+
+// static
 Time SysInfo::GetLsbReleaseTime() {
   return GetChromeOSVersionInfo().lsb_release_time();
 }
@@ -209,7 +222,7 @@ bool SysInfo::IsRunningOnChromeOS() {
 // static
 void SysInfo::SetChromeOSVersionInfoForTest(const std::string& lsb_release,
                                             const Time& lsb_release_time) {
-  scoped_ptr<Environment> env(Environment::Create());
+  std::unique_ptr<Environment> env(Environment::Create());
   env->SetVar(kLsbReleaseKey, lsb_release);
   env->SetVar(kLsbReleaseTimeKey,
               DoubleToString(lsb_release_time.ToDoubleT()));

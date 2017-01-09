@@ -6,21 +6,24 @@
 
 #include <utility>
 
-#include "base/command_line.h"
 #include "content/browser/browser_url_handler_impl.h"
 #include "content/browser/frame_host/cross_process_frame_connector.h"
 #include "content/browser/frame_host/navigation_entry_impl.h"
+#include "content/browser/frame_host/navigation_handle_impl.h"
 #include "content/browser/frame_host/navigator.h"
 #include "content/browser/frame_host/navigator_impl.h"
 #include "content/browser/renderer_host/render_view_host_impl.h"
 #include "content/browser/site_instance_impl.h"
 #include "content/common/frame_messages.h"
+#include "content/common/render_message_filter.mojom.h"
 #include "content/common/view_messages.h"
+#include "content/public/browser/navigation_data.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/page_state.h"
+#include "content/public/test/browser_side_navigation_test_utils.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/test/test_render_view_host.h"
 #include "ui/base/page_transition_types.h"
@@ -35,9 +38,10 @@ TestWebContents::TestWebContents(BrowserContext* browser_context)
 }
 
 TestWebContents* TestWebContents::Create(BrowserContext* browser_context,
-                                         SiteInstance* instance) {
+                                         scoped_refptr<SiteInstance> instance) {
   TestWebContents* test_web_contents = new TestWebContents(browser_context);
-  test_web_contents->Init(WebContents::CreateParams(browser_context, instance));
+  test_web_contents->Init(
+      WebContents::CreateParams(browser_context, std::move(instance)));
   return test_web_contents;
 }
 
@@ -55,8 +59,7 @@ TestRenderViewHost* TestWebContents::GetRenderViewHost() const {
 }
 
 TestRenderFrameHost* TestWebContents::GetPendingMainFrame() const {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+  if (IsBrowserSideNavigationEnabled()) {
     return static_cast<TestRenderFrameHost*>(
         GetRenderManager()->speculative_render_frame_host_.get());
   }
@@ -72,12 +75,12 @@ void TestWebContents::StartNavigation(const GURL& url) {
   BrowserURLHandlerImpl::GetInstance()->RewriteURLIfNecessary(
       &loaded_url, GetBrowserContext(), &reverse_on_redirect);
 
+  if (GetMainFrame()->is_waiting_for_beforeunload_ack())
+    GetMainFrame()->SendBeforeUnloadACK(true);
+
   // This will simulate receiving the DidStartProvisionalLoad IPC from the
   // renderer.
-  if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
-    if (GetMainFrame()->is_waiting_for_beforeunload_ack())
-      GetMainFrame()->SendBeforeUnloadACK(true);
+  if (!IsBrowserSideNavigationEnabled()) {
     TestRenderFrameHost* rfh =
         GetPendingMainFrame() ? GetPendingMainFrame() : GetMainFrame();
     rfh->SimulateNavigationStart(url);
@@ -94,13 +97,11 @@ int TestWebContents::DownloadImage(const GURL& url,
 }
 
 void TestWebContents::TestDidNavigate(RenderFrameHost* render_frame_host,
-                                      int page_id,
                                       int nav_entry_id,
                                       bool did_create_new_entry,
                                       const GURL& url,
                                       ui::PageTransition transition) {
   TestDidNavigateWithReferrer(render_frame_host,
-                              page_id,
                               nav_entry_id,
                               did_create_new_entry,
                               url,
@@ -110,7 +111,6 @@ void TestWebContents::TestDidNavigate(RenderFrameHost* render_frame_host,
 
 void TestWebContents::TestDidNavigateWithReferrer(
     RenderFrameHost* render_frame_host,
-    int page_id,
     int nav_entry_id,
     bool did_create_new_entry,
     const GURL& url,
@@ -125,7 +125,6 @@ void TestWebContents::TestDidNavigateWithReferrer(
 
   FrameHostMsg_DidCommitProvisionalLoad_Params params;
 
-  params.page_id = page_id;
   params.nav_entry_id = nav_entry_id;
   params.url = url;
   params.referrer = referrer;
@@ -135,10 +134,9 @@ void TestWebContents::TestDidNavigateWithReferrer(
   params.searchable_form_url = GURL();
   params.searchable_form_encoding = std::string();
   params.did_create_new_entry = did_create_new_entry;
-  params.security_info = std::string();
   params.gesture = NavigationGestureUser;
   params.was_within_same_page = false;
-  params.is_post = false;
+  params.method = "GET";
   params.page_state = PageState::CreateFromURL(url);
   params.contents_mime_type = std::string("text/html");
 
@@ -150,12 +148,8 @@ const std::string& TestWebContents::GetSaveFrameHeaders() {
 }
 
 bool TestWebContents::CrossProcessNavigationPending() {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
-    return GetRenderManager()->speculative_render_frame_host_ &&
-           static_cast<TestRenderFrameHost*>(
-               GetRenderManager()->speculative_render_frame_host_.get())
-               ->pending_commit();
+  if (IsBrowserSideNavigationEnabled()) {
+    return GetRenderManager()->speculative_render_frame_host_ != nullptr;
   }
   return GetRenderManager()->pending_frame_host() != nullptr;
 }
@@ -165,10 +159,9 @@ bool TestWebContents::CreateRenderViewForRenderManager(
     int opener_frame_routing_id,
     int proxy_routing_id,
     const FrameReplicationState& replicated_frame_state) {
-  UpdateMaxPageIDIfNecessary(render_view_host);
   // This will go to a TestRenderViewHost.
   static_cast<RenderViewHostImpl*>(render_view_host)
-      ->CreateRenderView(opener_frame_routing_id, proxy_routing_id, -1,
+      ->CreateRenderView(opener_frame_routing_id, proxy_routing_id,
                          replicated_frame_state, false);
   return true;
 }
@@ -193,53 +186,61 @@ void TestWebContents::NavigateAndCommit(const GURL& url) {
 }
 
 void TestWebContents::TestSetIsLoading(bool value) {
-  SetIsLoading(value, true, nullptr);
+  if (value) {
+    DidStartLoading(GetMainFrame()->frame_tree_node(), true);
+  } else {
+    for (FrameTreeNode* node : frame_tree_.Nodes()) {
+      RenderFrameHostImpl* current_frame_host =
+          node->render_manager()->current_frame_host();
+      DCHECK(current_frame_host);
+      current_frame_host->ResetLoadingState();
+
+      if (IsBrowserSideNavigationEnabled()) {
+        RenderFrameHostImpl* speculative_frame_host =
+            node->render_manager()->speculative_frame_host();
+        if (speculative_frame_host)
+          speculative_frame_host->ResetLoadingState();
+        node->ResetNavigationRequest(false);
+      } else {
+        RenderFrameHostImpl* pending_frame_host =
+            node->render_manager()->pending_frame_host();
+        if (pending_frame_host)
+          pending_frame_host->ResetLoadingState();
+      }
+    }
+  }
 }
 
 void TestWebContents::CommitPendingNavigation() {
   const NavigationEntry* entry = GetController().GetPendingEntry();
   DCHECK(entry);
 
-  // If we are doing a cross-site navigation, this simulates the current RFH
-  // notifying that it has unloaded so the pending RFH is resumed and can
-  // navigate.
-  // PlzNavigate: the pending RFH is not created before the navigation commit,
-  // so it is necessary to simulate the IO thread response here to commit in the
-  // proper renderer. It is necessary to call PrepareForCommit before getting
-  // the main and the pending frame because when we are trying to navigate to a
-  // webui from a new tab, a RenderFrameHost is created to display it that is
-  // committed immediately (since it is a new tab). Therefore the main frame is
-  // replaced without a pending frame being created, and we don't get the right
-  // values for the RFH to navigate: we try to use the old one that has been
-  // deleted in the meantime.
-  // Note that for some synchronous navigations (about:blank, javascript
-  // urls, etc.) there will be no NavigationRequest, and no simulation of the
-  // network stack is required.
-  bool browser_side_navigation =
-      base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation);
-  if (!browser_side_navigation ||
-      GetMainFrame()->frame_tree_node()->navigation_request()) {
-    GetMainFrame()->PrepareForCommit();
-  }
-
   TestRenderFrameHost* old_rfh = GetMainFrame();
+
+  // PlzNavigate: the pending RenderFrameHost is not created before the
+  // navigation commit, so it is necessary to simulate the IO thread response
+  // here to commit in the proper renderer. It is necessary to call
+  // PrepareForCommit before getting the main and the pending frame because when
+  // we are trying to navigate to a webui from a new tab, a RenderFrameHost is
+  // created to display it that is committed immediately (since it is a new
+  // tab). Therefore the main frame is replaced without a pending frame being
+  // created, and we don't get the right values for the RenderFrameHost to
+  // navigate: we try to use the old one that has been deleted in the meantime.
+  // Note that for some synchronous navigations (about:blank, javascript urls,
+  // etc.), no simulation of the network stack is required.
+  old_rfh->PrepareForCommitIfNecessary();
+
   TestRenderFrameHost* rfh = GetPendingMainFrame();
   if (!rfh)
     rfh = old_rfh;
+  const bool browser_side_navigation = IsBrowserSideNavigationEnabled();
   CHECK(!browser_side_navigation || rfh->is_loading());
   CHECK(!browser_side_navigation ||
         !rfh->frame_tree_node()->navigation_request());
 
-  int page_id = entry->GetPageID();
-  if (page_id == -1) {
-    // It's a new navigation, assign a never-seen page id to it.
-    page_id = GetMaxPageIDForSiteInstance(rfh->GetSiteInstance()) + 1;
-  }
-
-  rfh->SendNavigate(page_id, entry->GetUniqueID(),
-                    GetController().GetPendingEntryIndex() == -1,
-                    entry->GetURL());
+  rfh->SendNavigateWithTransition(entry->GetUniqueID(),
+                                  GetController().GetPendingEntryIndex() == -1,
+                                  entry->GetURL(), entry->GetTransitionType());
   // Simulate the SwapOut_ACK. This is needed when cross-site navigation
   // happens.
   if (old_rfh != rfh)
@@ -264,7 +265,9 @@ void TestWebContents::SetOpener(TestWebContents* opener) {
 
 void TestWebContents::AddPendingContents(TestWebContents* contents) {
   // This is normally only done in WebContentsImpl::CreateNewWindow.
-  pending_contents_[contents->GetRenderViewHost()->GetRoutingID()] = contents;
+  ProcessRoutingIdPair key(contents->GetRenderViewHost()->GetProcess()->GetID(),
+                           contents->GetRenderViewHost()->GetRoutingID());
+  pending_contents_[key] = contents;
   AddDestructionObserver(contents);
 }
 
@@ -300,32 +303,42 @@ void TestWebContents::TestDidFailLoadWithError(
   frame_tree_.root()->current_frame_host()->OnMessageReceived(msg);
 }
 
+void TestWebContents::SetNavigationData(
+    NavigationHandle* navigation_handle,
+    std::unique_ptr<NavigationData> navigation_data) {
+  static_cast<NavigationHandleImpl*>(navigation_handle)
+      ->set_navigation_data(std::move(navigation_data));
+}
+
 void TestWebContents::CreateNewWindow(
     SiteInstance* source_site_instance,
     int32_t route_id,
     int32_t main_frame_route_id,
     int32_t main_frame_widget_route_id,
-    const ViewHostMsg_CreateWindow_Params& params,
+    const mojom::CreateNewWindowParams& params,
     SessionStorageNamespace* session_storage_namespace) {}
 
-void TestWebContents::CreateNewWidget(int32 render_process_id,
-                                      int32 route_id,
+void TestWebContents::CreateNewWidget(int32_t render_process_id,
+                                      int32_t route_id,
                                       blink::WebPopupType popup_type) {}
 
-void TestWebContents::CreateNewFullscreenWidget(int32 render_process_id,
-                                                int32 route_id) {}
+void TestWebContents::CreateNewFullscreenWidget(int32_t render_process_id,
+                                                int32_t route_id) {}
 
-void TestWebContents::ShowCreatedWindow(int route_id,
+void TestWebContents::ShowCreatedWindow(int process_id,
+                                        int route_id,
                                         WindowOpenDisposition disposition,
                                         const gfx::Rect& initial_rect,
                                         bool user_gesture) {
 }
 
-void TestWebContents::ShowCreatedWidget(int route_id,
+void TestWebContents::ShowCreatedWidget(int process_id,
+                                        int route_id,
                                         const gfx::Rect& initial_rect) {
 }
 
-void TestWebContents::ShowCreatedFullscreenWidget(int route_id) {
+void TestWebContents::ShowCreatedFullscreenWidget(int process_id,
+                                                  int route_id) {
 }
 
 void TestWebContents::SaveFrameWithHeaders(const GURL& url,

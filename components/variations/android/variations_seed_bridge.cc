@@ -5,6 +5,7 @@
 #include "components/variations/android/variations_seed_bridge.h"
 
 #include <jni.h>
+#include <stdint.h>
 #include <vector>
 
 #include "base/android/context_utils.h"
@@ -25,7 +26,7 @@ namespace {
 std::string JavaByteArrayToString(JNIEnv* env, jbyteArray byte_array) {
   if (!byte_array)
     return std::string();
-  std::vector<uint8> array_data;
+  std::vector<uint8_t> array_data;
   base::android::JavaByteArrayToByteVector(env, byte_array, &array_data);
   return std::string(array_data.begin(), array_data.end());
 }
@@ -33,7 +34,7 @@ std::string JavaByteArrayToString(JNIEnv* env, jbyteArray byte_array) {
 ScopedJavaLocalRef<jbyteArray> StringToJavaByteArray(
     JNIEnv* env,
     const std::string& str_data) {
-  std::vector<uint8> array_data(str_data.begin(), str_data.end());
+  std::vector<uint8_t> array_data(str_data.begin(), str_data.end());
   return base::android::ToJavaByteArray(env, array_data);
 }
 
@@ -41,10 +42,6 @@ ScopedJavaLocalRef<jbyteArray> StringToJavaByteArray(
 
 namespace variations {
 namespace android {
-
-bool RegisterVariationsSeedBridge(JNIEnv* env) {
-  return RegisterNativesImpl(env);
-}
 
 void GetVariationsFirstRunSeed(std::string* seed_data,
                                std::string* seed_signature,
@@ -92,10 +89,10 @@ void SetJavaFirstRunPrefsForTesting(const std::string& seed_data,
                                     bool is_gzip_compressed) {
   JNIEnv* env = AttachCurrentThread();
   Java_VariationsSeedBridge_setVariationsFirstRunSeed(
-      env, GetApplicationContext(), StringToJavaByteArray(env, seed_data).obj(),
-      ConvertUTF8ToJavaString(env, seed_signature).obj(),
-      ConvertUTF8ToJavaString(env, seed_country).obj(),
-      ConvertUTF8ToJavaString(env, response_date).obj(),
+      env, GetApplicationContext(), StringToJavaByteArray(env, seed_data),
+      ConvertUTF8ToJavaString(env, seed_signature),
+      ConvertUTF8ToJavaString(env, seed_country),
+      ConvertUTF8ToJavaString(env, response_date),
       static_cast<jboolean>(is_gzip_compressed));
 }
 

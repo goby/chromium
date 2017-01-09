@@ -4,29 +4,24 @@
 
 #include "chrome/browser/ui/cocoa/website_settings/permission_bubble_cocoa.h"
 
+#include "base/memory/ptr_util.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/website_settings/permission_bubble_controller.h"
-#import "chrome/browser/ui/website_settings/permission_bubble_view.h"
+#import "chrome/browser/ui/website_settings/permission_prompt.h"
 #include "content/public/browser/web_contents.h"
 #import "ui/base/cocoa/nsview_additions.h"
 
 PermissionBubbleCocoa::PermissionBubbleCocoa(Browser* browser)
-    : browser_(browser), delegate_(nullptr), bubbleController_(nil) {
-  DCHECK(browser);
-}
+    : browser_(browser), delegate_(nullptr), bubbleController_(nil) {}
 
 PermissionBubbleCocoa::~PermissionBubbleCocoa() {
 }
 
-// static
-scoped_ptr<PermissionBubbleView> PermissionBubbleView::Create(
-    Browser* browser) {
-  return make_scoped_ptr(new PermissionBubbleCocoa(browser));
-}
-
 void PermissionBubbleCocoa::Show(
-    const std::vector<PermissionBubbleRequest*>& requests,
+    const std::vector<PermissionRequest*>& requests,
     const std::vector<bool>& accept_state) {
+  DCHECK(browser_);
+
   if (!bubbleController_) {
     bubbleController_ =
         [[PermissionBubbleController alloc] initWithBrowser:browser_

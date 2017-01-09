@@ -16,9 +16,8 @@ int64_t WebRtcAudioDeviceNotImpl::TimeUntilNextProcess() {
   return kMillisecondsBetweenProcessCalls - delta_time.InMilliseconds();
 }
 
-int32_t WebRtcAudioDeviceNotImpl::Process() {
+void WebRtcAudioDeviceNotImpl::Process() {
   last_process_time_ = base::TimeTicks::Now();
-  return 0;
 }
 
 int32_t WebRtcAudioDeviceNotImpl::RegisterEventObserver(
@@ -270,5 +269,33 @@ bool WebRtcAudioDeviceNotImpl::BuiltInAECIsAvailable() const {
 int32_t WebRtcAudioDeviceNotImpl::EnableBuiltInAEC(bool enable) {
   return 0;
 }
+
+bool WebRtcAudioDeviceNotImpl::BuiltInAGCIsAvailable() const {
+  return false;
+}
+
+int32_t WebRtcAudioDeviceNotImpl::EnableBuiltInAGC(bool enable) {
+  return 0;
+}
+
+bool WebRtcAudioDeviceNotImpl::BuiltInNSIsAvailable() const {
+  return false;
+}
+
+int32_t WebRtcAudioDeviceNotImpl::EnableBuiltInNS(bool enable) {
+  return 0;
+}
+
+#if defined(OS_IOS)
+int WebRtcAudioDeviceNotImpl::GetPlayoutAudioParameters(
+    AudioParameters* params) const {
+  return 0;
+}
+
+int WebRtcAudioDeviceNotImpl::GetRecordAudioParameters(
+    AudioParameters* params) const {
+  return 0;
+}
+#endif  // OS_IOS
 
 }  // namespace content

@@ -26,18 +26,21 @@ DeclarativeContentConditionTrackerTest::
   base::RunLoop().RunUntilIdle();
 }
 
-scoped_ptr<content::WebContents>
+std::unique_ptr<content::WebContents>
 DeclarativeContentConditionTrackerTest::MakeTab() {
-  return make_scoped_ptr(content::WebContentsTester::CreateTestWebContents(
-      profile_.get(),
-      nullptr));
+  std::unique_ptr<content::WebContents> tab(
+      content::WebContentsTester::CreateTestWebContents(profile_.get(),
+                                                        nullptr));
+  content::RenderFrameHostTester::For(tab->GetMainFrame())
+      ->InitializeRenderFrameIfNeeded();
+  return tab;
 }
 
 content::MockRenderProcessHost*
 DeclarativeContentConditionTrackerTest::GetMockRenderProcessHost(
     content::WebContents* contents) {
   return static_cast<content::MockRenderProcessHost*>(
-      contents->GetRenderViewHost()->GetProcess());
+      contents->GetMainFrame()->GetProcess());
 }
 
 const void* DeclarativeContentConditionTrackerTest::GeneratePredicateGroupID() {

@@ -31,79 +31,80 @@
 #ifndef SVGMatrixTearOff_h
 #define SVGMatrixTearOff_h
 
-#include "bindings/core/v8/ExceptionState.h"
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "bindings/core/v8/TraceWrapperMember.h"
 #include "core/CoreExport.h"
 #include "platform/heap/Handle.h"
 #include "platform/transforms/AffineTransform.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
+class ExceptionState;
 class SVGTransformTearOff;
 
 // SVGMatrixTearOff wraps a AffineTransform for Javascript.
-// Its instance can either hold a static value, or this can be teared off from |SVGTransform.matrix|.
-// This does not derive from SVGPropertyTearOff, as its instances are never tied to an animated property nor an XML attribute.
-class CORE_EXPORT SVGMatrixTearOff final : public RefCountedWillBeGarbageCollectedFinalized<SVGMatrixTearOff>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGMatrixTearOff> create(const AffineTransform& value)
-    {
-        return adoptRefWillBeNoop(new SVGMatrixTearOff(value));
-    }
+// Its instance can either hold a static value, or this can be teared off from
+// |SVGTransform.matrix|.  This does not derive from SVGPropertyTearOff, as its
+// instances are never tied to an animated property nor an XML attribute.
+class CORE_EXPORT SVGMatrixTearOff final
+    : public GarbageCollected<SVGMatrixTearOff>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    static PassRefPtrWillBeRawPtr<SVGMatrixTearOff> create(SVGTransformTearOff* target)
-    {
-        return adoptRefWillBeNoop(new SVGMatrixTearOff(target));
-    }
+ public:
+  static SVGMatrixTearOff* create(const AffineTransform& value) {
+    return new SVGMatrixTearOff(value);
+  }
 
-    ~SVGMatrixTearOff();
+  static SVGMatrixTearOff* create(SVGTransformTearOff* target) {
+    return new SVGMatrixTearOff(target);
+  }
 
-    double a() { return value().a(); }
-    double b() { return value().b(); }
-    double c() { return value().c(); }
-    double d() { return value().d(); }
-    double e() { return value().e(); }
-    double f() { return value().f(); }
+  double a() { return value().a(); }
+  double b() { return value().b(); }
+  double c() { return value().c(); }
+  double d() { return value().d(); }
+  double e() { return value().e(); }
+  double f() { return value().f(); }
 
-    void setA(double, ExceptionState&);
-    void setB(double, ExceptionState&);
-    void setC(double, ExceptionState&);
-    void setD(double, ExceptionState&);
-    void setE(double, ExceptionState&);
-    void setF(double, ExceptionState&);
+  void setA(double, ExceptionState&);
+  void setB(double, ExceptionState&);
+  void setC(double, ExceptionState&);
+  void setD(double, ExceptionState&);
+  void setE(double, ExceptionState&);
+  void setF(double, ExceptionState&);
 
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> translate(double tx, double ty);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> scale(double);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> scaleNonUniform(double sx, double sy);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> rotate(double);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> flipX();
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> flipY();
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> skewX(double);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> skewY(double);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> multiply(PassRefPtrWillBeRawPtr<SVGMatrixTearOff>);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> inverse(ExceptionState&);
-    PassRefPtrWillBeRawPtr<SVGMatrixTearOff> rotateFromVector(double x, double y, ExceptionState&);
+  SVGMatrixTearOff* translate(double tx, double ty);
+  SVGMatrixTearOff* scale(double);
+  SVGMatrixTearOff* scaleNonUniform(double sx, double sy);
+  SVGMatrixTearOff* rotate(double);
+  SVGMatrixTearOff* flipX();
+  SVGMatrixTearOff* flipY();
+  SVGMatrixTearOff* skewX(double);
+  SVGMatrixTearOff* skewY(double);
+  SVGMatrixTearOff* multiply(SVGMatrixTearOff*);
+  SVGMatrixTearOff* inverse(ExceptionState&);
+  SVGMatrixTearOff* rotateFromVector(double x, double y, ExceptionState&);
 
-    SVGTransformTearOff* contextTransform() { return m_contextTransform; }
+  SVGTransformTearOff* contextTransform() { return m_contextTransform; }
 
-    const AffineTransform& value() const;
+  const AffineTransform& value() const;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
 
-private:
-    explicit SVGMatrixTearOff(const AffineTransform&);
-    explicit SVGMatrixTearOff(SVGTransformTearOff*);
+ private:
+  explicit SVGMatrixTearOff(const AffineTransform&);
+  explicit SVGMatrixTearOff(SVGTransformTearOff*);
 
-    AffineTransform* mutableValue();
-    void commitChange();
+  AffineTransform* mutableValue();
+  void commitChange();
 
-    AffineTransform m_staticValue;
+  AffineTransform m_staticValue;
 
-    RawPtrWillBeMember<SVGTransformTearOff> m_contextTransform;
+  TraceWrapperMember<SVGTransformTearOff> m_contextTransform;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGMatrixTearOff_h
+#endif  // SVGMatrixTearOff_h

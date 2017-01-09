@@ -6,100 +6,65 @@
  * @fileoverview
  * 'settings-default-browser-page' is the settings page that contains
  * settings to change the default browser (i.e. which the OS will open).
- *
- * Example:
- *
- *   <iron-animated-pages>
- *     <settings-default-browser-page>
- *     </settings-default-browser-page>
- *     ... other pages ...
- *   </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-default-browser-page
  */
 Polymer({
   is: 'settings-default-browser-page',
 
+  behaviors: [WebUIListenerBehavior],
+
   properties: {
-    /**
-     * The current active route.
-     */
-    currentRoute: {
-      type: Object,
-      notify: true,
-    },
+    /** @private */
+    isDefault_: Boolean,
 
-    /**
-     * A message about whether Chrome is the default browser.
-     */
-    message_: {
-      type: String,
-    },
+    /** @private */
+    isSecondaryInstall_: Boolean,
 
-    /**
-     * Show or hide an error indicator showing whether SetAsDefault succeeded.
-     */
-    showError_: {
-      type: Boolean,
-      value: false,
-    },
+    /** @private */
+    isUnknownError_: Boolean,
 
-    /**
-     * Only show the SetAsDefault button if we have permission to set it.
-     */
-    showButton_: {
-      type: Boolean,
-    },
+    /** @private */
+    maySetDefaultBrowser_: Boolean,
   },
 
-  behaviors: [
-    I18nBehavior,
-  ],
+  /** @private {settings.DefaultBrowserBrowserProxy} */
+  browserProxy_: null,
+
+  /** @override */
+  created: function() {
+    this.browserProxy_ = settings.DefaultBrowserBrowserProxyImpl.getInstance();
+  },
 
   ready: function() {
-    var self = this;
-    cr.define('Settings', function() {
-      return {
-        setAsDefaultConcluded: function() {
-          return self.setAsDefaultConcluded_.apply(self, arguments);
-        },
-        updateDefaultBrowserState: function() {
-          return self.updateDefaultBrowserState_.apply(self, arguments);
-        },
-      };
-    });
-    chrome.send('SettingsDefaultBrowser.requestDefaultBrowserState');
+    this.addWebUIListener('settings.updateDefaultBrowserState',
+        this.updateDefaultBrowserState_.bind(this));
+
+    this.browserProxy_.requestDefaultBrowserState().then(
+        this.updateDefaultBrowserState_.bind(this));
   },
 
   /**
-   * @param {boolean} succeeded
+   * @param {!DefaultBrowserInfo} defaultBrowserState
    * @private
    */
-  setAsDefaultConcluded_: function(succeeded) {
-    this.showError_ = !succeeded;
-  },
+  updateDefaultBrowserState_: function(defaultBrowserState) {
+    this.isDefault_ = false;
+    this.isSecondaryInstall_ = false;
+    this.isUnknownError_ = false;
+    this.maySetDefaultBrowser_ = false;
 
-  /**
-   * @param {boolean} isDefault Whether Chrome is currently the user's default
-   *   browser.
-   * @param {boolean} canBeDefault Whether Chrome can be the default browser on
-   *   this system.
-   * @private
-   */
-  updateDefaultBrowserState_: function(isDefault, canBeDefault) {
-    this.showButton_ = !isDefault && canBeDefault;
-    if (canBeDefault) {
-      this.message_ = loadTimeData.getString(isDefault ?
-          'defaultBrowserDefault' :
-          'defaultBrowserNotDefault');
-    } else {
-      this.message_ = loadTimeData.getString('defaultBrowserUnknown');
-    }
+    if (defaultBrowserState.isDefault)
+      this.isDefault_ = true;
+    else if (!defaultBrowserState.canBeDefault)
+      this.isSecondaryInstall_ = true;
+    else if (!defaultBrowserState.isDisabledByPolicy &&
+        !defaultBrowserState.isUnknownError)
+      this.maySetDefaultBrowser_ = true;
+    else
+      this.isUnknownError_ = true;
   },
 
   /** @private */
   onSetDefaultBrowserTap_: function() {
-    chrome.send('SettingsDefaultBrowser.setAsDefaultBrowser');
+    this.browserProxy_.setAsDefaultBrowser();
   },
 });

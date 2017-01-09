@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/frame/browser_view.h"
 
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/test/base/in_process_browser_test.h"
@@ -14,7 +15,8 @@
 #include "ui/aura/client/aura_constants.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_delegate.h"
-#include "ui/gfx/screen.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #endif
 
 using views::FocusManager;
@@ -61,11 +63,14 @@ IN_PROC_BROWSER_TEST_P(BrowserViewTestParam, BrowserRemembersDockedState) {
   Browser::CreateParams params =
       test_app ? Browser::CreateParams::CreateForApp(
                      "test_browser_app", true /* trusted_source */, gfx::Rect(),
-                     browser()->profile(), browser()->host_desktop_type())
-               : Browser::CreateParams(browser()->profile(),
-                                       browser()->host_desktop_type());
+                     browser()->profile())
+               : Browser::CreateParams(browser()->profile());
   params.initial_show_state = ui::SHOW_STATE_DEFAULT;
-  bool is_ash = browser()->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH;
+#if defined(USE_ASH)
+  const bool kIsAsh = true;
+#else
+  const bool kIsAsh = false;
+#endif
   // Default |browser()| is not used by this test.
   browser()->window()->Close();
 
@@ -77,7 +82,7 @@ IN_PROC_BROWSER_TEST_P(BrowserViewTestParam, BrowserRemembersDockedState) {
   window->SetBounds(original_bounds);
   window->Show();
   // Dock the browser window using |kShowStateKey| property.
-  gfx::Rect work_area = gfx::Screen::GetScreenFor(window)
+  gfx::Rect work_area = display::Screen::GetScreen()
                             ->GetDisplayNearestPoint(window->bounds().origin())
                             .work_area();
   window->SetProperty(aura::client::kShowStateKey, ui::SHOW_STATE_DOCKED);
@@ -88,10 +93,10 @@ IN_PROC_BROWSER_TEST_P(BrowserViewTestParam, BrowserRemembersDockedState) {
   const views::Widget* widget = views::Widget::GetWidgetForNativeWindow(window);
   widget->widget_delegate()->GetSavedWindowPlacement(widget, &bounds,
                                                      &show_state);
-  EXPECT_EQ(is_ash && test_app ? ui::SHOW_STATE_DOCKED : ui::SHOW_STATE_DEFAULT,
+  EXPECT_EQ(kIsAsh && test_app ? ui::SHOW_STATE_DOCKED : ui::SHOW_STATE_DEFAULT,
             show_state);
   // Docking is only relevant on Ash desktop.
-  if (!is_ash)
+  if (!kIsAsh)
     return;
 
   // Saved placement should reflect restore bounds.

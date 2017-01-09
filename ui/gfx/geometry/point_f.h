@@ -18,15 +18,14 @@ namespace gfx {
 // A floating version of gfx::Point.
 class GFX_EXPORT PointF {
  public:
-  PointF() : x_(0.f), y_(0.f) {}
-  PointF(float x, float y) : x_(x), y_(y) {}
-  ~PointF() {}
+  constexpr PointF() : x_(0.f), y_(0.f) {}
+  constexpr PointF(float x, float y) : x_(x), y_(y) {}
 
-  explicit PointF(const Point& p)
+  constexpr explicit PointF(const Point& p)
       : PointF(static_cast<float>(p.x()), static_cast<float>(p.y())) {}
 
-  float x() const { return x_; }
-  float y() const { return y_; }
+  constexpr float x() const { return x_; }
+  constexpr float y() const { return y_; }
   void set_x(float x) { x_ = x; }
   void set_y(float y) { y_ = y; }
 
@@ -118,8 +117,8 @@ inline PointF ScalePoint(const PointF& p, float scale) {
 }
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const PointF& point, ::std::ostream* os);
 
 }  // namespace gfx

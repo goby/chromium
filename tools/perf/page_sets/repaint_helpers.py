@@ -2,7 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 
 
 def Repaint(action_runner, mode='viewport', width=None, height=None):
@@ -19,7 +19,7 @@ def Repaint(action_runner, mode='viewport', width=None, height=None):
   if height:
     args['height'] = height
 
-  # Enque benchmark
+  # Enqueue benchmark
   action_runner.ExecuteJavaScript("""
       window.benchmark_results = {};
       window.benchmark_results.id =
@@ -33,12 +33,13 @@ def Repaint(action_runner, mode='viewport', width=None, height=None):
   micro_benchmark_id = action_runner.EvaluateJavaScript(
       'window.benchmark_results.id')
   if not micro_benchmark_id:
-    raise page_test.MeasurementFailure(
+    raise legacy_page_test.MeasurementFailure(
         'Failed to schedule invalidation_benchmark.')
 
   with action_runner.CreateInteraction('Repaint'):
     action_runner.RepaintContinuously(seconds=5)
 
+  # TODO(catapult:#3028): Fix interpolation of JavaScript values.
   action_runner.ExecuteJavaScript("""
       window.benchmark_results.message_handled =
           chrome.gpuBenchmarking.sendMessageToMicroBenchmark(
@@ -46,3 +47,8 @@ def Repaint(action_runner, mode='viewport', width=None, height=None):
                 "notify_done": true
               });
   """)
+
+
+def WaitThenRepaint(action_runner):
+  action_runner.Wait(2)
+  Repaint(action_runner)

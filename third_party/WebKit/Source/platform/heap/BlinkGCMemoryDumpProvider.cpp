@@ -2,73 +2,144 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "platform/heap/BlinkGCMemoryDumpProvider.h"
 
+#include "base/trace_event/heap_profiler_allocation_context_tracker.h"
+#include "base/trace_event/heap_profiler_allocation_register.h"
+#include "base/trace_event/memory_allocator_dump.h"
+#include "base/trace_event/process_memory_dump.h"
+#include "base/trace_event/trace_event_memory_overhead.h"
 #include "platform/heap/Handle.h"
+#include "platform/tracing/web_memory_allocator_dump.h"
 #include "public/platform/Platform.h"
-#include "public/platform/WebMemoryAllocatorDump.h"
-#include "public/platform/WebProcessMemoryDump.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/Threading.h"
 
 namespace blink {
 namespace {
 
-void dumpMemoryTotals(blink::WebProcessMemoryDump* memoryDump)
-{
-    String dumpName = String::format("blink_gc");
-    WebMemoryAllocatorDump* allocatorDump = memoryDump->createMemoryAllocatorDump(dumpName);
-    allocatorDump->addScalar("size", "bytes", Heap::allocatedSpace());
+void dumpMemoryTotals(base::trace_event::ProcessMemoryDump* memoryDump) {
+  base::trace_event::MemoryAllocatorDump* allocatorDump =
+      memoryDump->CreateAllocatorDump("blink_gc");
+  allocatorDump->AddScalar("size", "bytes", ProcessHeap::totalAllocatedSpace());
 
-    dumpName.append("/allocated_objects");
-    WebMemoryAllocatorDump* objectsDump = memoryDump->createMemoryAllocatorDump(dumpName);
+  base::trace_event::MemoryAllocatorDump* objectsDump =
+      memoryDump->CreateAllocatorDump("blink_gc/allocated_objects");
 
-    // Heap::markedObjectSize() can be underestimated if we're still in the
-    // process of lazy sweeping.
-    objectsDump->addScalar("size", "bytes", Heap::allocatedObjectSize() + Heap::markedObjectSize());
+  // ThreadHeap::markedObjectSize() can be underestimated if we're still in the
+  // process of lazy sweeping.
+  objectsDump->AddScalar("size", "bytes",
+                         ProcessHeap::totalAllocatedObjectSize() +
+                             ProcessHeap::totalMarkedObjectSize());
 }
 
-} // namespace
-
-BlinkGCMemoryDumpProvider* BlinkGCMemoryDumpProvider::instance()
-{
-    DEFINE_STATIC_LOCAL(BlinkGCMemoryDumpProvider, instance, ());
-    return &instance;
+void reportAllocation(Address address, size_t size, const char* typeName) {
+  BlinkGCMemoryDumpProvider::instance()->insert(address, size, typeName);
 }
 
-BlinkGCMemoryDumpProvider::~BlinkGCMemoryDumpProvider()
-{
+void reportFree(Address address) {
+  BlinkGCMemoryDumpProvider::instance()->remove(address);
 }
 
-bool BlinkGCMemoryDumpProvider::onMemoryDump(WebMemoryDumpLevelOfDetail levelOfDetail, blink::WebProcessMemoryDump* memoryDump)
-{
-    if (levelOfDetail == WebMemoryDumpLevelOfDetail::Light) {
-        dumpMemoryTotals(memoryDump);
-        return true;
+}  // namespace
+
+BlinkGCMemoryDumpProvider* BlinkGCMemoryDumpProvider::instance() {
+  DEFINE_STATIC_LOCAL(BlinkGCMemoryDumpProvider, instance, ());
+  return &instance;
+}
+
+BlinkGCMemoryDumpProvider::~BlinkGCMemoryDumpProvider() {}
+
+bool BlinkGCMemoryDumpProvider::OnMemoryDump(
+    const base::trace_event::MemoryDumpArgs& args,
+    base::trace_event::ProcessMemoryDump* memoryDump) {
+  using base::trace_event::MemoryDumpLevelOfDetail;
+  MemoryDumpLevelOfDetail levelOfDetail = args.level_of_detail;
+  // In the case of a detailed dump perform a mark-only GC pass to collect
+  // more detailed stats.
+  if (levelOfDetail == MemoryDumpLevelOfDetail::DETAILED)
+    ThreadState::current()->collectGarbage(BlinkGC::NoHeapPointersOnStack,
+                                           BlinkGC::TakeSnapshot,
+                                           BlinkGC::ForcedGC);
+  dumpMemoryTotals(memoryDump);
+
+  if (m_isHeapProfilingEnabled) {
+    // Overhead should always be reported, regardless of light vs. heavy.
+    base::trace_event::TraceEventMemoryOverhead overhead;
+    base::hash_map<base::trace_event::AllocationContext,
+                   base::trace_event::AllocationMetrics>
+        metricsByContext;
+    {
+      MutexLocker locker(m_allocationRegisterMutex);
+      if (levelOfDetail == MemoryDumpLevelOfDetail::DETAILED) {
+        for (const auto& allocSize : *m_allocationRegister) {
+          base::trace_event::AllocationMetrics& metrics =
+              metricsByContext[allocSize.context];
+          metrics.size += allocSize.size;
+          metrics.count++;
+        }
+      }
+      m_allocationRegister->EstimateTraceMemoryOverhead(&overhead);
     }
+    memoryDump->DumpHeapUsage(metricsByContext, overhead, "blink_gc");
+  }
 
-    Heap::collectGarbage(BlinkGC::NoHeapPointersOnStack, BlinkGC::TakeSnapshot, BlinkGC::ForcedGC);
-    dumpMemoryTotals(memoryDump);
-
-    // Merge all dumps collected by Heap::collectGarbage.
-    memoryDump->takeAllDumpsFrom(m_currentProcessMemoryDump.get());
-    return true;
+  // Merge all dumps collected by ThreadHeap::collectGarbage.
+  if (levelOfDetail == MemoryDumpLevelOfDetail::DETAILED)
+    memoryDump->TakeAllDumpsFrom(m_currentProcessMemoryDump.get());
+  return true;
 }
 
-WebMemoryAllocatorDump* BlinkGCMemoryDumpProvider::createMemoryAllocatorDumpForCurrentGC(const String& absoluteName)
-{
-    return m_currentProcessMemoryDump->createMemoryAllocatorDump(absoluteName);
+void BlinkGCMemoryDumpProvider::OnHeapProfilingEnabled(bool enabled) {
+  if (enabled) {
+    {
+      MutexLocker locker(m_allocationRegisterMutex);
+      if (!m_allocationRegister)
+        m_allocationRegister.reset(new base::trace_event::AllocationRegister());
+    }
+    HeapAllocHooks::setAllocationHook(reportAllocation);
+    HeapAllocHooks::setFreeHook(reportFree);
+  } else {
+    HeapAllocHooks::setAllocationHook(nullptr);
+    HeapAllocHooks::setFreeHook(nullptr);
+  }
+  m_isHeapProfilingEnabled = enabled;
 }
 
-void BlinkGCMemoryDumpProvider::clearProcessDumpForCurrentGC()
-{
-    m_currentProcessMemoryDump->clear();
+base::trace_event::MemoryAllocatorDump*
+BlinkGCMemoryDumpProvider::createMemoryAllocatorDumpForCurrentGC(
+    const String& absoluteName) {
+  // TODO(bashi): Change type name of |absoluteName|.
+  return m_currentProcessMemoryDump->CreateAllocatorDump(
+      absoluteName.utf8().data());
+}
+
+void BlinkGCMemoryDumpProvider::clearProcessDumpForCurrentGC() {
+  m_currentProcessMemoryDump->Clear();
 }
 
 BlinkGCMemoryDumpProvider::BlinkGCMemoryDumpProvider()
-    : m_currentProcessMemoryDump(adoptPtr(Platform::current()->createProcessMemoryDump()))
-{
+    : m_currentProcessMemoryDump(new base::trace_event::ProcessMemoryDump(
+          nullptr,
+          {base::trace_event::MemoryDumpLevelOfDetail::DETAILED})),
+      m_isHeapProfilingEnabled(false) {}
+
+void BlinkGCMemoryDumpProvider::insert(Address address,
+                                       size_t size,
+                                       const char* typeName) {
+  base::trace_event::AllocationContext context =
+      base::trace_event::AllocationContextTracker::GetInstanceForCurrentThread()
+          ->GetContextSnapshot();
+  context.type_name = typeName;
+  MutexLocker locker(m_allocationRegisterMutex);
+  if (m_allocationRegister)
+    m_allocationRegister->Insert(address, size, context);
 }
 
-} // namespace blink
+void BlinkGCMemoryDumpProvider::remove(Address address) {
+  MutexLocker locker(m_allocationRegisterMutex);
+  if (m_allocationRegister)
+    m_allocationRegister->Remove(address);
+}
+
+}  // namespace blink

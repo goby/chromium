@@ -4,11 +4,13 @@
 
 #include "chrome/browser/ui/webui/options/handler_options_handler.h"
 
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -17,6 +19,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/google/core/browser/google_util.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_ui.h"
 
 namespace options {
@@ -88,11 +91,11 @@ static void GetHandlersAsListValue(
     base::ListValue* handler_list) {
   ProtocolHandlerRegistry::ProtocolHandlerList::const_iterator handler;
   for (handler = handlers.begin(); handler != handlers.end(); ++handler) {
-    base::ListValue* handlerValue = new base::ListValue();
-    handlerValue->Append(new base::StringValue(handler->protocol()));
-    handlerValue->Append(new base::StringValue(handler->url().spec()));
-    handlerValue->Append(new base::StringValue(handler->url().host()));
-    handler_list->Append(handlerValue);
+    std::unique_ptr<base::ListValue> handler_value(new base::ListValue());
+    handler_value->AppendString(handler->protocol());
+    handler_value->AppendString(handler->url().spec());
+    handler_value->AppendString(handler->url().host());
+    handler_list->Append(std::move(handler_value));
   }
 }
 
@@ -132,16 +135,18 @@ void HandlerOptionsHandler::UpdateHandlerList() {
   base::ListValue handlers;
   for (std::vector<std::string>::iterator protocol = protocols.begin();
        protocol != protocols.end(); protocol++) {
-    base::DictionaryValue* handler_value = new base::DictionaryValue();
-    GetHandlersForProtocol(*protocol, handler_value);
-    handlers.Append(handler_value);
+    std::unique_ptr<base::DictionaryValue> handler_value(
+        new base::DictionaryValue());
+    GetHandlersForProtocol(*protocol, handler_value.get());
+    handlers.Append(std::move(handler_value));
   }
 
-  scoped_ptr<base::ListValue> ignored_handlers(new base::ListValue());
+  std::unique_ptr<base::ListValue> ignored_handlers(new base::ListValue());
   GetIgnoredHandlers(ignored_handlers.get());
-  web_ui()->CallJavascriptFunction("HandlerOptions.setHandlers", handlers);
-  web_ui()->CallJavascriptFunction("HandlerOptions.setIgnoredHandlers",
-                                   *ignored_handlers);
+  web_ui()->CallJavascriptFunctionUnsafe("HandlerOptions.setHandlers",
+                                         handlers);
+  web_ui()->CallJavascriptFunctionUnsafe("HandlerOptions.setIgnoredHandlers",
+                                         *ignored_handlers);
 }
 
 void HandlerOptionsHandler::RemoveHandler(const base::ListValue* args) {
@@ -210,10 +215,8 @@ void HandlerOptionsHandler::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_PROTOCOL_HANDLER_REGISTRY_CHANGED)
-    UpdateHandlerList();
-  else
-    NOTREACHED();
+  DCHECK_EQ(chrome::NOTIFICATION_PROTOCOL_HANDLER_REGISTRY_CHANGED, type);
+  UpdateHandlerList();
 }
 
 }  // namespace options

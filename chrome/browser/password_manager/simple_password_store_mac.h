@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_PASSWORD_MANAGER_SIMPLE_PASSWORD_STORE_MAC_H_
 #define CHROME_BROWSER_PASSWORD_MANAGER_SIMPLE_PASSWORD_STORE_MAC_H_
 
+#include "base/macros.h"
 #include "components/password_manager/core/browser/password_store_default.h"
 
 // The same as PasswordStoreDefault but running on the dedicated thread. The
@@ -16,14 +17,14 @@ class SimplePasswordStoreMac : public password_manager::PasswordStoreDefault {
   SimplePasswordStoreMac(
       scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner,
       scoped_refptr<base::SingleThreadTaskRunner> background_thread_runner,
-      scoped_ptr<password_manager::LoginDatabase> login_db);
+      std::unique_ptr<password_manager::LoginDatabase> login_db);
 
   // Sets the background thread and LoginDatabase. |login_db| should be already
   // inited. The method isn't necessary to call if the constructor already got
   // the correct parameters.
   void InitWithTaskRunner(
       scoped_refptr<base::SingleThreadTaskRunner> background_task_runner,
-      scoped_ptr<password_manager::LoginDatabase> login_db);
+      std::unique_ptr<password_manager::LoginDatabase> login_db);
 
   using PasswordStoreDefault::GetBackgroundTaskRunner;
 

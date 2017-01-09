@@ -5,18 +5,15 @@
 #ifndef NET_QUIC_TEST_TOOLS_RTT_STATS_PEER_H_
 #define NET_QUIC_TEST_TOOLS_RTT_STATS_PEER_H_
 
-#include "net/quic/congestion_control/rtt_stats.h"
-#include "net/quic/quic_time.h"
+#include "base/macros.h"
+#include "net/quic/core/congestion_control/rtt_stats.h"
+#include "net/quic/core/quic_time.h"
 
 namespace net {
 namespace test {
 
 class RttStatsPeer {
  public:
-  static QuicTime::Delta GetHalfWindowRtt(const RttStats* rtt_stats);
-
-  static QuicTime::Delta GetQuarterWindowRtt(const RttStats* rtt_stats);
-
   static void SetSmoothedRtt(RttStats* rtt_stats, QuicTime::Delta rtt_ms);
 
   static void SetMinRtt(RttStats* rtt_stats, QuicTime::Delta rtt_ms);

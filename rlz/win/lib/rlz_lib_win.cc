@@ -9,9 +9,11 @@
 
 #include <windows.h>
 #include <aclapi.h>
+#include <stddef.h>
 #include <winerror.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/win/registry.h"
 #include "rlz/lib/assert.h"
 #include "rlz/lib/rlz_value_store.h"
@@ -24,7 +26,7 @@ namespace rlz_lib {
 
 template<class T>
 class typed_buffer_ptr {
-  scoped_ptr<char[]> buffer_;
+  std::unique_ptr<char[]> buffer_;
 
  public:
   typed_buffer_ptr() {

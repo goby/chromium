@@ -5,6 +5,9 @@
 #ifndef CONTENT_CHILD_WEBTHEMEENGINE_IMPL_DEFAULT_H_
 #define CONTENT_CHILD_WEBTHEMEENGINE_IMPL_DEFAULT_H_
 
+#include <stdint.h>
+
+#include "build/build_config.h"
 #include "third_party/WebKit/public/platform/WebThemeEngine.h"
 
 namespace content {
@@ -12,26 +15,22 @@ namespace content {
 class WebThemeEngineImpl : public blink::WebThemeEngine {
  public:
   // WebThemeEngine methods:
-  virtual blink::WebSize getSize(blink::WebThemeEngine::Part);
-  virtual void paint(
-      blink::WebCanvas* canvas,
-      blink::WebThemeEngine::Part part,
-      blink::WebThemeEngine::State state,
-      const blink::WebRect& rect,
-      const blink::WebThemeEngine::ExtraParams* extra_params);
-  virtual void paintStateTransition(blink::WebCanvas* canvas,
-                                    blink::WebThemeEngine::Part part,
-                                    blink::WebThemeEngine::State startState,
-                                    blink::WebThemeEngine::State endState,
-                                    double progress,
-                                    const blink::WebRect& rect);
-
+  blink::WebSize getSize(blink::WebThemeEngine::Part) override;
+  void paint(blink::WebCanvas* canvas,
+             blink::WebThemeEngine::Part part,
+             blink::WebThemeEngine::State state,
+             const blink::WebRect& rect,
+             const blink::WebThemeEngine::ExtraParams* extra_params) override;
+  void getOverlayScrollbarStyle(
+      blink::WebThemeEngine::ScrollbarStyle*) override;
 #if defined(OS_WIN)
-  // Caches the scrollbar metrics.
-  static void cacheScrollBarMetrics(int32 vertical_scroll_bar_width,
-                                    int32 horizontal_scroll_bar_height,
-                                    int32 vertical_arrow_bitmap_height,
-                                    int32 horizontal_arrow_bitmap_width);
+  // Caches the scrollbar metrics. These are retrieved in the browser and passed
+  // to the renderer in RendererPreferences because the required Windows system
+  // calls cannot be made in sandboxed renderers.
+  static void cacheScrollBarMetrics(int32_t vertical_scroll_bar_width,
+                                    int32_t horizontal_scroll_bar_height,
+                                    int32_t vertical_arrow_bitmap_height,
+                                    int32_t horizontal_arrow_bitmap_width);
 #endif
 };
 

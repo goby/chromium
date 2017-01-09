@@ -7,9 +7,10 @@
 #ifndef CHROME_INSTALLER_UTIL_CHROMIUM_BINARIES_DISTRIBUTION_H_
 #define CHROME_INSTALLER_UTIL_CHROMIUM_BINARIES_DISTRIBUTION_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/installer/util/browser_distribution.h"
 
 class ChromiumBinariesDistribution : public BrowserDistribution {
@@ -20,9 +21,9 @@ class ChromiumBinariesDistribution : public BrowserDistribution {
 
   base::string16 GetDisplayName() override;
 
-  base::string16 GetShortcutName(ShortcutType shortcut_type) override;
+  base::string16 GetShortcutName() override;
 
-  int GetIconIndex(ShortcutType shortcut_type) override;
+  int GetIconIndex() override;
 
   base::string16 GetBaseAppName() override;
 
@@ -38,6 +39,8 @@ class ChromiumBinariesDistribution : public BrowserDistribution {
 
   std::string GetSafeBrowsingName() override;
 
+  base::string16 GetRegistryPath() override;
+
   base::string16 GetUninstallRegPath() override;
 
   DefaultBrowserControlPolicy GetDefaultBrowserControlPolicy() override;
@@ -52,7 +55,7 @@ class ChromiumBinariesDistribution : public BrowserDistribution {
   ChromiumBinariesDistribution();
 
   explicit ChromiumBinariesDistribution(
-      scoped_ptr<AppRegistrationData> app_reg_data);
+      std::unique_ptr<AppRegistrationData> app_reg_data);
 
   BrowserDistribution* browser_distribution_;
 

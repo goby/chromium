@@ -5,12 +5,14 @@
 #ifndef BASE_TEST_SEQUENCED_WORKER_POOL_OWNER_H_
 #define BASE_TEST_SEQUENCED_WORKER_POOL_OWNER_H_
 
+#include <stddef.h>
+
 #include <cstddef>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "base/synchronization/lock.h"
@@ -37,7 +39,7 @@ class SequencedWorkerPoolOwner : public SequencedWorkerPool::TestingObserver {
   ~SequencedWorkerPoolOwner() override;
 
   // Don't change the returned pool's testing observer.
-  const scoped_refptr<SequencedWorkerPool>& pool();
+  const scoped_refptr<SequencedWorkerPool>& pool() const;
 
   // The given callback will be called on WillWaitForShutdown().
   void SetWillWaitForShutdownCallback(const Closure& callback);

@@ -56,7 +56,8 @@ function PDFScriptingAPI(window, plugin) {
   this.setPlugin(plugin);
 
   window.addEventListener('message', function(event) {
-    if (event.origin != 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai') {
+    if (event.origin != 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai' &&
+        event.origin != 'chrome://print') {
       console.error('Received message that was not from the extension: ' +
                     event);
       return;
@@ -74,12 +75,6 @@ function PDFScriptingAPI(window, plugin) {
         this.loadState_ = event.data.load_state;
         if (this.loadCallback_)
           this.loadCallback_(this.loadState_ == LoadState.SUCCESS);
-        break;
-      case 'getAccessibilityJSONReply':
-        if (this.accessibilityCallback_) {
-          this.accessibilityCallback_(event.data.json);
-          this.accessibilityCallback_ = null;
-        }
         break;
       case 'getSelectedTextReply':
         if (this.selectedTextCallback_) {
@@ -189,30 +184,6 @@ PDFScriptingAPI.prototype = {
   },
 
   /**
-   * Get accessibility JSON for the document. May only be called after document
-   * load.
-   * @param {Function} callback a callback to be called with the accessibility
-   *     json that has been retrieved.
-   * @param {number} [page] the 0-indexed page number to get accessibility data
-   *     for. If this is not provided, data about the entire document is
-   *     returned.
-   * @return {boolean} true if the function is successful, false if there is an
-   *     outstanding request for accessibility data that has not been answered.
-   */
-  getAccessibilityJSON: function(callback, page) {
-    if (this.accessibilityCallback_)
-      return false;
-    this.accessibilityCallback_ = callback;
-    var message = {
-      type: 'getAccessibilityJSON',
-    };
-    if (page || page == 0)
-      message.page = page;
-    this.sendMessage_(message);
-    return true;
-  },
-
-  /**
    * Select all the text in the document. May only be called after document
    * load.
    */
@@ -271,26 +242,13 @@ PDFScriptingAPI.prototype = {
 function PDFCreateOutOfProcessPlugin(src) {
   var client = new PDFScriptingAPI(window);
   var iframe = window.document.createElement('iframe');
+  iframe.setAttribute('src', 'pdf_preview.html?' + src);
   // Prevent the frame from being tab-focusable.
   iframe.setAttribute('tabindex', '-1');
 
-  // TODO(raymes): This below is a hack to tell if the material design PDF UI
-  // has been enabled. Remove this as soon as we remove the material design PDF
-  // flag.
-  var EXTENSION_URL = 'chrome-extension://mhjfbmdgcfjbbpaeojofohoefgiehjai/';
-  var PAGE_NAME = 'index.html';
-  var MATERIAL_PAGE_NAME = 'index-material.html';
-  fetch(EXTENSION_URL + PAGE_NAME, {
-    method: 'get'
-  }).then(function() {
-    iframe.setAttribute('src', EXTENSION_URL + PAGE_NAME + '?' + src);
-  }, function() {
-    iframe.setAttribute('src', EXTENSION_URL + MATERIAL_PAGE_NAME + '?' + src);
-  }).then(function() {
-    iframe.onload = function() {
-      client.setPlugin(iframe.contentWindow);
-    };
-  });
+  iframe.onload = function() {
+    client.setPlugin(iframe.contentWindow);
+  };
 
   // Add the functions to the iframe so that they can be called directly.
   iframe.setViewportChangedCallback =

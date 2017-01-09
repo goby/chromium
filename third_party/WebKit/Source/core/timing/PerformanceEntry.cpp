@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/timing/PerformanceEntry.h"
 
 #include "bindings/core/v8/ScriptValue.h"
@@ -36,62 +35,64 @@
 
 namespace blink {
 
-PerformanceEntry::PerformanceEntry(const String& name, const String& entryType, double startTime, double finishTime)
-    : m_name(name)
-    , m_entryType(entryType)
-    , m_startTime(startTime)
-    , m_duration(finishTime - startTime)
-    , m_entryTypeEnum(toEntryTypeEnum(entryType))
-{
+PerformanceEntry::PerformanceEntry(const String& name,
+                                   const String& entryType,
+                                   double startTime,
+                                   double finishTime)
+    : m_name(name),
+      m_entryType(entryType),
+      m_startTime(startTime),
+      m_duration(finishTime - startTime),
+      m_entryTypeEnum(toEntryTypeEnum(entryType)) {}
+
+PerformanceEntry::~PerformanceEntry() {}
+
+String PerformanceEntry::name() const {
+  return m_name;
 }
 
-PerformanceEntry::~PerformanceEntry()
-{
+String PerformanceEntry::entryType() const {
+  return m_entryType;
 }
 
-String PerformanceEntry::name() const
-{
-    return m_name;
+double PerformanceEntry::startTime() const {
+  return m_startTime;
 }
 
-String PerformanceEntry::entryType() const
-{
-    return m_entryType;
+double PerformanceEntry::duration() const {
+  return m_duration;
 }
 
-double PerformanceEntry::startTime() const
-{
-    return m_startTime;
+PerformanceEntry::EntryType PerformanceEntry::toEntryTypeEnum(
+    const String& entryType) {
+  if (entryType == "composite")
+    return Composite;
+  if (entryType == "longtask")
+    return LongTask;
+  if (entryType == "mark")
+    return Mark;
+  if (entryType == "measure")
+    return Measure;
+  if (entryType == "render")
+    return Render;
+  if (entryType == "resource")
+    return Resource;
+  if (entryType == "navigation")
+    return Navigation;
+  return Invalid;
 }
 
-double PerformanceEntry::duration() const
-{
-    return m_duration;
+ScriptValue PerformanceEntry::toJSONForBinding(ScriptState* scriptState) const {
+  V8ObjectBuilder result(scriptState);
+  buildJSONValue(result);
+  return result.scriptValue();
 }
 
-PerformanceEntry::EntryType PerformanceEntry::toEntryTypeEnum(const String& entryType)
-{
-    if (equalIgnoringCase(entryType, "composite"))
-        return Composite;
-    if (equalIgnoringCase(entryType, "mark"))
-        return Mark;
-    if (equalIgnoringCase(entryType, "measure"))
-        return Measure;
-    if (equalIgnoringCase(entryType, "render"))
-        return Render;
-    if (equalIgnoringCase(entryType, "resource"))
-        return Resource;
-    return Invalid;
+void PerformanceEntry::buildJSONValue(V8ObjectBuilder& builder) const {
+  builder.addString("name", name());
+  builder.addString("entryType", entryType());
+  builder.addNumber("startTime", startTime());
+  builder.addNumber("duration", duration());
 }
 
-ScriptValue PerformanceEntry::toJSONForBinding(ScriptState* scriptState) const
-{
-    V8ObjectBuilder result(scriptState);
-    result.addString("name", name());
-    result.addString("entryType", entryType());
-    result.addNumber("startTime", startTime());
-    result.addNumber("duration", duration());
-    return result.scriptValue();
-}
-
-} // namespace blink
+}  // namespace blink

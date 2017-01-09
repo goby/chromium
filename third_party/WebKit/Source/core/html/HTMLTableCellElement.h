@@ -32,46 +32,48 @@
 namespace blink {
 
 class CORE_EXPORT HTMLTableCellElement final : public HTMLTablePartElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableCellElement);
+  DEFINE_WRAPPERTYPEINFO();
 
-    int cellIndex() const;
+ public:
+  DECLARE_ELEMENT_FACTORY_WITH_TAGNAME(HTMLTableCellElement);
 
-    unsigned colSpan() const;
-    unsigned rowSpan() const;
+  int cellIndex() const;
 
-    void setCellIndex(int);
+  unsigned colSpan() const;
+  unsigned rowSpan() const;
 
-    const AtomicString& abbr() const;
-    const AtomicString& axis() const;
-    void setColSpan(unsigned);
-    const AtomicString& headers() const;
-    void setRowSpan(unsigned);
-    const AtomicString& scope() const;
+  void setCellIndex(int);
 
-    HTMLTableCellElement* cellAbove() const;
+  const AtomicString& abbr() const;
+  const AtomicString& axis() const;
+  void setColSpan(unsigned);
+  const AtomicString& headers() const;
+  void setRowSpan(unsigned);
 
-private:
-    HTMLTableCellElement(const QualifiedName&, Document&);
+ private:
+  HTMLTableCellElement(const QualifiedName&, Document&);
 
-    void parseAttribute(const QualifiedName&, const AtomicString&, const AtomicString&) override;
-    bool isPresentationAttribute(const QualifiedName&) const override;
-    void collectStyleForPresentationAttribute(const QualifiedName&, const AtomicString&, MutableStylePropertySet*) override;
-    const StylePropertySet* additionalPresentationAttributeStyle() override;
+  void parseAttribute(const QualifiedName&,
+                      const AtomicString&,
+                      const AtomicString&) override;
+  bool isPresentationAttribute(const QualifiedName&) const override;
+  void collectStyleForPresentationAttribute(const QualifiedName&,
+                                            const AtomicString&,
+                                            MutableStylePropertySet*) override;
+  const StylePropertySet* additionalPresentationAttributeStyle() override;
 
-    bool isURLAttribute(const Attribute&) const override;
-    bool hasLegalLinkAttribute(const QualifiedName&) const override;
-    const QualifiedName& subResourceAttributeName() const override;
+  bool isURLAttribute(const Attribute&) const override;
+  bool hasLegalLinkAttribute(const QualifiedName&) const override;
+  const QualifiedName& subResourceAttributeName() const override;
 };
 
-inline bool isHTMLTableCellElement(const HTMLElement& element)
-{
-    return element.hasTagName(HTMLNames::tdTag) || element.hasTagName(HTMLNames::thTag);
+inline bool isHTMLTableCellElement(const HTMLElement& element) {
+  return element.hasTagName(HTMLNames::tdTag) ||
+         element.hasTagName(HTMLNames::thTag);
 }
 
 DEFINE_HTMLELEMENT_TYPE_CASTS_WITH_FUNCTION(HTMLTableCellElement);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLTableCellElement_h
+#endif  // HTMLTableCellElement_h

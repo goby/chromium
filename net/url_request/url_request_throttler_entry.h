@@ -5,18 +5,20 @@
 #ifndef NET_URL_REQUEST_URL_REQUEST_THROTTLER_ENTRY_H_
 #define NET_URL_REQUEST_URL_REQUEST_THROTTLER_ENTRY_H_
 
+#include <stdint.h>
+
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "net/base/backoff_entry.h"
-#include "net/log/net_log.h"
+#include "net/base/net_export.h"
+#include "net/log/net_log_with_source.h"
 #include "net/url_request/url_request_throttler_entry_interface.h"
 
 namespace net {
 
-class NetworkDelegate;
 class URLRequestThrottlerManager;
 
 // URLRequestThrottlerEntry represents an entry of URLRequestThrottlerManager.
@@ -86,7 +88,7 @@ class NET_EXPORT URLRequestThrottlerEntry
 
   // Implementation of URLRequestThrottlerEntryInterface.
   bool ShouldRejectRequest(const URLRequest& request) const override;
-  int64 ReserveSendingTimeForNextRequest(
+  int64_t ReserveSendingTimeForNextRequest(
       const base::TimeTicks& earliest_time) override;
   base::TimeTicks GetExponentialBackoffReleaseTime() const override;
   void UpdateWithResponse(int status_code) override;
@@ -108,11 +110,6 @@ class NET_EXPORT URLRequestThrottlerEntry
   // unit testing seam for dependency injection in tests.
   virtual const BackoffEntry* GetBackoffEntry() const;
   virtual BackoffEntry* GetBackoffEntry();
-
-  // Returns true if |load_flags| contains a flag that indicates an
-  // explicit request by the user to load the resource. We never
-  // throttle requests with such load flags.
-  static bool ExplicitUserRequest(const int load_flags);
 
   // Used by tests.
   base::TimeTicks sliding_window_release_time() const {
@@ -152,7 +149,7 @@ class NET_EXPORT URLRequestThrottlerEntry
   // Canonicalized URL string that this entry is for; used for logging only.
   std::string url_id_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(URLRequestThrottlerEntry);
 };

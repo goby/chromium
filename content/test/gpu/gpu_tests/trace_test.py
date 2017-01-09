@@ -5,10 +5,9 @@ from gpu_tests import gpu_test_base
 from gpu_tests import trace_test_expectations
 import page_sets
 
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.timeline import model as model_module
-from telemetry.timeline import tracing_category_filter
-from telemetry.timeline import tracing_options
+from telemetry.timeline import tracing_config
 
 TOPLEVEL_GL_CATEGORY = 'gpu_toplevel'
 TOPLEVEL_SERVICE_CATEGORY = 'disabled-by-default-gpu.service'
@@ -23,6 +22,21 @@ test_harness_script = r"""
   domAutomationController.setAutomationId = function(id) {}
 
   domAutomationController.send = function(msg) {
+    // Issue a read pixel to synchronize the gpu process to ensure
+    // the asynchronous category enabling is finished.
+    var temp_canvas = document.createElement("canvas")
+    temp_canvas.width = 1;
+    temp_canvas.height = 1;
+    var temp_gl = temp_canvas.getContext("experimental-webgl") ||
+                  temp_canvas.getContext("webgl");
+    if (temp_gl) {
+      temp_gl.clear(temp_gl.COLOR_BUFFER_BIT);
+      var id = new Uint8Array(4);
+      temp_gl.readPixels(0, 0, 1, 1, temp_gl.RGBA, temp_gl.UNSIGNED_BYTE, id);
+    } else {
+      console.log('Failed to get WebGL context.');
+    }
+
     domAutomationController._finished = true;
   }
 
@@ -35,7 +49,7 @@ class TraceValidatorBase(gpu_test_base.ValidatorBase):
     raise NotImplementedError("GetCategoryName() Not implemented!")
 
   def ValidateAndMeasurePage(self, page, tab, results):
-    timeline_data = tab.browser.platform.tracing_controller.Stop()
+    timeline_data = tab.browser.platform.tracing_controller.StopTracing()
     timeline_model = model_module.TimelineModel(timeline_data)
 
     category_name = self.GetCategoryName()
@@ -46,17 +60,20 @@ class TraceValidatorBase(gpu_test_base.ValidatorBase):
           event.category == category_name):
         break
     else:
-      raise page_test.Failure(self._FormatException(category_name))
+      raise legacy_page_test.Failure(self._FormatException(category_name))
 
   def CustomizeBrowserOptions(self, options):
     options.AppendExtraBrowserArgs('--enable-logging')
+    options.AppendExtraBrowserArgs('--enable-experimental-canvas-features')
 
   def WillNavigateToPage(self, page, tab):
-    cat_string = ','.join(TOPLEVEL_CATEGORIES)
-    cat_filter = tracing_category_filter.TracingCategoryFilter(cat_string)
-    options = tracing_options.TracingOptions()
-    options.enable_chrome_trace = True
-    tab.browser.platform.tracing_controller.Start(options, cat_filter, 60)
+    config = tracing_config.TracingConfig()
+    config.chrome_trace_config.category_filter.AddExcludedCategory('*')
+    for cat in TOPLEVEL_CATEGORIES:
+      config.chrome_trace_config.category_filter.AddDisabledByDefault(
+          cat)
+    config.enable_chrome_trace = True
+    tab.browser.platform.tracing_controller.StartTracing(config, 60)
 
   def _FormatException(self, category):
     return 'Trace markers for GPU category was not found: %s' % category
@@ -94,9 +111,6 @@ class TraceTest(TraceTestBase):
 
   def _CreateExpectations(self):
     return trace_test_expectations.TraceTestExpectations()
-
-  def CustomizeBrowserOptions(self, options):
-    options.enable_logging = True
 
 
 class DeviceTraceTest(TraceTestBase):

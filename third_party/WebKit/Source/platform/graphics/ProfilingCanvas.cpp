@@ -28,39 +28,32 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/ProfilingCanvas.h"
 
 #include "wtf/CurrentTime.h"
 
 namespace blink {
 
-CanvasInterceptor<ProfilingCanvas>::CanvasInterceptor(InterceptingCanvasBase* canvas)
-    : CanvasInterceptorBase(canvas)
-    , m_startTime(WTF::monotonicallyIncreasingTime())
-{
-}
+CanvasInterceptor<ProfilingCanvas>::CanvasInterceptor(
+    InterceptingCanvasBase* canvas)
+    : CanvasInterceptorBase(canvas),
+      m_startTime(WTF::monotonicallyIncreasingTime()) {}
 
-CanvasInterceptor<ProfilingCanvas>::~CanvasInterceptor()
-{
-    if (!topLevelCall())
-        return;
-    double delta = WTF::monotonicallyIncreasingTime() - m_startTime;
-    if (auto timings = canvas()->m_timings) {
-        ASSERT(timings->size() == canvas()->callCount());
-        timings->append(delta);
-    }
+CanvasInterceptor<ProfilingCanvas>::~CanvasInterceptor() {
+  if (!topLevelCall())
+    return;
+  double delta = WTF::monotonicallyIncreasingTime() - m_startTime;
+  if (auto timings = canvas()->m_timings) {
+    ASSERT(timings->size() == canvas()->callCount());
+    timings->append(delta);
+  }
 }
 
 ProfilingCanvas::ProfilingCanvas(SkBitmap bitmap)
-    : InterceptingCanvas(bitmap)
-    , m_timings(nullptr)
-{
+    : InterceptingCanvas(bitmap), m_timings(nullptr) {}
+
+void ProfilingCanvas::setTimings(Vector<double>* timings) {
+  m_timings = timings;
 }
 
-void ProfilingCanvas::setTimings(Vector<double>* timings)
-{
-    m_timings = timings;
-}
-
-} // namespace blink
+}  // namespace blink

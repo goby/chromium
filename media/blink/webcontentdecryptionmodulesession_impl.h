@@ -5,11 +5,14 @@
 #ifndef MEDIA_BLINK_WEBCONTENTDECRYPTIONMODULESESSION_IMPL_H_
 #define MEDIA_BLINK_WEBCONTENTDECRYPTIONMODULESESSION_IMPL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
@@ -42,7 +45,7 @@ class WebContentDecryptionModuleSessionImpl
       blink::WebContentDecryptionModuleResult result) override;
   void load(const blink::WebString& session_id,
             blink::WebContentDecryptionModuleResult result) override;
-  void update(const uint8* response,
+  void update(const uint8_t* response,
               size_t response_length,
               blink::WebContentDecryptionModuleResult result) override;
   void close(blink::WebContentDecryptionModuleResult result) override;
@@ -50,10 +53,10 @@ class WebContentDecryptionModuleSessionImpl
 
   // Callbacks.
   void OnSessionMessage(MediaKeys::MessageType message_type,
-                        const std::vector<uint8>& message);
+                        const std::vector<uint8_t>& message);
   void OnSessionKeysChange(bool has_additional_usable_key,
                            CdmKeysInfo keys_info);
-  void OnSessionExpirationUpdate(const base::Time& new_expiry_time);
+  void OnSessionExpirationUpdate(base::Time new_expiry_time);
   void OnSessionClosed();
 
  private:
@@ -72,9 +75,14 @@ class WebContentDecryptionModuleSessionImpl
   // promise.
   std::string session_id_;
 
-  // Don't pass more than 1 close() event to blink::
-  // TODO(jrummell): Remove this once blink tests handle close() promise and
-  // closed() event.
+  // Keep track of whether the session has been closed or not. The session
+  // may be closed as a result of an application calling close(), or the CDM
+  // may close the session at any point.
+  // https://w3c.github.io/encrypted-media/#session-closed
+  // |has_close_been_called_| is used to keep track of whether close() has
+  // been called or not. |is_closed_| is used to keep track of whether the
+  // close event has been received or not.
+  bool has_close_been_called_;
   bool is_closed_;
 
   base::ThreadChecker thread_checker_;

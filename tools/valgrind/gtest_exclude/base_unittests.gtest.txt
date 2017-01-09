@@ -7,10 +7,6 @@ WatchdogTest.AlarmTest
 TimerTest.RepeatingTimer
 TimerTest.RepeatingTimer_Cancel
 
-# Crashes occasionally, see http://crbug.com/7477
-base::ObserverListThreadSafeTest.CrossThreadObserver
-base::ObserverListThreadSafeTest.CrossThreadNotifications
-
 # Hangs sometimes on linux, see http://crbug.com/22138
 ClipboardTest.*
 
@@ -27,3 +23,10 @@ PlatformFile.TouchGetInfoPlatformFile
 
 # Crashes under Valgrind, see http://crbug.com/355436
 OutOfMemoryHandledTest.Unchecked*
+
+# Running under Valgrind breaks TCMalloc tests, see https://crbug.com/567315
+TCMallocTest.*
+TCMallocFreeTest.*
+
+# https://crbug.com/582398#c4
+SecurityTest.NewOverflow

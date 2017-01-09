@@ -90,16 +90,39 @@ BASE_EXPORT bool SplitStringIntoKeyValuePairs(StringPiece input,
 
 // Similar to SplitString, but use a substring delimiter instead of a list of
 // characters that are all possible delimiters.
+BASE_EXPORT std::vector<string16> SplitStringUsingSubstr(
+    StringPiece16 input,
+    StringPiece16 delimiter,
+    WhitespaceHandling whitespace,
+    SplitResult result_type);
+BASE_EXPORT std::vector<std::string> SplitStringUsingSubstr(
+    StringPiece input,
+    StringPiece delimiter,
+    WhitespaceHandling whitespace,
+    SplitResult result_type);
+
+// Like SplitStringUsingSubstr above except it returns a vector of StringPieces
+// which reference the original buffer without copying. Although you have to be
+// careful to keep the original string unmodified, this provides an efficient
+// way to iterate through tokens in a string.
 //
-// TODO(brettw) this should probably be changed and expanded to provide a
-// mirror of the SplitString[Piece] API above, just with the different
-// delimiter handling.
-BASE_EXPORT void SplitStringUsingSubstr(StringPiece16 input,
-                                        StringPiece16 delimiter,
-                                        std::vector<string16>* result);
-BASE_EXPORT void SplitStringUsingSubstr(StringPiece input,
-                                        StringPiece delimiter,
-                                        std::vector<std::string>* result);
+// To iterate through all newline-separated tokens in an input string:
+//
+//   for (const auto& cur :
+//        base::SplitStringUsingSubstr(input, "\r\n",
+//                                     base::KEEP_WHITESPACE,
+//                                     base::SPLIT_WANT_NONEMPTY)) {
+//     ...
+BASE_EXPORT std::vector<StringPiece16> SplitStringPieceUsingSubstr(
+    StringPiece16 input,
+    StringPiece16 delimiter,
+    WhitespaceHandling whitespace,
+    SplitResult result_type);
+BASE_EXPORT std::vector<StringPiece> SplitStringPieceUsingSubstr(
+    StringPiece input,
+    StringPiece delimiter,
+    WhitespaceHandling whitespace,
+    SplitResult result_type);
 
 }  // namespace base
 

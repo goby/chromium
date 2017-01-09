@@ -7,7 +7,7 @@
 #include <netinet/in.h>
 #include <resolv.h>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "net/dns/dns_config_service.h"
@@ -54,7 +54,7 @@ class NetworkChangeNotifierMac::DnsConfigServiceThread : public base::Thread {
   void CleanUp() override { service_.reset(); }
 
  private:
-  scoped_ptr<DnsConfigService> service_;
+  std::unique_ptr<DnsConfigService> service_;
 
   DISALLOW_COPY_AND_ASSIGN(DnsConfigServiceThread);
 };

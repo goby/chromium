@@ -8,7 +8,7 @@ Code distributed by Google as part of the polymer project is also
 subject to an additional IP rights grant found at http://polymer.github.io/PATENTS.txt
 --><html><head><link rel="import" href="../polymer/polymer.html">
 <link rel="import" href="../iron-a11y-keys-behavior/iron-a11y-keys-behavior.html">
-<link rel="import" href="../iron-selector/iron-selectable.html">
+<link rel="import" href="../iron-menu-behavior/iron-menubar-behavior.html">
 <link rel="import" href="../paper-radio-button/paper-radio-button.html">
 
 <!--
@@ -41,6 +41,11 @@ Radio-button-groups can be made optional, and allow zero buttons to be selected:
 See <a href="paper-radio-button">paper-radio-button</a> for more
 information about `paper-radio-button`.
 
+
+Custom property | Description | Default
+----------------|-------------|----------
+`--paper-radio-group-item-padding` | The padding of the item | `12px`
+
 @group Paper Elements
 @element paper-radio-group
 @hero hero.svg
@@ -48,20 +53,19 @@ information about `paper-radio-button`.
 -->
 
 </head><body><dom-module id="paper-radio-group">
-  <style>
-    :host {
-      display: inline-block;
-    }
-
-    :host ::content > * {
-      padding: 12px;
-    }
-  </style>
-
   <template>
-      <content id="items" select="*"></content>
-  </template>
+    <style>
+      :host {
+        display: inline-block;
+      }
 
+      :host ::content > * {
+        padding: var(--paper-radio-group-item-padding, 12px);
+      }
+    </style>
+
+    <content id="items" select="*"></content>
+  </template>
 </dom-module>
 
 <script src="paper-radio-group-extracted.js"></script></body></html>

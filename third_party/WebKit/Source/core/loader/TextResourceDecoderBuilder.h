@@ -35,33 +35,36 @@
 #include "wtf/Allocator.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
 class Document;
 class TextResourceDecoder;
 
-class TextResourceDecoderBuilder {
-    DISALLOW_NEW();
-public:
-    TextResourceDecoderBuilder(const AtomicString& mimeType, const AtomicString& encoding);
-    ~TextResourceDecoderBuilder();
+class CORE_EXPORT TextResourceDecoderBuilder {
+  DISALLOW_NEW();
 
-    PassOwnPtr<TextResourceDecoder> buildFor(Document*);
+ public:
+  TextResourceDecoderBuilder(const AtomicString& mimeType,
+                             const AtomicString& encoding);
+  ~TextResourceDecoderBuilder();
 
-    const AtomicString& mimeType() const { return m_mimeType; }
-    const AtomicString& encoding() const { return m_encoding; }
+  std::unique_ptr<TextResourceDecoder> buildFor(Document*);
 
-    void clear();
+  const AtomicString& mimeType() const { return m_mimeType; }
+  const AtomicString& encoding() const { return m_encoding; }
 
-private:
-    PassOwnPtr<TextResourceDecoder> createDecoderInstance(Document*);
-    void setupEncoding(TextResourceDecoder*, Document*);
+  void clear();
 
-    AtomicString m_mimeType;
-    AtomicString m_encoding;
+ private:
+  std::unique_ptr<TextResourceDecoder> createDecoderInstance(Document*);
+  void setupEncoding(TextResourceDecoder*, Document*);
+
+  AtomicString m_mimeType;
+  AtomicString m_encoding;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // TextResourceDecoderBuilder_h
+#endif  // TextResourceDecoderBuilder_h

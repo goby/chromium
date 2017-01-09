@@ -34,44 +34,104 @@ class LayoutObject;
 struct PaintInfo;
 
 class ThemePainter {
-    DISALLOW_NEW();
-public:
-    // This method is called to paint the widget as a background of the LayoutObject.  A widget's foreground, e.g., the
-    // text of a button, is always rendered by the engine itself.  The boolean return value indicates
-    // whether the CSS border/background should also be painted.
-    bool paint(const LayoutObject&, const PaintInfo&, const IntRect&);
-    bool paintBorderOnly(const LayoutObject&, const PaintInfo&, const IntRect&);
-    bool paintDecorations(const LayoutObject&, const PaintInfo&, const IntRect&);
+  DISALLOW_NEW();
 
-    virtual bool paintCapsLockIndicator(const LayoutObject&, const PaintInfo&, const IntRect&) { return 0; }
-    void paintSliderTicks(const LayoutObject&, const PaintInfo&, const IntRect&);
+ public:
+  explicit ThemePainter();
 
-protected:
-#if !USE(NEW_THEME)
-    virtual bool paintCheckbox(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintRadio(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintInnerSpinButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-#endif
+  // This method is called to paint the widget as a background of the
+  // LayoutObject.  A widget's foreground, e.g., the text of a button, is always
+  // rendered by the engine itself.  The boolean return value indicates whether
+  // the CSS border/background should also be painted.
+  bool paint(const LayoutObject&, const PaintInfo&, const IntRect&);
+  bool paintBorderOnly(const LayoutObject&, const PaintInfo&, const IntRect&);
+  bool paintDecorations(const LayoutObject&, const PaintInfo&, const IntRect&);
 
-    virtual bool paintTextField(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintTextArea(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMenuList(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMenuListButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintMeter(const LayoutObject&, const PaintInfo&, const IntRect&);
-    virtual bool paintProgressBar(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSliderTrack(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSliderThumb(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchField(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchFieldCancelButton(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchFieldDecoration(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
-    virtual bool paintSearchFieldResultsDecoration(const LayoutObject&, const PaintInfo&, const IntRect&) { return true; }
+  virtual bool paintCapsLockIndicator(const LayoutObject&,
+                                      const PaintInfo&,
+                                      const IntRect&) {
+    return 0;
+  }
+  void paintSliderTicks(const LayoutObject&, const PaintInfo&, const IntRect&);
 
-    bool paintUsingFallbackTheme(const LayoutObject&, const PaintInfo&, const IntRect&);
-    bool paintCheckboxUsingFallbackTheme(const LayoutObject&, const PaintInfo&, const IntRect&);
-    bool paintRadioUsingFallbackTheme(const LayoutObject&, const PaintInfo&, const IntRect&);
+ protected:
+  virtual bool paintCheckbox(const LayoutObject&,
+                             const PaintInfo&,
+                             const IntRect&) {
+    return true;
+  }
+  virtual bool paintRadio(const LayoutObject&,
+                          const PaintInfo&,
+                          const IntRect&) {
+    return true;
+  }
+  virtual bool paintButton(const LayoutObject&,
+                           const PaintInfo&,
+                           const IntRect&) {
+    return true;
+  }
+  virtual bool paintInnerSpinButton(const LayoutObject&,
+                                    const PaintInfo&,
+                                    const IntRect&) {
+    return true;
+  }
+  virtual bool paintTextField(const LayoutObject&,
+                              const PaintInfo&,
+                              const IntRect&) {
+    return true;
+  }
+  virtual bool paintTextArea(const LayoutObject&,
+                             const PaintInfo&,
+                             const IntRect&) {
+    return true;
+  }
+  virtual bool paintMenuList(const LayoutObject&,
+                             const PaintInfo&,
+                             const IntRect&) {
+    return true;
+  }
+  virtual bool paintMenuListButton(const LayoutObject&,
+                                   const PaintInfo&,
+                                   const IntRect&) {
+    return true;
+  }
+  virtual bool paintProgressBar(const LayoutObject&,
+                                const PaintInfo&,
+                                const IntRect&) {
+    return true;
+  }
+  virtual bool paintSliderTrack(const LayoutObject&,
+                                const PaintInfo&,
+                                const IntRect&) {
+    return true;
+  }
+  virtual bool paintSliderThumb(const LayoutObject&,
+                                const PaintInfo&,
+                                const IntRect&) {
+    return true;
+  }
+  virtual bool paintSearchField(const LayoutObject&,
+                                const PaintInfo&,
+                                const IntRect&) {
+    return true;
+  }
+  virtual bool paintSearchFieldCancelButton(const LayoutObject&,
+                                            const PaintInfo&,
+                                            const IntRect&) {
+    return true;
+  }
+
+  bool paintUsingFallbackTheme(const LayoutObject&,
+                               const PaintInfo&,
+                               const IntRect&);
+  bool paintCheckboxUsingFallbackTheme(const LayoutObject&,
+                                       const PaintInfo&,
+                                       const IntRect&);
+  bool paintRadioUsingFallbackTheme(const LayoutObject&,
+                                    const PaintInfo&,
+                                    const IntRect&);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ThemePainter_h
+#endif  // ThemePainter_h

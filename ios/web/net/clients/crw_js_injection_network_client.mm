@@ -4,12 +4,18 @@
 
 #import "ios/web/net/clients/crw_js_injection_network_client.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
-#include "base/mac/objc_property_releaser.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/metrics/histogram.h"
 #import "ios/net/crn_http_url_response.h"
 #import "ios/third_party/blink/src/html_tokenizer.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 // CRWJSInjectionNetworkClient injects an external script tag reference for
 // crweb.js into HTML and XHTML documents. To do this correctly, three data
@@ -143,7 +149,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
                                   HTTPVersion:[response cr_HTTPVersion]
                                  headerFields:all_headers_mutable];
 
-  return [update_response autorelease];
+  return update_response;
 }
 }  // namespace
 
@@ -295,7 +301,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
     [super didReceiveResponse:response];
   } else {
   // Client calls [super didReceiveResponse:] in sendPendingResponse.
-    _pendingResponse.reset([static_cast<CRNHTTPURLResponse*>(response) retain]);
+  _pendingResponse.reset(static_cast<CRNHTTPURLResponse*>(response));
   }
 }
 
@@ -347,7 +353,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
   NSString* jsContentString = [NSString
       stringWithFormat:kJSContentTemplate, [[NSUUID UUID] UUIDString]];
   _jsInjectionContent.reset(
-      [[jsContentString dataUsingEncoding:_contentEncoding] retain]);
+      [jsContentString dataUsingEncoding:_contentEncoding]);
 
   return _jsInjectionContent;
 }
@@ -361,7 +367,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
   if (!dataLength)
     return;
 
-  const uint8* bytes = reinterpret_cast<const uint8*>([firstData bytes]);
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>([firstData bytes]);
 
   // Construct one data in which to send the content + injected script tag.
   base::scoped_nsobject<NSMutableData> combined([[NSMutableData alloc] init]);
@@ -390,7 +396,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
     NSUInteger additionalLength = [[self jsInjectionContent] length];
     CRNHTTPURLResponse* responseToSend =
         ResponseWithUpdatedContentSize(_pendingResponse, additionalLength);
-    _pendingResponse.reset([responseToSend retain]);
+    _pendingResponse.reset(responseToSend);
   }
 
   [super didReceiveResponse:_pendingResponse];
@@ -461,7 +467,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
   // Do the same check that WebKit does for the byte order mark (BOM), which
   // must be right at the beginning of the content to be accepted.
   // Info on byte order mark: http://en.wikipedia.org/wiki/Byte_order_mark
-  const uint8* bytes = reinterpret_cast<const uint8*>([firstData bytes]);
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>([firstData bytes]);
   if (BytesEqual(bytes, 0xFF, 0xFE)) {
     bytes += 2;
 
@@ -522,7 +528,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
   // is not exactly clear about what, if anything, can appear before an XML
   // declaration. Can there be white space? Can there be comments? WebKit only
   // accepts XML declarations if they are right at the beginning of the content.
-  const uint8* bytes = reinterpret_cast<const uint8*>([firstData bytes]);
+  const uint8_t* bytes = reinterpret_cast<const uint8_t*>([firstData bytes]);
   if (BytesEqual(bytes, '<', '?', 'x', 'm', 'l')) {
     _contentEncoding = NSISOLatin1StringEncoding;
   } else if (BytesEqual(bytes, '<', 0, '?', 0, 'x', 0)) {
@@ -565,7 +571,7 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
   NSData* firstData = [_pendingData firstObject];
   DCHECK([firstData length] >= kMinimumBytesNeededForHTMLTag);
 
-  const uint8* bytes8 = reinterpret_cast<const uint8*>([firstData bytes]);
+  const uint8_t* bytes8 = reinterpret_cast<const uint8_t*>([firstData bytes]);
 
   WebCore::CharacterProvider provider;
   switch (_contentEncoding) {
@@ -573,8 +579,8 @@ CRNHTTPURLResponse* ResponseWithUpdatedContentSize(
     case NSUTF16LittleEndianStringEncoding:
     case NSUTF32BigEndianStringEncoding:
     case NSUTF32LittleEndianStringEncoding: {
-      const uint16* bytes16 =
-          reinterpret_cast<const uint16*>(bytes8 + _headerLength);
+      const uint16_t* bytes16 =
+          reinterpret_cast<const uint16_t*>(bytes8 + _headerLength);
 
       provider.setContents(bytes16, [firstData length] - _headerLength);
 

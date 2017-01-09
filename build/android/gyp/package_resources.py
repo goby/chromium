@@ -80,7 +80,8 @@ def _ParseArgs(args):
   """
   parser = optparse.OptionParser()
   build_utils.AddDepfileOption(parser)
-  parser.add_option('--android-sdk', help='path to the Android SDK folder')
+  parser.add_option('--android-sdk-jar',
+                    help='path to the Android SDK jar.')
   parser.add_option('--aapt-path',
                     help='path to the Android aapt tool')
 
@@ -123,14 +124,14 @@ def _ParseArgs(args):
     parser.error('No positional arguments should be given.')
 
   # Check that required options have been provided.
-  required_options = ('android_sdk', 'aapt_path', 'configuration_name',
+  required_options = ('android_sdk_jar', 'aapt_path', 'configuration_name',
                       'android_manifest', 'version_code', 'version_name',
                       'apk_path')
 
   build_utils.CheckOptions(options, parser, required=required_options)
 
-  options.resource_zips = build_utils.ParseGypList(options.resource_zips)
-  options.language_splits = build_utils.ParseGypList(options.language_splits)
+  options.resource_zips = build_utils.ParseGnList(options.resource_zips)
+  options.language_splits = build_utils.ParseGnList(options.language_splits)
   return options
 
 
@@ -226,7 +227,8 @@ def _ConstructMostAaptArgs(options):
       '--no-crunch',
       '-f',
       '--auto-add-overlay',
-      '-I', os.path.join(options.android_sdk, 'android.jar'),
+      '--no-version-vectors',
+      '-I', options.android_sdk_jar,
       '-F', options.apk_path,
       '--ignore-assets', build_utils.AAPT_IGNORE_PATTERN,
   ]

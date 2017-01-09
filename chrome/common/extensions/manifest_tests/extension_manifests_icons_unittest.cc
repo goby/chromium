@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/linked_ptr.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -26,17 +25,9 @@ TEST_F(IconsManifestTest, NormalizeIconPaths) {
                                 ExtensionIconSet::MATCH_EXACTLY));
 }
 
-TEST_F(IconsManifestTest, InvalidIconSizes) {
+TEST_F(IconsManifestTest, IconSizes) {
   scoped_refptr<extensions::Extension> extension(
-      LoadAndExpectSuccess("init_ignored_icon_size.json"));
-  EXPECT_EQ("",
-            IconsInfo::GetIcons(extension.get())
-                .Get(300, ExtensionIconSet::MATCH_EXACTLY));
-}
-
-TEST_F(IconsManifestTest, ValidIconSizes) {
-  scoped_refptr<extensions::Extension> extension(
-      LoadAndExpectSuccess("init_valid_icon_size.json"));
+      LoadAndExpectSuccess("init_icon_size.json"));
   const ExtensionIconSet& icons = IconsInfo::GetIcons(extension.get());
 
   EXPECT_EQ("16.png", icons.Get(extension_misc::EXTENSION_ICON_BITTY,
@@ -53,6 +44,10 @@ TEST_F(IconsManifestTest, ValidIconSizes) {
                                  ExtensionIconSet::MATCH_EXACTLY));
   EXPECT_EQ("512.png", icons.Get(extension_misc::EXTENSION_ICON_GIGANTOR,
                                  ExtensionIconSet::MATCH_EXACTLY));
+
+  // Any old size will be accepted.
+  EXPECT_EQ("300.png", IconsInfo::GetIcons(extension.get())
+                           .Get(300, ExtensionIconSet::MATCH_EXACTLY));
 }
 
 }  // namespace extensions

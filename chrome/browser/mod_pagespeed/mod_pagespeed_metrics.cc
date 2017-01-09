@@ -8,7 +8,7 @@
 
 #include <string>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "net/http/http_response_headers.h"
 #include "url/gurl.h"
@@ -45,7 +45,7 @@ int GetXModPagespeedBucketFromVersion(const std::string& version) {
   int num_parsed = sscanf(version.c_str(), "%d.%d.%d.%d-%d", &unused_major,
                           &unused_minor, &branch, &point, &unused_commit);
   int output = 0;
-  if (num_parsed == 5) {
+  if (num_parsed >= 4) {
     output = 2;
     if (branch > 10)
       output += 2 * (branch - 10);
@@ -86,7 +86,7 @@ void RecordMetrics(const content::ResourceType resource_type,
   if (!response_headers)
     return;
 
-  void* iter = nullptr;
+  size_t iter = 0;
   std::string name;
   std::string value;
   while (response_headers->EnumerateHeaderLines(&iter, &name, &value)) {

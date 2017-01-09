@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_PAGE_CAPTURE_PAGE_CAPTURE_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_PAGE_CAPTURE_PAGE_CAPTURE_API_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/memory/ref_counted.h"
@@ -46,15 +48,15 @@ class PageCaptureSaveAsMHTMLFunction : public ChromeAsyncExtensionFunction {
   // Called on the UI thread.
   void TemporaryFileCreated(bool success);
   void ReturnFailure(const std::string& error);
-  void ReturnSuccess(int64 file_size);
+  void ReturnSuccess(int64_t file_size);
 
   // Callback called once the MHTML generation is done.
-  void MHTMLGenerated(int64 mhtml_file_size);
+  void MHTMLGenerated(int64_t mhtml_file_size);
 
   // Returns the WebContents we are associated with, NULL if it's been closed.
   content::WebContents* GetWebContents();
 
-  scoped_ptr<extensions::api::page_capture::SaveAsMHTML::Params> params_;
+  std::unique_ptr<extensions::api::page_capture::SaveAsMHTML::Params> params_;
 
   // The path to the temporary file containing the MHTML data.
   base::FilePath mhtml_path_;

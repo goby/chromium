@@ -2,31 +2,38 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <math.h>
+#include "content/browser/renderer_host/input/input_router_impl.h"
 
-#include "base/basictypes.h"
+#include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <tuple>
+
 #include "base/command_line.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/input/gesture_event_queue.h"
 #include "content/browser/renderer_host/input/input_router_client.h"
-#include "content/browser/renderer_host/input/input_router_impl.h"
 #include "content/browser/renderer_host/input/mock_input_ack_handler.h"
 #include "content/browser/renderer_host/input/mock_input_router_client.h"
 #include "content/common/content_constants_internal.h"
 #include "content/common/edit_command.h"
 #include "content/common/input/synthetic_web_input_event_builders.h"
 #include "content/common/input/touch_action.h"
-#include "content/common/input/web_input_event_traits.h"
 #include "content/common/input_messages.h"
 #include "content/common/view_messages.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_browser_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/events/blink/web_input_event_traits.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
 #if defined(USE_AURA)
@@ -34,7 +41,6 @@
 #include "ui/events/event.h"
 #endif
 
-using base::TimeDelta;
 using blink::WebGestureDevice;
 using blink::WebGestureEvent;
 using blink::WebKeyboardEvent;
@@ -43,6 +49,8 @@ using blink::WebMouseEvent;
 using blink::WebMouseWheelEvent;
 using blink::WebTouchEvent;
 using blink::WebTouchPoint;
+using ui::DidOverscrollParams;
+using ui::WebInputEventTraits;
 
 namespace content {
 
@@ -85,7 +93,7 @@ void ExpectIPCMessageWithArg1(const IPC::Message* msg, const ARG_T1& arg1) {
   ASSERT_EQ(MSG_T::ID, msg->type());
   typename MSG_T::Schema::Param param;
   ASSERT_TRUE(MSG_T::Read(msg, &param));
-  EXPECT_EQ(arg1, base::get<0>(param));
+  EXPECT_EQ(arg1, std::get<0>(param));
 }
 
 template<typename MSG_T, typename ARG_T1, typename ARG_T2>
@@ -95,8 +103,8 @@ void ExpectIPCMessageWithArg2(const IPC::Message* msg,
   ASSERT_EQ(MSG_T::ID, msg->type());
   typename MSG_T::Schema::Param param;
   ASSERT_TRUE(MSG_T::Read(msg, &param));
-  EXPECT_EQ(arg1, base::get<0>(param));
-  EXPECT_EQ(arg2, base::get<1>(param));
+  EXPECT_EQ(arg1, std::get<0>(param));
+  EXPECT_EQ(arg2, std::get<1>(param));
 }
 
 #if defined(USE_AURA)
@@ -108,7 +116,7 @@ bool TouchEventsAreEquivalent(const ui::TouchEvent& first,
     return false;
   if (first.touch_id() != second.touch_id())
     return false;
-  if (second.time_stamp().InSeconds() != first.time_stamp().InSeconds())
+  if (second.time_stamp() != first.time_stamp())
     return false;
   return true;
 }
@@ -156,7 +164,7 @@ class InputRouterImplTest : public testing::Test {
 
   void TearDown() override {
     // Process all pending tasks to avoid leaks.
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     input_router_.reset();
     client_.reset();
@@ -184,9 +192,15 @@ class InputRouterImplTest : public testing::Test {
     input_router_->SendKeyboardEvent(key_event);
   }
 
-  void SimulateWheelEvent(float dX, float dY, int modifiers, bool precise) {
+  void SimulateWheelEvent(float x,
+                          float y,
+                          float dX,
+                          float dY,
+                          int modifiers,
+                          bool precise) {
     input_router_->SendWheelEvent(MouseWheelEventWithLatencyInfo(
-        SyntheticWebMouseWheelEventBuilder::Build(dX, dY, modifiers, precise)));
+        SyntheticWebMouseWheelEventBuilder::Build(x, y, dX, dY, modifiers,
+                                                  precise)));
   }
 
   void SimulateMouseEvent(WebInputEvent::Type type, int x, int y) {
@@ -242,12 +256,12 @@ class InputRouterImplTest : public testing::Test {
         velocity_x, velocity_y, source_device));
   }
 
-  void SetTouchTimestamp(base::TimeDelta timestamp) {
+  void SetTouchTimestamp(base::TimeTicks timestamp) {
     touch_event_.SetTimestamp(timestamp);
   }
 
-  uint32 SendTouchEvent() {
-    uint32 touch_event_id = touch_event_.uniqueTouchEventId;
+  uint32_t SendTouchEvent() {
+    uint32_t touch_event_id = touch_event_.uniqueTouchEventId;
     input_router_->SendTouchEvent(TouchEventWithLatencyInfo(touch_event_));
     touch_event_.ResetPoints();
     return touch_event_id;
@@ -272,15 +286,16 @@ class InputRouterImplTest : public testing::Test {
   void SendInputEventACK(blink::WebInputEvent::Type type,
                          InputEventAckState ack_result) {
     DCHECK(!WebInputEvent::isTouchEventType(type));
-    InputEventAck ack(type, ack_result);
+    InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD, type, ack_result);
     input_router_->OnMessageReceived(InputHostMsg_HandleInputEvent_ACK(0, ack));
   }
 
   void SendTouchEventACK(blink::WebInputEvent::Type type,
                          InputEventAckState ack_result,
-                         uint32 touch_event_id) {
+                         uint32_t touch_event_id) {
     DCHECK(WebInputEvent::isTouchEventType(type));
-    InputEventAck ack(type, ack_result, touch_event_id);
+    InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD, type, ack_result,
+                      touch_event_id);
     input_router_->OnMessageReceived(InputHostMsg_HandleInputEvent_ACK(0, ack));
   }
 
@@ -327,24 +342,24 @@ class InputRouterImplTest : public testing::Test {
   static void RunTasksAndWait(base::TimeDelta delay) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(), delay);
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   InputRouterImpl::Config config_;
-  scoped_ptr<MockRenderProcessHost> process_;
-  scoped_ptr<MockInputRouterClient> client_;
-  scoped_ptr<MockInputAckHandler> ack_handler_;
-  scoped_ptr<InputRouterImpl> input_router_;
+  std::unique_ptr<MockRenderProcessHost> process_;
+  std::unique_ptr<MockInputRouterClient> client_;
+  std::unique_ptr<MockInputAckHandler> ack_handler_;
+  std::unique_ptr<InputRouterImpl> input_router_;
 
  private:
   base::MessageLoopForUI message_loop_;
   SyntheticWebTouchEvent touch_event_;
 
-  scoped_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
 };
 
 TEST_F(InputRouterImplTest, CoalescesRangeSelection) {
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(1, 2), gfx::Point(3, 4))));
   ExpectIPCMessageWithArg2<InputMsg_SelectRange>(
       process_->sink().GetMessageAt(0),
@@ -353,17 +368,17 @@ TEST_F(InputRouterImplTest, CoalescesRangeSelection) {
   EXPECT_EQ(1u, GetSentMessageCountAndResetSink());
 
   // Send two more messages without acking.
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(5, 6), gfx::Point(7, 8))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(9, 10), gfx::Point(11, 12))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
   // Now ack the first message.
   {
-    scoped_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
 
@@ -376,14 +391,14 @@ TEST_F(InputRouterImplTest, CoalescesRangeSelection) {
 
   // Acking the coalesced msg should not send any more msg.
   {
-    scoped_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 }
 
 TEST_F(InputRouterImplTest, CoalescesMoveRangeSelectionExtent) {
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(1, 2))));
   ExpectIPCMessageWithArg1<InputMsg_MoveRangeSelectionExtent>(
       process_->sink().GetMessageAt(0),
@@ -391,17 +406,17 @@ TEST_F(InputRouterImplTest, CoalescesMoveRangeSelectionExtent) {
   EXPECT_EQ(1u, GetSentMessageCountAndResetSink());
 
   // Send two more messages without acking.
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(3, 4))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(5, 6))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
   // Now ack the first message.
   {
-    scoped_ptr<IPC::Message> response(
+    std::unique_ptr<IPC::Message> response(
         new InputHostMsg_MoveRangeSelectionExtent_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
@@ -414,7 +429,7 @@ TEST_F(InputRouterImplTest, CoalescesMoveRangeSelectionExtent) {
 
   // Acking the coalesced msg should not send any more msg.
   {
-    scoped_ptr<IPC::Message> response(
+    std::unique_ptr<IPC::Message> response(
         new InputHostMsg_MoveRangeSelectionExtent_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
@@ -423,7 +438,7 @@ TEST_F(InputRouterImplTest, CoalescesMoveRangeSelectionExtent) {
 
 TEST_F(InputRouterImplTest, InterleaveSelectRangeAndMoveRangeSelectionExtent) {
   // Send first message: SelectRange.
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(1, 2), gfx::Point(3, 4))));
   ExpectIPCMessageWithArg2<InputMsg_SelectRange>(
       process_->sink().GetMessageAt(0),
@@ -432,12 +447,12 @@ TEST_F(InputRouterImplTest, InterleaveSelectRangeAndMoveRangeSelectionExtent) {
   EXPECT_EQ(1u, GetSentMessageCountAndResetSink());
 
   // Send second message: MoveRangeSelectionExtent.
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(5, 6))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
   // Send third message: SelectRange.
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(7, 8), gfx::Point(9, 10))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
@@ -446,8 +461,7 @@ TEST_F(InputRouterImplTest, InterleaveSelectRangeAndMoveRangeSelectionExtent) {
 
   // Ack the first message.
   {
-    scoped_ptr<IPC::Message> response(
-        new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
 
@@ -458,7 +472,7 @@ TEST_F(InputRouterImplTest, InterleaveSelectRangeAndMoveRangeSelectionExtent) {
 
   // Ack the second message.
   {
-    scoped_ptr<IPC::Message> response(
+    std::unique_ptr<IPC::Message> response(
         new InputHostMsg_MoveRangeSelectionExtent_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
@@ -471,8 +485,7 @@ TEST_F(InputRouterImplTest, InterleaveSelectRangeAndMoveRangeSelectionExtent) {
 
   // Ack the third message.
   {
-    scoped_ptr<IPC::Message> response(
-        new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
@@ -490,7 +503,7 @@ TEST_F(InputRouterImplTest,
   //  > SelectRange
   //  > MoveRangeSelectionExtent
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(1, 2), gfx::Point(3, 4))));
   ExpectIPCMessageWithArg2<InputMsg_SelectRange>(
       process_->sink().GetMessageAt(0),
@@ -498,34 +511,33 @@ TEST_F(InputRouterImplTest,
       gfx::Point(3, 4));
   EXPECT_EQ(1u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(5, 6))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(7, 8))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(9, 10))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(11, 12), gfx::Point(13, 14))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_SelectRange(0, gfx::Point(15, 16), gfx::Point(17, 18))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(scoped_ptr<IPC::Message>(
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
       new InputMsg_MoveRangeSelectionExtent(0, gfx::Point(19, 20))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
   // Ack the first message.
   {
-    scoped_ptr<IPC::Message> response(
-        new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
 
@@ -538,7 +550,7 @@ TEST_F(InputRouterImplTest,
 
   // Ack the second message.
   {
-    scoped_ptr<IPC::Message> response(
+    std::unique_ptr<IPC::Message> response(
         new InputHostMsg_MoveRangeSelectionExtent_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
@@ -552,8 +564,7 @@ TEST_F(InputRouterImplTest,
 
   // Ack the third message.
   {
-    scoped_ptr<IPC::Message> response(
-        new InputHostMsg_SelectRange_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_SelectRange_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
 
@@ -565,7 +576,7 @@ TEST_F(InputRouterImplTest,
 
   // Ack the fourth message.
   {
-    scoped_ptr<IPC::Message> response(
+    std::unique_ptr<IPC::Message> response(
         new InputHostMsg_MoveRangeSelectionExtent_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
@@ -573,24 +584,24 @@ TEST_F(InputRouterImplTest,
 }
 
 TEST_F(InputRouterImplTest, CoalescesCaretMove) {
-  input_router_->SendInput(
-      scoped_ptr<IPC::Message>(new InputMsg_MoveCaret(0, gfx::Point(1, 2))));
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
+      new InputMsg_MoveCaret(0, gfx::Point(1, 2))));
   ExpectIPCMessageWithArg1<InputMsg_MoveCaret>(
       process_->sink().GetMessageAt(0), gfx::Point(1, 2));
   EXPECT_EQ(1u, GetSentMessageCountAndResetSink());
 
   // Send two more messages without acking.
-  input_router_->SendInput(
-      scoped_ptr<IPC::Message>(new InputMsg_MoveCaret(0, gfx::Point(5, 6))));
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
+      new InputMsg_MoveCaret(0, gfx::Point(5, 6))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
-  input_router_->SendInput(
-      scoped_ptr<IPC::Message>(new InputMsg_MoveCaret(0, gfx::Point(9, 10))));
+  input_router_->SendInput(std::unique_ptr<IPC::Message>(
+      new InputMsg_MoveCaret(0, gfx::Point(9, 10))));
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
 
   // Now ack the first message.
   {
-    scoped_ptr<IPC::Message> response(new InputHostMsg_MoveCaret_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_MoveCaret_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
 
@@ -601,7 +612,7 @@ TEST_F(InputRouterImplTest, CoalescesCaretMove) {
 
   // Acking the coalesced msg should not send any more msg.
   {
-    scoped_ptr<IPC::Message> response(new InputHostMsg_MoveCaret_ACK(0));
+    std::unique_ptr<IPC::Message> response(new InputHostMsg_MoveCaret_ACK(0));
     input_router_->OnMessageReceived(*response);
   }
   EXPECT_EQ(0u, GetSentMessageCountAndResetSink());
@@ -684,11 +695,11 @@ TEST_F(InputRouterImplTest, IgnoreKeyEventsWeDidntSend) {
 
 TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
   // Simulate wheel events.
-  SimulateWheelEvent(0, -5, 0, false);  // sent directly
-  SimulateWheelEvent(0, -10, 0, false);  // enqueued
-  SimulateWheelEvent(8, -6, 0, false);  // coalesced into previous event
-  SimulateWheelEvent(9, -7, 1, false);  // enqueued, different modifiers
-  SimulateWheelEvent(0, -10, 0, false);  // enqueued, different modifiers
+  SimulateWheelEvent(0, 0, 0, -5, 0, false);   // sent directly
+  SimulateWheelEvent(0, 0, 0, -10, 0, false);  // enqueued
+  SimulateWheelEvent(0, 0, 8, -6, 0, false);   // coalesced into previous event
+  SimulateWheelEvent(0, 0, 9, -7, 1, false);   // enqueued, different modifiers
+  SimulateWheelEvent(0, 0, 0, -10, 0, false);  // enqueued, different modifiers
   // Explicitly verify that PhaseEnd isn't coalesced to avoid bugs like
   // https://crbug.com/154740.
   SimulateWheelEventWithPhase(WebMouseWheelEvent::PhaseEnded);  // enqueued
@@ -711,7 +722,7 @@ TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
   // The coalesced events can queue up a delayed ack
   // so that additional input events can be processed before
   // we turn off coalescing.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(
           InputMsg_HandleInputEvent::ID));
@@ -725,7 +736,7 @@ TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
   // Ack the second event (which had the third coalesced into it).
   SendInputEventACK(WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(
                   InputMsg_HandleInputEvent::ID));
@@ -739,7 +750,7 @@ TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
   // Ack the fourth event.
   SendInputEventACK(WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_CONSUMED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_TRUE(
       process_->sink().GetUniqueMessageMatching(InputMsg_HandleInputEvent::ID));
@@ -752,7 +763,7 @@ TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
 
   // Ack the fifth event.
   SendInputEventACK(WebInputEvent::MouseWheel, INPUT_EVENT_ACK_STATE_CONSUMED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_TRUE(
       process_->sink().GetUniqueMessageMatching(InputMsg_HandleInputEvent::ID));
@@ -766,7 +777,7 @@ TEST_F(InputRouterImplTest, CoalescesWheelEvents) {
 
   // After the final ack, the queue should be empty.
   SendInputEventACK(WebInputEvent::MouseWheel, INPUT_EVENT_ACK_STATE_CONSUMED);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_EQ(0U, GetSentMessageCountAndResetSink());
 }
@@ -776,14 +787,14 @@ TEST_F(InputRouterImplTest, TouchEventQueue) {
   OnHasTouchEventHandlers(true);
 
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   EXPECT_TRUE(client_->GetAndResetFilterEventCalled());
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   EXPECT_FALSE(TouchEventQueueEmpty());
 
   // The second touch should not be sent since one is already in queue.
   MoveTouchPoint(0, 5, 5);
-  uint32 touch_move_event_id = SendTouchEvent();
+  uint32_t touch_move_event_id = SendTouchEvent();
   EXPECT_FALSE(client_->GetAndResetFilterEventCalled());
   EXPECT_EQ(0U, GetSentMessageCountAndResetSink());
   EXPECT_FALSE(TouchEventQueueEmpty());
@@ -816,7 +827,7 @@ TEST_F(InputRouterImplTest, TouchEventQueueFlush) {
 
   // Send a touch-press event.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   MoveTouchPoint(0, 2, 2);
   MoveTouchPoint(0, 3, 3);
   EXPECT_FALSE(TouchEventQueueEmpty());
@@ -850,13 +861,13 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
 
   // Use a custom timestamp for all the events to test that the acked events
   // have the same timestamp;
-  base::TimeDelta timestamp = base::Time::NowFromSystemTime() - base::Time();
+  base::TimeTicks timestamp = base::TimeTicks::Now();
   timestamp -= base::TimeDelta::FromSeconds(600);
 
   // Press the first finger.
   PressTouchPoint(1, 1);
   SetTouchTimestamp(timestamp);
-  uint32 touch_press_event_id1 = SendTouchEvent();
+  uint32_t touch_press_event_id1 = SendTouchEvent();
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   expected_events.push_back(
       new ui::TouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(1, 1), 0, timestamp));
@@ -865,7 +876,7 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
   timestamp += base::TimeDelta::FromSeconds(10);
   MoveTouchPoint(0, 500, 500);
   SetTouchTimestamp(timestamp);
-  uint32 touch_move_event_id1 = SendTouchEvent();
+  uint32_t touch_move_event_id1 = SendTouchEvent();
   EXPECT_FALSE(TouchEventQueueEmpty());
   expected_events.push_back(new ui::TouchEvent(
       ui::ET_TOUCH_MOVED, gfx::Point(500, 500), 0, timestamp));
@@ -874,7 +885,7 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
   timestamp += base::TimeDelta::FromSeconds(10);
   PressTouchPoint(2, 2);
   SetTouchTimestamp(timestamp);
-  uint32 touch_press_event_id2 = SendTouchEvent();
+  uint32_t touch_press_event_id2 = SendTouchEvent();
   EXPECT_FALSE(TouchEventQueueEmpty());
   expected_events.push_back(
       new ui::TouchEvent(ui::ET_TOUCH_PRESSED, gfx::Point(2, 2), 1, timestamp));
@@ -884,7 +895,7 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
   MoveTouchPoint(0, 10, 10);
   MoveTouchPoint(1, 20, 20);
   SetTouchTimestamp(timestamp);
-  uint32 touch_move_event_id2 = SendTouchEvent();
+  uint32_t touch_move_event_id2 = SendTouchEvent();
   EXPECT_FALSE(TouchEventQueueEmpty());
   expected_events.push_back(
       new ui::TouchEvent(ui::ET_TOUCH_MOVED, gfx::Point(10, 10), 0, timestamp));
@@ -898,10 +909,8 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
                                  WebInputEvent::TouchStart,
                                  WebInputEvent::TouchMove };
 
-  uint32 touch_event_ids[] = {touch_press_event_id1,
-                              touch_move_event_id1,
-                              touch_press_event_id2,
-                              touch_move_event_id2};
+  uint32_t touch_event_ids[] = {touch_press_event_id1, touch_move_event_id1,
+                                touch_press_event_id2, touch_move_event_id2};
 
   TouchEventCoordinateSystem coordinate_system = LOCAL_COORDINATES;
 #if !defined(OS_WIN)
@@ -930,45 +939,50 @@ TEST_F(InputRouterImplTest, AckedTouchEventState) {
 
 TEST_F(InputRouterImplTest, UnhandledWheelEvent) {
   // Simulate wheel events.
-  SimulateWheelEvent(0, -5, 0, false);  // sent directly
-  SimulateWheelEvent(0, -10, 0, false);  // enqueued
+  SimulateWheelEvent(0, 0, 0, -5, 0, false);   // sent directly
+  SimulateWheelEvent(0, 0, 0, -10, 0, false);  // enqueued
 
   // Check that only the first event was sent.
-  EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(
-                  InputMsg_HandleInputEvent::ID));
+  EXPECT_TRUE(
+      process_->sink().GetUniqueMessageMatching(InputMsg_HandleInputEvent::ID));
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
 
   // Indicate that the wheel event was unhandled.
   SendInputEventACK(WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
 
+  // Check that the ack for the MouseWheel and ScrollBegin
+  // were processed.
+  EXPECT_EQ(2U, ack_handler_->GetAndResetAckCount());
+
+  // There should be a ScrollBegin and ScrollUpdate, MouseWheel sent
+  EXPECT_EQ(3U, GetSentMessageCountAndResetSink());
+
+  EXPECT_EQ(ack_handler_->acked_wheel_event().deltaY, -5);
+  SendInputEventACK(WebInputEvent::GestureScrollUpdate,
+                    INPUT_EVENT_ACK_STATE_CONSUMED);
+  SendInputEventACK(WebInputEvent::MouseWheel,
+                    INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
+
   // Check that the correct unhandled wheel event was received.
-  EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
+  EXPECT_EQ(2U, ack_handler_->GetAndResetAckCount());
   EXPECT_EQ(INPUT_EVENT_ACK_STATE_NOT_CONSUMED, ack_handler_->ack_state());
-  EXPECT_EQ(ack_handler_->acked_wheel_event().deltaY, -5);
-
-  // Check that the second event was sent.
-  EXPECT_TRUE(process_->sink().GetUniqueMessageMatching(
-                  InputMsg_HandleInputEvent::ID));
-  EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
-
-  // Check that the correct unhandled wheel event was received.
-  EXPECT_EQ(ack_handler_->acked_wheel_event().deltaY, -5);
+  EXPECT_EQ(ack_handler_->acked_wheel_event().deltaY, -10);
 }
 
 TEST_F(InputRouterImplTest, TouchTypesIgnoringAck) {
   OnHasTouchEventHandlers(true);
   // Only acks for TouchCancel should always be ignored.
-  ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+  ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
       GetEventWithType(WebInputEvent::TouchStart)));
-  ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+  ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
       GetEventWithType(WebInputEvent::TouchMove)));
-  ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+  ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
       GetEventWithType(WebInputEvent::TouchEnd)));
 
   // Precede the TouchCancel with an appropriate TouchStart;
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id);
   ASSERT_EQ(1U, GetSentMessageCountAndResetSink());
@@ -977,7 +991,7 @@ TEST_F(InputRouterImplTest, TouchTypesIgnoringAck) {
 
   // The TouchCancel ack is always ignored.
   CancelTouchPoint(0);
-  uint32 touch_cancel_event_id = SendTouchEvent();
+  uint32_t touch_cancel_event_id = SendTouchEvent();
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_EQ(0, client_->in_flight_event_count());
@@ -1022,8 +1036,7 @@ TEST_F(InputRouterImplTest, GestureTypesIgnoringAck) {
       WebInputEvent::GestureScrollEnd};
   for (size_t i = 0; i < arraysize(eventTypes); ++i) {
     WebInputEvent::Type type = eventTypes[i];
-    if (WebInputEventTraits::WillReceiveAckFromRenderer(
-            GetEventWithType(type))) {
+    if (WebInputEventTraits::ShouldBlockEventStream(GetEventWithType(type))) {
       SimulateGestureEvent(type, blink::WebGestureDeviceTouchscreen);
       EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
       EXPECT_EQ(0U, ack_handler_->GetAndResetAckCount());
@@ -1053,7 +1066,7 @@ TEST_F(InputRouterImplTest, MouseTypesIgnoringAck) {
   for (int i = start_type; i <= end_type; ++i) {
     WebInputEvent::Type type = static_cast<WebInputEvent::Type>(i);
     int expected_in_flight_event_count =
-        !WebInputEventTraits::WillReceiveAckFromRenderer(GetEventWithType(type))
+        !WebInputEventTraits::ShouldBlockEventStream(GetEventWithType(type))
             ? 0
             : 1;
 
@@ -1065,7 +1078,7 @@ TEST_F(InputRouterImplTest, MouseTypesIgnoringAck) {
     if (expected_in_flight_event_count) {
       SendInputEventACK(type, INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
       EXPECT_EQ(0U, GetSentMessageCountAndResetSink());
-      uint32 expected_ack_count = type == WebInputEvent::MouseMove ? 1 : 0;
+      uint32_t expected_ack_count = type == WebInputEvent::MouseMove ? 1 : 0;
       EXPECT_EQ(expected_ack_count, ack_handler_->GetAndResetAckCount());
       EXPECT_EQ(0, client_->in_flight_event_count());
     }
@@ -1073,7 +1086,7 @@ TEST_F(InputRouterImplTest, MouseTypesIgnoringAck) {
 }
 
 // Guard against breaking changes to the list of ignored event ack types in
-// |WebInputEventTraits::WillReceiveAckFromRenderer|.
+// |WebInputEventTraits::ShouldBlockEventStream|.
 TEST_F(InputRouterImplTest, RequiredEventAckTypes) {
   const WebInputEvent::Type kRequiredEventAckTypes[] = {
     WebInputEvent::MouseMove,
@@ -1091,7 +1104,7 @@ TEST_F(InputRouterImplTest, RequiredEventAckTypes) {
   };
   for (size_t i = 0; i < arraysize(kRequiredEventAckTypes); ++i) {
     const WebInputEvent::Type required_ack_type = kRequiredEventAckTypes[i];
-    ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+    ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
         GetEventWithType(required_ack_type)));
   }
 }
@@ -1172,7 +1185,6 @@ TEST_F(InputRouterImplTest, GestureShowPressIsInOrder) {
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
 
-
   // GesturePinchBegin ignores its ack.
   SimulateGestureEvent(WebInputEvent::GesturePinchBegin,
                        blink::WebGestureDeviceTouchscreen);
@@ -1218,7 +1230,7 @@ TEST_F(InputRouterImplTest, TouchAckTimeoutConfigured) {
 
   // Verify that the touch ack timeout fires upon the delayed ack.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id1 = SendTouchEvent();
+  uint32_t touch_press_event_id1 = SendTouchEvent();
   EXPECT_EQ(0U, ack_handler_->GetAndResetAckCount());
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   RunTasksAndWait(base::TimeDelta::FromMilliseconds(kDesktopTimeoutMs + 1));
@@ -1251,22 +1263,22 @@ TEST_F(InputRouterImplTest, TouchAckTimeoutConfigured) {
   // TOUCH_ACTION_NONE (and no other touch-action) should disable the timeout.
   OnHasTouchEventHandlers(true);
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id2 = SendTouchEvent();
+  uint32_t touch_press_event_id2 = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_PAN_Y);
   EXPECT_TRUE(TouchEventTimeoutEnabled());
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id2 = SendTouchEvent();
+  uint32_t touch_release_event_id2 = SendTouchEvent();
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id2);
   SendTouchEventACK(WebInputEvent::TouchEnd, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_release_event_id2);
 
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id3 = SendTouchEvent();
+  uint32_t touch_press_event_id3 = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_NONE);
   EXPECT_FALSE(TouchEventTimeoutEnabled());
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id3 = SendTouchEvent();
+  uint32_t touch_release_event_id3 = SendTouchEvent();
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id3);
   SendTouchEventACK(WebInputEvent::TouchEnd, INPUT_EVENT_ACK_STATE_CONSUMED,
@@ -1291,7 +1303,7 @@ TEST_F(InputRouterImplTest,
 
   // Start a touch sequence.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
 
   // TOUCH_ACTION_NONE should disable the timeout.
@@ -1302,7 +1314,7 @@ TEST_F(InputRouterImplTest,
   EXPECT_FALSE(TouchEventTimeoutEnabled());
 
   MoveTouchPoint(0, 1, 2);
-  uint32 touch_move_event_id = SendTouchEvent();
+  uint32_t touch_move_event_id = SendTouchEvent();
   EXPECT_FALSE(TouchEventTimeoutEnabled());
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
 
@@ -1316,7 +1328,7 @@ TEST_F(InputRouterImplTest,
 
   // End the touch sequence.
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id = SendTouchEvent();
+  uint32_t touch_release_event_id = SendTouchEvent();
   SendTouchEventACK(WebInputEvent::TouchEnd, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_release_event_id);
   EXPECT_FALSE(TouchEventTimeoutEnabled());
@@ -1342,20 +1354,20 @@ TEST_F(InputRouterImplTest, TouchActionResetBeforeEventReachesRenderer) {
 
   // Sequence 1.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id1 = SendTouchEvent();
+  uint32_t touch_press_event_id1 = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_NONE);
   MoveTouchPoint(0, 50, 50);
-  uint32 touch_move_event_id1 = SendTouchEvent();
+  uint32_t touch_move_event_id1 = SendTouchEvent();
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id1 = SendTouchEvent();
+  uint32_t touch_release_event_id1 = SendTouchEvent();
 
   // Sequence 2.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id2 = SendTouchEvent();
+  uint32_t touch_press_event_id2 = SendTouchEvent();
   MoveTouchPoint(0, 50, 50);
-  uint32 touch_move_event_id2 = SendTouchEvent();
+  uint32_t touch_move_event_id2 = SendTouchEvent();
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id2 = SendTouchEvent();
+  uint32_t touch_release_event_id2 = SendTouchEvent();
 
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id1);
@@ -1400,9 +1412,9 @@ TEST_F(InputRouterImplTest, TouchActionResetWhenTouchHasNoConsumer) {
 
   // Sequence 1.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id1 = SendTouchEvent();
+  uint32_t touch_press_event_id1 = SendTouchEvent();
   MoveTouchPoint(0, 50, 50);
-  uint32 touch_move_event_id1 = SendTouchEvent();
+  uint32_t touch_move_event_id1 = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_NONE);
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id1);
@@ -1410,11 +1422,11 @@ TEST_F(InputRouterImplTest, TouchActionResetWhenTouchHasNoConsumer) {
                     touch_move_event_id1);
 
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id1 = SendTouchEvent();
+  uint32_t touch_release_event_id1 = SendTouchEvent();
 
   // Sequence 2
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id2 = SendTouchEvent();
+  uint32_t touch_press_event_id2 = SendTouchEvent();
   MoveTouchPoint(0, 50, 50);
   SendTouchEvent();
   ReleaseTouchPoint(0);
@@ -1452,12 +1464,12 @@ TEST_F(InputRouterImplTest, TouchActionResetWhenTouchHandlerRemoved) {
   // Touch sequence with touch handler.
   OnHasTouchEventHandlers(true);
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   MoveTouchPoint(0, 50, 50);
-  uint32 touch_move_event_id = SendTouchEvent();
+  uint32_t touch_move_event_id = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_NONE);
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id = SendTouchEvent();
+  uint32_t touch_release_event_id = SendTouchEvent();
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
 
   // Ensure we have touch-action:none, suppressing scroll events.
@@ -1498,17 +1510,17 @@ TEST_F(InputRouterImplTest, DoubleTapGestureDependsOnFirstTap) {
 
   // Sequence 1.
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id1 = SendTouchEvent();
+  uint32_t touch_press_event_id1 = SendTouchEvent();
   OnSetTouchAction(TOUCH_ACTION_NONE);
   SendTouchEventACK(WebInputEvent::TouchStart, INPUT_EVENT_ACK_STATE_CONSUMED,
                     touch_press_event_id1);
 
   ReleaseTouchPoint(0);
-  uint32 touch_release_event_id = SendTouchEvent();
+  uint32_t touch_release_event_id = SendTouchEvent();
 
   // Sequence 2
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id2 = SendTouchEvent();
+  uint32_t touch_press_event_id2 = SendTouchEvent();
 
   // First tap.
   EXPECT_EQ(2U, GetSentMessageCountAndResetSink());
@@ -1522,7 +1534,7 @@ TEST_F(InputRouterImplTest, DoubleTapGestureDependsOnFirstTap) {
                        blink::WebGestureDeviceTouchscreen);
   EXPECT_EQ(1U, GetSentMessageCountAndResetSink());
   // This test will become invalid if GestureTap stops requiring an ack.
-  ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+  ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
       GetEventWithType(WebInputEvent::GestureTap)));
   EXPECT_EQ(2, client_->in_flight_event_count());
   SendInputEventACK(WebInputEvent::GestureTap,
@@ -1552,7 +1564,7 @@ TEST_F(InputRouterImplTest, DoubleTapGestureDependsOnFirstTap) {
   SimulateGestureEvent(WebInputEvent::GestureDoubleTap,
                        blink::WebGestureDeviceTouchscreen);
   // This test will become invalid if GestureDoubleTap stops requiring an ack.
-  ASSERT_TRUE(WebInputEventTraits::WillReceiveAckFromRenderer(
+  ASSERT_TRUE(WebInputEventTraits::ShouldBlockEventStream(
       GetEventWithType(WebInputEvent::GestureDoubleTap)));
   EXPECT_EQ(1, client_->in_flight_event_count());
   SendInputEventACK(WebInputEvent::GestureTap, INPUT_EVENT_ACK_STATE_CONSUMED);
@@ -1572,7 +1584,7 @@ TEST_F(InputRouterImplTest, InputFlush) {
   // Queue a TouchStart.
   OnHasTouchEventHandlers(true);
   PressTouchPoint(1, 1);
-  uint32 touch_press_event_id = SendTouchEvent();
+  uint32_t touch_press_event_id = SendTouchEvent();
   EXPECT_TRUE(HasPendingEvents());
 
   // DidFlush should be called only after the event is ack'ed.
@@ -1585,7 +1597,7 @@ TEST_F(InputRouterImplTest, InputFlush) {
   // Ensure different types of enqueued events will prevent the DidFlush call
   // until all such events have been fully dispatched.
   MoveTouchPoint(0, 50, 50);
-  uint32 touch_move_event_id = SendTouchEvent();
+  uint32_t touch_move_event_id = SendTouchEvent();
   ASSERT_TRUE(HasPendingEvents());
   SimulateGestureEvent(WebInputEvent::GestureScrollBegin,
                        blink::WebGestureDeviceTouchscreen);
@@ -1774,7 +1786,8 @@ TEST_F(InputRouterImplTest, TouchpadPinchAndScrollUpdate) {
   EXPECT_EQ(1, client_->in_flight_event_count());
 
   // Ack the wheel event.
-  SendInputEventACK(WebInputEvent::MouseWheel, INPUT_EVENT_ACK_STATE_CONSUMED);
+  SendInputEventACK(WebInputEvent::GesturePinchUpdate,
+                    INPUT_EVENT_ACK_STATE_CONSUMED);
   EXPECT_EQ(0U, GetSentMessageCountAndResetSink());
   EXPECT_EQ(1U, ack_handler_->GetAndResetAckCount());
   EXPECT_EQ(0, client_->in_flight_event_count());
@@ -1802,8 +1815,9 @@ TEST_F(InputRouterImplTest, OverscrollDispatch) {
   wheel_overscroll.latest_overscroll_delta = gfx::Vector2dF(3, 0);
   wheel_overscroll.current_fling_velocity = gfx::Vector2dF(1, 0);
 
-  SimulateWheelEvent(3, 0, 0, false);
-  InputEventAck ack(WebInputEvent::MouseWheel,
+  SimulateWheelEvent(0, 0, 3, 0, 0, false);
+  InputEventAck ack(InputEventAckSource::COMPOSITOR_THREAD,
+                    WebInputEvent::MouseWheel,
                     INPUT_EVENT_ACK_STATE_NOT_CONSUMED);
   ack.overscroll.reset(new DidOverscrollParams(wheel_overscroll));
   input_router_->OnMessageReceived(InputHostMsg_HandleInputEvent_ACK(0, ack));
@@ -1815,6 +1829,38 @@ TEST_F(InputRouterImplTest, OverscrollDispatch) {
             client_overscroll.latest_overscroll_delta);
   EXPECT_EQ(wheel_overscroll.current_fling_velocity,
             client_overscroll.current_fling_velocity);
+}
+
+// Tests that touch event stream validation passes when events are filtered
+// out. See crbug.com/581231 for details.
+TEST_F(InputRouterImplTest, TouchValidationPassesWithFilteredInputEvents) {
+  // Touch sequence with touch handler.
+  OnHasTouchEventHandlers(true);
+  PressTouchPoint(1, 1);
+  uint32_t touch_press_event_id = SendTouchEvent();
+  SendTouchEventACK(WebInputEvent::TouchStart,
+                    INPUT_EVENT_ACK_STATE_NO_CONSUMER_EXISTS,
+                    touch_press_event_id);
+
+  PressTouchPoint(1, 1);
+  touch_press_event_id = SendTouchEvent();
+  SendTouchEventACK(WebInputEvent::TouchStart,
+                    INPUT_EVENT_ACK_STATE_NO_CONSUMER_EXISTS,
+                    touch_press_event_id);
+
+  // This event will be filtered out, since no consumer exists.
+  ReleaseTouchPoint(1);
+  uint32_t touch_release_event_id = SendTouchEvent();
+  SendTouchEventACK(WebInputEvent::TouchEnd, INPUT_EVENT_ACK_STATE_NOT_CONSUMED,
+                    touch_release_event_id);
+
+  // If the validator didn't see the filtered out release event, it will crash
+  // now, upon seeing a press for a touch which it believes to be still pressed.
+  PressTouchPoint(1, 1);
+  touch_press_event_id = SendTouchEvent();
+  SendTouchEventACK(WebInputEvent::TouchStart,
+                    INPUT_EVENT_ACK_STATE_NO_CONSUMER_EXISTS,
+                    touch_press_event_id);
 }
 
 namespace {
@@ -1834,7 +1880,7 @@ class InputRouterImplScaleEventTest : public InputRouterImplTest {
 
     InputMsg_HandleInputEvent::Schema::Param param;
     InputMsg_HandleInputEvent::Read(process_->sink().GetMessageAt(0), &param);
-    return static_cast<const T*>(base::get<0>(param));
+    return static_cast<const T*>(std::get<0>(param));
   }
 
   template <typename T>
@@ -1880,11 +1926,13 @@ TEST_F(InputRouterImplScaleMouseEventTest, ScaleMouseEventTest) {
 
 TEST_F(InputRouterImplScaleEventTest, ScaleMouseWheelEventTest) {
   ASSERT_EQ(0u, process_->sink().message_count());
-  SimulateWheelEvent(10, 10, 0, false);
+  SimulateWheelEvent(5, 5, 10, 10, 0, false);
   ASSERT_EQ(1u, process_->sink().message_count());
 
   const WebMouseWheelEvent* sent_event =
       GetSentWebInputEvent<WebMouseWheelEvent>();
+  EXPECT_EQ(10, sent_event->x);
+  EXPECT_EQ(10, sent_event->y);
   EXPECT_EQ(20, sent_event->deltaX);
   EXPECT_EQ(20, sent_event->deltaY);
   EXPECT_EQ(2, sent_event->wheelTicksX);
@@ -1892,6 +1940,8 @@ TEST_F(InputRouterImplScaleEventTest, ScaleMouseWheelEventTest) {
 
   const WebMouseWheelEvent* filter_event =
       GetFilterWebInputEvent<WebMouseWheelEvent>();
+  EXPECT_EQ(5, filter_event->x);
+  EXPECT_EQ(5, filter_event->y);
   EXPECT_EQ(10, filter_event->deltaX);
   EXPECT_EQ(10, filter_event->deltaY);
   EXPECT_EQ(1, filter_event->wheelTicksX);
@@ -1949,7 +1999,7 @@ class InputRouterImplScaleTouchEventTest
   }
 
   void FlushTouchEvent(WebInputEvent::Type type) {
-    uint32 touch_event_id = SendTouchEvent();
+    uint32_t touch_event_id = SendTouchEvent();
     SendTouchEventACK(type, INPUT_EVENT_ACK_STATE_CONSUMED, touch_event_id);
     ASSERT_TRUE(TouchEventQueueEmpty());
     ASSERT_NE(0u, process_->sink().message_count());
@@ -2118,8 +2168,8 @@ TEST_F(InputRouterImplScaleGestureEventTest, GestureScrollUpdate) {
 }
 
 TEST_F(InputRouterImplScaleGestureEventTest, GestureScrollBegin) {
-  SimulateGestureEvent(
-      SyntheticWebGestureEventBuilder::BuildScrollBegin(10.f, 20.f));
+  SimulateGestureEvent(SyntheticWebGestureEventBuilder::BuildScrollBegin(
+      10.f, 20.f, blink::WebGestureDeviceTouchscreen));
   const WebGestureEvent* sent_event = GetSentWebInputEvent<WebGestureEvent>();
   EXPECT_EQ(20.f, sent_event->data.scrollBegin.deltaXHint);
   EXPECT_EQ(40.f, sent_event->data.scrollBegin.deltaYHint);

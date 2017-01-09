@@ -7,7 +7,8 @@
 
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 
 // Provides sensible creation of default WebInputEvents for testing purposes.
 
@@ -26,7 +27,17 @@ class CONTENT_EXPORT SyntheticWebMouseWheelEventBuilder {
  public:
   static blink::WebMouseWheelEvent Build(
       blink::WebMouseWheelEvent::Phase phase);
-  static blink::WebMouseWheelEvent Build(float dx,
+  static blink::WebMouseWheelEvent Build(float x,
+                                         float y,
+                                         float dx,
+                                         float dy,
+                                         int modifiers,
+                                         bool precise);
+  static blink::WebMouseWheelEvent Build(float x,
+                                         float y,
+                                         float global_x,
+                                         float global_y,
+                                         float dx,
                                          float dy,
                                          int modifiers,
                                          bool precise);
@@ -41,8 +52,10 @@ class CONTENT_EXPORT SyntheticWebGestureEventBuilder {
  public:
   static blink::WebGestureEvent Build(blink::WebInputEvent::Type type,
                                       blink::WebGestureDevice source_device);
-  static blink::WebGestureEvent BuildScrollBegin(float dx_hint,
-                                                 float dy_hint);
+  static blink::WebGestureEvent BuildScrollBegin(
+      float dx_hint,
+      float dy_hint,
+      blink::WebGestureDevice source_device);
   static blink::WebGestureEvent BuildScrollUpdate(
       float dx,
       float dy,
@@ -74,7 +87,7 @@ class CONTENT_EXPORT SyntheticWebTouchEvent
   void ReleasePoint(int index);
   void CancelPoint(int index);
 
-  void SetTimestamp(base::TimeDelta timestamp);
+  void SetTimestamp(base::TimeTicks timestamp);
 };
 
 }  // namespace content

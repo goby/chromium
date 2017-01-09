@@ -4,29 +4,34 @@
 
 #include "chrome/browser/sync/test/integration/retry_verifier.h"
 
+#include <string.h>
+
 #include <algorithm>
 
 #include "base/logging.h"
-#include "sync/internal_api/public/engine/polling_constants.h"
-#include "sync/internal_api/public/sessions/sync_session_snapshot.h"
+#include "components/sync/engine/cycle/sync_cycle_snapshot.h"
+#include "components/sync/engine/polling_constants.h"
 
 namespace {
 // Given the current delay calculate the minimum and maximum wait times for
 // the next retry.
-DelayInfo CalculateDelay(int64 current_delay) {
-  int64 backoff_s = std::max(static_cast<int64>(1), current_delay *
-                             syncer::kBackoffRandomizationFactor);
+DelayInfo CalculateDelay(int64_t current_delay) {
+  int64_t backoff_s =
+      std::max(static_cast<int64_t>(1),
+               current_delay * syncer::kBackoffRandomizationFactor);
 
   DelayInfo delay_info;
   delay_info.min_delay = backoff_s + (-1 * current_delay/
                              syncer::kBackoffRandomizationFactor);
   delay_info.max_delay = backoff_s + current_delay/2;
 
-  delay_info.min_delay = std::max(static_cast<int64>(1),
-      std::min(delay_info.min_delay, syncer::kMaxBackoffSeconds));
+  delay_info.min_delay =
+      std::max(static_cast<int64_t>(1),
+               std::min(delay_info.min_delay, syncer::kMaxBackoffSeconds));
 
-  delay_info.max_delay = std::max(static_cast<int64>(1),
-      std::min(delay_info.max_delay, syncer::kMaxBackoffSeconds));
+  delay_info.max_delay =
+      std::max(static_cast<int64_t>(1),
+               std::min(delay_info.max_delay, syncer::kMaxBackoffSeconds));
 
   return delay_info;
 }
@@ -34,11 +39,11 @@ DelayInfo CalculateDelay(int64 current_delay) {
 // Fills the table with the maximum and minimum values for each retry, upto
 // |count| number of retries.
 void FillDelayTable(DelayInfo* delay_table, int count) {
-  DCHECK(count > 1);
+  DCHECK_GT(count, 1);
 
   // We start off with the minimum value of 2 seconds.
-  delay_table[0].min_delay = static_cast<int64>(2);
-  delay_table[0].max_delay = static_cast<int64>(2);
+  delay_table[0].min_delay = static_cast<int64_t>(2);
+  delay_table[0].max_delay = static_cast<int64_t>(2);
 
   for (int i = 1 ; i < count ; ++i) {
     delay_table[i].min_delay = CalculateDelay(delay_table[i-1].min_delay).
@@ -76,8 +81,7 @@ RetryVerifier::~RetryVerifier() {
 }
 
 // Initializes the state for verification.
-void RetryVerifier::Initialize(
-    const syncer::sessions::SyncSessionSnapshot& snap) {
+void RetryVerifier::Initialize(const syncer::SyncCycleSnapshot& snap) {
   retry_count_ = 0;
   last_sync_time_ = snap.sync_start_time();
   FillDelayTable(delay_table_, kMaxRetry);
@@ -85,8 +89,7 @@ void RetryVerifier::Initialize(
   success_ = false;
 }
 
-void RetryVerifier::VerifyRetryInterval(
-    const syncer::sessions::SyncSessionSnapshot& snap) {
+void RetryVerifier::VerifyRetryInterval(const syncer::SyncCycleSnapshot& snap) {
   DCHECK(retry_count_ < kMaxRetry);
   if (retry_count_ == 0) {
     if (snap.sync_start_time() != last_sync_time_) {
@@ -101,7 +104,7 @@ void RetryVerifier::VerifyRetryInterval(
   // has taken place.
   if (snap.sync_start_time() != last_sync_time_) {
     base::TimeDelta delta = snap.sync_start_time() - last_sync_time_;
-    success_ = IsRetryOnTime(delay_table_,retry_count_ -1, delta);
+    success_ = IsRetryOnTime(delay_table_, retry_count_ - 1, delta);
     last_sync_time_ = snap.sync_start_time();
     ++retry_count_;
     done_ = (retry_count_ >= kMaxRetry);

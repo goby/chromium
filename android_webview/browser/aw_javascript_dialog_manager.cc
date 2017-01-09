@@ -17,7 +17,6 @@ AwJavaScriptDialogManager::~AwJavaScriptDialogManager() {}
 void AwJavaScriptDialogManager::RunJavaScriptDialog(
     content::WebContents* web_contents,
     const GURL& origin_url,
-    const std::string& accept_lang,
     content::JavaScriptMessageType message_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
@@ -39,7 +38,6 @@ void AwJavaScriptDialogManager::RunJavaScriptDialog(
 
 void AwJavaScriptDialogManager::RunBeforeUnloadDialog(
     content::WebContents* web_contents,
-    const base::string16& message_text,
     bool is_reload,
     const DialogClosedCallback& callback) {
   AwContentsClientBridgeBase* bridge =
@@ -50,16 +48,12 @@ void AwJavaScriptDialogManager::RunBeforeUnloadDialog(
   }
 
   bridge->RunBeforeUnloadDialog(web_contents->GetURL(),
-                                message_text,
                                 callback);
 }
 
-void AwJavaScriptDialogManager::CancelActiveAndPendingDialogs(
-    content::WebContents* web_contents) {
-}
-
-void AwJavaScriptDialogManager::ResetDialogState(
-    content::WebContents* web_contents) {
-}
+void AwJavaScriptDialogManager::CancelDialogs(
+    content::WebContents* web_contents,
+    bool suppress_callbacks,
+    bool reset_state) {}
 
 }  // namespace android_webview

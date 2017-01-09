@@ -6,7 +6,7 @@
 
 #include "base/logging.h"
 #include "third_party/skia/include/core/SkPaint.h"
-#include "third_party/skia/include/effects/SkLerpXfermode.h"
+#include "third_party/skia/include/effects/SkArithmeticMode.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/animation/animation.h"
 #include "ui/gfx/canvas.h"
@@ -69,13 +69,10 @@ gfx::Size LabelButtonBorder::GetMinimumSize() const {
 }
 
 LabelButtonAssetBorder::LabelButtonAssetBorder(Button::ButtonStyle style) {
-  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
-  const gfx::Insets insets(kButtonInsets,
-                           kButtonInsets,
-                           kButtonInsets,
-                           kButtonInsets);
-
   set_insets(GetDefaultInsetsForStyle(style));
+
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  const gfx::Insets insets(kButtonInsets);
   if (style == Button::STYLE_BUTTON) {
     SetPainter(false, Button::STATE_NORMAL,
                Painter::CreateImagePainter(
@@ -116,9 +113,9 @@ gfx::Insets LabelButtonAssetBorder::GetDefaultInsetsForStyle(
     Button::ButtonStyle style) {
   gfx::Insets insets;
   if (style == Button::STYLE_BUTTON) {
-    insets = gfx::Insets(8, 13, 8, 13);
+    insets = gfx::Insets(8, 13);
   } else if (style == Button::STYLE_TEXTBUTTON) {
-    insets = gfx::Insets(5, 6, 5, 6);
+    insets = gfx::Insets(5, 6);
   } else {
     NOTREACHED();
   }
@@ -142,21 +139,28 @@ void LabelButtonAssetBorder::Paint(const View& view, gfx::Canvas* canvas) {
 
   if (animation && animation->is_animating()) {
     // Linearly interpolate background and foreground painters during animation.
-    const SkRect sk_rect = gfx::RectToSkRect(rect);
-    canvas->sk_canvas()->saveLayer(&sk_rect, NULL);
-    state = native_theme_delegate->GetBackgroundThemeState(&extra);
-    PaintHelper(this, canvas, state, rect, extra);
+    uint8_t fg_alpha =
+        static_cast<uint8_t>(animation->CurrentValueBetween(0, 255));
 
+    const SkRect sk_rect = gfx::RectToSkRect(rect);
+    SkAutoCanvasRestore auto_restore(canvas->sk_canvas(), false);
+    canvas->sk_canvas()->saveLayer(&sk_rect, nullptr);
+
+    {
+      // First, modulate the background by 1 - alpha.
+      SkAutoCanvasRestore auto_restore(canvas->sk_canvas(), false);
+      canvas->sk_canvas()->saveLayerAlpha(&sk_rect, 255 - fg_alpha);
+      state = native_theme_delegate->GetBackgroundThemeState(&extra);
+      PaintHelper(this, canvas, state, rect, extra);
+    }
+
+    // Then modulate the foreground by alpha, and blend using kPlus_Mode.
     SkPaint paint;
-    skia::RefPtr<SkXfermode> sk_lerp_xfer =
-        skia::AdoptRef(SkLerpXfermode::Create(animation->GetCurrentValue()));
-    paint.setXfermode(sk_lerp_xfer.get());
+    paint.setAlpha(fg_alpha);
+    paint.setBlendMode(SkBlendMode::kPlus);
     canvas->sk_canvas()->saveLayer(&sk_rect, &paint);
     state = native_theme_delegate->GetForegroundThemeState(&extra);
     PaintHelper(this, canvas, state, rect, extra);
-    canvas->sk_canvas()->restore();
-
-    canvas->sk_canvas()->restore();
   } else {
     PaintHelper(this, canvas, state, rect, extra);
   }

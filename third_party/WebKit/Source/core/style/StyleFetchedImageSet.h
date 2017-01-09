@@ -26,70 +26,76 @@
 #ifndef StyleFetchedImageSet_h
 #define StyleFetchedImageSet_h
 
-#include "core/fetch/ImageResourceClient.h"
-#include "core/fetch/ResourcePtr.h"
+#include "core/fetch/ImageResourceObserver.h"
 #include "core/style/StyleImage.h"
 #include "platform/geometry/LayoutSize.h"
+#include "platform/weborigin/KURL.h"
 
 namespace blink {
 
-class ImageResource;
 class CSSImageSetValue;
 
 // This class keeps one cached image and has access to a set of alternatives.
 
-class StyleFetchedImageSet final : public StyleImage, private ImageResourceClient {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(StyleFetchedImageSet);
-public:
-    static PassRefPtrWillBeRawPtr<StyleFetchedImageSet> create(ImageResource* image, float imageScaleFactor, CSSImageSetValue* value, const KURL& url)
-    {
-        return adoptRefWillBeNoop(new StyleFetchedImageSet(image, imageScaleFactor, value, url));
-    }
-    ~StyleFetchedImageSet() override;
+class StyleFetchedImageSet final : public StyleImage,
+                                   public ImageResourceObserver {
+  USING_PRE_FINALIZER(StyleFetchedImageSet, dispose);
 
-    PassRefPtrWillBeRawPtr<CSSValue> cssValue() const override;
-    PassRefPtrWillBeRawPtr<CSSValue> computedCSSValue() const override;
+ public:
+  static StyleFetchedImageSet* create(ImageResourceContent* image,
+                                      float imageScaleFactor,
+                                      CSSImageSetValue* value,
+                                      const KURL& url) {
+    return new StyleFetchedImageSet(image, imageScaleFactor, value, url);
+  }
+  ~StyleFetchedImageSet() override;
 
-    // FIXME: This is used by StyleImage for equals comparison, but this implementation
-    // only looks at the image from the set that we have loaded. I'm not sure if that is
-    // meaningful enough or not.
-    WrappedImagePtr data() const override;
+  CSSValue* cssValue() const override;
+  CSSValue* computedCSSValue() const override;
 
-#if !ENABLE(OILPAN)
-    void clearImageSetValue() { m_imageSetValue = nullptr; }
-#endif
+  // FIXME: This is used by StyleImage for equals comparison, but this
+  // implementation only looks at the image from the set that we have loaded.
+  // I'm not sure if that is meaningful enough or not.
+  WrappedImagePtr data() const override;
 
-    bool canRender() const override;
-    bool isLoaded() const override;
-    bool errorOccurred() const override;
-    LayoutSize imageSize(const LayoutObject*, float multiplier) const override;
-    bool imageHasRelativeWidth() const override;
-    bool imageHasRelativeHeight() const override;
-    void computeIntrinsicDimensions(const LayoutObject*, Length& intrinsicWidth, Length& intrinsicHeight, FloatSize& intrinsicRatio) override;
-    bool usesImageContainerSize() const override;
-    void addClient(LayoutObject*) override;
-    void removeClient(LayoutObject*) override;
-    PassRefPtr<Image> image(const LayoutObject*, const IntSize&, float) const override;
-    float imageScaleFactor() const override { return m_imageScaleFactor; }
-    bool knownToBeOpaque(const LayoutObject*) const override;
-    ImageResource* cachedImage() const override;
+  bool canRender() const override;
+  bool isLoaded() const override;
+  bool errorOccurred() const override;
+  LayoutSize imageSize(const LayoutObject&,
+                       float multiplier,
+                       const LayoutSize& defaultObjectSize) const override;
+  bool imageHasRelativeSize() const override;
+  bool usesImageContainerSize() const override;
+  void addClient(LayoutObject*) override;
+  void removeClient(LayoutObject*) override;
+  PassRefPtr<Image> image(const LayoutObject&,
+                          const IntSize&,
+                          float) const override;
+  float imageScaleFactor() const override { return m_imageScaleFactor; }
+  bool knownToBeOpaque(const LayoutObject&) const override;
+  ImageResourceContent* cachedImage() const override;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    StyleFetchedImageSet(ImageResource*, float imageScaleFactor, CSSImageSetValue*, const KURL&);
+ private:
+  StyleFetchedImageSet(ImageResourceContent*,
+                       float imageScaleFactor,
+                       CSSImageSetValue*,
+                       const KURL&);
 
-    String debugName() const override { return "StyleFetchedImageSet"; }
+  void dispose();
 
-    ResourcePtr<ImageResource> m_bestFitImage;
-    float m_imageScaleFactor;
+  String debugName() const override { return "StyleFetchedImageSet"; }
 
-    RawPtrWillBeMember<CSSImageSetValue> m_imageSetValue; // Not retained; it owns us.
-    const KURL m_url;
+  Member<ImageResourceContent> m_bestFitImage;
+  float m_imageScaleFactor;
+
+  Member<CSSImageSetValue> m_imageSetValue;  // Not retained; it owns us.
+  const KURL m_url;
 };
 
 DEFINE_STYLE_IMAGE_TYPE_CASTS(StyleFetchedImageSet, isImageResourceSet());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // StyleFetchedImageSet_h
+#endif  // StyleFetchedImageSet_h

@@ -4,11 +4,14 @@
 
 #include "components/proximity_auth/bluetooth_connection.h"
 
+#include <utility>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/run_loop.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/proximity_auth_test_util.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/wire_message.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_uuid.h"
@@ -211,8 +214,7 @@ TEST_F(ProximityAuthBluetoothConnectionTest, Connect_NoBluetoothAdapter) {
 TEST_F(ProximityAuthBluetoothConnectionTest, Connect_DeviceMissing) {
   StrictMock<MockBluetoothConnection> connection;
 
-  ON_CALL(*adapter_, GetDevice(_))
-      .WillByDefault(Return(static_cast<device::BluetoothDevice*>(NULL)));
+  ON_CALL(*adapter_, GetDevice(_)).WillByDefault(Return(nullptr));
   EXPECT_CALL(connection, SetStatusProxy(Connection::IN_PROGRESS));
   EXPECT_CALL(connection, SetStatusProxy(Connection::DISCONNECTED));
   connection.Connect();
@@ -397,10 +399,10 @@ TEST_F(ProximityAuthBluetoothConnectionTest,
   Connect(&connection);
 
   scoped_refptr<net::IOBuffer> buffer;
-  scoped_ptr<TestWireMessage> wire_message(new TestWireMessage);
+  std::unique_ptr<TestWireMessage> wire_message(new TestWireMessage);
   EXPECT_CALL(*socket_, Send(_, kSerializedMessageLength, _, _))
       .WillOnce(SaveArg<0>(&buffer));
-  connection.SendMessage(wire_message.Pass());
+  connection.SendMessage(std::move(wire_message));
   ASSERT_TRUE(buffer.get());
   EXPECT_EQ(kSerializedMessage,
             std::string(buffer->data(), kSerializedMessageLength));
@@ -415,13 +417,13 @@ TEST_F(ProximityAuthBluetoothConnectionTest, SendMessage_Success) {
   StrictMock<MockBluetoothConnection> connection;
   Connect(&connection);
 
-  scoped_ptr<TestWireMessage> wire_message(new TestWireMessage);
+  std::unique_ptr<TestWireMessage> wire_message(new TestWireMessage);
   // Ownership will be transfered below, so grab a reference here.
   TestWireMessage* expected_wire_message = wire_message.get();
 
   device::BluetoothSocket::SendCompletionCallback callback;
   EXPECT_CALL(*socket_, Send(_, _, _, _)).WillOnce(SaveArg<2>(&callback));
-  connection.SendMessage(wire_message.Pass());
+  connection.SendMessage(std::move(wire_message));
   ASSERT_FALSE(callback.is_null());
 
   EXPECT_CALL(connection, OnDidSendMessage(Ref(*expected_wire_message), true));
@@ -437,13 +439,13 @@ TEST_F(ProximityAuthBluetoothConnectionTest, SendMessage_Failure) {
   StrictMock<MockBluetoothConnection> connection;
   Connect(&connection);
 
-  scoped_ptr<TestWireMessage> wire_message(new TestWireMessage);
+  std::unique_ptr<TestWireMessage> wire_message(new TestWireMessage);
   // Ownership will be transfered below, so grab a reference here.
   TestWireMessage* expected_wire_message = wire_message.get();
 
   device::BluetoothSocket::ErrorCompletionCallback error_callback;
   EXPECT_CALL(*socket_, Send(_, _, _, _)).WillOnce(SaveArg<3>(&error_callback));
-  connection.SendMessage(wire_message.Pass());
+  connection.SendMessage(std::move(wire_message));
 
   ASSERT_FALSE(error_callback.is_null());
   EXPECT_CALL(connection, OnDidSendMessage(Ref(*expected_wire_message), false));

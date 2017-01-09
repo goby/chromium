@@ -29,7 +29,6 @@
  *
  */
 
-#include "config.h"
 #include "core/loader/PrerendererClient.h"
 
 #include "core/page/Page.h"
@@ -37,21 +36,20 @@
 namespace blink {
 
 // static
-const char* PrerendererClient::supplementName()
-{
-    return "PrerendererClient";
+const char* PrerendererClient::supplementName() {
+  return "PrerendererClient";
 }
 
 // static
-PrerendererClient* PrerendererClient::from(Page* page)
-{
-    PrerendererClient* supplement = static_cast<PrerendererClient*>(WillBeHeapSupplement<Page>::from(page, supplementName()));
-    return supplement;
+PrerendererClient* PrerendererClient::from(Page* page) {
+  PrerendererClient* supplement = static_cast<PrerendererClient*>(
+      Supplement<Page>::from(page, supplementName()));
+  return supplement;
 }
 
-void providePrerendererClientTo(Page& page, PrerendererClient* client)
-{
-    PrerendererClient::provideTo(page, PrerendererClient::supplementName(), adoptPtrWillBeNoop(client));
+void providePrerendererClientTo(Page& page, PrerendererClient* client) {
+  PrerendererClient::provideTo(page, PrerendererClient::supplementName(),
+                               client);
 }
 
-}
+}  // namespace blink

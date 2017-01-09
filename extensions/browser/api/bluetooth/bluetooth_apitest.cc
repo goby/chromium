@@ -25,6 +25,7 @@
 
 using device::BluetoothAdapter;
 using device::BluetoothDevice;
+using device::BluetoothDeviceType;
 using device::BluetoothDiscoverySession;
 using device::BluetoothUUID;
 using device::MockBluetoothAdapter;
@@ -76,7 +77,7 @@ class BluetoothApiTest : public ExtensionApiTest {
       const BluetoothAdapter::ErrorCallback& error_callback) {
     if (mock_session_.get()) {
       callback.Run(
-          scoped_ptr<BluetoothDiscoverySession>(mock_session_.release()));
+          std::unique_ptr<BluetoothDiscoverySession>(mock_session_.release()));
       return;
     }
     error_callback.Run();
@@ -91,10 +92,11 @@ class BluetoothApiTest : public ExtensionApiTest {
 
  protected:
   testing::StrictMock<MockBluetoothAdapter>* mock_adapter_;
-  scoped_ptr<testing::NiceMock<MockBluetoothDiscoverySession> > mock_session_;
-  scoped_ptr<testing::NiceMock<MockBluetoothDevice> > device1_;
-  scoped_ptr<testing::NiceMock<MockBluetoothDevice> > device2_;
-  scoped_ptr<testing::NiceMock<MockBluetoothDevice> > device3_;
+  std::unique_ptr<testing::NiceMock<MockBluetoothDiscoverySession>>
+      mock_session_;
+  std::unique_ptr<testing::NiceMock<MockBluetoothDevice>> device1_;
+  std::unique_ptr<testing::NiceMock<MockBluetoothDevice>> device2_;
+  std::unique_ptr<testing::NiceMock<MockBluetoothDevice>> device3_;
 
   extensions::BluetoothEventRouter* event_router() {
     return bluetooth_api()->event_router();
@@ -130,7 +132,7 @@ IN_PROC_BROWSER_TEST_F(BluetoothApiTest, GetAdapterState) {
   scoped_refptr<api::BluetoothGetAdapterStateFunction> get_adapter_state;
   get_adapter_state = setupFunction(new api::BluetoothGetAdapterStateFunction);
 
-  scoped_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
+  std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
       get_adapter_state.get(), "[]", browser()));
   ASSERT_TRUE(result.get() != NULL);
   api::bluetooth::AdapterState state;
@@ -154,10 +156,11 @@ IN_PROC_BROWSER_TEST_F(BluetoothApiTest, DeviceEvents) {
   event_router()->DeviceAdded(mock_adapter_, device1_.get());
   event_router()->DeviceAdded(mock_adapter_, device2_.get());
 
-  EXPECT_CALL(*device2_.get(), GetDeviceName())
-    .WillRepeatedly(testing::Return("the real d2"));
-  EXPECT_CALL(*device2_.get(), GetName())
-    .WillRepeatedly(testing::Return(base::UTF8ToUTF16("the real d2")));
+  EXPECT_CALL(*device2_, GetName())
+      .WillRepeatedly(
+          testing::Return(base::Optional<std::string>("the real d2")));
+  EXPECT_CALL(*device2_, GetNameForDisplay())
+      .WillRepeatedly(testing::Return(base::UTF8ToUTF16("the real d2")));
   event_router()->DeviceChanged(mock_adapter_, device2_.get());
 
   event_router()->DeviceAdded(mock_adapter_, device3_.get());
@@ -195,8 +198,7 @@ IN_PROC_BROWSER_TEST_F(BluetoothApiTest, Discovery) {
       .WillOnce(
           testing::Invoke(this, &BluetoothApiTest::DiscoverySessionCallback));
   start_function = setupFunction(new api::BluetoothStartDiscoveryFunction);
-  (void)
-      utils::RunFunctionAndReturnError(start_function.get(), "[]", browser());
+  utils::RunFunction(start_function.get(), "[]", browser(), utils::NONE);
 
   // End the discovery session. The StopDiscovery function should succeed.
   testing::Mock::VerifyAndClearExpectations(mock_adapter_);
@@ -409,31 +411,29 @@ IN_PROC_BROWSER_TEST_F(BluetoothApiTest, DeviceInfo) {
   // Set up the first device object to reflect a real-world device.
   BluetoothAdapter::ConstDeviceList devices;
 
-  EXPECT_CALL(*device1_.get(), GetAddress())
-    .WillRepeatedly(testing::Return("A4:17:31:00:00:00"));
-  EXPECT_CALL(*device1_.get(), GetDeviceName())
-    .WillRepeatedly(testing::Return("Chromebook Pixel"));
-  EXPECT_CALL(*device1_.get(), GetName())
-    .WillRepeatedly(testing::Return(base::UTF8ToUTF16("Chromebook Pixel")));
-  EXPECT_CALL(*device1_.get(), GetBluetoothClass())
-    .WillRepeatedly(testing::Return(0x080104));
-  EXPECT_CALL(*device1_.get(), GetDeviceType())
-    .WillRepeatedly(testing::Return(BluetoothDevice::DEVICE_COMPUTER));
-  EXPECT_CALL(*device1_.get(), GetVendorIDSource())
-    .WillRepeatedly(testing::Return(BluetoothDevice::VENDOR_ID_BLUETOOTH));
-  EXPECT_CALL(*device1_.get(), GetVendorID())
-    .WillRepeatedly(testing::Return(0x00E0));
-  EXPECT_CALL(*device1_.get(), GetProductID())
-    .WillRepeatedly(testing::Return(0x240A));
-  EXPECT_CALL(*device1_.get(), GetDeviceID())
-    .WillRepeatedly(testing::Return(0x0400));
+  EXPECT_CALL(*device1_, GetAddress())
+      .WillRepeatedly(testing::Return("A4:17:31:00:00:00"));
+  EXPECT_CALL(*device1_, GetName())
+      .WillRepeatedly(
+          testing::Return(base::Optional<std::string>("Chromebook Pixel")));
+  EXPECT_CALL(*device1_, GetNameForDisplay())
+      .WillRepeatedly(testing::Return(base::UTF8ToUTF16("Chromebook Pixel")));
+  EXPECT_CALL(*device1_, GetBluetoothClass())
+      .WillRepeatedly(testing::Return(0x080104));
+  EXPECT_CALL(*device1_, GetDeviceType())
+      .WillRepeatedly(testing::Return(BluetoothDeviceType::COMPUTER));
+  EXPECT_CALL(*device1_, GetVendorIDSource())
+      .WillRepeatedly(testing::Return(BluetoothDevice::VENDOR_ID_BLUETOOTH));
+  EXPECT_CALL(*device1_, GetVendorID()).WillRepeatedly(testing::Return(0x00E0));
+  EXPECT_CALL(*device1_, GetProductID())
+      .WillRepeatedly(testing::Return(0x240A));
+  EXPECT_CALL(*device1_, GetDeviceID()).WillRepeatedly(testing::Return(0x0400));
 
-  BluetoothDevice::UUIDList uuids;
-  uuids.push_back(BluetoothUUID("1105"));
-  uuids.push_back(BluetoothUUID("1106"));
+  BluetoothDevice::UUIDSet uuids;
+  uuids.insert(BluetoothUUID("1105"));
+  uuids.insert(BluetoothUUID("1106"));
 
-  EXPECT_CALL(*device1_.get(), GetUUIDs())
-      .WillOnce(testing::Return(uuids));
+  EXPECT_CALL(*device1_, GetUUIDs()).WillOnce(testing::Return(uuids));
 
   devices.push_back(device1_.get());
 

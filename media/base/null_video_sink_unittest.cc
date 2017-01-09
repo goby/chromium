@@ -2,10 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "media/base/gmock_callback_support.h"
 #include "media/base/null_video_sink.h"
 #include "media/base/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -17,10 +21,6 @@ using testing::Return;
 
 namespace media {
 
-ACTION_P(RunClosure, closure) {
-  closure.Run();
-}
-
 class NullVideoSinkTest : public testing::Test,
                           public VideoRendererSink::RenderCallback {
  public:
@@ -30,9 +30,9 @@ class NullVideoSinkTest : public testing::Test,
   }
   ~NullVideoSinkTest() override {}
 
-  scoped_ptr<NullVideoSink> ConstructSink(bool clockless,
-                                          base::TimeDelta interval) {
-    scoped_ptr<NullVideoSink> new_sink(new NullVideoSink(
+  std::unique_ptr<NullVideoSink> ConstructSink(bool clockless,
+                                               base::TimeDelta interval) {
+    std::unique_ptr<NullVideoSink> new_sink(new NullVideoSink(
         clockless, interval,
         base::Bind(&NullVideoSinkTest::FrameReceived, base::Unretained(this)),
         message_loop_.task_runner()));
@@ -66,12 +66,8 @@ class NullVideoSinkTest : public testing::Test,
 TEST_F(NullVideoSinkTest, BasicFunctionality) {
   const base::TimeDelta kInterval = base::TimeDelta::FromMilliseconds(25);
 
-  scoped_ptr<NullVideoSink> sink = ConstructSink(false, kInterval);
+  std::unique_ptr<NullVideoSink> sink = ConstructSink(false, kInterval);
   scoped_refptr<VideoFrame> test_frame = CreateFrame(base::TimeDelta());
-
-  // The sink shouldn't have to be started to use the paint method.
-  EXPECT_CALL(*this, FrameReceived(test_frame));
-  sink->PaintFrameUsingOldRenderingPath(test_frame);
 
   {
     SCOPED_TRACE("Waiting for sink startup.");
@@ -95,11 +91,12 @@ TEST_F(NullVideoSinkTest, BasicFunctionality) {
   {
     SCOPED_TRACE("Waiting for second render call.");
     WaitableMessageLoopEvent event;
+    scoped_refptr<VideoFrame> test_frame_2 = CreateFrame(kInterval);
     EXPECT_CALL(*this, Render(_, _, true))
         .WillOnce(Return(test_frame))
-        .WillOnce(Return(nullptr));
+        .WillOnce(Return(test_frame_2));
     EXPECT_CALL(*this, FrameReceived(test_frame)).Times(0);
-    EXPECT_CALL(*this, FrameReceived(scoped_refptr<VideoFrame>()))
+    EXPECT_CALL(*this, FrameReceived(test_frame_2))
         .WillOnce(RunClosure(event.GetClosure()));
     event.RunAndWait();
   }
@@ -111,18 +108,23 @@ TEST_F(NullVideoSinkTest, BasicFunctionality) {
     sink->Stop();
     event.RunAndWait();
   }
+
+  // The sink shouldn't have to be started to use the paint method.
+  EXPECT_CALL(*this, FrameReceived(test_frame));
+  sink->PaintSingleFrame(test_frame, false);
 }
 
 TEST_F(NullVideoSinkTest, ClocklessFunctionality) {
   // Construct the sink with a huge interval, it should still complete quickly.
   const base::TimeDelta interval = base::TimeDelta::FromSeconds(10);
-  scoped_ptr<NullVideoSink> sink = ConstructSink(true, interval);
+  std::unique_ptr<NullVideoSink> sink = ConstructSink(true, interval);
 
   scoped_refptr<VideoFrame> test_frame = CreateFrame(base::TimeDelta());
+  scoped_refptr<VideoFrame> test_frame_2 = CreateFrame(interval);
   sink->Start(this);
 
   EXPECT_CALL(*this, FrameReceived(test_frame)).Times(1);
-  EXPECT_CALL(*this, FrameReceived(scoped_refptr<VideoFrame>())).Times(1);
+  EXPECT_CALL(*this, FrameReceived(test_frame_2)).Times(1);
 
   const int kTestRuns = 6;
   const base::TimeTicks now = base::TimeTicks::Now();
@@ -138,7 +140,8 @@ TEST_F(NullVideoSinkTest, ClocklessFunctionality) {
     } else {
       EXPECT_CALL(*this, Render(current_time + i * interval,
                                 current_time + (i + 1) * interval, false))
-          .WillOnce(DoAll(RunClosure(event.GetClosure()), Return(nullptr)));
+          .WillOnce(
+              DoAll(RunClosure(event.GetClosure()), Return(test_frame_2)));
     }
   }
   event.RunAndWait();

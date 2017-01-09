@@ -15,6 +15,17 @@ import zipfile
 from util import build_utils
 
 
+def _CheckFilePathEndsWithJar(parser, file_path):
+  if not file_path.endswith(".jar"):
+    # dx ignores non .jar files.
+    parser.error("%s does not end in .jar" % file_path)
+
+
+def _CheckFilePathsEndWithJar(parser, file_paths):
+  for file_path in file_paths:
+    _CheckFilePathEndsWithJar(parser, file_path)
+
+
 def _RemoveUnwantedFilesFromZip(dex_path):
   iz = zipfile.ZipFile(dex_path, 'r')
   tmp_dex_path = '%s.tmp.zip' % dex_path
@@ -47,7 +58,7 @@ def _ParseArgs(args):
   parser.add_option('--proguard-enabled-input-path',
                     help=('Path to dex in Release mode when proguard '
                           'is enabled.'))
-  parser.add_option('--no-locals',
+  parser.add_option('--no-locals', default='0',
                     help='Exclude locals list from the dex file.')
   parser.add_option('--incremental',
                     action='store_true',
@@ -80,9 +91,14 @@ def _ParseArgs(args):
     logging.warning('--main-dex-list-path is unused if multidex is not enabled')
 
   if options.inputs:
-    options.inputs = build_utils.ParseGypList(options.inputs)
+    options.inputs = build_utils.ParseGnList(options.inputs)
+    _CheckFilePathsEndWithJar(parser, options.inputs)
   if options.excluded_paths:
-    options.excluded_paths = build_utils.ParseGypList(options.excluded_paths)
+    options.excluded_paths = build_utils.ParseGnList(options.excluded_paths)
+
+  if options.proguard_enabled_input_path:
+    _CheckFilePathEndsWithJar(parser, options.proguard_enabled_input_path)
+  _CheckFilePathsEndWithJar(parser, paths)
 
   return options, paths
 
@@ -94,33 +110,68 @@ def _AllSubpathsAreClassFiles(paths, changes):
   return True
 
 
+def _DexWasEmpty(paths, changes):
+  for path in paths:
+    if any(p.endswith('.class')
+           for p in changes.old_metadata.IterSubpaths(path)):
+      return False
+  return True
+
+
+def _IterAllClassFiles(changes):
+  for path in changes.IterAllPaths():
+    for subpath in changes.IterAllSubpaths(path):
+      if subpath.endswith('.class'):
+        yield path
+
+
+def _MightHitDxBug(changes):
+  # We've seen dx --incremental fail for small libraries. It's unlikely a
+  # speed-up anyways in this case.
+  num_classes = sum(1 for x in _IterAllClassFiles(changes))
+  if num_classes < 10:
+    return True
+
+  # We've also been able to consistently produce a failure by adding an empty
+  # line to the top of the first .java file of a library.
+  # https://crbug.com/617935
+  first_file = next(_IterAllClassFiles(changes))
+  for path in changes.IterChangedPaths():
+    for subpath in changes.IterChangedSubpaths(path):
+      if first_file == subpath:
+        return True
+  return False
+
+
 def _RunDx(changes, options, dex_cmd, paths):
   with build_utils.TempDir() as classes_temp_dir:
     # --multi-dex is incompatible with --incremental.
     if options.multi_dex:
       dex_cmd.append('--main-dex-list=%s' % options.main_dex_list_path)
     else:
-      # Use --incremental when .class files are added or modified (never when
-      # removed).
       # --incremental tells dx to merge all newly dex'ed .class files with
       # what that already exist in the output dex file (existing classes are
       # replaced).
-      if options.incremental and changes.AddedOrModifiedOnly():
+      # Use --incremental when .class files are added or modified, but not when
+      # any are removed (since it won't know to remove them).
+      if (options.incremental
+          and not _MightHitDxBug(changes)
+          and changes.AddedOrModifiedOnly()):
         changed_inputs = set(changes.IterChangedPaths())
         changed_paths = [p for p in paths if p in changed_inputs]
         if not changed_paths:
           return
         # When merging in other dex files, there's no easy way to know if
         # classes were removed from them.
-        if _AllSubpathsAreClassFiles(changed_paths, changes):
+        if (_AllSubpathsAreClassFiles(changed_paths, changes)
+            and not _DexWasEmpty(changed_paths, changes)):
           dex_cmd.append('--incremental')
           for path in changed_paths:
             changed_subpaths = set(changes.IterChangedSubpaths(path))
-            # Not a fundamental restriction, but it's the case right now and it
-            # simplifies the logic to assume so.
-            assert changed_subpaths, 'All inputs should be zip files.'
-            build_utils.ExtractAll(path, path=classes_temp_dir,
-                                   predicate=lambda p: p in changed_subpaths)
+            # Note: |changed_subpaths| may be empty if nothing changed.
+            if changed_subpaths:
+              build_utils.ExtractAll(path, path=classes_temp_dir,
+                                     predicate=lambda p: p in changed_subpaths)
           paths = [classes_temp_dir]
 
     dex_cmd += paths
@@ -160,7 +211,8 @@ def main(args):
   # See http://crbug.com/272064 for context on --force-jumbo.
   # See https://github.com/android/platform_dalvik/commit/dd140a22d for
   # --num-threads.
-  dex_cmd = [dx_binary, '--num-threads=8', '--dex', '--force-jumbo',
+  # See http://crbug.com/658782 for why -JXmx2G was added.
+  dex_cmd = [dx_binary, '-JXmx2G', '--num-threads=8', '--dex', '--force-jumbo',
              '--output', options.dex_path]
   if options.no_locals != '0':
     dex_cmd.append('--no-locals')

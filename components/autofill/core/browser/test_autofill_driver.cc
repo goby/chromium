@@ -6,6 +6,7 @@
 
 #include "base/test/sequenced_worker_pool_owner.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "ui/gfx/geometry/rect_f.h"
 
 namespace autofill {
 
@@ -70,5 +71,12 @@ void TestAutofillDriver::RendererShouldPreviewFieldWithValue(
 
 void TestAutofillDriver::PopupHidden() {
 }
+
+gfx::RectF TestAutofillDriver::TransformBoundingBoxToViewportCoordinates(
+    const gfx::RectF& bounding_box) {
+  return bounding_box;
+}
+
+void TestAutofillDriver::DidInteractWithCreditCardForm() {}
 
 }  // namespace autofill

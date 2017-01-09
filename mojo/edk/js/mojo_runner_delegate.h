@@ -7,12 +7,14 @@
 
 #include "base/macros.h"
 #include "gin/modules/module_runner_delegate.h"
+#include "mojo/edk/js/js_export.h"
 #include "mojo/public/c/system/core.h"
 
 namespace mojo {
 namespace edk {
+namespace js {
 
-class MojoRunnerDelegate : public gin::ModuleRunnerDelegate {
+class MOJO_JS_EXPORT MojoRunnerDelegate : public gin::ModuleRunnerDelegate {
  public:
   MojoRunnerDelegate();
   ~MojoRunnerDelegate() override;
@@ -27,6 +29,7 @@ class MojoRunnerDelegate : public gin::ModuleRunnerDelegate {
   DISALLOW_COPY_AND_ASSIGN(MojoRunnerDelegate);
 };
 
+}  // namespace js
 }  // namespace edk
 }  // namespace mojo
 

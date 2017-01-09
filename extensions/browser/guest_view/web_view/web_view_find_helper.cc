@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "components/guest_view/browser/guest_view_event.h"
 #include "extensions/browser/api/guest_view/web_view/web_view_internal_api.h"
 #include "extensions/browser/guest_view/web_view/web_view_constants.h"
@@ -22,12 +23,12 @@ WebViewFindHelper::~WebViewFindHelper() {
 }
 
 void WebViewFindHelper::CancelAllFindSessions() {
-  current_find_session_ = linked_ptr<WebViewFindHelper::FindInfo>();
+  current_find_session_ = nullptr;
   while (!find_info_map_.empty()) {
     find_info_map_.begin()->second->SendResponse(true /* canceled */);
     find_info_map_.erase(find_info_map_.begin());
   }
-  if (find_update_event_.get())
+  if (find_update_event_)
     DispatchFindUpdateEvent(true /* canceled */, true /* final_update */);
   find_update_event_.reset();
 }
@@ -35,13 +36,13 @@ void WebViewFindHelper::CancelAllFindSessions() {
 void WebViewFindHelper::DispatchFindUpdateEvent(bool canceled,
                                                 bool final_update) {
   DCHECK(find_update_event_.get());
-  scoped_ptr<base::DictionaryValue> args(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> args(new base::DictionaryValue());
   find_update_event_->PrepareResults(args.get());
   args->SetBoolean(webview::kFindCanceled, canceled);
   args->SetBoolean(webview::kFindFinalUpdate, final_update);
   DCHECK(webview_guest_);
-  webview_guest_->DispatchEventToView(
-      new GuestViewEvent(webview::kEventFindReply, args.Pass()));
+  webview_guest_->DispatchEventToView(base::MakeUnique<GuestViewEvent>(
+      webview::kEventFindReply, std::move(args)));
 }
 
 void WebViewFindHelper::EndFindSession(int session_request_id, bool canceled) {
@@ -100,9 +101,8 @@ void WebViewFindHelper::Find(
   std::pair<FindInfoMap::iterator, bool> insert_result =
       find_info_map_.insert(std::make_pair(
           current_find_request_id_,
-          linked_ptr<
-              WebViewFindHelper::FindInfo>(new WebViewFindHelper::FindInfo(
-              current_find_request_id_, search_text, options, find_function))));
+          make_scoped_refptr(new FindInfo(current_find_request_id_, search_text,
+                                          options, find_function))));
   // No duplicate insertions.
   DCHECK(insert_result.second);
 
@@ -110,7 +110,7 @@ void WebViewFindHelper::Find(
   blink::WebFindOptions* full_options = insert_result.first->second->options();
 
   // Set |findNext| implicitly.
-  if (current_find_session_.get()) {
+  if (current_find_session_) {
     const base::string16& current_search_text =
         current_find_session_->search_text();
     bool current_match_case = current_find_session_->options()->matchCase;
@@ -122,7 +122,7 @@ void WebViewFindHelper::Find(
   }
 
   // Link find requests that are a part of the same find session.
-  if (full_options->findNext && current_find_session_.get()) {
+  if (full_options->findNext && current_find_session_) {
     DCHECK(current_find_request_id_ != current_find_session_->request_id());
     current_find_session_->AddFindNextRequest(
         insert_result.first->second->AsWeakPtr());
@@ -155,16 +155,16 @@ void WebViewFindHelper::FindReply(int request_id,
     return;
 
   // This find request must be a part of an existing find session.
-  DCHECK(current_find_session_.get());
+  DCHECK(current_find_session_);
 
   WebViewFindHelper::FindInfo* find_info = find_iterator->second.get();
-
   // Handle canceled find requests.
   if (!find_info->options()->findNext &&
       find_info_map_.begin()->first < request_id) {
     DCHECK_NE(current_find_session_->request_id(),
               find_info_map_.begin()->first);
-    DispatchFindUpdateEvent(true /* canceled */, true /* final_update */);
+    if (find_update_event_)
+      DispatchFindUpdateEvent(true /* canceled */, true /* final_update */);
     EndFindSession(find_info_map_.begin()->first, true /* canceled */);
   }
 
@@ -260,9 +260,6 @@ WebViewFindHelper::FindInfo::FindInfo(
       weak_ptr_factory_(this) {
 }
 
-WebViewFindHelper::FindInfo::~FindInfo() {
-}
-
 void WebViewFindHelper::FindInfo::AggregateResults(
     int number_of_matches,
     const gfx::Rect& selection_rect,
@@ -285,8 +282,10 @@ void WebViewFindHelper::FindInfo::SendResponse(bool canceled) {
   results.SetBoolean(webview::kFindCanceled, canceled);
 
   // Call the callback.
-  find_function_->SetResult(results.DeepCopy());
+  find_function_->SetResult(results.CreateDeepCopy());
   find_function_->SendResponse(true);
 }
+
+WebViewFindHelper::FindInfo::~FindInfo() {}
 
 }  // namespace extensions

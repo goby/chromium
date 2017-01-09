@@ -4,15 +4,20 @@
 
 #include "content/renderer/scheduler/resource_dispatch_throttler.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "content/common/resource_messages.h"
-#include "content/test/fake_renderer_scheduler.h"
+#include "content/common/resource_request.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/WebKit/public/platform/scheduler/test/fake_renderer_scheduler.h"
 
 namespace content {
 namespace {
 
-const uint32 kRequestsPerFlush = 4;
+const uint32_t kRequestsPerFlush = 4;
 const double kFlushPeriodSeconds = 1.f / 60;
 const int kRoutingId = 1;
 
@@ -42,7 +47,8 @@ int GetRequestId(const IPC::Message& msg) {
   return request_id;
 }
 
-class RendererSchedulerForTest : public FakeRendererScheduler {
+class RendererSchedulerForTest
+    : public blink::scheduler::FakeRendererScheduler {
  public:
   RendererSchedulerForTest() : high_priority_work_anticipated_(false) {}
   ~RendererSchedulerForTest() override {}
@@ -64,13 +70,15 @@ class RendererSchedulerForTest : public FakeRendererScheduler {
 
 class ResourceDispatchThrottlerForTest : public ResourceDispatchThrottler {
  public:
-  ResourceDispatchThrottlerForTest(IPC::Sender* sender,
-                                   scheduler::RendererScheduler* scheduler)
+  ResourceDispatchThrottlerForTest(
+      IPC::Sender* sender,
+      blink::scheduler::RendererScheduler* scheduler)
       : ResourceDispatchThrottler(
             sender,
             scheduler,
             base::TimeDelta::FromSecondsD(kFlushPeriodSeconds),
             kRequestsPerFlush),
+        now_(base::TimeTicks() + base::TimeDelta::FromDays(1)),
         flush_scheduled_(false) {}
   ~ResourceDispatchThrottlerForTest() override {}
 
@@ -121,7 +129,7 @@ class ResourceDispatchThrottlerTest : public testing::Test, public IPC::Sender {
   bool FlushScheduled() { return throttler_->flush_scheduled(); }
 
   bool RequestResource() {
-    ResourceHostMsg_Request request;
+    ResourceRequest request;
     request.download_to_file = true;
     return throttler_->Send(new ResourceHostMsg_RequestResource(
         kRoutingId, ++last_request_id_, request));
@@ -130,7 +138,7 @@ class ResourceDispatchThrottlerTest : public testing::Test, public IPC::Sender {
   bool RequestResourceSync() {
     SyncLoadResult result;
     return throttler_->Send(new ResourceHostMsg_SyncLoad(
-        kRoutingId, ++last_request_id_, ResourceHostMsg_Request(), &result));
+        kRoutingId, ++last_request_id_, ResourceRequest(), &result));
   }
 
   void RequestResourcesUntilThrottled() {
@@ -183,10 +191,9 @@ class ResourceDispatchThrottlerTest : public testing::Test, public IPC::Sender {
   ScopedMessages sent_messages_;
 
  private:
-  scoped_ptr<ResourceDispatchThrottlerForTest> throttler_;
+  std::unique_ptr<ResourceDispatchThrottlerForTest> throttler_;
   RendererSchedulerForTest scheduler_;
   int last_request_id_;
-  bool flush_scheduled_;
 
   DISALLOW_COPY_AND_ASSIGN(ResourceDispatchThrottlerTest);
 };
@@ -245,6 +252,45 @@ TEST_F(ResourceDispatchThrottlerTest, NotThrottledIfSufficientTimePassed) {
     RequestResource();
     EXPECT_EQ(1U, GetAndResetSentMessageCount());
     EXPECT_FALSE(FlushScheduled());
+  }
+}
+
+TEST_F(ResourceDispatchThrottlerTest, NotThrottledIfSendRateSufficientlyLow) {
+  SetHighPriorityWorkAnticipated(true);
+
+  // Continuous dispatch of resource requests below the allowed send rate
+  // should never throttled.
+  const base::TimeDelta kAllowedContinuousSendInterval =
+      base::TimeDelta::FromSecondsD((kFlushPeriodSeconds / kRequestsPerFlush) +
+                                    .00001);
+  for (size_t i = 0; i < kRequestsPerFlush * 10; ++i) {
+    Advance(kAllowedContinuousSendInterval);
+    RequestResource();
+    EXPECT_EQ(1U, GetAndResetSentMessageCount());
+    EXPECT_FALSE(FlushScheduled());
+  }
+}
+
+TEST_F(ResourceDispatchThrottlerTest, ThrottledIfSendRateSufficientlyHigh) {
+  SetHighPriorityWorkAnticipated(true);
+
+  // Continuous dispatch of resource requests above the allowed send rate
+  // should be throttled.
+  const base::TimeDelta kThrottledContinuousSendInterval =
+      base::TimeDelta::FromSecondsD((kFlushPeriodSeconds / kRequestsPerFlush) -
+                                    .00001);
+
+  for (size_t i = 0; i < kRequestsPerFlush * 10; ++i) {
+    Advance(kThrottledContinuousSendInterval);
+    RequestResource();
+    // Only the first batch of requests under the limit should be unthrottled.
+    if (i < kRequestsPerFlush) {
+      EXPECT_EQ(1U, GetAndResetSentMessageCount());
+      EXPECT_FALSE(FlushScheduled());
+    } else {
+      EXPECT_EQ(0U, GetAndResetSentMessageCount());
+      EXPECT_TRUE(FlushScheduled());
+    }
   }
 }
 

@@ -5,7 +5,8 @@
 #ifndef CONTENT_BROWSER_SSL_SSL_CLIENT_AUTH_HANDLER_H_
 #define CONTENT_BROWSER_SSL_SSL_CLIENT_AUTH_HANDLER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -49,7 +50,7 @@ class SSLClientAuthHandler {
 
   // Creates a new SSLClientAuthHandler. The caller ensures that the handler
   // does not outlive |request| or |delegate|.
-  SSLClientAuthHandler(scoped_ptr<net::ClientCertStore> client_cert_store,
+  SSLClientAuthHandler(std::unique_ptr<net::ClientCertStore> client_cert_store,
                        net::URLRequest* request,
                        net::SSLCertRequestInfo* cert_request_info,
                        Delegate* delegate);

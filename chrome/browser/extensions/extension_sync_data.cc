@@ -12,12 +12,12 @@
 #include "chrome/common/extensions/manifest_handlers/app_launch_info.h"
 #include "chrome/common/extensions/manifest_handlers/linked_app_icons.h"
 #include "components/crx_file/id_util.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/protocol/app_specifics.pb.h"
+#include "components/sync/protocol/extension_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_url_handlers.h"
-#include "sync/api/sync_data.h"
-#include "sync/protocol/app_specifics.pb.h"
-#include "sync/protocol/extension_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
 
 using syncer::StringOrdinal;
 
@@ -87,9 +87,11 @@ ExtensionSyncData::ExtensionSyncData(const Extension& extension,
                                      int disable_reasons,
                                      bool incognito_enabled,
                                      bool remote_install,
-                                     OptionalBoolean all_urls_enabled)
+                                     OptionalBoolean all_urls_enabled,
+                                     bool installed_by_custodian)
     : ExtensionSyncData(extension, enabled, disable_reasons, incognito_enabled,
-                        remote_install, all_urls_enabled, StringOrdinal(),
+                        remote_install, all_urls_enabled,
+                        installed_by_custodian, StringOrdinal(),
                         StringOrdinal(), LAUNCH_TYPE_INVALID) {
 }
 
@@ -99,6 +101,7 @@ ExtensionSyncData::ExtensionSyncData(const Extension& extension,
                                      bool incognito_enabled,
                                      bool remote_install,
                                      OptionalBoolean all_urls_enabled,
+                                     bool installed_by_custodian,
                                      const StringOrdinal& app_launch_ordinal,
                                      const StringOrdinal& page_ordinal,
                                      extensions::LaunchType launch_type)
@@ -111,7 +114,7 @@ ExtensionSyncData::ExtensionSyncData(const Extension& extension,
       incognito_enabled_(incognito_enabled),
       remote_install_(remote_install),
       all_urls_enabled_(all_urls_enabled),
-      installed_by_custodian_(extension.was_installed_by_custodian()),
+      installed_by_custodian_(installed_by_custodian),
       version_(extension.from_bookmark() ? base::Version("0")
                                          : *extension.version()),
       update_url_(ManifestURL::GetUpdateURL(&extension)),
@@ -134,28 +137,30 @@ ExtensionSyncData::ExtensionSyncData(const Extension& extension,
   }
 }
 
+ExtensionSyncData::ExtensionSyncData(const ExtensionSyncData& other) = default;
+
 ExtensionSyncData::~ExtensionSyncData() {}
 
 // static
-scoped_ptr<ExtensionSyncData> ExtensionSyncData::CreateFromSyncData(
+std::unique_ptr<ExtensionSyncData> ExtensionSyncData::CreateFromSyncData(
     const syncer::SyncData& sync_data) {
-  scoped_ptr<ExtensionSyncData> data(new ExtensionSyncData);
+  std::unique_ptr<ExtensionSyncData> data(new ExtensionSyncData);
   if (data->PopulateFromSyncData(sync_data))
-    return data.Pass();
+    return data;
   return nullptr;
 }
 
 // static
-scoped_ptr<ExtensionSyncData> ExtensionSyncData::CreateFromSyncChange(
+std::unique_ptr<ExtensionSyncData> ExtensionSyncData::CreateFromSyncChange(
     const syncer::SyncChange& sync_change) {
-  scoped_ptr<ExtensionSyncData> data(
+  std::unique_ptr<ExtensionSyncData> data(
       CreateFromSyncData(sync_change.sync_data()));
   if (!data.get())
     return nullptr;
 
   if (sync_change.change_type() == syncer::SyncChange::ACTION_DELETE)
     data->uninstalled_ = true;
-  return data.Pass();
+  return data;
 }
 
 syncer::SyncData ExtensionSyncData::GetSyncData() const {
@@ -236,7 +241,7 @@ bool ExtensionSyncData::PopulateFromExtensionSpecifics(
     return false;
   }
 
-  Version specifics_version(specifics.version());
+  base::Version specifics_version(specifics.version());
   if (!specifics_version.IsValid()) {
     LOG(ERROR) << "Attempt to sync bad ExtensionSpecifics (bad version):\n"
                << GetExtensionSpecificsLogMessage(specifics);

@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "media/base/decoder_buffer.h"
 #include "media/base/mock_filters.h"
 #include "media/base/test_helpers.h"
@@ -39,7 +40,7 @@ class FakeVideoDecoderTest
         num_decoded_frames_(0),
         num_bytes_decoded_(0),
         total_bytes_in_buffers_(0),
-        last_decode_status_(VideoDecoder::kOk),
+        last_decode_status_(DecodeStatus::OK),
         pending_decode_requests_(0),
         is_reset_pending_(false) {}
 
@@ -50,9 +51,9 @@ class FakeVideoDecoderTest
   void InitializeWithConfigAndExpectResult(const VideoDecoderConfig& config,
                                            bool success) {
     decoder_->Initialize(
-        config, false, SetCdmReadyCB(), NewExpectedBoolCB(success),
+        config, false, nullptr, NewExpectedBoolCB(success),
         base::Bind(&FakeVideoDecoderTest::FrameReady, base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     current_config_ = config;
   }
 
@@ -67,11 +68,11 @@ class FakeVideoDecoderTest
 
   void SatisfyInit() {
     decoder_->SatisfyInit();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   // Callback for VideoDecoder::Decode().
-  void DecodeDone(VideoDecoder::Status status) {
+  void DecodeDone(DecodeStatus status) {
     DCHECK_GT(pending_decode_requests_, 0);
     --pending_decode_requests_;
     last_decode_status_ = status;
@@ -101,17 +102,17 @@ class FakeVideoDecoderTest
         break;
       case OK:
         EXPECT_EQ(0, pending_decode_requests_);
-        ASSERT_EQ(VideoDecoder::kOk, last_decode_status_);
+        ASSERT_EQ(DecodeStatus::OK, last_decode_status_);
         ASSERT_TRUE(last_decoded_frame_.get());
         break;
       case NOT_ENOUGH_DATA:
         EXPECT_EQ(0, pending_decode_requests_);
-        ASSERT_EQ(VideoDecoder::kOk, last_decode_status_);
+        ASSERT_EQ(DecodeStatus::OK, last_decode_status_);
         ASSERT_FALSE(last_decoded_frame_.get());
         break;
       case ABORTED:
         EXPECT_EQ(0, pending_decode_requests_);
-        ASSERT_EQ(VideoDecoder::kAborted, last_decode_status_);
+        ASSERT_EQ(DecodeStatus::ABORTED, last_decode_status_);
         EXPECT_FALSE(last_decoded_frame_.get());
         break;
     }
@@ -136,7 +137,7 @@ class FakeVideoDecoderTest
     decoder_->Decode(
         buffer,
         base::Bind(&FakeVideoDecoderTest::DecodeDone, base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   void ReadOneFrame() {
@@ -162,7 +163,7 @@ class FakeVideoDecoderTest
 
   void SatisfyDecodeAndExpect(CallbackResult result) {
     decoder_->SatisfyDecode();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExpectReadResult(result);
   }
 
@@ -193,7 +194,7 @@ class FakeVideoDecoderTest
     is_reset_pending_ = true;
     decoder_->Reset(base::Bind(&FakeVideoDecoderTest::OnDecoderReset,
                                base::Unretained(this)));
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExpectResetResult(result);
   }
 
@@ -204,13 +205,13 @@ class FakeVideoDecoderTest
 
   void SatisfyReset() {
     decoder_->SatisfyReset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExpectResetResult(OK);
   }
 
   void Destroy() {
     decoder_.reset();
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     // All pending callbacks must have been fired.
     DCHECK_EQ(pending_decode_requests_, 0);
@@ -220,7 +221,7 @@ class FakeVideoDecoderTest
   base::MessageLoop message_loop_;
   VideoDecoderConfig current_config_;
 
-  scoped_ptr<FakeVideoDecoder> decoder_;
+  std::unique_ptr<FakeVideoDecoder> decoder_;
 
   int num_input_buffers_;
   int num_decoded_frames_;
@@ -228,7 +229,7 @@ class FakeVideoDecoderTest
   int total_bytes_in_buffers_;
 
   // Callback result/status.
-  VideoDecoder::Status last_decode_status_;
+  DecodeStatus last_decode_status_;
   scoped_refptr<VideoFrame> last_decoded_frame_;
   int pending_decode_requests_;
   bool is_reset_pending_;
@@ -254,7 +255,7 @@ TEST_P(FakeVideoDecoderTest, SimulateFailureToInitialize) {
   decoder_->SimulateFailureToInit();
   InitializeWithConfigAndExpectResult(TestVideoConfig::Normal(), false);
   Decode();
-  EXPECT_EQ(last_decode_status_, VideoDecoder::kDecodeError);
+  EXPECT_EQ(last_decode_status_, DecodeStatus::DECODE_ERROR);
 }
 
 TEST_P(FakeVideoDecoderTest, Read_AllFrames) {
@@ -334,7 +335,7 @@ TEST_P(FakeVideoDecoderTest, ReadWithHold_DecodingDelay) {
       Decode();
     decoder_->SatisfySingleDecode();
     ++num_decodes_satisfied;
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
   DCHECK_EQ(num_decoded_frames_, 1);
@@ -354,7 +355,7 @@ TEST_P(FakeVideoDecoderTest, SimulateFailureToReinitialize) {
   decoder_->SimulateFailureToInit();
   InitializeWithConfigAndExpectResult(TestVideoConfig::Normal(), false);
   Decode();
-  EXPECT_EQ(last_decode_status_, VideoDecoder::kDecodeError);
+  EXPECT_EQ(last_decode_status_, DecodeStatus::DECODE_ERROR);
 }
 
 // Reinitializing the decoder during the middle of the decoding process can

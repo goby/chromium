@@ -4,8 +4,9 @@
 
 #include "gpu/command_buffer/service/shader_translator.h"
 
-#include <string.h>
 #include <GLES2/gl2.h>
+#include <stddef.h>
+#include <string.h>
 #include <algorithm>
 
 #include "base/at_exit.h"
@@ -14,7 +15,6 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/trace_event/trace_event.h"
-#include "gpu/command_buffer/service/gpu_switches.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_version_info.h"
 
@@ -110,7 +110,7 @@ void GetNameHashingInfo(ShHandle compiler, NameMap* name_map) {
 }  // namespace
 
 ShShaderOutput ShaderTranslator::GetShaderOutputLanguageForContext(
-    const gfx::GLVersionInfo& version_info) {
+    const gl::GLVersionInfo& version_info) {
   if (version_info.is_es) {
     return SH_ESSL_OUTPUT;
   }
@@ -141,15 +141,15 @@ ShShaderOutput ShaderTranslator::GetShaderOutputLanguageForContext(
     return SH_GLSL_330_CORE_OUTPUT;
   } else if (context_version == 320) {
     return SH_GLSL_150_CORE_OUTPUT;
-  } else if (context_version == 310) {
-    return SH_GLSL_140_OUTPUT;
-  } else if (context_version == 300) {
-    return SH_GLSL_130_OUTPUT;
   }
 
-  // Before OpenGL 3.0 we use compatibility profile. Also for future
-  // specs between OpenGL 3.3 and OpenGL 4.0, at the time of writing,
-  // we use compatibility profile.
+  // Before OpenGL 3.2 we use the compatibility profile. Shading
+  // language version 130 restricted how sampler arrays can be indexed
+  // in loops, which causes problems like crbug.com/550487 .
+  //
+  // Also for any future specs that might be introduced between OpenGL
+  // 3.3 and OpenGL 4.0, at the time of writing, we use the
+  // compatibility profile.
   return SH_GLSL_COMPATIBILITY_OUTPUT;
 }
 
@@ -161,14 +161,15 @@ ShaderTranslator::DestructionObserver::~DestructionObserver() {
 
 ShaderTranslator::ShaderTranslator()
     : compiler_(NULL),
-      driver_bug_workarounds_(static_cast<ShCompileOptions>(0)) {
+      compile_options_(0) {
 }
 
 bool ShaderTranslator::Init(GLenum shader_type,
                             ShShaderSpec shader_spec,
                             const ShBuiltInResources* resources,
                             ShShaderOutput shader_output_language,
-                            ShCompileOptions driver_bug_workarounds) {
+                            ShCompileOptions driver_bug_workarounds,
+                            bool gl_shader_interm_output) {
   // Make sure Init is called only once.
   DCHECK(compiler_ == NULL);
   DCHECK(shader_type == GL_FRAGMENT_SHADER || shader_type == GL_VERTEX_SHADER);
@@ -184,23 +185,28 @@ bool ShaderTranslator::Init(GLenum shader_type,
     compiler_ = ShConstructCompiler(shader_type, shader_spec,
                                     shader_output_language, resources);
   }
-  driver_bug_workarounds_ = driver_bug_workarounds;
-  return compiler_ != NULL;
-}
 
-int ShaderTranslator::GetCompileOptions() const {
-  int compile_options =
+  compile_options_ =
       SH_OBJECT_CODE | SH_VARIABLES | SH_ENFORCE_PACKING_RESTRICTIONS |
       SH_LIMIT_EXPRESSION_COMPLEXITY | SH_LIMIT_CALL_STACK_DEPTH |
       SH_CLAMP_INDIRECT_ARRAY_BOUNDS;
+  if (gl_shader_interm_output)
+    compile_options_ |= SH_INTERMEDIATE_TREE;
+  compile_options_ |= driver_bug_workarounds;
+  switch (shader_spec) {
+    case SH_WEBGL_SPEC:
+    case SH_WEBGL2_SPEC:
+      compile_options_ |= SH_INIT_OUTPUT_VARIABLES;
+      break;
+    default:
+      break;
+  }
 
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kGLShaderIntermOutput))
-    compile_options |= SH_INTERMEDIATE_TREE;
+  return compiler_ != NULL;
+}
 
-  compile_options |= driver_bug_workarounds_;
-
-  return compile_options;
+ShCompileOptions ShaderTranslator::GetCompileOptions() const {
+  return compile_options_;
 }
 
 bool ShaderTranslator::Translate(const std::string& shader_source,
@@ -255,7 +261,7 @@ std::string ShaderTranslator::GetStringForOptionsThatWouldAffectCompilation()
     const {
   DCHECK(compiler_ != NULL);
   return std::string(":CompileOptions:" +
-         base::IntToString(GetCompileOptions())) +
+         base::Uint64ToString(GetCompileOptions())) +
          ShGetBuiltInResourcesString(compiler_);
 }
 
@@ -270,9 +276,8 @@ void ShaderTranslator::RemoveDestructionObserver(
 }
 
 ShaderTranslator::~ShaderTranslator() {
-  FOR_EACH_OBSERVER(DestructionObserver,
-                    destruction_observers_,
-                    OnDestruct(this));
+  for (auto& observer : destruction_observers_)
+    observer.OnDestruct(this);
 
   if (compiler_ != NULL)
     ShDestruct(compiler_);

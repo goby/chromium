@@ -4,17 +4,24 @@
 <script src="../../../resources/js-test.js"></script>
 <script>
     var callbackWasTriggered = false;
+    var nodeIterator, callbackObservation, nodeFilterObservation,
+        nodeIteratorObservation;
 
-    var callback = function(node) {
+    // Do initialization work in an inner function to avoid references to
+    // objects remaining live on this function's stack frame.
+    // (http://crbug.com/595672/).
+    (function() {
+      var callback = function(node) {
         callbackWasTriggered = true;
         return NodeFilter.FILTER_ACCEPT;
-    };
-    var nodeIterator = document.createNodeIterator(document, NodeFilter.SHOW_ELEMENT, callback, false);
+      };
 
-    var callbackObservation = internals.observeGC(callback);
-    callback = null;
-    var nodeFilterObservation = internals.observeGC(nodeIterator.filter);
-    var nodeIteratorObservation = internals.observeGC(nodeIterator);
+      nodeIterator = document.createNodeIterator(document,
+          NodeFilter.SHOW_ELEMENT, callback, false);
+      callbackObservation = internals.observeGC(callback);
+      nodeFilterObservation = internals.observeGC(nodeIterator.filter);
+      nodeIteratorObservation = internals.observeGC(nodeIterator);
+    })()
 
     gc();
     shouldBeFalse('nodeFilterObservation.wasCollected');

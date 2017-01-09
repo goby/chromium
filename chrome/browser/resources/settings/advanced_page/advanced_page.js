@@ -6,41 +6,17 @@
  * @fileoverview
  * 'settings-advanced-page' is the settings page containing the advanced
  * settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-advanced-page prefs="{{prefs}}">
- *      </settings-advanced-page>
- *      ... other pages ...
- *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-advanced-page
  */
 Polymer({
   is: 'settings-advanced-page',
 
+  behaviors: [SettingsPageVisibility, MainPageBehavior],
+
   properties: {
-    /**
-     * Preferences state.
-     */
+    /** Preferences state. */
     prefs: {
       type: Object,
       notify: true,
     },
-
-    /**
-     * The current active route.
-     */
-    currentRoute: {
-      type: Object,
-      notify: true,
-    },
-  },
-
-  ready: function() {
-    this.$.locationCategory.category =
-        settings.ContentSettingsTypes.GEOLOCATION;
   },
 });

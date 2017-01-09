@@ -5,14 +5,17 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_MANAGER_H_
 #define CONTENT_BROWSER_DEVTOOLS_DEVTOOLS_MANAGER_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/devtools_manager_delegate.h"
 
 namespace content {
 
-class DevToolsAgentHostImpl;
+class DevToolsHttpHandler;
 
 // This class is a singleton that manage global DevTools state for the whole
 // browser.
@@ -28,13 +31,13 @@ class CONTENT_EXPORT DevToolsManager {
 
   DevToolsManagerDelegate* delegate() const { return delegate_.get(); }
 
-  void AgentHostStateChanged(DevToolsAgentHostImpl* agent_host, bool attached);
+  void SetHttpHandler(std::unique_ptr<DevToolsHttpHandler> http_handler);
 
  private:
   friend struct base::DefaultSingletonTraits<DevToolsManager>;
 
-  scoped_ptr<DevToolsManagerDelegate> delegate_;
-  int attached_hosts_count_;
+  std::unique_ptr<DevToolsManagerDelegate> delegate_;
+  std::unique_ptr<DevToolsHttpHandler> http_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(DevToolsManager);
 };

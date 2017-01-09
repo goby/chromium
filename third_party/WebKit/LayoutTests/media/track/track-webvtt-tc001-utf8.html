@@ -1,75 +1,57 @@
 <!DOCTYPE html>
-<html>
-    <head>
-        <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+<title>Tests that UTF-8 encoded characters are recognized properly and that different encodings (iconv) are not recognized as a WebVTT file (we do allow it, it just looks ugly).</title>
+<video>
+    <track src="captions-webvtt/tc001-utf8.vtt">
+    <track src="captions-webvtt/tc001-iso2022jp3.vtt">
+</video>
+<script src="track-helpers.js"></script>
+<script src="../../resources/testharness.js"></script>
+<script src="../../resources/testharnessreport.js"></script>
+<script>
+async_test(function(t) {
+    var video = document.querySelector("video");
+    
+    var trackElements = document.querySelectorAll("track");
+    for (var i = 0; i < video.textTracks.length; i++)
+        trackElements[i].onload = t.step_func(trackLoaded);
 
-        <script src=../media-file.js></script>
-        <script src=../video-test.js></script>
-        <script>
-        
-            numberOfTrackTests = 2;
-            
-            function trackLoaded()
-            {
-                numberOfTracksLoaded++;
-                if (numberOfTracksLoaded == numberOfTrackTests) {
-                    testTrack0();
-                    testTrack1();
-                }
-            }
-            
-            function testTrack0()
-            {
-                findMediaElement();
-                var expected = 
-                {
-                    length : 2,
-                    tests:
-                    [
-                        {
-                            property : "id",
-                            values : [1, 2],
-                        },
-                        {
-                            property : "startTime",
-                            values : [0.0, 31.0],
-                        },
-                        {
-                            property : "endTime",
-                            values : [30.5, 1200.5],
-                        },
-                        {
-                            property : "text",
-                            values : ["景気判断", "電力不足"],
-                        },
-                    ],
-                };
-                testCues(0, expected);
+    enableAllTextTracks(video.textTracks);
 
-                allTestsEnded();
-            }
-            
-            function testTrack1()
-            {
-                findMediaElement();
-                var expected = 
-                {
-                    length : 2,
-                    tests:
-                    [],
-                };
-                testCues(1, expected);
-                
-                allTestsEnded();
-            }
+    var numberOfTracksLoaded = 0;
+    function trackLoaded() {
+        numberOfTracksLoaded++;
+        if (numberOfTracksLoaded != 2)
+            return;
 
-        </script>
-    </head>
-    <body onload="enableAllTextTracks()">
-        <p>Tests that UTF-8 encoded characters are recognized properly and that different encodings (iconv) are not recognized as a WebVTT file (we do allow it, it just looks ugly).</p>
-        <video>
-            <track src="captions-webvtt/tc001-utf8.vtt" onload="trackLoaded()">
-            <track src="captions-webvtt/tc001-iso2022jp3.vtt" onload="trackLoaded()">
-        </video>
-    </body>
-</html>
+        testTrack0();
+        testTrack1();
+        t.done();
+    }
+
+    function testTrack0() {
+        var expected = [
+            {
+                id : "1",
+                startTime : 0,
+                endTime : 30.5,
+                text : "景気判断"
+            },
+            {
+                id : "2",
+                startTime : 31,
+                endTime : 1200.5,
+                text : "電力不足"
+            }
+        ];
+
+        var cues = video.textTracks[0].cues;
+        assert_equals(cues.length, 2);
+        assert_cues_equal(cues, expected);
+    }
+
+    function testTrack1() {
+        assert_equals(video.textTracks[1].cues.length, 2);
+    }
+});
+</script>

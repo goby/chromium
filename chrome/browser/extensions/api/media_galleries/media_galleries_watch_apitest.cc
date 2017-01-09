@@ -7,6 +7,7 @@
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -31,7 +32,6 @@ const char kTestExtensionId[] = "gceegfkgibmgpfopknlcgleimclbknie";
 const char kTestExtensionPath[] = "media_galleries/gallerywatch";
 
 // JS commands.
-const char kGetAllWatchedGalleryIdsCmd[] = "getAllWatchedGalleryIds()";
 const char kGetMediaFileSystemsCmd[] = "getMediaFileSystems()";
 const char kSetupWatchOnValidGalleriesCmd[] = "setupWatchOnValidGalleries()";
 const char kSetupWatchOnUnlistenedValidGalleriesCmd[] =
@@ -39,7 +39,6 @@ const char kSetupWatchOnUnlistenedValidGalleriesCmd[] =
 const char kAddGalleryChangedListenerCmd[] = "addGalleryChangedListener()";
 const char kAddCheckingGalleryChangedListenerCmd[] =
     "addCheckingGalleryChangedListener()";
-const char kRemoveAllGalleryWatchCmd[] = "removeAllGalleryWatch()";
 const char kRemoveGalleryChangedListenerCmd[] =
     "removeGalleryChangedListener()";
 const char kRemoveGalleryWatchCmd[] = "removeGalleryWatch()";
@@ -47,25 +46,21 @@ const char kSetupWatchOnInvalidGalleryCmd[] = "setupWatchOnInvalidGallery()";
 
 // And JS reply messages.
 const char kAddGalleryWatchOK[] = "add_gallery_watch_ok";
-const char kGetAllGalleryWatchOK[] = "get_all_gallery_watch_ok";
 const char kGetMediaFileSystemsCallbackOK[] =
     "get_media_file_systems_callback_ok";
 const char kGetMediaFileSystemsOK[] = "get_media_file_systems_ok";
 const char kAddGalleryChangedListenerOK[] = "add_gallery_changed_listener_ok";
-const char kRemoveAllGalleryWatchOK[] = "remove_all_gallery_watch_ok";
 const char kRemoveGalleryChangedListenerOK[] =
     "remove_gallery_changed_listener_ok";
 const char kRemoveGalleryWatchOK[] = "remove_gallery_watch_ok";
 const char kOnGalleryChangedCheckingOK[] = "on_gallery_changed_checking_ok";
 
 // Test reply messages.
-const char kNoGalleryWatchesInstalled[] = "gallery_watchers_does_not_exists";
 const char kAddGalleryWatchRequestFailed[] = "add_watch_request_failed";
 const char kAddGalleryWatchRequestRuntimeError[] =
     "add_watch_request_runtime_error";
 const char kAddGalleryWatchRequestSucceeded[] = "add_watch_request_succeeded";
 const char kGalleryChangedEventReceived[] = "gallery_changed_event_received";
-const char kGalleryWatchesCheck[] = "gallery_watcher_checks";
 
 }  // namespace
 
@@ -115,7 +110,7 @@ class MediaGalleriesGalleryWatchApiTest : public ExtensionApiTest {
 
   bool AddNewFileInTestGallery() {
     base::FilePath gallery_file =
-        test_gallery_.path().Append(FILE_PATH_LITERAL("test1.txt"));
+        test_gallery_.GetPath().Append(FILE_PATH_LITERAL("test1.txt"));
     std::string content("new content");
     int write_size =
         base::WriteFile(gallery_file, content.c_str(), content.length());
@@ -152,8 +147,8 @@ class MediaGalleriesGalleryWatchApiTest : public ExtensionApiTest {
 
     ASSERT_TRUE(test_gallery_.CreateUniqueTempDir());
     MediaGalleryPrefInfo gallery_info;
-    ASSERT_FALSE(
-        preferences->LookUpGalleryByPath(test_gallery_.path(), &gallery_info));
+    ASSERT_FALSE(preferences->LookUpGalleryByPath(test_gallery_.GetPath(),
+                                                  &gallery_info));
     MediaGalleryPrefId id =
         preferences->AddGallery(gallery_info.device_id,
                                 gallery_info.path,
@@ -177,7 +172,8 @@ class MediaGalleriesGalleryWatchApiTest : public ExtensionApiTest {
     EXPECT_TRUE(get_media_systems_finished.WaitUntilSatisfied());
   }
 
-  scoped_ptr<EnsureMediaDirectoriesExists> ensure_media_directories_exists_;
+  std::unique_ptr<EnsureMediaDirectoriesExists>
+      ensure_media_directories_exists_;
 
   base::ScopedTempDir test_gallery_;
 
@@ -291,70 +287,4 @@ IN_PROC_BROWSER_TEST_F(MediaGalleriesGalleryWatchApiTest,
   // Set up a invalid gallery watch.
   ExecuteCmdAndCheckReply(
       kSetupWatchOnInvalidGalleryCmd, kAddGalleryWatchRequestFailed);
-}
-
-IN_PROC_BROWSER_TEST_F(MediaGalleriesGalleryWatchApiTest, GetAllGalleryWatch) {
-  // Add gallery watch listener.
-  ExecuteCmdAndCheckReply(kAddGalleryChangedListenerCmd,
-                          kAddGalleryChangedListenerOK);
-
-  // Gallery watchers are not yet added.
-  // chrome.mediaGalleries.getAllGalleryWatch should return an empty
-  // list.
-  ExtensionTestMessageListener initial_get_all_check_finished(
-      kNoGalleryWatchesInstalled, false /* no reply */);
-  ExecuteCmdAndCheckReply(kGetAllWatchedGalleryIdsCmd, kGetAllGalleryWatchOK);
-  EXPECT_TRUE(initial_get_all_check_finished.WaitUntilSatisfied());
-
-  if (!GalleryWatchesSupported())
-    return;
-
-  SetupGalleryWatches();
-
-  // chrome.mediaGalleries.getAllGalleryWatch should return the
-  // gallery identifiers.
-  ExtensionTestMessageListener get_all_watched_galleries_finished(
-      kGalleryWatchesCheck, false /* no reply */);
-  ExecuteCmdAndCheckReply(kGetAllWatchedGalleryIdsCmd, kGetAllGalleryWatchOK);
-  EXPECT_TRUE(get_all_watched_galleries_finished.WaitUntilSatisfied());
-
-  // Remove gallery watch request.
-  ExecuteCmdAndCheckReply(kRemoveGalleryWatchCmd, kRemoveGalleryWatchOK);
-
-  // Gallery watchers removed.
-  // chrome.mediaGalleries.getAllGalleryWatch() should return an empty
-  // list.
-  ExtensionTestMessageListener final_get_all_check_finished(
-      kNoGalleryWatchesInstalled, false /* no reply */);
-  ExecuteCmdAndCheckReply(kGetAllWatchedGalleryIdsCmd, kGetAllGalleryWatchOK);
-  EXPECT_TRUE(final_get_all_check_finished.WaitUntilSatisfied());
-}
-
-IN_PROC_BROWSER_TEST_F(MediaGalleriesGalleryWatchApiTest,
-                       RemoveAllGalleryWatch) {
-  // Add gallery watch listener.
-  ExecuteCmdAndCheckReply(kAddGalleryChangedListenerCmd,
-                          kAddGalleryChangedListenerOK);
-
-  if (!GalleryWatchesSupported())
-    return;
-
-  SetupGalleryWatches();
-
-  // chrome.mediaGalleries.getAllGalleryWatch should return the watched
-  // gallery identifiers.
-  ExtensionTestMessageListener get_all_watched_galleries_finished(
-      kGalleryWatchesCheck, false /* no reply */);
-  ExecuteCmdAndCheckReply(kGetAllWatchedGalleryIdsCmd, kGetAllGalleryWatchOK);
-  EXPECT_TRUE(get_all_watched_galleries_finished.WaitUntilSatisfied());
-
-  // Remove all gallery watchers.
-  ExecuteCmdAndCheckReply(kRemoveAllGalleryWatchCmd, kRemoveAllGalleryWatchOK);
-
-  // Gallery watchers removed. chrome.mediaGalleries.getAllGalleryWatch
-  // should return an empty list.
-  ExtensionTestMessageListener final_get_all_check_finished(
-      kNoGalleryWatchesInstalled, false /* no reply */);
-  ExecuteCmdAndCheckReply(kGetAllWatchedGalleryIdsCmd, kGetAllGalleryWatchOK);
-  EXPECT_TRUE(final_get_all_check_finished.WaitUntilSatisfied());
 }

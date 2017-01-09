@@ -4,7 +4,8 @@
 
 #include "gpu/command_buffer/service/vertex_attrib_manager.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/feature_info.h"
@@ -21,7 +22,7 @@ namespace gles2 {
 
 class VertexAttribManagerTest : public GpuServiceTest {
  public:
-  static const uint32 kNumVertexAttribs = 8;
+  static const uint32_t kNumVertexAttribs = 8;
 
   VertexAttribManagerTest() {
   }
@@ -32,7 +33,7 @@ class VertexAttribManagerTest : public GpuServiceTest {
   void SetUp() override {
     GpuServiceTest::SetUp();
 
-    for (uint32 ii = 0; ii < kNumVertexAttribs; ++ii) {
+    for (uint32_t ii = 0; ii < kNumVertexAttribs; ++ii) {
       EXPECT_CALL(*gl_, VertexAttrib4f(ii, 0.0f, 0.0f, 0.0f, 1.0f))
           .Times(1)
           .RetiresOnSaturation();
@@ -47,7 +48,7 @@ class VertexAttribManagerTest : public GpuServiceTest {
 
 // GCC requires these declarations, but MSVC requires they not be present
 #ifndef COMPILER_MSVC
-const uint32 VertexAttribManagerTest::kNumVertexAttribs;
+const uint32_t VertexAttribManagerTest::kNumVertexAttribs;
 #endif
 
 TEST_F(VertexAttribManagerTest, Basic) {
@@ -58,7 +59,7 @@ TEST_F(VertexAttribManagerTest, Basic) {
       manager_->GetEnabledVertexAttribs();
   EXPECT_EQ(0u, enabled_attribs.size());
 
-  for (uint32 ii = 0; ii < kNumVertexAttribs; ii += kNumVertexAttribs - 1) {
+  for (uint32_t ii = 0; ii < kNumVertexAttribs; ii += kNumVertexAttribs - 1) {
     VertexAttrib* attrib = manager_->GetVertexAttrib(ii);
     ASSERT_TRUE(attrib != NULL);
     EXPECT_EQ(ii, attrib->index());
@@ -118,7 +119,8 @@ TEST_F(VertexAttribManagerTest, SetAttribInfo) {
   // The VertexAttribManager must be destroyed before the BufferManager
   // so it releases its buffers.
   manager_ = NULL;
-  buffer_manager.Destroy(false);
+  buffer_manager.MarkContextLost();
+  buffer_manager.Destroy();
 }
 
 TEST_F(VertexAttribManagerTest, HaveFixedAttribs) {
@@ -145,7 +147,6 @@ TEST_F(VertexAttribManagerTest, CanAccess) {
 
   EXPECT_TRUE(attrib->CanAccess(0));
   manager_->Enable(1, true);
-  EXPECT_FALSE(attrib->CanAccess(0));
 
   manager_->SetAttribInfo(1, buffer, 4, GL_FLOAT, GL_FALSE, 0, 16, 0, GL_FALSE);
   EXPECT_FALSE(attrib->CanAccess(0));
@@ -179,7 +180,8 @@ TEST_F(VertexAttribManagerTest, CanAccess) {
   // The VertexAttribManager must be destroyed before the BufferManager
   // so it releases its buffers.
   manager_ = NULL;
-  buffer_manager.Destroy(false);
+  buffer_manager.MarkContextLost();
+  buffer_manager.Destroy();
 }
 
 TEST_F(VertexAttribManagerTest, Unbind) {
@@ -216,7 +218,8 @@ TEST_F(VertexAttribManagerTest, Unbind) {
   // The VertexAttribManager must be destroyed before the BufferManager
   // so it releases its buffers.
   manager_ = NULL;
-  buffer_manager.Destroy(false);
+  buffer_manager.MarkContextLost();
+  buffer_manager.Destroy();
 }
 
 // TODO(gman): Test ValidateBindings
@@ -224,5 +227,3 @@ TEST_F(VertexAttribManagerTest, Unbind) {
 
 }  // namespace gles2
 }  // namespace gpu
-
-

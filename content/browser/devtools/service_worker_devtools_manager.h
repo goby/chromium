@@ -5,9 +5,11 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_SERVICE_WORKER_DEVTOOLS_MANAGER_H_
 #define CONTENT_BROWSER_DEVTOOLS_SERVICE_WORKER_DEVTOOLS_MANAGER_H_
 
+#include <stdint.h>
+
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -32,8 +34,9 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
     virtual void WorkerCreated(ServiceWorkerDevToolsAgentHost* host) {}
     virtual void WorkerReadyForInspection(
         ServiceWorkerDevToolsAgentHost* host) {}
+    virtual void WorkerVersionInstalled(ServiceWorkerDevToolsAgentHost* host) {}
+    virtual void WorkerVersionDoomed(ServiceWorkerDevToolsAgentHost* host) {}
     virtual void WorkerDestroyed(ServiceWorkerDevToolsAgentHost* host) {}
-    virtual void DebugOnStartUpdated(bool debug_on_start) {}
 
    protected:
     virtual ~Observer() {}
@@ -44,8 +47,9 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
     ServiceWorkerIdentifier(
         const ServiceWorkerContextCore* context,
         base::WeakPtr<ServiceWorkerContextCore> context_weak,
-        int64 version_id,
-        const GURL& url);
+        int64_t version_id,
+        const GURL& url,
+        const GURL& scope);
     ServiceWorkerIdentifier(const ServiceWorkerIdentifier& other);
     ~ServiceWorkerIdentifier();
 
@@ -55,14 +59,16 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
     base::WeakPtr<ServiceWorkerContextCore> context_weak() const {
       return context_weak_;
     }
-    int64 version_id() const { return version_id_; }
+    int64_t version_id() const { return version_id_; }
     GURL url() const { return url_; }
+    GURL scope() const { return scope_; }
 
    private:
     const ServiceWorkerContextCore* const context_;
     const base::WeakPtr<ServiceWorkerContextCore> context_weak_;
-    const int64 version_id_;
+    const int64_t version_id_;
     const GURL url_;
+    const GURL scope_;
   };
 
   // Returns the ServiceWorkerDevToolsManager singleton.
@@ -81,9 +87,11 @@ class CONTENT_EXPORT ServiceWorkerDevToolsManager {
   // debug-on-start is enabled in chrome://serviceworker-internals.
   bool WorkerCreated(int worker_process_id,
                      int worker_route_id,
-                     const ServiceWorkerIdentifier& service_worker_id);
+                     const ServiceWorkerIdentifier& service_worker_id,
+                     bool is_installed_version);
   void WorkerReadyForInspection(int worker_process_id, int worker_route_id);
-  void WorkerStopIgnored(int worker_process_id, int worker_route_id);
+  void WorkerVersionInstalled(int worker_process_id, int worker_route_id);
+  void WorkerVersionDoomed(int worker_process_id, int worker_route_id);
   void WorkerDestroyed(int worker_process_id, int worker_route_id);
   void RemoveInspectedWorkerData(WorkerId id);
 

@@ -4,11 +4,14 @@
 
 #include "chrome/browser/web_applications/update_shortcut_worker_win.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/shortcut.h"
@@ -16,6 +19,7 @@
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/tab_helper.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/shell_integration_win.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/browser/web_applications/web_app_win.h"
 #include "components/favicon_base/select_favicon_frames.h"
@@ -61,11 +65,12 @@ void UpdateShortcutWorker::Observe(
     int type,
     const content::NotificationSource& source,
     const content::NotificationDetails& details) {
-  if (type == chrome::NOTIFICATION_TAB_CLOSING &&
-      content::Source<NavigationController>(source).ptr() ==
-        &web_contents_->GetController()) {
+  DCHECK_EQ(chrome::NOTIFICATION_TAB_CLOSING, type);
+
+  if (content::Source<NavigationController>(source).ptr() ==
+      &web_contents_->GetController()) {
     // Underlying tab is closing.
-    web_contents_ = NULL;
+    web_contents_ = nullptr;
   }
 }
 
@@ -154,7 +159,7 @@ void UpdateShortcutWorker::CheckExistingShortcuts() {
     }
   };
 
-  for (int i = 0; i < arraysize(locations); ++i) {
+  for (size_t i = 0; i < arraysize(locations); ++i) {
     base::FilePath path;
     if (!PathService::Get(locations[i].location_id, &path)) {
       NOTREACHED();
@@ -201,7 +206,7 @@ void UpdateShortcutWorker::UpdateShortcutsOnFileThread() {
   CheckExistingShortcuts();
   if (!shortcut_files_.empty()) {
     // Generates app id from web app url and profile path.
-    base::string16 app_id = ShellIntegration::GetAppModelIdForProfile(
+    base::string16 app_id = shell_integration::win::GetAppModelIdForProfile(
         base::UTF8ToWide(
             web_app::GenerateApplicationNameFromURL(shortcut_info_->url)),
         profile_path_);

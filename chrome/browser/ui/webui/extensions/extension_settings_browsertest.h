@@ -5,15 +5,18 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_SETTINGS_BROWSERTEST_H_
 #define CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_SETTINGS_BROWSERTEST_H_
 
-#include "chrome/browser/extensions/extension_test_notification_observer.h"
-#include "chrome/common/extensions/features/feature_channel.h"
+#include <memory>
+
+#include "base/files/file_path.h"
+#include "base/macros.h"
 #include "chrome/test/base/web_ui_browser_test.h"
-#include "extensions/browser/extension_dialog_auto_confirm.h"
 #include "extensions/browser/test_management_policy.h"
-#include "extensions/common/extension.h"
 #include "extensions/common/feature_switch.h"
 
-class Profile;
+namespace extensions {
+class Extension;
+class ScopedTestDialogAutoConfirm;
+}
 
 // C++ test fixture used by extension_settings_browsertest.js.
 class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
@@ -22,15 +25,6 @@ class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
   ~ExtensionSettingsUIBrowserTest() override;
 
  protected:
-  // Get the profile to use.
-  Profile* GetProfile();
-
-  const std::string& last_loaded_extension_id() {
-    return observer_->last_loaded_extension_id();
-  }
-
-  void SetUpOnMainThread() override;
-
   void InstallGoodExtension();
 
   void InstallErrorsExtension();
@@ -54,15 +48,7 @@ class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
   void ShrinkWebContentsView();
 
  private:
-  bool WaitForExtensionViewsToLoad();
-  const extensions::Extension* InstallUnpackedExtension(
-      const base::FilePath& path);
   const extensions::Extension* InstallExtension(const base::FilePath& path);
-
-  scoped_ptr<ExtensionTestNotificationObserver> observer_;
-
-  // The default profile to be used.
-  Profile* profile_;
 
   // Used to simulate managed extensions (by being registered as a provider).
   extensions::TestManagementPolicyProvider policy_provider_;
@@ -70,9 +56,11 @@ class ExtensionSettingsUIBrowserTest : public WebUIBrowserTest {
   base::FilePath test_data_dir_;
 
   // Used to enable the error console.
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> error_console_override_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride>
+      error_console_override_;
 
-  scoped_ptr<extensions::ScopedTestDialogAutoConfirm> uninstall_auto_confirm_;
+  std::unique_ptr<extensions::ScopedTestDialogAutoConfirm>
+      uninstall_auto_confirm_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionSettingsUIBrowserTest);
 };

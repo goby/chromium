@@ -60,8 +60,8 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
   // http://crbug.com/176725 / http://openradar.appspot.com/radar?id=2773401 .
   // Work around it by reinstalling the tracking area after window resize.
   // This AppKit bug is fixed on Yosemite, so we only apply this workaround on
-  // 10.7 to 10.9.
-  if (base::mac::IsOSMavericksOrEarlier() && base::mac::IsOSLionOrLater()) {
+  // 10.9.
+  if (base::mac::IsOS10_9()) {
     [self disableTracking];
     [self enableTracking];
   }
@@ -76,6 +76,10 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
   // Derived classes should return kEventHandled if they handled an event,
   // otherwise it will be forwarded on to |super|.
   return kEventNotHandled;
+}
+
+- (void)forceTouchEvent:(NSEvent*)theEvent {
+  // This method left intentionally blank.
 }
 
 - (void)mouseDown:(NSEvent*)theEvent {
@@ -164,6 +168,19 @@ NSString* kSelectionDirection = @"Chromium.kSelectionDirection";
 - (void)keyUp:(NSEvent*)theEvent {
   if ([self keyEvent:theEvent] != kEventHandled)
     [super keyUp:theEvent];
+}
+
+- (void)pressureChangeWithEvent:(NSEvent*)theEvent {
+  NSInteger newStage = [theEvent stage];
+  if (pressureEventStage_ == newStage)
+    return;
+
+  // Call the force touch event when the stage reaches 2, which is the value
+  // for force touch.
+  if (newStage == 2) {
+    [self forceTouchEvent:theEvent];
+  }
+  pressureEventStage_ = newStage;
 }
 
 - (void)flagsChanged:(NSEvent*)theEvent {

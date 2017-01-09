@@ -6,6 +6,8 @@
 #define NET_ANDROID_DUMMY_SPNEGO_AUTHENTICATOR_H_
 
 #include <jni.h>
+#include <stdint.h>
+
 #include <cstdint>
 #include <list>
 #include <string>
@@ -22,8 +24,6 @@ namespace net {
 #define GSS_S_COMPLETE 0
 #define GSS_S_CONTINUE_NEEDED 1
 #define GSS_S_FAILURE 2
-
-class gss_buffer_desc;
 
 typedef struct gss_OID_desc_struct {
   uint32_t length;
@@ -80,6 +80,7 @@ class DummySpnegoAuthenticator {
                          const char* expected_input_token,
                          const char* output_token);
     SecurityContextQuery();
+    SecurityContextQuery(const SecurityContextQuery& other);
     ~SecurityContextQuery();
 
     // Note that many of these fields only exist for compatibility with the
@@ -140,4 +141,4 @@ class DummySpnegoAuthenticator {
 }  // namespace android
 }  // namespace net
 
-#endif  // NET_ANDROID_DUMMY_SPNEGO_AUTHENTICATOR_DRIVER_H
+#endif  // NET_ANDROID_DUMMY_SPNEGO_AUTHENTICATOR_H_

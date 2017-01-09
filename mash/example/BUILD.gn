@@ -8,10 +8,13 @@ group("example") {
   testonly = true
 
   deps = [
-    "//mash/example/main",
     "//mash/example/views_examples",
     "//mash/example/window_type_launcher",
-    "//mash/wm",
-    "//mojo/runner:mojo_runner",
+    "//mash/simple_wm",
+    "//services/service_manager/standalone",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//ash/mus" ]
+  }
 }

@@ -4,6 +4,7 @@
 
 #include "chrome/browser/download/all_download_item_notifier.h"
 
+#include "base/macros.h"
 #include "content/public/test/mock_download_item.h"
 #include "content/public/test/mock_download_manager.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -70,8 +71,8 @@ class AllDownloadItemNotifierTest : public testing::Test {
 
  private:
   NiceMock<content::MockDownloadItem> item_;
-  scoped_ptr<content::MockDownloadManager> download_manager_;
-  scoped_ptr<AllDownloadItemNotifier> notifier_;
+  std::unique_ptr<content::MockDownloadManager> download_manager_;
+  std::unique_ptr<AllDownloadItemNotifier> notifier_;
   NiceMock<MockNotifierObserver> observer_;
 
   DISALLOW_COPY_AND_ASSIGN(AllDownloadItemNotifierTest);

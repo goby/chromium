@@ -6,7 +6,6 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
@@ -26,6 +25,7 @@
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/keyboard/keyboard_switches.h"
 #include "ui/keyboard/keyboard_ui.h"
+#include "ui/keyboard/scoped_keyboard_disabler.h"
 
 namespace {
 
@@ -112,6 +112,9 @@ std::string GetKeyboardLayout() {
 }
 
 bool IsKeyboardEnabled() {
+  // Blocks keyboard from showing up regardless of other settings.
+  if (ScopedKeyboardDisabler::GetForceDisableVirtualKeyboard())
+    return false;
   // Accessibility setting prioritized over policy setting.
   if (g_accessibility_keyboard_enabled)
     return true;
@@ -165,14 +168,8 @@ void SetKeyboardShowOverride(KeyboardShowOverride override) {
 }
 
 bool IsInputViewEnabled() {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableInputView))
-    return true;
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableInputView))
-    return false;
-  // Default value if no command line flags specified.
-  return true;
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableInputView);
 }
 
 bool IsExperimentalInputViewEnabled() {
@@ -181,30 +178,23 @@ bool IsExperimentalInputViewEnabled() {
 }
 
 bool IsFloatingVirtualKeyboardEnabled() {
-  std::string floating_virtual_keyboard_switch =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kFloatingVirtualKeyboard);
-  return floating_virtual_keyboard_switch ==
-      switches::kFloatingVirtualKeyboardEnabled;
+  return base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kEnableFloatingVirtualKeyboard);
 }
 
 bool IsGestureTypingEnabled() {
-  return base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-      switches::kGestureTyping) != switches::kGestureTypingDisabled;
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableGestureTyping);
 }
 
 bool IsGestureEditingEnabled() {
-  std::string keyboard_switch =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kGestureEditing);
-  return keyboard_switch != switches::kGestureEditingDisabled;
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableGestureEditing);
 }
 
 bool IsSmartDeployEnabled() {
-  std::string keyboard_switch =
-      base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-          switches::kSmartVirtualKeyboard);
-  return keyboard_switch != switches::kSmartVirtualKeyboardDisabled;
+  return !base::CommandLine::ForCurrentProcess()->HasSwitch(
+      switches::kDisableSmartVirtualKeyboard);
 }
 
 bool IsVoiceInputEnabled() {

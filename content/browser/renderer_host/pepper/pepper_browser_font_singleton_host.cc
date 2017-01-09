@@ -4,6 +4,10 @@
 
 #include "content/browser/renderer_host/pepper/pepper_browser_font_singleton_host.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "content/common/font_list.h"
@@ -66,7 +70,7 @@ int32_t FontMessageFilter::OnResourceMessageReceived(
 int32_t FontMessageFilter::OnHostMsgGetFontFamilies(
     ppapi::host::HostMessageContext* context) {
   // OK to use "slow blocking" version since we're on the blocking pool.
-  scoped_ptr<base::ListValue> list(GetFontList_SlowBlocking());
+  std::unique_ptr<base::ListValue> list(GetFontList_SlowBlocking());
 
   std::string output;
   for (size_t i = 0; i < list->GetSize(); i++) {

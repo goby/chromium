@@ -5,15 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SETTINGS_DOWNLOADS_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_SETTINGS_DOWNLOADS_HANDLER_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
-#include "chrome/browser/ui/webui/settings/md_settings_ui.h"
+#include "base/macros.h"
+#include "chrome/browser/ui/webui/settings/settings_page_ui_handler.h"
 #include "ui/shell_dialogs/select_file_dialog.h"
-
-namespace base {
-class Value;
-}
 
 namespace settings {
 
@@ -26,6 +23,8 @@ class DownloadsHandler : public SettingsPageUIHandler,
 
   // SettingsPageUIHandler implementation.
   void RegisterMessages() override;
+  void OnJavascriptAllowed() override {}
+  void OnJavascriptDisallowed() override {}
 
  private:
   // SelectFileDialog::Listener implementation.

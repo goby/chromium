@@ -4,6 +4,7 @@
 
 #include "ppapi/proxy/resource_creation_proxy.h"
 
+#include "build/build_config.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/pp_size.h"
 #include "ppapi/proxy/audio_encoder_resource.h"
@@ -53,6 +54,7 @@
 #include "ppapi/proxy/video_destination_resource.h"
 #include "ppapi/proxy/video_encoder_resource.h"
 #include "ppapi/proxy/video_source_resource.h"
+#include "ppapi/proxy/vpn_provider_resource.h"
 #include "ppapi/proxy/websocket_resource.h"
 #include "ppapi/shared_impl/api_id.h"
 #include "ppapi/shared_impl/host_resource.h"
@@ -263,10 +265,10 @@ PP_Resource ResourceCreationProxy::CreateGraphics3D(
 PP_Resource ResourceCreationProxy::CreateGraphics3DRaw(
     PP_Instance instance,
     PP_Resource share_context,
-    const int32_t* attrib_list,
+    const gpu::gles2::ContextCreationAttribHelper& attrib_helper,
     gpu::Capabilities* capabilities,
     base::SharedMemoryHandle* shared_state,
-    uint64_t* command_buffer_id) {
+    gpu::CommandBufferId* command_buffer_id) {
   // Not proxied. The raw creation function is used only in the implementation
   // of the proxy on the host side.
   return 0;
@@ -406,6 +408,10 @@ PP_Resource ResourceCreationProxy::CreateVideoEncoder(PP_Instance instance) {
 PP_Resource ResourceCreationProxy::CreateVideoSource(
     PP_Instance instance) {
   return (new VideoSourceResource(GetConnection(), instance))->GetReference();
+}
+
+PP_Resource ResourceCreationProxy::CreateVpnProvider(PP_Instance instance) {
+  return (new VpnProviderResource(GetConnection(), instance))->GetReference();
 }
 
 PP_Resource ResourceCreationProxy::CreateWebSocket(PP_Instance instance) {

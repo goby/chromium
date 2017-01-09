@@ -4,7 +4,12 @@
 
 #include "chrome/browser/ui/views/infobars/alternate_nav_infobar_view.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/omnibox/alternate_nav_infobar_delegate.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/gfx/text_elider.h"
@@ -15,21 +20,20 @@
 // AlternateNavInfoBarDelegate -------------------------------------------------
 
 // static
-scoped_ptr<infobars::InfoBar> AlternateNavInfoBarDelegate::CreateInfoBar(
-    scoped_ptr<AlternateNavInfoBarDelegate> delegate) {
-  return make_scoped_ptr(new AlternateNavInfoBarView(delegate.Pass()));
+std::unique_ptr<infobars::InfoBar> AlternateNavInfoBarDelegate::CreateInfoBar(
+    std::unique_ptr<AlternateNavInfoBarDelegate> delegate) {
+  return base::MakeUnique<AlternateNavInfoBarView>(std::move(delegate));
 }
 
 
 // AlternateNavInfoBarView -----------------------------------------------------
 
 AlternateNavInfoBarView::AlternateNavInfoBarView(
-    scoped_ptr<AlternateNavInfoBarDelegate> delegate)
-    : InfoBarView(delegate.Pass()),
+    std::unique_ptr<AlternateNavInfoBarDelegate> delegate)
+    : InfoBarView(std::move(delegate)),
       label_1_(NULL),
       link_(NULL),
-      label_2_(NULL) {
-}
+      label_2_(NULL) {}
 
 AlternateNavInfoBarView::~AlternateNavInfoBarView() {
 }
@@ -79,15 +83,15 @@ void AlternateNavInfoBarView::ViewHierarchyChanged(
     DCHECK_NE(base::string16::npos, offset);
     label_1_text_ = message_text.substr(0, offset);
     label_1_ = CreateLabel(label_1_text_);
-    AddChildView(label_1_);
+    AddViewToContentArea(label_1_);
 
     link_text_ = delegate->GetLinkText();
     link_ = CreateLink(link_text_, this);
-    AddChildView(link_);
+    AddViewToContentArea(link_);
 
     label_2_text_ = message_text.substr(offset);
     label_2_ = CreateLabel(label_2_text_);
-    AddChildView(label_2_);
+    AddViewToContentArea(label_2_);
   }
 
   // This must happen after adding all other children so InfoBarView can ensure

@@ -2,8 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
-#include "ServiceWorkerContainerClient.h"
+#include "modules/serviceworkers/ServiceWorkerContainerClient.h"
 
 #include "core/dom/Document.h"
 #include "core/dom/ExecutionContext.h"
@@ -11,52 +10,56 @@
 #include "core/loader/FrameLoaderClient.h"
 #include "core/workers/WorkerGlobalScope.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerProvider.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtrWillBeRawPtr<ServiceWorkerContainerClient> ServiceWorkerContainerClient::create(PassOwnPtr<WebServiceWorkerProvider> provider)
-{
-    return adoptPtrWillBeNoop(new ServiceWorkerContainerClient(provider));
+ServiceWorkerContainerClient* ServiceWorkerContainerClient::create(
+    std::unique_ptr<WebServiceWorkerProvider> provider) {
+  return new ServiceWorkerContainerClient(std::move(provider));
 }
 
-ServiceWorkerContainerClient::~ServiceWorkerContainerClient()
-{
+ServiceWorkerContainerClient::ServiceWorkerContainerClient(
+    std::unique_ptr<WebServiceWorkerProvider> provider)
+    : m_provider(std::move(provider)) {}
+
+ServiceWorkerContainerClient::~ServiceWorkerContainerClient() {}
+
+const char* ServiceWorkerContainerClient::supplementName() {
+  return "ServiceWorkerContainerClient";
 }
 
-const char* ServiceWorkerContainerClient::supplementName()
-{
-    return "ServiceWorkerContainerClient";
-}
-
-ServiceWorkerContainerClient* ServiceWorkerContainerClient::from(ExecutionContext* context)
-{
-    if (context->isDocument()) {
-        Document* document = toDocument(context);
-        if (!document->frame())
-            return 0;
-
-        ServiceWorkerContainerClient* client = static_cast<ServiceWorkerContainerClient*>(WillBeHeapSupplement<Document>::from(document, supplementName()));
-        if (client)
-            return client;
-
-        // If it's not provided yet, create it lazily.
-        document->WillBeHeapSupplementable<Document>::provideSupplement(ServiceWorkerContainerClient::supplementName(), ServiceWorkerContainerClient::create(document->frame()->loader().client()->createServiceWorkerProvider()));
-        return static_cast<ServiceWorkerContainerClient*>(WillBeHeapSupplement<Document>::from(document, supplementName()));
-    }
-
+ServiceWorkerContainerClient* ServiceWorkerContainerClient::from(
+    ExecutionContext* context) {
+  if (!context)
+    return nullptr;
+  if (context->isWorkerGlobalScope()) {
     WorkerClients* clients = toWorkerGlobalScope(context)->clients();
     ASSERT(clients);
-    return static_cast<ServiceWorkerContainerClient*>(WillBeHeapSupplement<WorkerClients>::from(clients, supplementName()));
+    return static_cast<ServiceWorkerContainerClient*>(
+        Supplement<WorkerClients>::from(clients, supplementName()));
+  }
+  Document* document = toDocument(context);
+  if (!document->frame())
+    return nullptr;
+
+  ServiceWorkerContainerClient* client =
+      static_cast<ServiceWorkerContainerClient*>(
+          Supplement<Document>::from(document, supplementName()));
+  if (!client) {
+    client = new ServiceWorkerContainerClient(
+        document->frame()->loader().client()->createServiceWorkerProvider());
+    Supplement<Document>::provideTo(*document, supplementName(), client);
+  }
+  return client;
 }
 
-ServiceWorkerContainerClient::ServiceWorkerContainerClient(PassOwnPtr<WebServiceWorkerProvider> provider)
-    : m_provider(provider)
-{
+void provideServiceWorkerContainerClientToWorker(
+    WorkerClients* clients,
+    std::unique_ptr<WebServiceWorkerProvider> provider) {
+  clients->provideSupplement(
+      ServiceWorkerContainerClient::supplementName(),
+      ServiceWorkerContainerClient::create(std::move(provider)));
 }
 
-void provideServiceWorkerContainerClientToWorker(WorkerClients* clients, PassOwnPtr<WebServiceWorkerProvider> provider)
-{
-    clients->provideSupplement(ServiceWorkerContainerClient::supplementName(), ServiceWorkerContainerClient::create(provider));
-}
-
-} // namespace blink
+}  // namespace blink

@@ -26,8 +26,8 @@
 #ifndef SpeechRecognition_h
 #define SpeechRecognition_h
 
-#include "core/dom/ActiveDOMObject.h"
-#include "core/page/PageLifecycleObserver.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
+#include "core/dom/SuspendableObject.h"
 #include "modules/EventTargetModules.h"
 #include "modules/ModulesExport.h"
 #include "modules/speech/SpeechGrammarList.h"
@@ -42,95 +42,101 @@ namespace blink {
 class ExceptionState;
 class ExecutionContext;
 class MediaStreamTrack;
+class Page;
 class SpeechRecognitionController;
 class SpeechRecognitionError;
 
-class MODULES_EXPORT SpeechRecognition final : public RefCountedGarbageCollectedEventTargetWithInlineData<SpeechRecognition>, public PageLifecycleObserver, public ActiveDOMObject {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(SpeechRecognition);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SpeechRecognition);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static SpeechRecognition* create(ExecutionContext*);
-    ~SpeechRecognition() override;
+class MODULES_EXPORT SpeechRecognition final : public EventTargetWithInlineData,
+                                               public ActiveScriptWrappable,
+                                               public SuspendableObject {
+  USING_GARBAGE_COLLECTED_MIXIN(SpeechRecognition);
+  DEFINE_WRAPPERTYPEINFO();
 
-    // SpeechRecognition.idl implemementation.
-    // Attributes.
-    SpeechGrammarList* grammars() { return m_grammars; }
-    void setGrammars(SpeechGrammarList* grammars) { m_grammars = grammars; }
-    String lang() { return m_lang; }
-    void setLang(const String& lang) { m_lang = lang; }
-    String serviceURI() { return m_serviceURI; }
-    void setServiceURI(const String& serviceURI) { m_serviceURI = serviceURI; }
-    bool continuous() { return m_continuous; }
-    void setContinuous(bool continuous) { m_continuous = continuous; }
-    bool interimResults() { return m_interimResults; }
-    void setInterimResults(bool interimResults) { m_interimResults = interimResults; }
-    unsigned maxAlternatives() { return m_maxAlternatives; }
-    void setMaxAlternatives(unsigned maxAlternatives) { m_maxAlternatives = maxAlternatives; }
-    MediaStreamTrack* audioTrack() { return m_audioTrack; }
-    void setAudioTrack(MediaStreamTrack* audioTrack) { m_audioTrack = audioTrack; }
+ public:
+  static SpeechRecognition* create(ExecutionContext*);
+  ~SpeechRecognition() override;
 
-    // Callable by the user.
-    void start(ExceptionState&);
-    void stopFunction();
-    void abort();
+  // SpeechRecognition.idl implemementation.
+  // Attributes.
+  SpeechGrammarList* grammars() { return m_grammars; }
+  void setGrammars(SpeechGrammarList* grammars) { m_grammars = grammars; }
+  String lang() { return m_lang; }
+  void setLang(const String& lang) { m_lang = lang; }
+  bool continuous() { return m_continuous; }
+  void setContinuous(bool continuous) { m_continuous = continuous; }
+  bool interimResults() { return m_interimResults; }
+  void setInterimResults(bool interimResults) {
+    m_interimResults = interimResults;
+  }
+  unsigned maxAlternatives() { return m_maxAlternatives; }
+  void setMaxAlternatives(unsigned maxAlternatives) {
+    m_maxAlternatives = maxAlternatives;
+  }
+  MediaStreamTrack* audioTrack() { return m_audioTrack; }
+  void setAudioTrack(MediaStreamTrack* audioTrack) {
+    m_audioTrack = audioTrack;
+  }
 
-    // Called by the SpeechRecognitionClient.
-    void didStartAudio();
-    void didStartSound();
-    void didStartSpeech();
-    void didEndSpeech();
-    void didEndSound();
-    void didEndAudio();
-    void didReceiveResults(const HeapVector<Member<SpeechRecognitionResult>>& newFinalResults, const HeapVector<Member<SpeechRecognitionResult>>& currentInterimResults);
-    void didReceiveNoMatch(SpeechRecognitionResult*);
-    void didReceiveError(PassRefPtrWillBeRawPtr<SpeechRecognitionError>);
-    void didStart();
-    void didEnd();
+  // Callable by the user.
+  void start(ExceptionState&);
+  void stopFunction();
+  void abort();
 
-    // EventTarget.
-    const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
+  // Called by the SpeechRecognitionClient.
+  void didStartAudio();
+  void didStartSound();
+  void didStartSpeech();
+  void didEndSpeech();
+  void didEndSound();
+  void didEndAudio();
+  void didReceiveResults(
+      const HeapVector<Member<SpeechRecognitionResult>>& newFinalResults,
+      const HeapVector<Member<SpeechRecognitionResult>>& currentInterimResults);
+  void didReceiveNoMatch(SpeechRecognitionResult*);
+  void didReceiveError(SpeechRecognitionError*);
+  void didStart();
+  void didEnd();
 
-    // ActiveDOMObject.
-    bool hasPendingActivity() const override;
-    void stop() override;
+  // EventTarget
+  const AtomicString& interfaceName() const override;
+  ExecutionContext* getExecutionContext() const override;
 
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(audiostart);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(soundstart);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(speechstart);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(speechend);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(soundend);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(audioend);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(result);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(nomatch);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(start);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(end);
+  // ScriptWrappable
+  bool hasPendingActivity() const final;
 
-    DECLARE_VIRTUAL_TRACE();
+  // SuspendableObject
+  void contextDestroyed() override;
 
-    // PageLifecycleObserver
-    void contextDestroyed() override;
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(audiostart);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundstart);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechstart);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(speechend);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(soundend);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(audioend);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(result);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(nomatch);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(start);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(end);
 
-private:
-    SpeechRecognition(Page*, ExecutionContext*);
+  DECLARE_VIRTUAL_TRACE();
 
-    Member<SpeechGrammarList> m_grammars;
-    Member<MediaStreamTrack> m_audioTrack;
-    String m_lang;
-    String m_serviceURI;
-    bool m_continuous;
-    bool m_interimResults;
-    unsigned long m_maxAlternatives;
+ private:
+  SpeechRecognition(Page*, ExecutionContext*);
 
-    RawPtrWillBeMember<SpeechRecognitionController> m_controller;
-    bool m_stoppedByActiveDOMObject;
-    bool m_started;
-    bool m_stopping;
-    HeapVector<Member<SpeechRecognitionResult>> m_finalResults;
+  Member<SpeechGrammarList> m_grammars;
+  Member<MediaStreamTrack> m_audioTrack;
+  String m_lang;
+  bool m_continuous;
+  bool m_interimResults;
+  unsigned long m_maxAlternatives;
+
+  Member<SpeechRecognitionController> m_controller;
+  bool m_started;
+  bool m_stopping;
+  HeapVector<Member<SpeechRecognitionResult>> m_finalResults;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SpeechRecognition_h
+#endif  // SpeechRecognition_h

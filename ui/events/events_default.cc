@@ -8,9 +8,7 @@
 
 namespace ui {
 
-void UpdateDeviceList() { NOTIMPLEMENTED(); }
-
-base::TimeDelta EventTimeFromNative(const base::NativeEvent& native_event) {
+base::TimeTicks EventTimeFromNative(const base::NativeEvent& native_event) {
   const ui::Event* event = static_cast<const ui::Event*>(native_event);
   return event->time_stamp();
 }
@@ -96,18 +94,12 @@ int GetTouchId(const base::NativeEvent& native_event) {
   return event->touch_id();
 }
 
-float GetTouchRadiusX(const base::NativeEvent& native_event) {
+PointerDetails GetTouchPointerDetailsFromNative(
+    const base::NativeEvent& native_event) {
   const ui::TouchEvent* event =
       static_cast<const ui::TouchEvent*>(native_event);
   DCHECK(event->IsTouchEvent());
-  return event->pointer_details().radius_x();
-}
-
-float GetTouchRadiusY(const base::NativeEvent& native_event) {
-  const ui::TouchEvent* event =
-      static_cast<const ui::TouchEvent*>(native_event);
-  DCHECK(event->IsTouchEvent());
-  return event->pointer_details().radius_y();
+  return event->pointer_details();
 }
 
 float GetTouchAngle(const base::NativeEvent& native_event) {
@@ -117,19 +109,13 @@ float GetTouchAngle(const base::NativeEvent& native_event) {
   return event->rotation_angle();
 }
 
-float GetTouchForce(const base::NativeEvent& native_event) {
-  const ui::TouchEvent* event =
-      static_cast<const ui::TouchEvent*>(native_event);
-  DCHECK(event->IsTouchEvent());
-  return event->pointer_details().force();
-}
-
 bool GetScrollOffsets(const base::NativeEvent& native_event,
                       float* x_offset,
                       float* y_offset,
                       float* x_offset_ordinal,
                       float* y_offset_ordinal,
-                      int* finger_count) {
+                      int* finger_count,
+                      EventMomentumPhase* momentum_phase) {
   const ui::ScrollEvent* event =
       static_cast<const ui::ScrollEvent*>(native_event);
   DCHECK(event->IsScrollEvent());
@@ -143,6 +129,8 @@ bool GetScrollOffsets(const base::NativeEvent& native_event,
     *y_offset_ordinal = event->y_offset_ordinal();
   if (finger_count)
     *finger_count = event->finger_count();
+  if (momentum_phase)
+    *momentum_phase = event->momentum_phase();
 
   return true;
 }

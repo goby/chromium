@@ -2,9 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -17,8 +21,8 @@ using ::testing::Mock;
 
 namespace jingle_glue {
 
-static const uint32 kTestMessage1 = 1;
-static const uint32 kTestMessage2 = 2;
+static const uint32_t kTestMessage1 = 1;
+static const uint32_t kTestMessage2 = 2;
 
 static const int kTestDelayMs1 = 10;
 static const int kTestDelayMs2 = 20;
@@ -72,7 +76,7 @@ class ThreadWrapperTest : public testing::Test {
     EXPECT_CALL(handler, OnMessage(
         MatchMessage(&handler, kTestMessage2, data)))
         .WillOnce(DeleteMessageData());
-    thread_->Send(&handler, kTestMessage2, data);
+    thread_->Send(RTC_FROM_HERE, &handler, kTestMessage2, data);
   }
 
  protected:
@@ -98,10 +102,10 @@ TEST_F(ThreadWrapperTest, Post) {
   rtc::MessageData* data3 = new rtc::MessageData();
   rtc::MessageData* data4 = new rtc::MessageData();
 
-  thread_->Post(&handler1_, kTestMessage1, data1);
-  thread_->Post(&handler1_, kTestMessage2, data2);
-  thread_->Post(&handler2_, kTestMessage1, data3);
-  thread_->Post(&handler2_, kTestMessage1, data4);
+  thread_->Post(RTC_FROM_HERE, &handler1_, kTestMessage1, data1);
+  thread_->Post(RTC_FROM_HERE, &handler1_, kTestMessage2, data2);
+  thread_->Post(RTC_FROM_HERE, &handler2_, kTestMessage1, data3);
+  thread_->Post(RTC_FROM_HERE, &handler2_, kTestMessage1, data4);
 
   InSequence in_seq;
 
@@ -118,7 +122,7 @@ TEST_F(ThreadWrapperTest, Post) {
       MatchMessage(&handler2_, kTestMessage1, data4)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ThreadWrapperTest, PostDelayed) {
@@ -127,10 +131,14 @@ TEST_F(ThreadWrapperTest, PostDelayed) {
   rtc::MessageData* data3 = new rtc::MessageData();
   rtc::MessageData* data4 = new rtc::MessageData();
 
-  thread_->PostDelayed(kTestDelayMs1, &handler1_, kTestMessage1, data1);
-  thread_->PostDelayed(kTestDelayMs2, &handler1_, kTestMessage2, data2);
-  thread_->PostDelayed(kTestDelayMs3, &handler2_, kTestMessage1, data3);
-  thread_->PostDelayed(kTestDelayMs4, &handler2_, kTestMessage1, data4);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs1, &handler1_, kTestMessage1,
+                       data1);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs2, &handler1_, kTestMessage2,
+                       data2);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs3, &handler2_, kTestMessage1,
+                       data3);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs4, &handler2_, kTestMessage1,
+                       data4);
 
   InSequence in_seq;
 
@@ -147,17 +155,17 @@ TEST_F(ThreadWrapperTest, PostDelayed) {
       MatchMessage(&handler2_, kTestMessage1, data4)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.PostDelayedTask(
+  message_loop_.task_runner()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       base::TimeDelta::FromMilliseconds(kMaxTestDelay));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(ThreadWrapperTest, Clear) {
-  thread_->Post(&handler1_, kTestMessage1, NULL);
-  thread_->Post(&handler1_, kTestMessage2, NULL);
-  thread_->Post(&handler2_, kTestMessage1, NULL);
-  thread_->Post(&handler2_, kTestMessage2, NULL);
+  thread_->Post(RTC_FROM_HERE, &handler1_, kTestMessage1, NULL);
+  thread_->Post(RTC_FROM_HERE, &handler1_, kTestMessage2, NULL);
+  thread_->Post(RTC_FROM_HERE, &handler2_, kTestMessage1, NULL);
+  thread_->Post(RTC_FROM_HERE, &handler2_, kTestMessage2, NULL);
 
   thread_->Clear(&handler1_, kTestMessage2);
 
@@ -174,14 +182,18 @@ TEST_F(ThreadWrapperTest, Clear) {
       MatchMessage(&handler2_, kTestMessage2, null_data)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(ThreadWrapperTest, ClearDelayed) {
-  thread_->PostDelayed(kTestDelayMs1, &handler1_, kTestMessage1, NULL);
-  thread_->PostDelayed(kTestDelayMs2, &handler1_, kTestMessage2, NULL);
-  thread_->PostDelayed(kTestDelayMs3, &handler2_, kTestMessage1, NULL);
-  thread_->PostDelayed(kTestDelayMs4, &handler2_, kTestMessage1, NULL);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs1, &handler1_, kTestMessage1,
+                       NULL);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs2, &handler1_, kTestMessage2,
+                       NULL);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs3, &handler2_, kTestMessage1,
+                       NULL);
+  thread_->PostDelayed(RTC_FROM_HERE, kTestDelayMs4, &handler2_, kTestMessage1,
+                       NULL);
 
   thread_->Clear(&handler1_, kTestMessage2);
 
@@ -198,19 +210,19 @@ TEST_F(ThreadWrapperTest, ClearDelayed) {
       MatchMessage(&handler2_, kTestMessage1, null_data)))
       .WillOnce(DeleteMessageData());
 
-  message_loop_.PostDelayedTask(
+  message_loop_.task_runner()->PostDelayedTask(
       FROM_HERE, base::MessageLoop::QuitWhenIdleClosure(),
       base::TimeDelta::FromMilliseconds(kMaxTestDelay));
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 // Verify that the queue is cleared when a handler is destroyed.
-TEST_F(ThreadWrapperTest, ClearDestoroyed) {
+TEST_F(ThreadWrapperTest, ClearDestroyed) {
   MockMessageHandler* handler_ptr;
   {
     MockMessageHandler handler;
     handler_ptr = &handler;
-    thread_->Post(&handler, kTestMessage1, NULL);
+    thread_->Post(RTC_FROM_HERE, &handler, kTestMessage1, NULL);
   }
   rtc::MessageList removed;
   thread_->Clear(handler_ptr, rtc::MQID_ANY, &removed);
@@ -225,7 +237,7 @@ TEST_F(ThreadWrapperTest, SendSameThread) {
   EXPECT_CALL(handler1_, OnMessage(
       MatchMessage(&handler1_, kTestMessage1, data)))
       .WillOnce(DeleteMessageData());
-  thread_->Send(&handler1_, kTestMessage1, data);
+  thread_->Send(RTC_FROM_HERE, &handler1_, kTestMessage1, data);
 }
 
 void InitializeWrapperForNewThread(rtc::Thread** thread,
@@ -244,11 +256,13 @@ TEST_F(ThreadWrapperTest, SendToOtherThread) {
   base::Thread second_thread("JingleThreadWrapperTest");
   second_thread.Start();
 
-  base::WaitableEvent initialized_event(true, false);
+  base::WaitableEvent initialized_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   rtc::Thread* target;
-  second_thread.message_loop()->PostTask(
-      FROM_HERE, base::Bind(&InitializeWrapperForNewThread,
-                            &target, &initialized_event));
+  second_thread.task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&InitializeWrapperForNewThread, &target, &initialized_event));
   initialized_event.Wait();
 
   ASSERT_TRUE(target != NULL);
@@ -258,7 +272,7 @@ TEST_F(ThreadWrapperTest, SendToOtherThread) {
   EXPECT_CALL(handler1_, OnMessage(
       MatchMessage(&handler1_, kTestMessage1, data)))
       .WillOnce(DeleteMessageData());
-  target->Send(&handler1_, kTestMessage1, data);
+  target->Send(RTC_FROM_HERE, &handler1_, kTestMessage1, data);
 
   Mock::VerifyAndClearExpectations(&handler1_);
 }
@@ -273,11 +287,13 @@ TEST_F(ThreadWrapperTest, SendDuringSend) {
   base::Thread second_thread("JingleThreadWrapperTest");
   second_thread.Start();
 
-  base::WaitableEvent initialized_event(true, false);
+  base::WaitableEvent initialized_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   rtc::Thread* target;
-  second_thread.message_loop()->PostTask(
-      FROM_HERE, base::Bind(&InitializeWrapperForNewThread,
-                            &target, &initialized_event));
+  second_thread.task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&InitializeWrapperForNewThread, &target, &initialized_event));
   initialized_event.Wait();
 
   ASSERT_TRUE(target != NULL);
@@ -290,7 +306,7 @@ TEST_F(ThreadWrapperTest, SendDuringSend) {
           InvokeWithoutArgs(
               this, &ThreadWrapperTest::PingMainThread),
           DeleteMessageData()));
-  target->Send(&handler1_, kTestMessage1, data);
+  target->Send(RTC_FROM_HERE, &handler1_, kTestMessage1, data);
 
   Mock::VerifyAndClearExpectations(&handler1_);
 }
@@ -299,7 +315,7 @@ TEST_F(ThreadWrapperTest, Dispose) {
   bool deleted_ = false;
   thread_->Dispose(new DeletableObject(&deleted_));
   EXPECT_FALSE(deleted_);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(deleted_);
 }
 

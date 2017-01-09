@@ -9,23 +9,23 @@ function test()
     InspectorTest.runProfilerTestSuite([
         function testProfiling(next)
         {
-            var cpuProfiler = WebInspector.targetManager.mainTarget().cpuProfilerModel;
-            var targetManager = WebInspector.targetManager;
-            targetManager.addEventListener(WebInspector.TargetManager.Events.SuspendStateChanged, onSuspendStateChanged);
-            var profilesPanel = WebInspector.panels.profiles;
+            var cpuProfiler = SDK.targetManager.mainTarget().cpuProfilerModel;
+            var targetManager = SDK.targetManager;
+            targetManager.addEventListener(SDK.TargetManager.Events.SuspendStateChanged, onSuspendStateChanged);
+            var profilesPanel = UI.panels.profiles;
             InspectorTest.addSniffer(cpuProfiler, "stopRecording", stopRecording);
             InspectorTest.addSniffer(profilesPanel, "_addProfileHeader", onAddProfileHeader);
-            profilesPanel.toggleRecordButton();  // Start profiling.
+            profilesPanel.toggleRecord();  // Start profiling.
 
             function onAddProfileHeader()
             {
-                profilesPanel.toggleRecordButton();  // Stop profiling.
+                profilesPanel.toggleRecord();  // Stop profiling.
                 profilesPanel._reset();  // ... and remove the profile before it actually stopped.
             }
 
             function onSuspendStateChanged()
             {
-                if (WebInspector.targetManager.allTargetsSuspended()) {
+                if (SDK.targetManager.allTargetsSuspended()) {
                     InspectorTest.addResult("Suspending targets");
                     return;
                 }

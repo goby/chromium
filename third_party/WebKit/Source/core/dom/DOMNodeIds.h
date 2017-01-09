@@ -12,23 +12,16 @@
 
 namespace blink {
 
-#if !ENABLE(OILPAN)
-template<> struct WeakIdentifierMapTraits<Node> {
-    static void removedFromIdentifierMap(Node*);
-    static void addedToIdentifierMap(Node*);
-};
-#endif
-
 DECLARE_WEAK_IDENTIFIER_MAP(Node);
 
 class CORE_EXPORT DOMNodeIds {
-    STATIC_ONLY(DOMNodeIds);
-public:
-    static int idForNode(Node*);
-    static Node* nodeForId(int id);
+  STATIC_ONLY(DOMNodeIds);
+
+ public:
+  static int idForNode(Node*);
+  static Node* nodeForId(int id);
 };
 
-} // namespace blink
+}  // namespace blink
 
-
-#endif // DOMNodeIds_h
+#endif  // DOMNodeIds_h

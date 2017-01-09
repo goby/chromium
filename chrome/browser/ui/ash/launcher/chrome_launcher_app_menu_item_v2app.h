@@ -7,11 +7,8 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "chrome/browser/ui/ash/launcher/chrome_launcher_app_menu_item.h"
-
-namespace gfx {
-class image;
-}
 
 class ChromeLauncherController;
 

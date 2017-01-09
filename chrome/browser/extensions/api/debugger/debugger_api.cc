@@ -6,15 +6,19 @@
 
 #include "chrome/browser/extensions/api/debugger/debugger_api.h"
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <set>
+#include <utility>
 
 #include "base/callback_helpers.h"
 #include "base/command_line.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/scoped_observer.h"
 #include "base/stl_util.h"
@@ -22,7 +26,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/devtools/devtools_target_impl.h"
+#include "chrome/browser/devtools/chrome_devtools_manager_delegate.h"
 #include "chrome/browser/devtools/global_confirm_info_bar.h"
 #include "chrome/browser/extensions/api/debugger/debugger_api_constants.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -98,13 +102,15 @@ class ExtensionDevToolsInfoBarDelegate : public ConfirmInfoBarDelegate {
 
   // ConfirmInfoBarDelegate:
   Type GetInfoBarType() const override;
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   bool ShouldExpire(const NavigationDetails& details) const override;
   void InfoBarDismissed() override;
   base::string16 GetMessageText() const override;
   int GetButtons() const override;
   bool Cancel() override;
 
-  std::string client_name_;
+ private:
+  const base::string16 client_name_;
   base::Closure dismissed_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionDevToolsInfoBarDelegate);
@@ -114,7 +120,7 @@ ExtensionDevToolsInfoBarDelegate::ExtensionDevToolsInfoBarDelegate(
     const base::Closure& dismissed_callback,
     const std::string& client_name)
     : ConfirmInfoBarDelegate(),
-      client_name_(client_name),
+      client_name_(base::UTF8ToUTF16(client_name)),
       dismissed_callback_(dismissed_callback) {}
 
 ExtensionDevToolsInfoBarDelegate::~ExtensionDevToolsInfoBarDelegate() {
@@ -123,6 +129,11 @@ ExtensionDevToolsInfoBarDelegate::~ExtensionDevToolsInfoBarDelegate() {
 infobars::InfoBarDelegate::Type
 ExtensionDevToolsInfoBarDelegate::GetInfoBarType() const {
   return WARNING_TYPE;
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+ExtensionDevToolsInfoBarDelegate::GetIdentifier() const {
+  return EXTENSION_DEV_TOOLS_INFOBAR_DELEGATE;
 }
 
 bool ExtensionDevToolsInfoBarDelegate::ShouldExpire(
@@ -137,8 +148,7 @@ void ExtensionDevToolsInfoBarDelegate::InfoBarDismissed() {
 }
 
 base::string16 ExtensionDevToolsInfoBarDelegate::GetMessageText() const {
-  return l10n_util::GetStringFUTF16(IDS_DEV_TOOLS_INFOBAR_LABEL,
-                                    base::UTF8ToUTF16(client_name_));
+  return l10n_util::GetStringFUTF16(IDS_DEV_TOOLS_INFOBAR_LABEL, client_name_);
 }
 
 int ExtensionDevToolsInfoBarDelegate::GetButtons() const {
@@ -203,12 +213,12 @@ ExtensionDevToolsInfoBar::ExtensionDevToolsInfoBar(
   g_extension_info_bars.Get()[extension_id] = this;
 
   // This class closes the |infobar_|, so it's safe to pass Unretained(this).
-  scoped_ptr<ExtensionDevToolsInfoBarDelegate> delegate(
+  std::unique_ptr<ExtensionDevToolsInfoBarDelegate> delegate(
       new ExtensionDevToolsInfoBarDelegate(
           base::Bind(&ExtensionDevToolsInfoBar::InfoBarDismissed,
                      base::Unretained(this)),
           extension_name));
-  infobar_ = GlobalConfirmInfoBar::Show(delegate.Pass());
+  infobar_ = GlobalConfirmInfoBar::Show(std::move(delegate));
 }
 
 ExtensionDevToolsInfoBar::~ExtensionDevToolsInfoBar() {
@@ -220,13 +230,13 @@ ExtensionDevToolsInfoBar::~ExtensionDevToolsInfoBar() {
 void ExtensionDevToolsInfoBar::Remove(
     ExtensionDevToolsClientHost* client_host) {
   callbacks_.erase(client_host);
-  if (!callbacks_.size())
+  if (callbacks_.empty())
     delete this;
 }
 
 void ExtensionDevToolsInfoBar::InfoBarDismissed() {
   std::map<ExtensionDevToolsClientHost*, base::Closure> copy = callbacks_;
-  for (const auto& pair: copy)
+  for (const auto& pair : copy)
     pair.second.Run();
 }
 
@@ -357,7 +367,7 @@ void ExtensionDevToolsClientHost::AgentHostClosed(
 }
 
 void ExtensionDevToolsClientHost::Close() {
-  agent_host_->DetachClient();
+  agent_host_->DetachClient(this);
   delete this;
 }
 
@@ -377,7 +387,7 @@ void ExtensionDevToolsClientHost::SendMessageToBackend(
 
   std::string json_args;
   base::JSONWriter::Write(protocol_request, &json_args);
-  agent_host_->DispatchProtocolMessage(json_args);
+  agent_host_->DispatchProtocolMessage(this, json_args);
 }
 
 void ExtensionDevToolsClientHost::InfoBarDismissed() {
@@ -390,13 +400,13 @@ void ExtensionDevToolsClientHost::SendDetachedEvent() {
   if (!EventRouter::Get(profile_))
     return;
 
-  scoped_ptr<base::ListValue> args(OnDetach::Create(debuggee_,
-                                                    detach_reason_));
-  scoped_ptr<Event> event(
-      new Event(events::DEBUGGER_ON_DETACH, OnDetach::kEventName, args.Pass()));
+  std::unique_ptr<base::ListValue> args(
+      OnDetach::Create(debuggee_, detach_reason_));
+  std::unique_ptr<Event> event(new Event(
+      events::DEBUGGER_ON_DETACH, OnDetach::kEventName, std::move(args)));
   event->restrict_to_browser_context = profile_;
   EventRouter::Get(profile_)
-      ->DispatchEventToExtension(extension_id_, event.Pass());
+      ->DispatchEventToExtension(extension_id_, std::move(event));
 }
 
 void ExtensionDevToolsClientHost::OnExtensionUnloaded(
@@ -421,8 +431,8 @@ void ExtensionDevToolsClientHost::DispatchProtocolMessage(
   if (!EventRouter::Get(profile_))
     return;
 
-  scoped_ptr<base::Value> result = base::JSONReader::Read(message);
-  if (!result->IsType(base::Value::TYPE_DICTIONARY))
+  std::unique_ptr<base::Value> result = base::JSONReader::Read(message);
+  if (!result || !result->IsType(base::Value::Type::DICTIONARY))
     return;
   base::DictionaryValue* dictionary =
       static_cast<base::DictionaryValue*>(result.get());
@@ -438,13 +448,13 @@ void ExtensionDevToolsClientHost::DispatchProtocolMessage(
     if (dictionary->GetDictionary("params", &params_value))
       params.additional_properties.Swap(params_value);
 
-    scoped_ptr<base::ListValue> args(
+    std::unique_ptr<base::ListValue> args(
         OnEvent::Create(debuggee_, method_name, params));
-    scoped_ptr<Event> event(
-        new Event(events::DEBUGGER_ON_EVENT, OnEvent::kEventName, args.Pass()));
+    std::unique_ptr<Event> event(new Event(
+        events::DEBUGGER_ON_EVENT, OnEvent::kEventName, std::move(args)));
     event->restrict_to_browser_context = profile_;
     EventRouter::Get(profile_)
-        ->DispatchEventToExtension(extension_id_, event.Pass());
+        ->DispatchEventToExtension(extension_id_, std::move(event));
   } else {
     DebuggerSendCommandFunction* function = pending_requests_[id].get();
     if (!function)
@@ -562,7 +572,7 @@ DebuggerAttachFunction::~DebuggerAttachFunction() {
 }
 
 bool DebuggerAttachFunction::RunAsync() {
-  scoped_ptr<Attach::Params> params(Attach::Params::Create(*args_));
+  std::unique_ptr<Attach::Params> params(Attach::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   CopyDebuggee(&debuggee_, params->target);
@@ -599,7 +609,7 @@ DebuggerDetachFunction::~DebuggerDetachFunction() {
 }
 
 bool DebuggerDetachFunction::RunAsync() {
-  scoped_ptr<Detach::Params> params(Detach::Params::Create(*args_));
+  std::unique_ptr<Detach::Params> params(Detach::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   CopyDebuggee(&debuggee_, params->target);
@@ -621,7 +631,8 @@ DebuggerSendCommandFunction::~DebuggerSendCommandFunction() {
 }
 
 bool DebuggerSendCommandFunction::RunAsync() {
-  scoped_ptr<SendCommand::Params> params(SendCommand::Params::Create(*args_));
+  std::unique_ptr<SendCommand::Params> params(
+      SendCommand::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   CopyDebuggee(&debuggee_, params->target);
@@ -662,33 +673,36 @@ const char kTargetTitleField[] = "title";
 const char kTargetAttachedField[] = "attached";
 const char kTargetUrlField[] = "url";
 const char kTargetFaviconUrlField[] = "faviconUrl";
-const char kTargetTypePage[] = "page";
-const char kTargetTypeBackgroundPage[] = "background_page";
-const char kTargetTypeWorker[] = "worker";
-const char kTargetTypeOther[] = "other";
 const char kTargetTabIdField[] = "tabId";
 const char kTargetExtensionIdField[] = "extensionId";
+const char kTargetTypeWorker[] = "worker";
 
-base::Value* SerializeTarget(const DevToolsTargetImpl& target) {
-  base::DictionaryValue* dictionary = new base::DictionaryValue();
+std::unique_ptr<base::DictionaryValue> SerializeTarget(
+    scoped_refptr<DevToolsAgentHost> host) {
+  std::unique_ptr<base::DictionaryValue> dictionary(
+      new base::DictionaryValue());
+  dictionary->SetString(kTargetIdField, host->GetId());
+  dictionary->SetString(kTargetTitleField, host->GetTitle());
+  dictionary->SetBoolean(kTargetAttachedField, host->IsAttached());
+  dictionary->SetString(kTargetUrlField, host->GetURL().spec());
 
-  dictionary->SetString(kTargetIdField, target.GetId());
-  dictionary->SetString(kTargetTitleField, target.GetTitle());
-  dictionary->SetBoolean(kTargetAttachedField, target.IsAttached());
-  dictionary->SetString(kTargetUrlField, target.GetURL().spec());
-
-  std::string type = target.GetType();
-  if (type == kTargetTypePage) {
-    dictionary->SetInteger(kTargetTabIdField, target.GetTabId());
-  } else if (type == kTargetTypeBackgroundPage) {
-    dictionary->SetString(kTargetExtensionIdField, target.GetExtensionId());
-  } else if (type != kTargetTypeWorker) {
-    // DevToolsTargetImpl may support more types than the debugger API.
-    type = kTargetTypeOther;
+  std::string type = host->GetType();
+  if (type == DevToolsAgentHost::kTypePage) {
+    int tab_id =
+        extensions::ExtensionTabUtil::GetTabId(host->GetWebContents());
+    dictionary->SetInteger(kTargetTabIdField, tab_id);
+  } else if (type == ChromeDevToolsManagerDelegate::kTypeBackgroundPage) {
+    dictionary->SetString(kTargetExtensionIdField, host->GetURL().host());
   }
+
+  if (type == DevToolsAgentHost::kTypeServiceWorker ||
+      type == DevToolsAgentHost::kTypeSharedWorker) {
+    type = kTargetTypeWorker;
+  }
+
   dictionary->SetString(kTargetTypeField, type);
 
-  GURL favicon_url = target.GetFaviconURL();
+  GURL favicon_url = host->GetFaviconURL();
   if (favicon_url.is_valid())
     dictionary->SetString(kTargetFaviconUrlField, favicon_url.spec());
 
@@ -704,7 +718,7 @@ DebuggerGetTargetsFunction::~DebuggerGetTargetsFunction() {
 }
 
 bool DebuggerGetTargetsFunction::RunAsync() {
-  std::vector<DevToolsTargetImpl*> list = DevToolsTargetImpl::EnumerateAll();
+  content::DevToolsAgentHost::List list = DevToolsAgentHost::GetOrCreateAll();
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
       FROM_HERE,
@@ -713,12 +727,11 @@ bool DebuggerGetTargetsFunction::RunAsync() {
 }
 
 void DebuggerGetTargetsFunction::SendTargetList(
-    const std::vector<DevToolsTargetImpl*>& target_list) {
-  scoped_ptr<base::ListValue> result(new base::ListValue());
+    const content::DevToolsAgentHost::List& target_list) {
+  std::unique_ptr<base::ListValue> result(new base::ListValue());
   for (size_t i = 0; i < target_list.size(); ++i)
-    result->Append(SerializeTarget(*target_list[i]));
-  STLDeleteContainerPointers(target_list.begin(), target_list.end());
-  SetResult(result.release());
+    result->Append(SerializeTarget(target_list[i]));
+  SetResult(std::move(result));
   SendResponse(true);
 }
 

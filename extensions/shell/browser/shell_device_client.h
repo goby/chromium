@@ -5,11 +5,11 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_DEVICE_CLIENT_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_DEVICE_CLIENT_H_
 
-#include "device/core/device_client.h"
+#include <memory>
 
-#include "base/compiler_specific.h"
+#include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
+#include "device/base/device_client.h"
 
 namespace extensions {
 
@@ -20,13 +20,20 @@ class ShellDeviceClient : device::DeviceClient {
   ShellDeviceClient();
   ~ShellDeviceClient() override;
 
+  // Must be called before the destructor, when the FILE thread is still alive.
+  void Shutdown();
+
   // device::DeviceClient implementation
   device::UsbService* GetUsbService() override;
   device::HidService* GetHidService() override;
 
  private:
-  scoped_ptr<device::HidService> hid_service_;
-  scoped_ptr<device::UsbService> usb_service_;
+#if DCHECK_IS_ON()
+  bool did_shutdown_ = false;
+#endif
+
+  std::unique_ptr<device::HidService> hid_service_;
+  std::unique_ptr<device::UsbService> usb_service_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellDeviceClient);
 };

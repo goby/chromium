@@ -7,11 +7,11 @@
 
 #include <string>
 
+#include "build/build_config.h"
 #include "chrome/browser/devtools/devtools_toggle_action.h"
-#include "chrome/browser/ssl/security_state_model.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model_delegate.h"
 #include "content/public/common/page_zoom.h"
+#include "printing/features/features.h"
 #include "ui/base/window_open_disposition.h"
 
 class Browser;
@@ -23,6 +23,10 @@ namespace content {
 class PageState;
 class WebContents;
 }
+
+namespace security_state {
+struct SecurityInfo;
+}  // namespace security_state
 
 namespace chrome {
 
@@ -41,22 +45,19 @@ void RemoveCommandObserver(Browser*, int command, CommandObserver* observer);
 int GetContentRestrictions(const Browser* browser);
 
 // Opens a new window with the default blank tab.
-void NewEmptyWindow(Profile* profile, HostDesktopType desktop_type);
+void NewEmptyWindow(Profile* profile);
 
 // Opens a new window with the default blank tab. This bypasses metrics and
 // various internal bookkeeping; NewEmptyWindow (above) is preferred.
-Browser* OpenEmptyWindow(Profile* profile, HostDesktopType desktop_type);
+Browser* OpenEmptyWindow(Profile* profile);
 
 // Opens a new window with the tabs from |profile|'s TabRestoreService.
-void OpenWindowWithRestoredTabs(Profile* profile,
-                                HostDesktopType host_desktop_type);
+void OpenWindowWithRestoredTabs(Profile* profile);
 
-// Opens the specified URL in a new browser window in an incognito session on
-// the desktop specified by |desktop_type|. If there is already an existing
-// active incognito session for the specified |profile|, that session is re-
-// used.
-void OpenURLOffTheRecord(Profile* profile, const GURL& url,
-                         chrome::HostDesktopType desktop_type);
+// Opens the specified URL in a new browser window in an incognito session. If
+// there is already an existing active incognito session for the specified
+// |profile|, that session is re- used.
+void OpenURLOffTheRecord(Profile* profile, const GURL& url);
 
 bool CanGoBack(const Browser* browser);
 void GoBack(Browser* browser, WindowOpenDisposition disposition);
@@ -66,7 +67,7 @@ bool NavigateToIndexWithDisposition(Browser* browser,
                                     int index,
                                     WindowOpenDisposition disposition);
 void Reload(Browser* browser, WindowOpenDisposition disposition);
-void ReloadIgnoringCache(Browser* browser, WindowOpenDisposition disposition);
+void ReloadBypassingCache(Browser* browser, WindowOpenDisposition disposition);
 bool CanReload(const Browser* browser);
 void Home(Browser* browser, WindowOpenDisposition disposition);
 void OpenCurrentURL(Browser* browser);
@@ -99,24 +100,19 @@ void BookmarkCurrentPageAllowingExtensionOverrides(Browser* browser);
 bool CanBookmarkCurrentPage(const Browser* browser);
 void BookmarkAllTabs(Browser* browser);
 bool CanBookmarkAllTabs(const Browser* browser);
-#if defined(TOOLKIT_VIEWS) && !defined(OS_MACOSX)
 void SaveCreditCard(Browser* browser);
-#endif
 void Translate(Browser* browser);
 void ManagePasswordsForPage(Browser* browser);
-#if defined(OS_WIN)
-void TogglePagePinnedToStartScreen(Browser* browser);
-#endif
 void SavePage(Browser* browser);
 bool CanSavePage(const Browser* browser);
 void ShowFindBar(Browser* browser);
 void ShowWebsiteSettings(Browser* browser,
                          content::WebContents* web_contents,
                          const GURL& url,
-                         const SecurityStateModel::SecurityInfo& security_info);
+                         const security_state::SecurityInfo& security_info);
 void Print(Browser* browser);
 bool CanPrint(Browser* browser);
-#if defined(ENABLE_BASIC_PRINTING)
+#if BUILDFLAG(ENABLE_BASIC_PRINTING)
 void BasicPrint(Browser* browser);
 bool CanBasicPrint(Browser* browser);
 #endif  // ENABLE_BASIC_PRINTING

@@ -22,7 +22,6 @@
  *
  */
 
-#include "config.h"
 #include "core/html/HTMLKeygenElement.h"
 
 #include "bindings/core/v8/ExceptionStatePlaceholder.h"
@@ -30,11 +29,12 @@
 #include "core/dom/Document.h"
 #include "core/dom/Text.h"
 #include "core/dom/shadow/ShadowRoot.h"
-#include "core/frame/UseCounter.h"
+#include "core/frame/Deprecation.h"
 #include "core/html/FormData.h"
 #include "core/html/HTMLOptionElement.h"
 #include "core/html/HTMLSelectElement.h"
 #include "core/layout/LayoutBlockFlow.h"
+#include "core/loader/FrameLoaderClient.h"
 #include "platform/text/PlatformLocale.h"
 #include "public/platform/Platform.h"
 #include "public/platform/WebLocalizedString.h"
@@ -46,93 +46,95 @@ namespace blink {
 
 using namespace HTMLNames;
 
-HTMLKeygenElement::HTMLKeygenElement(Document& document, HTMLFormElement* form)
-    : HTMLFormControlElementWithState(keygenTag, document, form)
-{
-    UseCounter::count(document, UseCounter::HTMLKeygenElement);
+HTMLKeygenElement::HTMLKeygenElement(Document& document)
+    : HTMLFormControlElementWithState(keygenTag, document) {
+  Deprecation::countDeprecation(document, UseCounter::HTMLKeygenElement);
+  if (document.frame())
+    document.frame()->loader().client()->didUseKeygen();
 }
 
-PassRefPtrWillBeRawPtr<HTMLKeygenElement> HTMLKeygenElement::create(Document& document, HTMLFormElement* form)
-{
-    RefPtrWillBeRawPtr<HTMLKeygenElement> keygen = adoptRefWillBeNoop(new HTMLKeygenElement(document, form));
-    keygen->ensureUserAgentShadowRoot();
-    return keygen.release();
+HTMLKeygenElement* HTMLKeygenElement::create(Document& document) {
+  HTMLKeygenElement* keygen = new HTMLKeygenElement(document);
+  keygen->ensureUserAgentShadowRoot();
+  return keygen;
 }
 
-LayoutObject* HTMLKeygenElement::createLayoutObject(const ComputedStyle& style)
-{
-    // TODO(mstensho): While it's harmful and meaningless to allow most display types on replaced
-    // content (e.g. table, table-row or flex), it would be useful to honor at least some of
-    // them. Table-cell (and maybe table-caption too), for instance. See crbug.com/335040
-    return new LayoutBlockFlow(this);
+LayoutObject* HTMLKeygenElement::createLayoutObject(
+    const ComputedStyle& style) {
+  // TODO(mstensho): While it's harmful and meaningless to allow most display
+  // types on replaced content (e.g. table, table-row or flex), it would be
+  // useful to honor at least some of them. Table-cell (and maybe table-caption
+  // too), for instance. See crbug.com/335040
+  return new LayoutBlockFlow(this);
 }
 
-void HTMLKeygenElement::didAddUserAgentShadowRoot(ShadowRoot& root)
-{
-    DEFINE_STATIC_LOCAL(AtomicString, keygenSelectPseudoId, ("-webkit-keygen-select", AtomicString::ConstructFromLiteral));
+void HTMLKeygenElement::didAddUserAgentShadowRoot(ShadowRoot& root) {
+  DEFINE_STATIC_LOCAL(AtomicString, keygenSelectPseudoId,
+                      ("-webkit-keygen-select"));
 
-    Vector<String> keys;
-    keys.reserveCapacity(2);
-    keys.append(locale().queryString(WebLocalizedString::KeygenMenuHighGradeKeySize));
-    keys.append(locale().queryString(WebLocalizedString::KeygenMenuMediumGradeKeySize));
+  Vector<String> keys;
+  keys.reserveCapacity(2);
+  keys.append(
+      locale().queryString(WebLocalizedString::KeygenMenuHighGradeKeySize));
+  keys.append(
+      locale().queryString(WebLocalizedString::KeygenMenuMediumGradeKeySize));
 
-    // Create a select element with one option element for each key size.
-    RefPtrWillBeRawPtr<HTMLSelectElement> select = HTMLSelectElement::create(document());
-    select->setShadowPseudoId(keygenSelectPseudoId);
-    for (const String& key : keys) {
-        RefPtrWillBeRawPtr<HTMLOptionElement> option = HTMLOptionElement::create(document());
-        option->appendChild(Text::create(document(), key));
-        select->appendChild(option);
-    }
+  // Create a select element with one option element for each key size.
+  HTMLSelectElement* select = HTMLSelectElement::create(document());
+  select->setShadowPseudoId(keygenSelectPseudoId);
+  for (const String& key : keys) {
+    HTMLOptionElement* option = HTMLOptionElement::create(document());
+    option->appendChild(Text::create(document(), key));
+    select->appendChild(option);
+  }
 
-    root.appendChild(select);
+  root.appendChild(select);
 }
 
-void HTMLKeygenElement::parseAttribute(const QualifiedName& name, const AtomicString& oldValue, const AtomicString& value)
-{
-    // Reflect disabled attribute on the shadow select element
-    if (name == disabledAttr)
-        shadowSelect()->setAttribute(name, value);
+void HTMLKeygenElement::parseAttribute(const QualifiedName& name,
+                                       const AtomicString& oldValue,
+                                       const AtomicString& value) {
+  // Reflect disabled attribute on the shadow select element
+  if (name == disabledAttr)
+    shadowSelect()->setAttribute(name, value);
 
-    HTMLFormControlElement::parseAttribute(name, oldValue, value);
+  HTMLFormControlElement::parseAttribute(name, oldValue, value);
 }
 
-void HTMLKeygenElement::appendToFormData(FormData& formData)
-{
-    // Only RSA is supported at this time.
-    const AtomicString& keyType = fastGetAttribute(keytypeAttr);
-    if (!keyType.isNull() && !equalIgnoringCase(keyType, "rsa"))
-        return;
-    String value = Platform::current()->signedPublicKeyAndChallengeString(shadowSelect()->selectedIndex(), fastGetAttribute(challengeAttr), document().baseURL());
-    if (!value.isNull())
-        formData.append(name(), value);
+void HTMLKeygenElement::appendToFormData(FormData& formData) {
+  // Only RSA is supported at this time.
+  const AtomicString& keyType = fastGetAttribute(keytypeAttr);
+  if (!keyType.isNull() && !equalIgnoringCase(keyType, "rsa"))
+    return;
+  SecurityOrigin* topOrigin =
+      document().frame()->tree().top()->securityContext()->getSecurityOrigin();
+  String value = Platform::current()->signedPublicKeyAndChallengeString(
+      shadowSelect()->selectedIndex(), fastGetAttribute(challengeAttr),
+      document().baseURL(), KURL(KURL(), topOrigin->toString()));
+  if (!value.isNull())
+    formData.append(name(), value);
 }
 
-const AtomicString& HTMLKeygenElement::formControlType() const
-{
-    DEFINE_STATIC_LOCAL(const AtomicString, keygen, ("keygen", AtomicString::ConstructFromLiteral));
-    return keygen;
+const AtomicString& HTMLKeygenElement::formControlType() const {
+  DEFINE_STATIC_LOCAL(const AtomicString, keygen, ("keygen"));
+  return keygen;
 }
 
-void HTMLKeygenElement::resetImpl()
-{
-    shadowSelect()->reset();
+void HTMLKeygenElement::resetImpl() {
+  shadowSelect()->reset();
 }
 
-HTMLSelectElement* HTMLKeygenElement::shadowSelect() const
-{
-    ShadowRoot* root = userAgentShadowRoot();
-    return root ? toHTMLSelectElement(root->firstChild()) : 0;
+HTMLSelectElement* HTMLKeygenElement::shadowSelect() const {
+  ShadowRoot* root = userAgentShadowRoot();
+  return root ? toHTMLSelectElementOrDie(root->firstChild()) : nullptr;
 }
 
-bool HTMLKeygenElement::isInteractiveContent() const
-{
-    return true;
+bool HTMLKeygenElement::isInteractiveContent() const {
+  return true;
 }
 
-bool HTMLKeygenElement::supportsAutofocus() const
-{
-    return true;
+bool HTMLKeygenElement::supportsAutofocus() const {
+  return true;
 }
 
-} // namespace
+}  // namespace blink

@@ -5,12 +5,17 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_MEDIA_STREAM_UI_PROXY_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_MEDIA_STREAM_UI_PROXY_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/media_stream_request.h"
+
+namespace url {
+class Origin;
+}
 
 namespace content {
 
@@ -22,14 +27,14 @@ class RenderFrameHostDelegate;
 class CONTENT_EXPORT MediaStreamUIProxy {
  public:
   typedef base::Callback<
-      void (const MediaStreamDevices& devices,
-            content::MediaStreamRequestResult result)>
+      void(const MediaStreamDevices& devices,
+           content::MediaStreamRequestResult result)>
         ResponseCallback;
 
   typedef base::Callback<void(gfx::NativeViewId window_id)> WindowIdCallback;
 
-  static scoped_ptr<MediaStreamUIProxy> Create();
-  static scoped_ptr<MediaStreamUIProxy> CreateForTests(
+  static std::unique_ptr<MediaStreamUIProxy> Create();
+  static std::unique_ptr<MediaStreamUIProxy> CreateForTests(
       RenderFrameHostDelegate* render_delegate);
 
   virtual ~MediaStreamUIProxy();
@@ -38,14 +43,14 @@ class CONTENT_EXPORT MediaStreamUIProxy {
   // WebContentsDelegate::RequestMediaAccessPermission(). The specified
   // |response_callback| is called when the WebContentsDelegate approves or
   // denies request.
-  virtual void RequestAccess(scoped_ptr<MediaStreamRequest> request,
+  virtual void RequestAccess(std::unique_ptr<MediaStreamRequest> request,
                              const ResponseCallback& response_callback);
 
   // Checks if we have permission to access the microphone or camera. Note that
   // this does not query the user, it checks any stored settings such as policy
   // or extension permissions. |type| must be MEDIA_DEVICE_AUDIO_CAPTURE
   // or MEDIA_DEVICE_VIDEO_CAPTURE.
-  virtual void CheckAccess(const GURL& security_origin,
+  virtual void CheckAccess(const url::Origin& security_origin,
                            MediaStreamType type,
                            int render_process_id,
                            int render_frame_id,
@@ -78,7 +83,7 @@ class CONTENT_EXPORT MediaStreamUIProxy {
   void OnCheckedAccess(const base::Callback<void(bool)>& callback,
                        bool have_access);
 
-  scoped_ptr<Core, content::BrowserThread::DeleteOnUIThread> core_;
+  std::unique_ptr<Core, content::BrowserThread::DeleteOnUIThread> core_;
   ResponseCallback response_callback_;
   base::Closure stop_callback_;
 
@@ -97,9 +102,9 @@ class CONTENT_EXPORT FakeMediaStreamUIProxy : public MediaStreamUIProxy {
   void SetCameraAccess(bool access);
 
   // MediaStreamUIProxy overrides.
-  void RequestAccess(scoped_ptr<MediaStreamRequest> request,
+  void RequestAccess(std::unique_ptr<MediaStreamRequest> request,
                      const ResponseCallback& response_callback) override;
-  void CheckAccess(const GURL& security_origin,
+  void CheckAccess(const url::Origin& security_origin,
                    MediaStreamType type,
                    int render_process_id,
                    int render_frame_id,

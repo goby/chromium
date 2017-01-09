@@ -5,7 +5,7 @@
 #ifndef CHROMECAST_BROWSER_METRICS_CAST_STABILITY_METRICS_PROVIDER_H_
 #define CHROMECAST_BROWSER_METRICS_CAST_STABILITY_METRICS_PROVIDER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/process/kill.h"
 #include "components/metrics/metrics_provider.h"
 #include "content/public/browser/browser_child_process_observer.h"
@@ -16,7 +16,6 @@ class PrefRegistrySimple;
 
 namespace content {
 class RenderProcessHost;
-class WebContents;
 }
 
 namespace metrics {

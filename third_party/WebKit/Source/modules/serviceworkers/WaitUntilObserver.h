@@ -5,12 +5,10 @@
 #ifndef WaitUntilObserver_h
 #define WaitUntilObserver_h
 
-#include "core/dom/ContextLifecycleObserver.h"
 #include "modules/ModulesExport.h"
 #include "modules/serviceworkers/ServiceWorkerGlobalScopeClient.h"
 #include "platform/Timer.h"
 #include "wtf/Forward.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
@@ -21,50 +19,61 @@ class ScriptState;
 class ScriptValue;
 
 // Created for each ExtendableEvent instance.
-class MODULES_EXPORT WaitUntilObserver final : public GarbageCollectedFinalized<WaitUntilObserver>, public ContextLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(WaitUntilObserver);
-public:
-    enum EventType {
-        Activate,
-        Install,
-        NotificationClick,
-        Push,
-        Sync
-    };
+class MODULES_EXPORT WaitUntilObserver final
+    : public GarbageCollectedFinalized<WaitUntilObserver> {
+ public:
+  enum EventType {
+    Activate,
+    Fetch,
+    Install,
+    Message,
+    NotificationClick,
+    NotificationClose,
+    PaymentRequest,
+    Push,
+    Sync
+  };
 
-    static WaitUntilObserver* create(ExecutionContext*, EventType, int eventID);
+  static WaitUntilObserver* create(ExecutionContext*, EventType, int eventID);
 
-    // Must be called before and after dispatching the event.
-    void willDispatchEvent();
-    void didDispatchEvent(bool errorOccurred);
+  // Must be called before and after dispatching the event.
+  void willDispatchEvent();
+  void didDispatchEvent(bool errorOccurred);
 
-    // Observes the promise and delays calling the continuation until
-    // the given promise is resolved or rejected.
-    void waitUntil(ScriptState*, ScriptPromise, ExceptionState&);
+  // Observes the promise and delays calling the continuation until
+  // the given promise is resolved or rejected.
+  void waitUntil(ScriptState*, ScriptPromise, ExceptionState&);
 
-    DECLARE_VIRTUAL_TRACE();
+  // These methods can be called when the lifecycle of ExtendableEvent
+  // observed by this WaitUntilObserver should be extended by other reason
+  // than ExtendableEvent.waitUntil.
+  // Note: There is no need to call decrementPendingActivity() after the context
+  // is being destroyed.
+  void incrementPendingActivity();
+  void decrementPendingActivity();
 
-private:
-    friend class InternalsServiceWorker;
-    class ThenFunction;
+  DECLARE_VIRTUAL_TRACE();
 
-    WaitUntilObserver(ExecutionContext*, EventType, int eventID);
+ private:
+  friend class InternalsServiceWorker;
+  class ThenFunction;
 
-    void reportError(const ScriptValue&);
+  WaitUntilObserver(ExecutionContext*, EventType, int eventID);
 
-    void incrementPendingActivity();
-    void decrementPendingActivity();
+  void reportError(const ScriptValue&);
 
-    void consumeWindowInteraction(Timer<WaitUntilObserver>*);
+  void consumeWindowInteraction(TimerBase*);
 
-    EventType m_type;
-    int m_eventID;
-    int m_pendingActivity;
-    bool m_hasError;
-    bool m_eventDispatched;
-    Timer<WaitUntilObserver> m_consumeWindowInteractionTimer;
+  Member<ExecutionContext> m_executionContext;
+  EventType m_type;
+  int m_eventID;
+  int m_pendingActivity = 0;
+  bool m_hasError = false;
+  bool m_eventDispatched = false;
+  double m_eventDispatchTime = 0;
+  Timer<WaitUntilObserver> m_consumeWindowInteractionTimer;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WaitUntilObserver_h
+#endif  // WaitUntilObserver_h

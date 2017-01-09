@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
@@ -13,7 +14,7 @@
 #include "base/files/file.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
@@ -42,11 +43,9 @@ class PrefRegistrySyncable;
 namespace chromeos {
 namespace file_system_provider {
 
-class ProvidedFileSystemFactoryInterface;
 class ProvidedFileSystemInfo;
 class ProvidedFileSystemInterface;
 class RegistryInterface;
-class ServiceFactory;
 struct MountOptions;
 
 // Registers preferences to remember registered file systems between reboots.
@@ -68,7 +67,7 @@ class Service : public KeyedService,
                 public extensions::ExtensionRegistryObserver,
                 public ProvidedFileSystemObserver {
  public:
-  typedef base::Callback<ProvidedFileSystemInterface*(
+  typedef base::Callback<std::unique_ptr<ProvidedFileSystemInterface>(
       Profile* profile,
       const ProvidedFileSystemInfo& file_system_info)>
       FileSystemFactoryCallback;
@@ -87,7 +86,7 @@ class Service : public KeyedService,
       const FileSystemFactoryCallback& factory_callback);
 
   // Sets a custom Registry implementation. Used by unit tests.
-  void SetRegistryForTesting(scoped_ptr<RegistryInterface> registry);
+  void SetRegistryForTesting(std::unique_ptr<RegistryInterface> registry);
 
   // Mounts a file system provided by an extension with the |extension_id|. If
   // |writable| is set to true, then the file system is mounted in a R/W mode.
@@ -171,11 +170,7 @@ class Service : public KeyedService,
 
   // Key is a pair of an extension id and file system id, which makes it
   // unique among the entire service instance.
-  typedef std::pair<std::string, std::string> FileSystemKey;
-
-  typedef std::map<FileSystemKey, ProvidedFileSystemInterface*>
-      ProvidedFileSystemMap;
-  typedef std::map<std::string, FileSystemKey> MountPointNameToKeyMap;
+  using FileSystemKey = std::pair<std::string, std::string>;
 
   // Mounts the file system in the specified context. See MountFileSystem() for
   // more information.
@@ -193,7 +188,7 @@ class Service : public KeyedService,
   void RememberFileSystem(const ProvidedFileSystemInfo& file_system_info,
                           const Watchers& watchers);
 
-  // Removes the file system from preferences, so it is not remounmted anymore
+  // Removes the file system from preferences, so it is not remounted anymore
   // after a reboot.
   void ForgetFileSystem(const std::string& extension_id,
                         const std::string& file_system_id);
@@ -206,9 +201,10 @@ class Service : public KeyedService,
   extensions::ExtensionRegistry* extension_registry_;  // Not owned.
   FileSystemFactoryCallback file_system_factory_;
   base::ObserverList<Observer> observers_;
-  ProvidedFileSystemMap file_system_map_;  // Owns pointers.
-  MountPointNameToKeyMap mount_point_name_to_key_map_;
-  scoped_ptr<RegistryInterface> registry_;
+  std::map<FileSystemKey, std::unique_ptr<ProvidedFileSystemInterface>>
+      file_system_map_;
+  std::map<std::string, FileSystemKey> mount_point_name_to_key_map_;
+  std::unique_ptr<RegistryInterface> registry_;
   base::ThreadChecker thread_checker_;
 
   base::WeakPtrFactory<Service> weak_ptr_factory_;

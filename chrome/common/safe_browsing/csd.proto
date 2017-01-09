@@ -186,6 +186,12 @@ message ClientDownloadRequest {
     TAB_URL = 2;
     // A redirect URL thas was fetched before hitting the final TAB_URL.
     TAB_REDIRECT = 3;
+    // The document URL for a PPAPI plugin instance that initiated the download.
+    // This is the document.url for the container element for the plugin
+    // instance.
+    PPAPI_DOCUMENT = 4;
+    // The plugin URL for a PPAPI plugin instance that initiated the download.
+    PPAPI_PLUGIN = 5;
   }
 
   message Resource {
@@ -280,6 +286,12 @@ message ClientDownloadRequest {
     // A .dmg, .pkg, etc, that Chrome failed to unpack to the point of finding
     // Mach O's.
     INVALID_MAC_ARCHIVE = 8;
+    // A download request initiated via PPAPI. Typically the requestor is
+    // a Flash applet.
+    PPAPI_SAVE_REQUEST = 9;
+    // A file we don't support, but we've decided to sample and send
+    // a light-ping.
+    SAMPLED_UNSUPPORTED_FILE = 10;
   }
   optional DownloadType download_type = 10 [default = WIN_EXECUTABLE];
 
@@ -358,6 +370,56 @@ message ClientDownloadRequest {
 
   // True if the .zip or DMG, etc, was 100% successfully unpacked.
   optional bool archive_valid = 26;
+
+    // True if this ClientDownloadRequest is from a whitelisted domain.
+  optional bool skipped_url_whitelist = 28;
+
+  // True if this ClientDownloadRequest contains a whitelisted certificate.
+  optional bool skipped_certificate_whitelist = 31;
+
+  // PPAPI_SAVE_REQUEST type messages may have more than one suggested filetype.
+  // Each element in this collection indicates an alternate extension including
+  // the leading extension separator.
+  repeated string alternate_extensions = 35;
+
+  message URLChainEntry {
+    enum URLType {
+      DOWNLOAD_URL = 1;
+      DOWNLOAD_REFERRER = 2;
+      LANDING_PAGE = 3;
+      LANDING_REFERRER = 4;
+      CLIENT_REDIRECT = 5;
+      SERVER_REDIRECT = 6;
+    }
+
+    // [required] The url of this Entry.
+    optional string url = 1;
+
+    // Type of URLs, such as download url, download referrer, etc.
+    optional URLType type = 2;
+
+    // IP address corresponding to url.
+    optional string ip_address = 3;
+
+    // Referrer url of this entry.
+    optional string referrer = 4;
+
+    // Main frame URL of referrer.
+    optional string main_frame_referrer = 5;
+
+    // If this URL loads in a different tab/frame from previous one.
+    optional bool is_retargeting = 6;
+
+    // If there is a user gesture attached to this transition.
+    optional bool is_user_initiated = 7;
+
+    optional double timestamp_in_millisec = 8;
+  }  // End of URLChainEntry
+
+  // URLs transitions from landing referrer to download in reverse chronological
+  // order, i.e. download url comes first in this list, and landing referrer
+  // comes last.
+  repeated URLChainEntry url_chain = 36;
 }
 
 message ClientDownloadResponse {
@@ -367,14 +429,17 @@ message ClientDownloadResponse {
     // Download is considered dangerous.  Chrome should show a warning to the
     // user.
     DANGEROUS = 1;
-    // Download is unknown.  Chrome should display a less severe warning.
+    // Download is uncommon.  Chrome should display a less severe warning.
     UNCOMMON = 2;
     // The download is potentially unwanted.
     POTENTIALLY_UNWANTED = 3;
     // The download is from a dangerous host.
     DANGEROUS_HOST = 4;
+    // The backend doesn't have confidence in its verdict of this file.
+    // Chrome should show the default warning if configured for this file type.
+    UNKNOWN = 5;
   }
-  required Verdict verdict = 1;
+  optional Verdict verdict = 1 [default = SAFE];
 
   message MoreInfo {
     // A human-readable string describing the nature of the warning.
@@ -447,6 +512,8 @@ message ClientIncidentReport {
         WEAK_LEGACY_OBSOLETE = 2;
         CHANGED = 3;
         UNTRUSTED_UNKNOWN_VALUE = 4;
+        BYPASS_CLEARED = 5;
+        BYPASS_CHANGED = 6;
       }
 
       optional string path = 1;
@@ -483,12 +550,18 @@ message ClientIncidentReport {
     message ResourceRequestIncident {
       enum Type {
         UNKNOWN = 0;
-        TYPE_SCRIPT = 1;
-        TYPE_DOMAIN = 2;
+        TYPE_PATTERN = 3;
       }
       optional bytes digest = 1;
       optional string origin = 2;
       optional Type type = 3 [default = UNKNOWN];
+    }
+    message SuspiciousModuleIncident {
+      optional string path = 1;
+      optional ClientDownloadRequest.Digests digest = 2;
+      optional string version = 3;
+      optional ClientDownloadRequest.SignatureInfo signature = 4;
+      optional ClientDownloadRequest.ImageHeaders image_headers = 5;
     }
     optional int64 incident_time_msec = 1;
     optional TrackedPreferenceIncident tracked_preference = 2;
@@ -497,6 +570,7 @@ message ClientIncidentReport {
     // Note: skip tag 5 because it was previously used.
     optional VariationsSeedSignatureIncident variations_seed_signature = 6;
     optional ResourceRequestIncident resource_request = 7;
+    optional SuspiciousModuleIncident suspicious_module = 8;
   }
 
   repeated IncidentData incident = 1;
@@ -667,7 +741,7 @@ message DownloadMetadata {
 // A Detailed Safebrowsing Report from clients. Chrome safebrowsing reports are
 // only sent by Chrome users who have opted into extended Safe Browsing.
 // This proto is replacing ClientMalwareReportRequest.
-// Next tag: 12
+// Next tag: 16
 message ClientSafeBrowsingReportRequest {
   // Note: A lot of the "optional" fields would make sense to be
   // "required" instead.  However, having them as optional allows the
@@ -681,7 +755,9 @@ message ClientSafeBrowsingReportRequest {
     URL_UNWANTED = 3;
     CLIENT_SIDE_PHISHING_URL = 4;
     CLIENT_SIDE_MALWARE_URL = 5;
-    MALICIOUS_DOWNLOAD_RECOVERY = 6;
+    DANGEROUS_DOWNLOAD_RECOVERY = 6;
+    DANGEROUS_DOWNLOAD_WARNING = 7;
+    DANGEROUS_DOWNLOAD_BY_API = 10;
   }
 
   message HTTPHeader {
@@ -733,7 +809,8 @@ message ClientSafeBrowsingReportRequest {
 
   optional ReportType type = 10;
 
-  // Only set if ReportType is MALICIOUS_DOWNLOAD_RECOVERY.
+  // Only set if ReportType is DANGEROUS_DOWNLOAD_RECOVERY,
+  // DANGEROUS_DOWNLOAD_WARNING or DANGEROUS_DOWNLOAD_BY_API.
   optional ClientDownloadResponse.Verdict download_verdict = 11;
 
   // URL of the page in the address bar.
@@ -756,4 +833,9 @@ message ClientSafeBrowsingReportRequest {
 
   // Whether user visited this origin before.
   optional bool repeat_visit = 9;
+
+  // The same token in ClientDownloadResponse. This field is only set if its
+  // report type is DANGEROUS_DOWNLOAD_RECOVERY, DANGEROUS_DOWNLOAD_WARNING or
+  // DANGEROUS_DOWNLOAD_BY_API.
+  optional bytes token = 15;
 }

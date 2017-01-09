@@ -4,11 +4,16 @@
 
 #include "ui/aura/window_tree_host_platform.h"
 
+#include <utility>
+
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "ui/aura/window_event_dispatcher.h"
+#include "ui/aura/window_port.h"
 #include "ui/compositor/compositor.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
-#include "ui/gfx/screen.h"
 
 #if defined(OS_ANDROID)
 #include "ui/platform_window/android/platform_window_android.h"
@@ -35,6 +40,7 @@ WindowTreeHost* WindowTreeHost::Create(const gfx::Rect& bounds) {
 
 WindowTreeHostPlatform::WindowTreeHostPlatform(const gfx::Rect& bounds)
     : WindowTreeHostPlatform() {
+  CreateCompositor();
 #if defined(USE_OZONE)
   window_ =
       ui::OzonePlatform::GetInstance()->CreatePlatformWindow(this, bounds);
@@ -48,19 +54,24 @@ WindowTreeHostPlatform::WindowTreeHostPlatform(const gfx::Rect& bounds)
 }
 
 WindowTreeHostPlatform::WindowTreeHostPlatform()
-    : widget_(gfx::kNullAcceleratedWidget),
+    : WindowTreeHostPlatform(nullptr) {}
+
+WindowTreeHostPlatform::WindowTreeHostPlatform(
+    std::unique_ptr<WindowPort> window_port)
+    : WindowTreeHost(std::move(window_port)),
+      widget_(gfx::kNullAcceleratedWidget),
       current_cursor_(ui::kCursorNull) {
-  CreateCompositor();
 }
 
 void WindowTreeHostPlatform::SetPlatformWindow(
-    scoped_ptr<ui::PlatformWindow> window) {
-  window_ = window.Pass();
+    std::unique_ptr<ui::PlatformWindow> window) {
+  window_ = std::move(window);
 }
 
 WindowTreeHostPlatform::~WindowTreeHostPlatform() {
   DestroyCompositor();
   DestroyDispatcher();
+  window_->Close();
 }
 
 ui::EventSource* WindowTreeHostPlatform::GetEventSource() {
@@ -79,15 +90,15 @@ void WindowTreeHostPlatform::HideImpl() {
   window_->Hide();
 }
 
-gfx::Rect WindowTreeHostPlatform::GetBounds() const {
-  return window_->GetBounds();
+gfx::Rect WindowTreeHostPlatform::GetBoundsInPixels() const {
+  return window_ ? window_->GetBounds() : gfx::Rect();
 }
 
-void WindowTreeHostPlatform::SetBounds(const gfx::Rect& bounds) {
+void WindowTreeHostPlatform::SetBoundsInPixels(const gfx::Rect& bounds) {
   window_->SetBounds(bounds);
 }
 
-gfx::Point WindowTreeHostPlatform::GetLocationOnNativeScreen() const {
+gfx::Point WindowTreeHostPlatform::GetLocationOnScreenInPixels() const {
   return window_->GetBounds().origin();
 }
 
@@ -112,8 +123,9 @@ void WindowTreeHostPlatform::SetCursorNative(gfx::NativeCursor cursor) {
   window_->SetCursor(cursor.platform());
 }
 
-void WindowTreeHostPlatform::MoveCursorToNative(const gfx::Point& location) {
-  window_->MoveCursorTo(location);
+void WindowTreeHostPlatform::MoveCursorToScreenLocationInPixels(
+    const gfx::Point& location_in_pixels) {
+  window_->MoveCursorTo(location_in_pixels);
 }
 
 void WindowTreeHostPlatform::OnCursorVisibilityChangedNative(bool show) {
@@ -122,16 +134,16 @@ void WindowTreeHostPlatform::OnCursorVisibilityChangedNative(bool show) {
 
 void WindowTreeHostPlatform::OnBoundsChanged(const gfx::Rect& new_bounds) {
   float current_scale = compositor()->device_scale_factor();
-  float new_scale = gfx::Screen::GetScreenFor(window())
+  float new_scale = display::Screen::GetScreen()
                         ->GetDisplayNearestWindow(window())
                         .device_scale_factor();
   gfx::Rect old_bounds = bounds_;
   bounds_ = new_bounds;
   if (bounds_.origin() != old_bounds.origin()) {
-    OnHostMoved(bounds_.origin());
+    OnHostMovedInPixels(bounds_.origin());
   }
   if (bounds_.size() != old_bounds.size() || current_scale != new_scale) {
-    OnHostResized(bounds_.size());
+    OnHostResizedInPixels(bounds_.size());
   }
 }
 

@@ -12,6 +12,7 @@
 #include "ui/views/controls/button/blue_button.h"
 #include "ui/views/controls/button/image_button.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/layout/box_layout.h"
 #include "ui/views/resources/grit/views_resources.h"
 #include "ui/views/view.h"
@@ -20,7 +21,6 @@ using base::ASCIIToUTF16;
 
 namespace {
 const char kLabelButton[] = "Label Button";
-const char kMultiLineText[] = "Multi-Line\nButton Text Is Here To Stay!\n123";
 const char kLongText[] = "Start of Really Really Really Really Really Really "
                          "Really Really Really Really Really Really Really "
                          "Really Really Really Really Really Long Button Text";
@@ -29,12 +29,7 @@ const char kLongText[] = "Start of Really Really Really Really Really Really "
 namespace views {
 namespace examples {
 
-ButtonExample::ButtonExample()
-    : ExampleBase("Button"),
-      label_button_(NULL),
-      image_button_(NULL),
-      icon_(NULL),
-      count_(0) {
+ButtonExample::ButtonExample() : ExampleBase("Button") {
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   icon_ = rb.GetImageNamed(IDR_CLOSE_H).ToImageSkia();
 }
@@ -44,28 +39,39 @@ ButtonExample::~ButtonExample() {
 
 void ButtonExample::CreateExampleView(View* container) {
   container->set_background(Background::CreateSolidBackground(SK_ColorWHITE));
-  container->SetLayoutManager(new BoxLayout(BoxLayout::kVertical, 10, 10, 10));
+  BoxLayout* layout = new BoxLayout(BoxLayout::kVertical, 10, 10, 10);
+  layout->set_cross_axis_alignment(BoxLayout::CROSS_AXIS_ALIGNMENT_CENTER);
+  container->SetLayoutManager(layout);
 
   label_button_ = new LabelButton(this, ASCIIToUTF16(kLabelButton));
-  label_button_->SetFocusable(true);
+  label_button_->SetFocusForPlatform();
+  label_button_->set_request_focus_on_press(true);
   container->AddChildView(label_button_);
 
-  LabelButton* styled_button =
-      new LabelButton(this, ASCIIToUTF16("Styled Button"));
-  styled_button->SetStyle(Button::STYLE_BUTTON);
-  container->AddChildView(styled_button);
+  styled_button_ = new LabelButton(this, ASCIIToUTF16("Styled Button"));
+  styled_button_->SetStyle(Button::STYLE_BUTTON);
+  container->AddChildView(styled_button_);
 
-  LabelButton* disabled_button =
-      new LabelButton(this, ASCIIToUTF16("Disabled Button"));
-  disabled_button->SetStyle(Button::STYLE_BUTTON);
-  disabled_button->SetState(Button::STATE_DISABLED);
-  container->AddChildView(disabled_button);
+  disabled_button_ = new LabelButton(this, ASCIIToUTF16("Disabled Button"));
+  disabled_button_->SetStyle(Button::STYLE_BUTTON);
+  disabled_button_->SetState(Button::STATE_DISABLED);
+  container->AddChildView(disabled_button_);
 
   container->AddChildView(new BlueButton(this, ASCIIToUTF16("Blue Button")));
 
+  md_button_ =
+      MdTextButton::Create(this, base::ASCIIToUTF16("Material design"));
+  container->AddChildView(md_button_);
+
+  md_default_button_ =
+      MdTextButton::Create(this, base::ASCIIToUTF16("Default"));
+  md_default_button_->SetIsDefault(true);
+  container->AddChildView(md_default_button_);
+
   ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
   image_button_ = new ImageButton(this);
-  image_button_->SetFocusable(true);
+  image_button_->SetFocusForPlatform();
+  image_button_->set_request_focus_on_press(true);
   image_button_->SetImage(ImageButton::STATE_NORMAL,
                           rb.GetImageNamed(IDR_CLOSE).ToImageSkia());
   image_button_->SetImage(ImageButton::STATE_HOVERED,
@@ -75,46 +81,53 @@ void ButtonExample::CreateExampleView(View* container) {
   container->AddChildView(image_button_);
 }
 
-void ButtonExample::LabelButtonPressed(const ui::Event& event) {
+void ButtonExample::LabelButtonPressed(LabelButton* label_button,
+                                       const ui::Event& event) {
   PrintStatus("Label Button Pressed! count: %d", ++count_);
   if (event.IsControlDown()) {
     if (event.IsShiftDown()) {
-      if (event.IsAltDown()) {
-        label_button_->SetTextMultiLine(!label_button_->GetTextMultiLine());
-        label_button_->SetText(ASCIIToUTF16(
-            label_button_->GetTextMultiLine() ? kMultiLineText : kLabelButton));
-      } else {
-        label_button_->SetText(ASCIIToUTF16(
-            label_button_->GetText().empty() ? kLongText :
-                label_button_->GetText().length() > 50 ? kLabelButton : ""));
-      }
+      label_button->SetText(ASCIIToUTF16(
+          label_button->GetText().empty()
+              ? kLongText
+              : label_button->GetText().length() > 50 ? kLabelButton : ""));
     } else if (event.IsAltDown()) {
-      label_button_->SetImage(Button::STATE_NORMAL,
-          label_button_->GetImage(Button::STATE_NORMAL).isNull() ?
-          *icon_ : gfx::ImageSkia());
+      label_button->SetImage(
+          Button::STATE_NORMAL,
+          label_button->GetImage(Button::STATE_NORMAL).isNull()
+              ? *icon_
+              : gfx::ImageSkia());
     } else {
-      label_button_->SetHorizontalAlignment(
-          static_cast<gfx::HorizontalAlignment>(
-              (label_button_->GetHorizontalAlignment() + 1) % 3));
+      static int alignment = 0;
+      label_button->SetHorizontalAlignment(
+          static_cast<gfx::HorizontalAlignment>(++alignment % 3));
     }
   } else if (event.IsShiftDown()) {
     if (event.IsAltDown()) {
-      label_button_->SetFocusable(!label_button_->IsFocusable());
+      // Toggle focusability.
+      label_button_->IsAccessibilityFocusable()
+          ? label_button_->SetFocusBehavior(View::FocusBehavior::NEVER)
+          : label_button_->SetFocusForPlatform();
     } else {
-      label_button_->SetStyle(static_cast<Button::ButtonStyle>(
-          (label_button_->style() + 1) % Button::STYLE_COUNT));
+      label_button->SetStyle(static_cast<Button::ButtonStyle>(
+          (label_button->style() + 1) % Button::STYLE_COUNT));
     }
   } else if (event.IsAltDown()) {
-    label_button_->SetIsDefault(!label_button_->is_default());
+    label_button->SetIsDefault(!label_button->is_default());
   } else {
-    label_button_->SetMinSize(gfx::Size());
+    label_button->SetMinSize(gfx::Size());
   }
   example_view()->GetLayoutManager()->Layout(example_view());
 }
 
 void ButtonExample::ButtonPressed(Button* sender, const ui::Event& event) {
   if (sender == label_button_)
-    LabelButtonPressed(event);
+    LabelButtonPressed(label_button_, event);
+  else if (sender == styled_button_)
+    LabelButtonPressed(styled_button_, event);
+  else if (sender == disabled_button_)
+    LabelButtonPressed(disabled_button_, event);
+  else if (sender == md_button_ || sender == md_default_button_)
+    static_cast<CustomButton*>(sender)->StartThrobbing(5);
   else
     PrintStatus("Image Button Pressed! count: %d", ++count_);
 }

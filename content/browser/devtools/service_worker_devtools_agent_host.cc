@@ -21,7 +21,7 @@ void StatusNoOp(ServiceWorkerStatusCode status) {}
 
 void TerminateServiceWorkerOnIO(
     base::WeakPtr<ServiceWorkerContextCore> context_weak,
-    int64 version_id) {
+    int64_t version_id) {
   if (ServiceWorkerContextCore* context = context_weak.get()) {
     if (ServiceWorkerVersion* version = context->GetLiveVersion(version_id))
       version->StopWorker(base::Bind(&StatusNoOp));
@@ -30,7 +30,7 @@ void TerminateServiceWorkerOnIO(
 
 void UnregisterServiceWorkerOnIO(
     base::WeakPtr<ServiceWorkerContextCore> context_weak,
-    int64 version_id) {
+    int64_t version_id) {
   if (ServiceWorkerContextCore* context = context_weak.get()) {
     if (ServiceWorkerVersion* version = context->GetLiveVersion(version_id)) {
         version->StopWorker(base::Bind(&StatusNoOp));
@@ -42,7 +42,7 @@ void UnregisterServiceWorkerOnIO(
 
 void SetDevToolsAttachedOnIO(
     base::WeakPtr<ServiceWorkerContextCore> context_weak,
-    int64 version_id,
+    int64_t version_id,
     bool attached) {
   if (ServiceWorkerContextCore* context = context_weak.get()) {
     if (ServiceWorkerVersion* version = context->GetLiveVersion(version_id))
@@ -54,16 +54,20 @@ void SetDevToolsAttachedOnIO(
 
 ServiceWorkerDevToolsAgentHost::ServiceWorkerDevToolsAgentHost(
     WorkerId worker_id,
-    const ServiceWorkerIdentifier& service_worker)
+    const ServiceWorkerIdentifier& service_worker,
+    bool is_installed_version)
     : WorkerDevToolsAgentHost(worker_id),
       service_worker_(new ServiceWorkerIdentifier(service_worker)),
-      network_handler_(new devtools::network::NetworkHandler()) {
+      network_handler_(new devtools::network::NetworkHandler()),
+      version_installed_time_(is_installed_version ? base::Time::Now()
+                                                   : base::Time()) {
   DevToolsProtocolDispatcher* dispatcher = protocol_handler()->dispatcher();
   dispatcher->SetNetworkHandler(network_handler_.get());
+  NotifyCreated();
 }
 
-DevToolsAgentHost::Type ServiceWorkerDevToolsAgentHost::GetType() {
-  return TYPE_SERVICE_WORKER;
+std::string ServiceWorkerDevToolsAgentHost::GetType() {
+  return kTypeServiceWorker;
 }
 
 std::string ServiceWorkerDevToolsAgentHost::GetTitle() {
@@ -80,6 +84,9 @@ GURL ServiceWorkerDevToolsAgentHost::GetURL() {
 
 bool ServiceWorkerDevToolsAgentHost::Activate() {
   return false;
+}
+
+void ServiceWorkerDevToolsAgentHost::Reload() {
 }
 
 bool ServiceWorkerDevToolsAgentHost::Close() {
@@ -105,8 +112,20 @@ void ServiceWorkerDevToolsAgentHost::OnAttachedStateChanged(bool attached) {
                   attached));
 }
 
-int64 ServiceWorkerDevToolsAgentHost::service_worker_version_id() const {
+void ServiceWorkerDevToolsAgentHost::WorkerVersionInstalled() {
+  version_installed_time_ = base::Time::Now();
+}
+
+void ServiceWorkerDevToolsAgentHost::WorkerVersionDoomed() {
+  version_doomed_time_ = base::Time::Now();
+}
+
+int64_t ServiceWorkerDevToolsAgentHost::service_worker_version_id() const {
   return service_worker_->version_id();
+}
+
+GURL ServiceWorkerDevToolsAgentHost::scope() const {
+  return service_worker_->scope();
 }
 
 bool ServiceWorkerDevToolsAgentHost::Matches(

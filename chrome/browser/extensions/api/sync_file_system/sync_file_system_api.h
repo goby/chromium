@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_SYNC_FILE_SYSTEM_SYNC_FILE_SYSTEM_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_SYNC_FILE_SYSTEM_SYNC_FILE_SYSTEM_API_H_
 
+#include <stdint.h>
+
 #include <map>
 
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -92,8 +94,8 @@ class SyncFileSystemGetUsageAndQuotaFunction
 
  private:
   void DidGetUsageAndQuota(storage::QuotaStatusCode status,
-                           int64 usage,
-                           int64 quota);
+                           int64_t usage,
+                           int64_t quota);
 };
 
 class SyncFileSystemRequestFileSystemFunction
@@ -118,36 +120,36 @@ class SyncFileSystemRequestFileSystemFunction
 };
 
 class SyncFileSystemSetConflictResolutionPolicyFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("syncFileSystem.setConflictResolutionPolicy",
                              SYNCFILESYSTEM_SETCONFLICTRESOLUTIONPOLICY)
 
  protected:
   ~SyncFileSystemSetConflictResolutionPolicyFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class SyncFileSystemGetConflictResolutionPolicyFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("syncFileSystem.getConflictResolutionPolicy",
                              SYNCFILESYSTEM_GETCONFLICTRESOLUTIONPOLICY)
 
  protected:
   ~SyncFileSystemGetConflictResolutionPolicyFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class SyncFileSystemGetServiceStatusFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("syncFileSystem.getServiceStatus",
                              SYNCFILESYSTEM_GETSERVICESTATUS)
 
  protected:
   ~SyncFileSystemGetServiceStatusFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 }  // namespace extensions

@@ -28,28 +28,32 @@ Status StubWebView::HandleReceivedEvents() {
   return Status(kOk);
 }
 
-Status StubWebView::Load(const std::string& url) {
+Status StubWebView::GetUrl(std::string* url) {
   return Status(kOk);
 }
 
-Status StubWebView::Reload() {
+Status StubWebView::Load(const std::string& url, const Timeout* timeout) {
   return Status(kOk);
 }
 
-Status StubWebView::TraverseHistory(int delta) {
+Status StubWebView::Reload(const Timeout* timeout) {
+  return Status(kOk);
+}
+
+Status StubWebView::TraverseHistory(int delta, const Timeout* timeout) {
   return Status(kOk);
 }
 
 Status StubWebView::EvaluateScript(const std::string& frame,
                                    const std::string& function,
-                                   scoped_ptr<base::Value>* result) {
+                                   std::unique_ptr<base::Value>* result) {
   return Status(kOk);
 }
 
 Status StubWebView::CallFunction(const std::string& frame,
                                  const std::string& function,
                                  const base::ListValue& args,
-                                 scoped_ptr<base::Value>* result) {
+                                 std::unique_ptr<base::Value>* result) {
   return Status(kOk);
 }
 
@@ -57,15 +61,16 @@ Status StubWebView::CallAsyncFunction(const std::string& frame,
                                       const std::string& function,
                                       const base::ListValue& args,
                                       const base::TimeDelta& timeout,
-                                      scoped_ptr<base::Value>* result) {
+                                      std::unique_ptr<base::Value>* result) {
   return Status(kOk);
 }
 
-Status StubWebView::CallUserAsyncFunction(const std::string& frame,
-                                          const std::string& function,
-                                          const base::ListValue& args,
-                                          const base::TimeDelta& timeout,
-                                          scoped_ptr<base::Value>* result) {
+Status StubWebView::CallUserAsyncFunction(
+    const std::string& frame,
+    const std::string& function,
+    const base::ListValue& args,
+    const base::TimeDelta& timeout,
+    std::unique_ptr<base::Value>* result) {
   return Status(kOk);
 }
 
@@ -93,7 +98,7 @@ Status StubWebView::DispatchKeyEvents(const std::list<KeyEvent>& events) {
   return Status(kOk);
 }
 
-Status StubWebView::GetCookies(scoped_ptr<base::ListValue>* cookies) {
+Status StubWebView::GetCookies(std::unique_ptr<base::ListValue>* cookies) {
   return Status(kOk);
 }
 
@@ -103,12 +108,13 @@ Status StubWebView::DeleteCookie(const std::string& name,
 }
 
 Status StubWebView::WaitForPendingNavigations(const std::string& frame_id,
-                                              const base::TimeDelta& timeout,
+                                              const Timeout& timeout,
                                               bool stop_load_on_timeout) {
   return Status(kOk);
 }
 
 Status StubWebView::IsPendingNavigation(const std::string& frame_id,
+                                        const Timeout* timeout,
                                         bool* is_pending) {
   return Status(kOk);
 }
@@ -137,7 +143,7 @@ Status StubWebView::SetFileInputFiles(
   return Status(kOk);
 }
 
-Status StubWebView::TakeHeapSnapshot(scoped_ptr<base::Value>* snapshot) {
+Status StubWebView::TakeHeapSnapshot(std::unique_ptr<base::Value>* snapshot) {
   return Status(kOk);
 }
 
@@ -145,7 +151,7 @@ Status StubWebView::StartProfile() {
   return Status(kOk);
 }
 
-Status StubWebView::EndProfile(scoped_ptr<base::Value>* profile_data) {
+Status StubWebView::EndProfile(std::unique_ptr<base::Value>* profile_data) {
   return Status(kOk);
 }
 
@@ -164,5 +170,17 @@ Status StubWebView::SynthesizeScrollGesture(int x,
 }
 
 Status StubWebView::SynthesizePinchGesture(int x, int y, double scale_factor) {
+  return Status(kOk);
+}
+
+Status StubWebView::GetScreenOrientation(std::string* orientation) {
+  return Status(kOk);
+}
+
+Status StubWebView::SetScreenOrientation(std::string orientation) {
+  return Status(kOk);
+}
+
+Status StubWebView::DeleteScreenOrientation() {
   return Status(kOk);
 }

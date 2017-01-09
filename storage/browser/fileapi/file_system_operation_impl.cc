@@ -4,6 +4,13 @@
 
 #include "storage/browser/fileapi/file_system_operation_impl.h"
 
+#include <stdint.h>
+
+#include <limits>
+#include <memory>
+#include <tuple>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
@@ -45,7 +52,7 @@ void DidOpenFile(
         base::Bind(&Destruct, base::Passed(&file)));
     return;
   }
-  callback.Run(file.Pass(), on_close_callback);
+  callback.Run(std::move(file), on_close_callback);
 }
 
 }  // namespace
@@ -53,9 +60,9 @@ void DidOpenFile(
 FileSystemOperation* FileSystemOperation::Create(
     const FileSystemURL& url,
     FileSystemContext* file_system_context,
-    scoped_ptr<FileSystemOperationContext> operation_context) {
+    std::unique_ptr<FileSystemOperationContext> operation_context) {
   return new FileSystemOperationImpl(url, file_system_context,
-                                     operation_context.Pass());
+                                     std::move(operation_context));
 }
 
 FileSystemOperationImpl::~FileSystemOperationImpl() {
@@ -131,7 +138,7 @@ void FileSystemOperationImpl::DirectoryExists(const FileSystemURL& url,
                                               const StatusCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationDirectoryExists));
   async_file_util_->GetFileInfo(
-      operation_context_.Pass(), url, GET_METADATA_FIELD_IS_DIRECTORY,
+      std::move(operation_context_), url, GET_METADATA_FIELD_IS_DIRECTORY,
       base::Bind(&FileSystemOperationImpl::DidDirectoryExists,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -140,7 +147,7 @@ void FileSystemOperationImpl::FileExists(const FileSystemURL& url,
                                          const StatusCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationFileExists));
   async_file_util_->GetFileInfo(
-      operation_context_.Pass(), url, GET_METADATA_FIELD_IS_DIRECTORY,
+      std::move(operation_context_), url, GET_METADATA_FIELD_IS_DIRECTORY,
       base::Bind(&FileSystemOperationImpl::DidFileExists,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -149,15 +156,14 @@ void FileSystemOperationImpl::GetMetadata(const FileSystemURL& url,
                                           int fields,
                                           const GetMetadataCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationGetMetadata));
-  async_file_util_->GetFileInfo(operation_context_.Pass(), url, fields,
+  async_file_util_->GetFileInfo(std::move(operation_context_), url, fields,
                                 callback);
 }
 
 void FileSystemOperationImpl::ReadDirectory(
     const FileSystemURL& url, const ReadDirectoryCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationReadDirectory));
-  async_file_util_->ReadDirectory(
-      operation_context_.Pass(), url, callback);
+  async_file_util_->ReadDirectory(std::move(operation_context_), url, callback);
 }
 
 void FileSystemOperationImpl::Remove(const FileSystemURL& url,
@@ -171,7 +177,7 @@ void FileSystemOperationImpl::Remove(const FileSystemURL& url,
     // first. If not supported, it is delegated to RemoveOperationDelegate
     // in DidDeleteRecursively.
     async_file_util_->DeleteRecursively(
-        operation_context_.Pass(), url,
+        std::move(operation_context_), url,
         base::Bind(&FileSystemOperationImpl::DidDeleteRecursively,
                    weak_factory_.GetWeakPtr(), url, callback));
     return;
@@ -187,18 +193,19 @@ void FileSystemOperationImpl::Remove(const FileSystemURL& url,
 
 void FileSystemOperationImpl::Write(
     const FileSystemURL& url,
-    scoped_ptr<FileWriterDelegate> writer_delegate,
-    scoped_ptr<net::URLRequest> blob_request,
+    std::unique_ptr<FileWriterDelegate> writer_delegate,
+    std::unique_ptr<net::URLRequest> blob_request,
     const WriteCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationWrite));
-  file_writer_delegate_ = writer_delegate.Pass();
+  file_writer_delegate_ = std::move(writer_delegate);
   file_writer_delegate_->Start(
-      blob_request.Pass(),
-      base::Bind(&FileSystemOperationImpl::DidWrite,
-                 weak_factory_.GetWeakPtr(), url, callback));
+      std::move(blob_request),
+      base::Bind(&FileSystemOperationImpl::DidWrite, weak_factory_.GetWeakPtr(),
+                 url, callback));
 }
 
-void FileSystemOperationImpl::Truncate(const FileSystemURL& url, int64 length,
+void FileSystemOperationImpl::Truncate(const FileSystemURL& url,
+                                       int64_t length,
                                        const StatusCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationTruncate));
 
@@ -222,8 +229,7 @@ void FileSystemOperationImpl::TouchFile(const FileSystemURL& url,
   TRACE_EVENT0("io", "FileSystemOperationImpl::TouchFile");
 
   async_file_util_->Touch(
-      operation_context_.Pass(), url,
-      last_access_time, last_modified_time,
+      std::move(operation_context_), url, last_access_time, last_modified_time,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -276,8 +282,8 @@ void FileSystemOperationImpl::CreateSnapshotFile(
     const FileSystemURL& url,
     const SnapshotFileCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationCreateSnapshotFile));
-  async_file_util_->CreateSnapshotFile(
-      operation_context_.Pass(), url, callback);
+  async_file_util_->CreateSnapshotFile(std::move(operation_context_), url,
+                                       callback);
 }
 
 void FileSystemOperationImpl::CopyInForeignFile(
@@ -302,7 +308,7 @@ void FileSystemOperationImpl::RemoveFile(
     const StatusCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationRemove));
   async_file_util_->DeleteFile(
-      operation_context_.Pass(), url,
+      std::move(operation_context_), url,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -312,7 +318,7 @@ void FileSystemOperationImpl::RemoveDirectory(
     const StatusCallback& callback) {
   DCHECK(SetPendingOperationType(kOperationRemove));
   async_file_util_->DeleteDirectory(
-      operation_context_.Pass(), url,
+      std::move(operation_context_), url,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -371,9 +377,9 @@ base::File::Error FileSystemOperationImpl::SyncGetPlatformPath(
 FileSystemOperationImpl::FileSystemOperationImpl(
     const FileSystemURL& url,
     FileSystemContext* file_system_context,
-    scoped_ptr<FileSystemOperationContext> operation_context)
+    std::unique_ptr<FileSystemOperationContext> operation_context)
     : file_system_context_(file_system_context),
-      operation_context_(operation_context.Pass()),
+      operation_context_(std::move(operation_context)),
       async_file_util_(NULL),
       pending_operation_(kOperationNone),
       weak_factory_(this) {
@@ -393,7 +399,8 @@ void FileSystemOperationImpl::GetUsageAndQuotaThenRunTask(
       !file_system_context()->GetQuotaUtil(url.type())) {
     // If we don't have the quota manager or the requested filesystem type
     // does not support quota, we should be able to let it go.
-    operation_context_->set_allowed_bytes_growth(kint64max);
+    operation_context_->set_allowed_bytes_growth(
+        std::numeric_limits<int64_t>::max());
     task.Run();
     return;
   }
@@ -411,8 +418,8 @@ void FileSystemOperationImpl::DidGetUsageAndQuotaAndRunTask(
     const base::Closure& task,
     const base::Closure& error_callback,
     storage::QuotaStatusCode status,
-    int64 usage,
-    int64 quota) {
+    int64_t usage,
+    int64_t quota) {
   if (status != storage::kQuotaStatusOk) {
     LOG(WARNING) << "Got unexpected quota error : " << status;
     error_callback.Run();
@@ -428,11 +435,10 @@ void FileSystemOperationImpl::DoCreateFile(
     const StatusCallback& callback,
     bool exclusive) {
   async_file_util_->EnsureFileExists(
-      operation_context_.Pass(), url,
+      std::move(operation_context_), url,
       base::Bind(
-          exclusive ?
-              &FileSystemOperationImpl::DidEnsureFileExistsExclusive :
-              &FileSystemOperationImpl::DidEnsureFileExistsNonExclusive,
+          exclusive ? &FileSystemOperationImpl::DidEnsureFileExistsExclusive
+                    : &FileSystemOperationImpl::DidEnsureFileExistsNonExclusive,
           weak_factory_.GetWeakPtr(), callback));
 }
 
@@ -441,8 +447,7 @@ void FileSystemOperationImpl::DoCreateDirectory(
     const StatusCallback& callback,
     bool exclusive, bool recursive) {
   async_file_util_->CreateDirectory(
-      operation_context_.Pass(),
-      url, exclusive, recursive,
+      std::move(operation_context_), url, exclusive, recursive,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -454,7 +459,8 @@ void FileSystemOperationImpl::DoCopyFileLocal(
     const CopyFileProgressCallback& progress_callback,
     const StatusCallback& callback) {
   async_file_util_->CopyFileLocal(
-      operation_context_.Pass(), src_url, dest_url, option, progress_callback,
+      std::move(operation_context_), src_url, dest_url, option,
+      progress_callback,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -465,7 +471,7 @@ void FileSystemOperationImpl::DoMoveFileLocal(
     CopyOrMoveOption option,
     const StatusCallback& callback) {
   async_file_util_->MoveFileLocal(
-      operation_context_.Pass(), src_url, dest_url, option,
+      std::move(operation_context_), src_url, dest_url, option,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -475,17 +481,16 @@ void FileSystemOperationImpl::DoCopyInForeignFile(
     const FileSystemURL& dest_url,
     const StatusCallback& callback) {
   async_file_util_->CopyInForeignFile(
-      operation_context_.Pass(),
-      src_local_disk_file_path, dest_url,
+      std::move(operation_context_), src_local_disk_file_path, dest_url,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
 
 void FileSystemOperationImpl::DoTruncate(const FileSystemURL& url,
                                          const StatusCallback& callback,
-                                         int64 length) {
+                                         int64_t length) {
   async_file_util_->Truncate(
-      operation_context_.Pass(), url, length,
+      std::move(operation_context_), url, length,
       base::Bind(&FileSystemOperationImpl::DidFinishOperation,
                  weak_factory_.GetWeakPtr(), callback));
 }
@@ -494,9 +499,9 @@ void FileSystemOperationImpl::DoOpenFile(const FileSystemURL& url,
                                          const OpenFileCallback& callback,
                                          int file_flags) {
   async_file_util_->CreateOrOpen(
-      operation_context_.Pass(), url, file_flags,
-      base::Bind(&DidOpenFile,
-                 file_system_context_, weak_factory_.GetWeakPtr(), callback));
+      std::move(operation_context_), url, file_flags,
+      base::Bind(&DidOpenFile, file_system_context_, weak_factory_.GetWeakPtr(),
+                 callback));
 }
 
 void FileSystemOperationImpl::DidEnsureFileExistsExclusive(
@@ -572,14 +577,14 @@ void FileSystemOperationImpl::DidWrite(
     const FileSystemURL& url,
     const WriteCallback& write_callback,
     base::File::Error rv,
-    int64 bytes,
+    int64_t bytes,
     FileWriterDelegate::WriteProgressStatus write_status) {
   const bool complete = (
       write_status != FileWriterDelegate::SUCCESS_IO_PENDING);
   if (complete && write_status != FileWriterDelegate::ERROR_WRITE_NOT_STARTED) {
     DCHECK(operation_context_);
     operation_context_->change_observers()->Notify(
-        &FileChangeObserver::OnModifyFile, base::MakeTuple(url));
+        &FileChangeObserver::OnModifyFile, std::make_tuple(url));
   }
 
   StatusCallback cancel_callback = cancel_callback_;

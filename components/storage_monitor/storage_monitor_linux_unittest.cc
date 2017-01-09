@@ -7,22 +7,24 @@
 #include "components/storage_monitor/storage_monitor_linux.h"
 
 #include <mntent.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/storage_monitor/mock_removable_storage_observer.h"
 #include "components/storage_monitor/removable_device_constants.h"
 #include "components/storage_monitor/storage_info.h"
 #include "components/storage_monitor/storage_monitor.h"
-#include "components/storage_monitor/test_media_transfer_protocol_manager_linux.h"
 #include "components/storage_monitor/test_storage_monitor.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -52,7 +54,7 @@ struct TestDeviceData {
   const char* device_path;
   const char* unique_id;
   StorageInfo::Type type;
-  uint64 partition_size_in_bytes;
+  uint64_t partition_size_in_bytes;
 };
 
 const TestDeviceData kTestDeviceData[] = {
@@ -69,8 +71,8 @@ const TestDeviceData kTestDeviceData[] = {
     StorageInfo::FIXED_MASS_STORAGE, 17282 },
 };
 
-scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
-                                      const base::FilePath& mount_point) {
+std::unique_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
+                                           const base::FilePath& mount_point) {
   bool device_found = false;
   size_t i = 0;
   for (; i < arraysize(kTestDeviceData); i++) {
@@ -80,10 +82,10 @@ scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
     }
   }
 
-  scoped_ptr<StorageInfo> storage_info;
+  std::unique_ptr<StorageInfo> storage_info;
   if (!device_found) {
     NOTREACHED();
-    return storage_info.Pass();
+    return storage_info;
   }
 
   StorageInfo::Type type = kTestDeviceData[i].type;
@@ -94,10 +96,10 @@ scoped_ptr<StorageInfo> GetDeviceInfo(const base::FilePath& device_path,
       base::ASCIIToUTF16("vendor name"),
       base::ASCIIToUTF16("model name"),
       kTestDeviceData[i].partition_size_in_bytes));
-  return storage_info.Pass();
+  return storage_info;
 }
 
-uint64 GetDevicePartitionSize(const std::string& device) {
+uint64_t GetDevicePartitionSize(const std::string& device) {
   for (size_t i = 0; i < arraysize(kTestDeviceData); ++i) {
     if (device == kTestDeviceData[i].device_path)
       return kTestDeviceData[i].partition_size_in_bytes;
@@ -123,8 +125,6 @@ class TestStorageMonitorLinux : public StorageMonitorLinux {
  public:
   explicit TestStorageMonitorLinux(const base::FilePath& path)
       : StorageMonitorLinux(path) {
-    SetMediaTransferProtocolManagerForTest(
-        new TestMediaTransferProtocolManagerLinux());
     SetGetDeviceInfoCallbackForTest(base::Bind(&GetDeviceInfo));
   }
   ~TestStorageMonitorLinux() override {}
@@ -164,7 +164,8 @@ class StorageMonitorLinuxTest : public testing::Test {
   void SetUp() override {
     // Create and set up a temp dir with files for the test.
     ASSERT_TRUE(scoped_temp_dir_.CreateUniqueTempDir());
-    base::FilePath test_dir = scoped_temp_dir_.path().AppendASCII("test_etc");
+    base::FilePath test_dir =
+        scoped_temp_dir_.GetPath().AppendASCII("test_etc");
     ASSERT_TRUE(base::CreateDirectory(test_dir));
     mtab_file_ = test_dir.AppendASCII("test_mtab");
     MtabTestData initial_test_data[] = {
@@ -229,7 +230,7 @@ class StorageMonitorLinuxTest : public testing::Test {
 
   void RemoveDCIMDirFromMountPoint(const std::string& dir) {
     base::FilePath dcim =
-        scoped_temp_dir_.path().AppendASCII(dir).Append(kDCIMDirectoryName);
+        scoped_temp_dir_.GetPath().AppendASCII(dir).Append(kDCIMDirectoryName);
     base::DeleteFile(dcim, false);
   }
 
@@ -241,7 +242,7 @@ class StorageMonitorLinuxTest : public testing::Test {
     return monitor_.get();
   }
 
-  uint64 GetStorageSize(const base::FilePath& path) {
+  uint64_t GetStorageSize(const base::FilePath& path) {
     StorageInfo info;
     if (!notifier()->GetStorageInfoForPath(path, &info))
       return 0;
@@ -256,7 +257,7 @@ class StorageMonitorLinuxTest : public testing::Test {
   // Returns the full path to the created directory on success, or an empty
   // path on failure.
   base::FilePath CreateMountPoint(const std::string& dir, bool with_dcim_dir) {
-    base::FilePath return_path(scoped_temp_dir_.path());
+    base::FilePath return_path(scoped_temp_dir_.GetPath());
     return_path = return_path.AppendASCII(dir);
     base::FilePath path(return_path);
     if (with_dcim_dir)
@@ -301,21 +302,20 @@ class StorageMonitorLinuxTest : public testing::Test {
 
   content::TestBrowserThreadBundle thread_bundle_;
 
-  scoped_ptr<MockRemovableStorageObserver> mock_storage_observer_;
+  std::unique_ptr<MockRemovableStorageObserver> mock_storage_observer_;
 
   // Temporary directory for created test data.
   base::ScopedTempDir scoped_temp_dir_;
   // Path to the test mtab file.
   base::FilePath mtab_file_;
 
-  scoped_ptr<TestStorageMonitorLinux> monitor_;
+  std::unique_ptr<TestStorageMonitorLinux> monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(StorageMonitorLinuxTest);
 };
 
 // Simple test case where we attach and detach a media device.
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_BasicAttachDetach) {
+TEST_F(StorageMonitorLinuxTest, BasicAttachDetach) {
   base::FilePath test_path = CreateMountPointWithDCIMDir(kMountPointA);
   ASSERT_FALSE(test_path.empty());
   MtabTestData test_data[] = {
@@ -339,8 +339,7 @@ TEST_F(StorageMonitorLinuxTest, DISABLED_BasicAttachDetach) {
 }
 
 // Only removable devices are recognized.
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_Removable) {
+TEST_F(StorageMonitorLinuxTest, Removable) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   ASSERT_FALSE(test_path_a.empty());
   MtabTestData test_data1[] = {
@@ -388,8 +387,7 @@ TEST_F(StorageMonitorLinuxTest, DISABLED_Removable) {
 }
 
 // More complicated test case with multiple devices on multiple mount points.
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_SwapMountPoints) {
+TEST_F(StorageMonitorLinuxTest, SwapMountPoints) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   base::FilePath test_path_b = CreateMountPointWithDCIMDir(kMountPointB);
   ASSERT_FALSE(test_path_a.empty());
@@ -426,8 +424,7 @@ TEST_F(StorageMonitorLinuxTest, DISABLED_SwapMountPoints) {
 }
 
 // More complicated test case with multiple devices on multiple mount points.
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_MultiDevicesMultiMountPoints) {
+TEST_F(StorageMonitorLinuxTest, MultiDevicesMultiMountPoints) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   base::FilePath test_path_b = CreateMountPointWithDCIMDir(kMountPointB);
   ASSERT_FALSE(test_path_a.empty());
@@ -494,9 +491,7 @@ TEST_F(StorageMonitorLinuxTest, DISABLED_MultiDevicesMultiMountPoints) {
   EXPECT_EQ(5, observer().detach_calls());
 }
 
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest,
-       DISABLED_MultipleMountPointsWithNonDCIMDevices) {
+TEST_F(StorageMonitorLinuxTest, MultipleMountPointsWithNonDCIMDevices) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   base::FilePath test_path_b = CreateMountPointWithDCIMDir(kMountPointB);
   ASSERT_FALSE(test_path_a.empty());
@@ -582,8 +577,7 @@ TEST_F(StorageMonitorLinuxTest,
   EXPECT_EQ(4, observer().detach_calls());
 }
 
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_DeviceLookUp) {
+TEST_F(StorageMonitorLinuxTest, DeviceLookUp) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   base::FilePath test_path_b = CreateMountPointWithoutDCIMDir(kMountPointB);
   base::FilePath test_path_c = CreateMountPointWithoutDCIMDir(kMountPointC);
@@ -657,8 +651,7 @@ TEST_F(StorageMonitorLinuxTest, DISABLED_DeviceLookUp) {
   EXPECT_EQ(1, observer().detach_calls());
 }
 
-// http://crbug.com/526252 flaky
-TEST_F(StorageMonitorLinuxTest, DISABLED_DevicePartitionSize) {
+TEST_F(StorageMonitorLinuxTest, DevicePartitionSize) {
   base::FilePath test_path_a = CreateMountPointWithDCIMDir(kMountPointA);
   base::FilePath test_path_b = CreateMountPointWithoutDCIMDir(kMountPointB);
   ASSERT_FALSE(test_path_a.empty());

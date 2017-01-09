@@ -5,18 +5,16 @@
 #ifndef REMOTING_TEST_REMOTE_HOST_INFO_FETCHER_H_
 #define REMOTING_TEST_REMOTE_HOST_INFO_FETCHER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "remoting/test/app_remoting_service_urls.h"
 #include "remoting/test/remote_host_info.h"
 
-namespace net {
-class UrlFetcher;
-}
 namespace remoting {
 class URLRequestContextGetter;
 }
@@ -51,7 +49,7 @@ class RemoteHostInfoFetcher : public net::URLFetcherDelegate {
   void OnURLFetchComplete(const net::URLFetcher* source) override;
 
   // Holds the URLFetcher for the RemoteHostInfo request.
-  scoped_ptr<net::URLFetcher> request_;
+  std::unique_ptr<net::URLFetcher> request_;
 
   // Provides application-specific context for the network request.
   scoped_refptr<remoting::URLRequestContextGetter> request_context_getter_;

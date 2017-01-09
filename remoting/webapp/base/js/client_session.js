@@ -156,7 +156,8 @@ remoting.ClientSession.State = {
   CONNECTED: 4,
   CLOSED: 5,
   FAILED: 6,
-  MAX_STATE_ENUM: 6,
+  VIDEO_STREAM_STARTED: 7,
+  MAX_STATE_ENUM: 7
 };
 
 /**
@@ -180,7 +181,9 @@ remoting.ClientSession.ConnectionError = {
   NETWORK_FAILURE: 4,
   HOST_OVERLOAD: 5,
   MAX_SESSION_LENGTH: 6,
-  HOST_CONFIGURATION_ERROR: 7
+  HOST_CONFIGURATION_ERROR: 7,
+  NACL_PLUGIN_CRASHED: 8,
+  INVALID_ACCOUNT: 9
 };
 
 /**
@@ -201,19 +204,29 @@ remoting.ClientSession.ConnectionError.fromString = function(error) {
  */
 remoting.ClientSession.PerfStats = function() {};
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.videoBandwidth;
+remoting.ClientSession.PerfStats.prototype.videoBandwidth = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.videoFrameRate;
+remoting.ClientSession.PerfStats.prototype.videoFrameRate = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.captureLatency;
+remoting.ClientSession.PerfStats.prototype.captureLatency = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.encodeLatency;
+remoting.ClientSession.PerfStats.prototype.maxCaptureLatency = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.decodeLatency;
+remoting.ClientSession.PerfStats.prototype.encodeLatency = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.renderLatency;
+remoting.ClientSession.PerfStats.prototype.maxEncodeLatency = 0;
 /** @type {number} */
-remoting.ClientSession.PerfStats.prototype.roundtripLatency;
+remoting.ClientSession.PerfStats.prototype.decodeLatency = 0;
+/** @type {number} */
+remoting.ClientSession.PerfStats.prototype.maxDecodeLatency = 0;
+/** @type {number} */
+remoting.ClientSession.PerfStats.prototype.renderLatency = 0;
+/** @type {number} */
+remoting.ClientSession.PerfStats.prototype.maxRenderLatency = 0;
+/** @type {number} */
+remoting.ClientSession.PerfStats.prototype.roundtripLatency = 0;
+/** @type {number} */
+remoting.ClientSession.PerfStats.prototype.maxRoundtripLatency = 0;
 
 // Keys for connection statistics.
 remoting.ClientSession.STATS_KEY_VIDEO_BANDWIDTH = 'videoBandwidth';
@@ -246,20 +259,8 @@ remoting.ClientSession.Capability = {
   // input, for compatibility with non-touch-aware systems.
   TOUCH_EVENTS: 'touchEvents',
 
-  // Indicates that host/client supports Google Drive integration, and that the
-  // client should send to the host the OAuth tokens to be used by Google Drive
-  // on the host.
-  GOOGLE_DRIVE: 'googleDrive',
-
-  // Indicates that the client supports the video frame-recording extension.
-  VIDEO_RECORDER: 'videoRecorder',
-
-  // Indicates that the client supports 'cast'ing the video stream to a
-  // cast-enabled device.
-  CAST: 'casting',
-
-  // Indicates desktop shape support.
-  DESKTOP_SHAPE: 'desktopShape',
+  // Indicates whether the client supports security key request forwarding.
+  SECURITY_KEY: 'securityKey',
 };
 
 /**
@@ -382,6 +383,8 @@ remoting.ClientSession.prototype.dropSessionOnSuspend = function(
  */
 remoting.ClientSession.prototype.onFirstFrameReceived = function() {
   this.hasReceivedFrame_ = true;
+  this.logger_.logSessionStateChange(
+    toSessionState(remoting.ClientSession.State.VIDEO_STREAM_STARTED));
 };
 
 /**
@@ -482,6 +485,12 @@ remoting.ClientSession.prototype.onConnectionStatusUpdate =
         break;
       case remoting.ClientSession.ConnectionError.HOST_CONFIGURATION_ERROR:
         errorTag = remoting.Error.Tag.HOST_CONFIGURATION_ERROR;
+        break;
+      case remoting.ClientSession.ConnectionError.NACL_PLUGIN_CRASHED:
+        errorTag = remoting.Error.Tag.NACL_PLUGIN_CRASHED;
+        break;
+      case remoting.ClientSession.ConnectionError.INVALID_ACCOUNT:
+        errorTag = remoting.Error.Tag.INVALID_ACCOUNT;
         break;
       default:
         this.error_ = remoting.Error.unexpected();
@@ -594,7 +603,7 @@ function recordState(state) {
 
   var metricDescription = {
     metricName: 'Chromoting.Connections',
-    type: 'histogram-linear',
+    type: chrome.metricsPrivate.MetricTypeType.HISTOGRAM_LINEAR,
     // According to histogram.h, minimum should be 1. Values less than minimum
     // end up in the 0th bucket.
     min: 1,
@@ -686,6 +695,8 @@ function toSessionState(state) {
       return SessionState.CONNECTION_DROPPED;
     case remoting.ClientSession.State.CONNECTION_CANCELED:
       return SessionState.CONNECTION_CANCELED;
+    case remoting.ClientSession.State.VIDEO_STREAM_STARTED:
+      return SessionState.VIDEO_STREAM_STARTED;
     default:
       throw new Error('Unknown session state : ' + state);
   }

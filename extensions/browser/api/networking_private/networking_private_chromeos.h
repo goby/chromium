@@ -5,9 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_CHROMEOS_H_
 #define EXTENSIONS_BROWSER_API_NETWORKING_PRIVATE_NETWORKING_PRIVATE_CHROMEOS_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "extensions/browser/api/networking_private/networking_private_delegate.h"
 
@@ -27,7 +28,7 @@ class NetworkingPrivateChromeOS : public NetworkingPrivateDelegate {
  public:
   // |verify_delegate| is passed to NetworkingPrivateDelegate and may be NULL.
   NetworkingPrivateChromeOS(content::BrowserContext* browser_context,
-                            scoped_ptr<VerifyDelegate> verify_delegate);
+                            std::unique_ptr<VerifyDelegate> verify_delegate);
   ~NetworkingPrivateChromeOS() override;
 
   // NetworkingPrivateApi
@@ -41,11 +42,11 @@ class NetworkingPrivateChromeOS : public NetworkingPrivateDelegate {
                 const DictionaryCallback& success_callback,
                 const FailureCallback& failure_callback) override;
   void SetProperties(const std::string& guid,
-                     scoped_ptr<base::DictionaryValue> properties,
+                     std::unique_ptr<base::DictionaryValue> properties,
                      const VoidCallback& success_callback,
                      const FailureCallback& failure_callback) override;
   void CreateNetwork(bool shared,
-                     scoped_ptr<base::DictionaryValue> properties,
+                     std::unique_ptr<base::DictionaryValue> properties,
                      const StringCallback& success_callback,
                      const FailureCallback& failure_callback) override;
   void ForgetNetwork(const std::string& guid,
@@ -89,8 +90,8 @@ class NetworkingPrivateChromeOS : public NetworkingPrivateDelegate {
                            const std::string& new_pin,
                            const VoidCallback& success_callback,
                            const FailureCallback& failure_callback) override;
-  scoped_ptr<base::ListValue> GetEnabledNetworkTypes() override;
-  scoped_ptr<DeviceStateList> GetDeviceStateList() override;
+  std::unique_ptr<base::ListValue> GetEnabledNetworkTypes() override;
+  std::unique_ptr<DeviceStateList> GetDeviceStateList() override;
   bool EnableNetworkType(const std::string& type) override;
   bool DisableNetworkType(const std::string& type) override;
   bool RequestScan() override;
@@ -99,7 +100,9 @@ class NetworkingPrivateChromeOS : public NetworkingPrivateDelegate {
   // Callback for both GetProperties and GetManagedProperties. Copies
   // |dictionary| and appends any networkingPrivate API specific properties,
   // then calls |callback| with the result.
-  void GetPropertiesCallback(const DictionaryCallback& callback,
+  void GetPropertiesCallback(const std::string& guid,
+                             bool managed,
+                             const DictionaryCallback& callback,
                              const std::string& service_path,
                              const base::DictionaryValue& dictionary);
 
@@ -108,13 +111,18 @@ class NetworkingPrivateChromeOS : public NetworkingPrivateDelegate {
   // which is not available to the chromeos/network module.
   void AppendThirdPartyProviderName(base::DictionaryValue* dictionary);
 
+  // Sets the active proxy values in managed network configurations.
+  void SetManagedActiveProxyValues(const std::string& guid,
+                                   base::DictionaryValue* dictionary);
+
   // Handles connection failures, possibly showing UI for configuration
   // failures, then calls the appropriate callback.
-  void ConnectFailureCallback(const std::string& guid,
-                              const VoidCallback& success_callback,
-                              const FailureCallback& failure_callback,
-                              const std::string& error_name,
-                              scoped_ptr<base::DictionaryValue> error_data);
+  void ConnectFailureCallback(
+      const std::string& guid,
+      const VoidCallback& success_callback,
+      const FailureCallback& failure_callback,
+      const std::string& error_name,
+      std::unique_ptr<base::DictionaryValue> error_data);
 
   content::BrowserContext* browser_context_;
   base::WeakPtrFactory<NetworkingPrivateChromeOS> weak_ptr_factory_;

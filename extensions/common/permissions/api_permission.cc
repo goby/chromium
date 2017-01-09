@@ -46,8 +46,8 @@ class SimpleAPIPermission : public APIPermission {
     return (value == NULL);
   }
 
-  scoped_ptr<base::Value> ToValue() const override {
-    return scoped_ptr<base::Value>();
+  std::unique_ptr<base::Value> ToValue() const override {
+    return std::unique_ptr<base::Value>();
   }
 
   APIPermission* Clone() const override {
@@ -69,9 +69,11 @@ class SimpleAPIPermission : public APIPermission {
     return new SimpleAPIPermission(info());
   }
 
-  void Write(IPC::Message* m) const override {}
+  void GetSize(base::PickleSizer* s) const override {}
 
-  bool Read(const IPC::Message* m, base::PickleIterator* iter) override {
+  void Write(base::Pickle* m) const override {}
+
+  bool Read(const base::Pickle* m, base::PickleIterator* iter) override {
     return true;
   }
 

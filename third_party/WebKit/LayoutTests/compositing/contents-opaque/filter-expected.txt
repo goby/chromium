@@ -1,22 +1,23 @@
 {
-  "bounds": [800, 600],
-  "children": [
+  "layers": [
     {
+      "name": "LayoutView #document",
       "bounds": [800, 600],
       "contentsOpaque": true,
-      "drawsContent": true,
-      "children": [
-        {
-          "position": [10, 10],
-          "bounds": [100, 100],
-          "drawsContent": true
-        },
-        {
-          "position": [10, 120],
-          "bounds": [100, 100],
-          "drawsContent": true
-        }
-      ]
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow DIV class='composited container-box'",
+      "position": [-18, -18],
+      "transformOrigin": [78, 78],
+      "bounds": [157, 157],
+      "drawsContent": true
+    },
+    {
+      "name": "LayoutBlockFlow DIV class='composited container-box'",
+      "position": [10, 120],
+      "bounds": [100, 100],
+      "drawsContent": true
     }
   ]
 }

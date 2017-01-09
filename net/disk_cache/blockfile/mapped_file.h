@@ -7,9 +7,13 @@
 #ifndef NET_DISK_CACHE_BLOCKFILE_MAPPED_FILE_H_
 #define NET_DISK_CACHE_BLOCKFILE_MAPPED_FILE_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "net/base/net_export.h"
 #include "net/disk_cache/blockfile/file.h"
 #include "net/disk_cache/blockfile/file_block.h"
+#include "net/net_features.h"
 
 namespace base {
 class FilePath;
@@ -38,11 +42,6 @@ class NET_EXPORT_PRIVATE MappedFile : public File {
   bool Load(const FileBlock* block);
   bool Store(const FileBlock* block);
 
-  // Asynchronous versions of Load/Store, following the semantics of File::Read
-  // and File::Write.
-  bool Load(const FileBlock* block, FileIOCallback* callback, bool* completed);
-  bool Store(const FileBlock* block, FileIOCallback* callback, bool* completed);
-
   // Flush the memory-mapped section to disk (synchronously).
   void Flush();
 
@@ -59,7 +58,7 @@ class NET_EXPORT_PRIVATE MappedFile : public File {
 #endif
   void* buffer_;  // Address of the memory mapped buffer.
   size_t view_size_;  // Size of the memory pointed by buffer_.
-#if defined(POSIX_AVOID_MMAP)
+#if BUILDFLAG(POSIX_AVOID_MMAP)
   void* snapshot_;  // Copy of the buffer taken when it was last flushed.
 #endif
 

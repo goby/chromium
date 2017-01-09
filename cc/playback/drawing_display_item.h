@@ -5,36 +5,48 @@
 #ifndef CC_PLAYBACK_DRAWING_DISPLAY_ITEM_H_
 #define CC_PLAYBACK_DRAWING_DISPLAY_ITEM_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+#include <vector>
+
 #include "cc/base/cc_export.h"
 #include "cc/playback/display_item.h"
-#include "skia/ext/refptr.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/point_f.h"
 
 class SkCanvas;
 class SkPicture;
 
 namespace cc {
+class ClientPictureCache;
 
 class CC_EXPORT DrawingDisplayItem : public DisplayItem {
  public:
   DrawingDisplayItem();
+  explicit DrawingDisplayItem(sk_sp<const SkPicture> picture);
+  explicit DrawingDisplayItem(const proto::DisplayItem& proto,
+                              ClientPictureCache* client_picture_cache,
+                              std::vector<uint32_t>* used_engine_picture_ids);
+  explicit DrawingDisplayItem(const DrawingDisplayItem& item);
   ~DrawingDisplayItem() override;
 
-  void SetNew(skia::RefPtr<SkPicture> picture);
-
   void ToProtobuf(proto::DisplayItem* proto) const override;
-  void FromProtobuf(const proto::DisplayItem& proto) override;
+  sk_sp<const SkPicture> GetPicture() const override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
 
+  size_t ExternalMemoryUsage() const;
+  int ApproximateOpCount() const;
+
   void CloneTo(DrawingDisplayItem* item) const;
 
  private:
-  skia::RefPtr<SkPicture> picture_;
+  void SetNew(sk_sp<const SkPicture> picture);
+
+  sk_sp<const SkPicture> picture_;
 };
 
 }  // namespace cc

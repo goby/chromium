@@ -14,7 +14,7 @@
 #include "chromeos/chromeos_switches.h"
 #include "chromeos/system/statistics_provider.h"
 #include "content/public/common/content_switches.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 #include "third_party/zlib/zlib.h"
 
 namespace {
@@ -118,15 +118,19 @@ bool IsMachineHWIDCorrect() {
     return true;
   if (!base::SysInfo::IsRunningOnChromeOS())
     return true;
-  std::string hwid;
+
   chromeos::system::StatisticsProvider* stats =
       chromeos::system::StatisticsProvider::GetInstance();
+  if (stats->IsRunningOnVm())
+    return true;
+
+  std::string hwid;
   if (!stats->GetMachineStatistic(chromeos::system::kHardwareClassKey, &hwid)) {
     LOG(ERROR) << "Couldn't get machine statistic 'hardware_class'.";
     return false;
   }
   if (!chromeos::IsHWIDCorrect(hwid)) {
-    LOG(ERROR) << "Machine has malformed HWID '" << hwid << "'.";
+    LOG(ERROR) << "Machine has malformed HWID '" << hwid << "'. ";
     return false;
   }
   return true;

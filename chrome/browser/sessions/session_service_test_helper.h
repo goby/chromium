@@ -5,23 +5,20 @@
 #ifndef CHROME_BROWSER_SESSIONS_SESSION_SERVICE_TEST_HELPER_H_
 #define CHROME_BROWSER_SESSIONS_SESSION_SERVICE_TEST_HELPER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "components/sessions/core/session_id.h"
 
 class SessionService;
 
-namespace base {
-class RunLoop;
-}
-
 namespace sessions {
 class SerializedNavigationEntry;
-class SessionCommand;
 struct SessionTab;
 struct SessionWindow;
 }
@@ -51,8 +48,9 @@ class SessionServiceTestHelper {
       bool force_browser_not_alive_with_no_windows);
 
   // Reads the contents of the last session.
-  void ReadWindows(std::vector<sessions::SessionWindow*>* windows,
-                   SessionID::id_type* active_window_id);
+  void ReadWindows(
+      std::vector<std::unique_ptr<sessions::SessionWindow>>* windows,
+      SessionID::id_type* active_window_id);
 
   void AssertTabEquals(const SessionID& window_id,
                        const SessionID& tab_id,
@@ -71,7 +69,7 @@ class SessionServiceTestHelper {
       const sessions::SerializedNavigationEntry& actual);
 
   void AssertSingleWindowWithSingleTab(
-      const std::vector<sessions::SessionWindow*>& windows,
+      const std::vector<std::unique_ptr<sessions::SessionWindow>>& windows,
       size_t nav_count);
 
   void SetService(SessionService* service);
@@ -82,7 +80,7 @@ class SessionServiceTestHelper {
                               const base::Closure& task);
 
  private:
-  scoped_ptr<SessionService> service_;
+  std::unique_ptr<SessionService> service_;
 
   DISALLOW_COPY_AND_ASSIGN(SessionServiceTestHelper);
 };

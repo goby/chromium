@@ -4,9 +4,11 @@
 
 #include "extensions/browser/mojo/keep_alive_impl.h"
 
+#include <utility>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
-#include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_test.h"
 #include "extensions/browser/process_manager.h"
@@ -16,8 +18,7 @@ namespace extensions {
 
 class KeepAliveTest : public ExtensionsTest {
  public:
-  KeepAliveTest()
-      : notification_service_(content::NotificationService::Create()) {}
+  KeepAliveTest() {}
   ~KeepAliveTest() override {}
 
   void SetUp() override {
@@ -26,16 +27,20 @@ class KeepAliveTest : public ExtensionsTest {
     extension_ =
         ExtensionBuilder()
             .SetManifest(
-                 DictionaryBuilder()
-                     .Set("name", "app")
-                     .Set("version", "1")
-                     .Set("manifest_version", 2)
-                     .Set("app",
-                          DictionaryBuilder().Set(
-                              "background",
-                              DictionaryBuilder().Set(
-                                  "scripts",
-                                  ListBuilder().Append("background.js")))))
+                DictionaryBuilder()
+                    .Set("name", "app")
+                    .Set("version", "1")
+                    .Set("manifest_version", 2)
+                    .Set("app", DictionaryBuilder()
+                                    .Set("background",
+                                         DictionaryBuilder()
+                                             .Set("scripts",
+                                                  ListBuilder()
+                                                      .Append("background.js")
+                                                      .Build())
+                                             .Build())
+                                    .Build())
+                    .Build())
             .SetID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
             .Build();
   }
@@ -53,7 +58,8 @@ class KeepAliveTest : public ExtensionsTest {
   }
 
   void CreateKeepAlive(mojo::InterfaceRequest<KeepAlive> request) {
-    KeepAliveImpl::Create(browser_context(), extension_.get(), request.Pass());
+    KeepAliveImpl::Create(browser_context(), extension_.get(),
+                          std::move(request));
   }
 
   const Extension* extension() { return extension_.get(); }
@@ -64,8 +70,7 @@ class KeepAliveTest : public ExtensionsTest {
   }
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
-  scoped_ptr<content::NotificationService> notification_service_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   scoped_refptr<const Extension> extension_;
 
   DISALLOW_COPY_AND_ASSIGN(KeepAliveTest);
@@ -107,15 +112,20 @@ TEST_F(KeepAliveTest, UnloadExtension) {
   scoped_refptr<const Extension> other_extension =
       ExtensionBuilder()
           .SetManifest(
-               DictionaryBuilder()
-                   .Set("name", "app")
-                   .Set("version", "1")
-                   .Set("manifest_version", 2)
-                   .Set("app", DictionaryBuilder().Set(
-                                   "background",
-                                   DictionaryBuilder().Set(
-                                       "scripts",
-                                       ListBuilder().Append("background.js")))))
+              DictionaryBuilder()
+                  .Set("name", "app")
+                  .Set("version", "1")
+                  .Set("manifest_version", 2)
+                  .Set("app",
+                       DictionaryBuilder()
+                           .Set("background",
+                                DictionaryBuilder()
+                                    .Set("scripts", ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                    .Build())
+                           .Build())
+                  .Build())
           .SetID("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
           .Build();
 

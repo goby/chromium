@@ -4,7 +4,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "components/bubble/bubble_reference.h"
 
 @class InfoBubbleView;
@@ -32,7 +33,7 @@ class TabStripModelObserverBridge;
 
   IBOutlet InfoBubbleView* bubble_;  // to set arrow position
   // Bridge for tab change notifications.
-  scoped_ptr<TabStripModelObserverBridge> tabStripObserverBridge_;
+  std::unique_ptr<TabStripModelObserverBridge> tabStripObserverBridge_;
 
   // Non-nil only on 10.7+. Both weak, owned by AppKit.
   // A local event tap that will dismiss the bubble when a click is delivered
@@ -86,6 +87,9 @@ class TabStripModelObserverBridge;
 - (id)initWithWindow:(NSWindow*)theWindow
         parentWindow:(NSWindow*)parentWindow
           anchoredAt:(NSPoint)anchoredAt;
+
+// Closes the bubble with BUBBLE_CLOSE_CANCELED.
+- (IBAction)cancel:(id)sender;
 
 // Creates an autoreleased horizontal separator view with a given frame. The
 // height of the frame is ignored.

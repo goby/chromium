@@ -5,9 +5,9 @@
 #include "extensions/common/permissions/socket_permission.h"
 
 #include <algorithm>
+#include <memory>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "extensions/common/api/sockets/sockets_manifest_permission.h"
 #include "extensions/common/permissions/permissions_info.h"
@@ -37,6 +37,21 @@ SocketPermission::SocketPermission(const APIPermissionInfo* info)
     : SetDisjunctionPermission<SocketPermissionData, SocketPermission>(info) {}
 
 SocketPermission::~SocketPermission() {}
+
+bool SocketPermission::FromValue(
+    const base::Value* value,
+    std::string* error,
+    std::vector<std::string>* unhandled_permissions) {
+  bool parsed_ok = SetDisjunctionPermission<
+      SocketPermissionData, SocketPermission>::FromValue(value, error,
+                                                         unhandled_permissions);
+  if (parsed_ok && data_set_.empty()) {
+    if (error)
+      *error = "NULL or empty permission list";
+    return false;
+  }
+  return parsed_ok;
+}
 
 PermissionIDSet SocketPermission::GetPermissions() const {
   PermissionIDSet ids;

@@ -7,13 +7,11 @@
 #include <string>
 
 #include "base/command_line.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/ui/login_web_dialog.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
@@ -23,13 +21,14 @@
 #include "chromeos/dbus/debug_daemon_client.h"
 #include "chromeos/dbus/power_manager_client.h"
 #include "components/login/localized_values_builder.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace {
 
 const char kJsScreenPath[] = "login.EnableDebuggingScreen";
-
-const char kEnableDebuggingScreen[] = "debugging";
 
 }  // namespace
 
@@ -47,11 +46,8 @@ EnableDebuggingScreenHandler::~EnableDebuggingScreenHandler() {
     delegate_->OnActorDestroyed(this);
 }
 
-void EnableDebuggingScreenHandler::PrepareToShow() {
-}
-
 void EnableDebuggingScreenHandler::ShowWithParams() {
-  ShowScreen(kEnableDebuggingScreen, NULL);
+  ShowScreen(OobeScreen::SCREEN_OOBE_ENABLE_DEBUGGING);
 
   UpdateUIState(UI_STATE_WAIT);
 
@@ -274,7 +270,7 @@ void EnableDebuggingScreenHandler::UpdateUIState(
     prefs->CommitPendingWrite();
   }
 
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "login.EnableDebuggingScreen.updateState",
       base::FundamentalValue(static_cast<int>(state)));
 }

@@ -2,15 +2,23 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_SPDY_TEST_UTILS_H_
-#define NET_SPDY_TEST_UTILS_H_
+#ifndef NET_SPDY_SPDY_TEST_UTILS_H_
+#define NET_SPDY_SPDY_TEST_UTILS_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <string>
 
+#include "base/strings/string_piece.h"
+#include "net/spdy/server_push_delegate.h"
+#include "net/spdy/spdy_bug_tracker.h"
 #include "net/spdy/spdy_header_block.h"
+#include "net/spdy/spdy_headers_handler_interface.h"
 #include "net/spdy/spdy_protocol.h"
+#include "net/test/gtest_util.h"
+
+#define EXPECT_SPDY_BUG EXPECT_DFATAL
 
 namespace net {
 
@@ -18,8 +26,8 @@ class HashValue;
 class TransportSecurityState;
 
 inline bool operator==(base::StringPiece x,
-                       const SpdyHeaderBlock::StringPieceProxy& y) {
-  return x == y.operator base::StringPiece();
+                       const SpdyHeaderBlock::ValueProxy& y) {
+  return x == y.as_string();
 }
 
 namespace test {
@@ -34,13 +42,9 @@ void CompareCharArraysWithHexError(
     const unsigned char* expected,
     const int expected_len);
 
-void SetFrameFlags(SpdyFrame* frame,
-                   uint8 flags,
-                   SpdyMajorVersion spdy_version);
+void SetFrameFlags(SpdySerializedFrame* frame, uint8_t flags);
 
-void SetFrameLength(SpdyFrame* frame,
-                    size_t length,
-                    SpdyMajorVersion spdy_version);
+void SetFrameLength(SpdySerializedFrame* frame, size_t length);
 
 std::string a2b_hex(const char* hex_data);
 
@@ -57,7 +61,47 @@ void AddPin(TransportSecurityState* state,
             uint8_t primary_label,
             uint8_t backup_label);
 
+// A test implementation of SpdyHeadersHandlerInterface that correctly
+// reconstructs multiple header values for the same name.
+class TestHeadersHandler : public SpdyHeadersHandlerInterface {
+ public:
+  TestHeadersHandler() : header_bytes_parsed_(0) {}
+
+  void OnHeaderBlockStart() override;
+
+  void OnHeader(base::StringPiece name, base::StringPiece value) override;
+
+  void OnHeaderBlockEnd(size_t header_bytes_parsed) override;
+
+  void OnHeaderBlockEnd(size_t header_bytes_parsed,
+                        size_t /* compressed_header_bytes_parsed */) override;
+
+  const SpdyHeaderBlock& decoded_block() const { return block_; }
+  size_t header_bytes_parsed() { return header_bytes_parsed_; }
+
+ private:
+  SpdyHeaderBlock block_;
+  size_t header_bytes_parsed_;
+
+  DISALLOW_COPY_AND_ASSIGN(TestHeadersHandler);
+};
+
+// A test implementation of ServerPushDelegate that caches all the pushed
+// request and provides a interface to cancel the push given url.
+class TestServerPushDelegate : public ServerPushDelegate {
+ public:
+  explicit TestServerPushDelegate();
+  ~TestServerPushDelegate() override;
+
+  void OnPush(std::unique_ptr<ServerPushHelper> push_helper) override;
+
+  bool CancelPush(GURL url);
+
+ private:
+  std::map<GURL, std::unique_ptr<ServerPushHelper>> push_helpers;
+};
+
 }  // namespace test
 }  // namespace net
 
-#endif  // NET_SPDY_TEST_UTILS_H_
+#endif  // NET_SPDY_SPDY_TEST_UTILS_H_

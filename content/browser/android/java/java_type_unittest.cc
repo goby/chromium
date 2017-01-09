@@ -4,8 +4,11 @@
 
 #include "content/browser/android/java/java_type.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content {

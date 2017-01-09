@@ -4,6 +4,7 @@
 
 #include "content/public/test/test_browser_thread.h"
 
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/thread.h"
 #include "content/browser/browser_thread_impl.h"
@@ -14,30 +15,26 @@ namespace content {
 class TestBrowserThreadImpl : public BrowserThreadImpl {
  public:
   explicit TestBrowserThreadImpl(BrowserThread::ID identifier)
-      : BrowserThreadImpl(identifier),
-        notification_service_(NULL) {
-  }
+      : BrowserThreadImpl(identifier) {}
 
   TestBrowserThreadImpl(BrowserThread::ID identifier,
                         base::MessageLoop* message_loop)
-      : BrowserThreadImpl(identifier, message_loop),
-        notification_service_(NULL) {}
+      : BrowserThreadImpl(identifier, message_loop) {}
 
   ~TestBrowserThreadImpl() override { Stop(); }
 
   void Init() override {
-    notification_service_ = new NotificationServiceImpl;
+    notification_service_.reset(new NotificationServiceImpl);
     BrowserThreadImpl::Init();
   }
 
   void CleanUp() override {
-    delete notification_service_;
-    notification_service_ = NULL;
+    notification_service_.reset();
     BrowserThreadImpl::CleanUp();
   }
 
  private:
-  NotificationService* notification_service_;
+  std::unique_ptr<NotificationService> notification_service_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserThreadImpl);
 };
@@ -74,10 +71,6 @@ void TestBrowserThread::Stop() {
 
 bool TestBrowserThread::IsRunning() {
   return impl_->IsRunning();
-}
-
-base::Thread* TestBrowserThread::DeprecatedGetThreadObject() {
-  return impl_.get();
 }
 
 }  // namespace content

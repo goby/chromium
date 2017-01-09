@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/event.h"
@@ -185,14 +186,15 @@ void TestLookup(const char* name, KeyboardLayoutEngine* engine) {
     KeyboardCode output_keycode;
     base::char16 output_character;
   } kTestCases[] = {
-      {DomCode::KEY_A, EF_NONE, DomKey::Constant<'a'>::Character, VKEY_A, 'a'},
-      {DomCode::KEY_A, EF_SHIFT_DOWN, DomKey::Constant<'A'>::Character, VKEY_A,
+      {DomCode::US_A, EF_NONE, DomKey::Constant<'a'>::Character, VKEY_A, 'a'},
+      {DomCode::US_A, EF_SHIFT_DOWN, DomKey::Constant<'A'>::Character, VKEY_A,
        'A'},
-      {DomCode::KEY_A, EF_CONTROL_DOWN, DomKey::Constant<'a'>::Character,
+      {DomCode::US_A, EF_CONTROL_DOWN, DomKey::Constant<'a'>::Character,
        VKEY_A, 1},
   };
 
-  KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(make_scoped_ptr(engine));
+  KeyboardLayoutEngineManager::SetKeyboardLayoutEngine(
+      base::WrapUnique(engine));
 
   for (const auto& t : kTestCases) {
     DomKey dom_key;

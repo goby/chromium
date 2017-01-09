@@ -11,7 +11,9 @@
 #include <algorithm>
 #include <string>
 
+#include "base/macros.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "components/mime_util/mime_util.h"
 #include "net/base/mime_util.h"
 
@@ -146,20 +148,20 @@ MediaPathFilter::~MediaPathFilter() {
 }
 
 bool MediaPathFilter::Match(const base::FilePath& path) {
-  return GetType(path) != MEDIA_GALLERY_SCAN_FILE_TYPE_UNKNOWN;
+  return GetType(path) != MEDIA_GALLERY_FILE_TYPE_UNKNOWN;
 }
 
-MediaGalleryScanFileType MediaPathFilter::GetType(const base::FilePath& path) {
+MediaGalleryFileType MediaPathFilter::GetType(const base::FilePath& path) {
   EnsureInitialized();
   MediaFileExtensionMap::const_iterator it =
       media_file_extensions_map_.find(base::ToLowerASCII(path.Extension()));
   if (it == media_file_extensions_map_.end())
-    return MEDIA_GALLERY_SCAN_FILE_TYPE_UNKNOWN;
-  return static_cast<MediaGalleryScanFileType>(it->second);
+    return MEDIA_GALLERY_FILE_TYPE_UNKNOWN;
+  return static_cast<MediaGalleryFileType>(it->second);
 }
 
 void MediaPathFilter::EnsureInitialized() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   if (initialized_)
     return;
 
@@ -167,30 +169,27 @@ void MediaPathFilter::EnsureInitialized() {
   // doing this in the ctor and removing |initialized_| would result in a
   // ThreadRestrictions failure.
   AddExtensionsToMediaFileExtensionMap(GetMediaExtensionList("image/*"),
-                                       MEDIA_GALLERY_SCAN_FILE_TYPE_IMAGE);
+                                       MEDIA_GALLERY_FILE_TYPE_IMAGE);
   AddExtensionsToMediaFileExtensionMap(GetMediaExtensionList("audio/*"),
-                                       MEDIA_GALLERY_SCAN_FILE_TYPE_AUDIO);
+                                       MEDIA_GALLERY_FILE_TYPE_AUDIO);
   AddExtensionsToMediaFileExtensionMap(GetMediaExtensionList("video/*"),
-                                       MEDIA_GALLERY_SCAN_FILE_TYPE_VIDEO);
+                                       MEDIA_GALLERY_FILE_TYPE_VIDEO);
   AddAdditionalExtensionsToMediaFileExtensionMap(
-      kExtraSupportedImageExtensions,
-      arraysize(kExtraSupportedImageExtensions),
-      MEDIA_GALLERY_SCAN_FILE_TYPE_IMAGE);
+      kExtraSupportedImageExtensions, arraysize(kExtraSupportedImageExtensions),
+      MEDIA_GALLERY_FILE_TYPE_IMAGE);
   AddAdditionalExtensionsToMediaFileExtensionMap(
-      kExtraSupportedAudioExtensions,
-      arraysize(kExtraSupportedAudioExtensions),
-      MEDIA_GALLERY_SCAN_FILE_TYPE_AUDIO);
+      kExtraSupportedAudioExtensions, arraysize(kExtraSupportedAudioExtensions),
+      MEDIA_GALLERY_FILE_TYPE_AUDIO);
   AddAdditionalExtensionsToMediaFileExtensionMap(
-      kExtraSupportedVideoExtensions,
-      arraysize(kExtraSupportedVideoExtensions),
-      MEDIA_GALLERY_SCAN_FILE_TYPE_VIDEO);
+      kExtraSupportedVideoExtensions, arraysize(kExtraSupportedVideoExtensions),
+      MEDIA_GALLERY_FILE_TYPE_VIDEO);
 
   initialized_ = true;
 }
 
 void MediaPathFilter::AddExtensionsToMediaFileExtensionMap(
     const MediaFileExtensionList& extensions_list,
-    MediaGalleryScanFileType type) {
+    MediaGalleryFileType type) {
   for (size_t i = 0; i < extensions_list.size(); ++i)
     AddExtensionToMediaFileExtensionMap(extensions_list[i].c_str(), type);
 }
@@ -198,14 +197,14 @@ void MediaPathFilter::AddExtensionsToMediaFileExtensionMap(
 void MediaPathFilter::AddAdditionalExtensionsToMediaFileExtensionMap(
     const base::FilePath::CharType* const* extensions_list,
     size_t extensions_list_size,
-    MediaGalleryScanFileType type) {
+    MediaGalleryFileType type) {
   for (size_t i = 0; i < extensions_list_size; ++i)
     AddExtensionToMediaFileExtensionMap(extensions_list[i], type);
 }
 
 void MediaPathFilter::AddExtensionToMediaFileExtensionMap(
     const base::FilePath::CharType* extension,
-    MediaGalleryScanFileType type) {
+    MediaGalleryFileType type) {
   base::FilePath::StringType extension_with_sep =
       base::FilePath::kExtensionSeparator +
       base::FilePath::StringType(extension);

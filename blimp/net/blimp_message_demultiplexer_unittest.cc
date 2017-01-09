@@ -1,12 +1,11 @@
 // Copyright 2015 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
-//
-// Unit test for data encryption functions.
 
 #include "blimp/net/blimp_message_demultiplexer.h"
 
 #include "base/logging.h"
+#include "blimp/common/create_blimp_message.h"
 #include "blimp/net/test_common.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -27,15 +26,17 @@ class BlimpMessageDemultiplexerTest : public testing::Test {
       : input_msg_(new BlimpMessage), compositor_msg_(new BlimpMessage) {}
 
   void SetUp() override {
-    demux_.AddProcessor(BlimpMessage::INPUT, &receiver1_);
-    demux_.AddProcessor(BlimpMessage::COMPOSITOR, &receiver2_);
-    input_msg_->set_type(BlimpMessage::INPUT);
-    compositor_msg_->set_type(BlimpMessage::COMPOSITOR);
+    demux_.AddProcessor(BlimpMessage::kInput, &receiver1_);
+    demux_.AddProcessor(BlimpMessage::kCompositor, &receiver2_);
+    InputMessage* input = nullptr;
+    input_msg_ = CreateBlimpMessage(&input);
+    CompositorMessage* compositor = nullptr;
+    compositor_msg_ = CreateBlimpMessage(&compositor, 1);
   }
 
  protected:
-  scoped_ptr<BlimpMessage> input_msg_;
-  scoped_ptr<BlimpMessage> compositor_msg_;
+  std::unique_ptr<BlimpMessage> input_msg_;
+  std::unique_ptr<BlimpMessage> compositor_msg_;
   MockBlimpMessageProcessor receiver1_;
   MockBlimpMessageProcessor receiver2_;
   net::CompletionCallback captured_cb_;
@@ -60,5 +61,11 @@ TEST_F(BlimpMessageDemultiplexerTest, ProcessMessageFailed) {
   EXPECT_EQ(net::ERR_FAILED, cb2.WaitForResult());
 }
 
+TEST_F(BlimpMessageDemultiplexerTest, ProcessMessageNoRegisteredHandler) {
+  net::TestCompletionCallback cb;
+  std::unique_ptr<BlimpMessage> unknown_message(new BlimpMessage);
+  demux_.ProcessMessage(std::move(unknown_message), cb.callback());
+  EXPECT_EQ(net::ERR_NOT_IMPLEMENTED, cb.WaitForResult());
+}
 
 }  // namespace blimp

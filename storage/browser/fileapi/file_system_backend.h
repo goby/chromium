@@ -5,14 +5,16 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_BACKEND_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_BACKEND_H_
 
+#include <stdint.h>
+
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "storage/browser/fileapi/file_permission_policy.h"
 #include "storage/browser/fileapi/open_file_system_mode.h"
 #include "storage/browser/fileapi/task_runner_bound_observer_list.h"
@@ -29,7 +31,6 @@ class FileSystemURL;
 class FileStreamReader;
 class FileStreamWriter;
 class FileSystemContext;
-class FileSystemFileUtil;
 class FileSystemOperation;
 class FileSystemQuotaUtil;
 class WatcherManager;
@@ -40,7 +41,7 @@ typedef base::Callback<void(const GURL& url)> URLCallback;
 // Maximum numer of bytes to be read by FileStreamReader classes. Used in
 // FileSystemBackend::CreateFileStreamReader(), when it's not known how many
 // bytes will be fetched in total.
-const int64 kMaximumLength = INT64_MAX;
+const int64_t kMaximumLength = INT64_MAX;
 
 // An interface for defining a file system backend.
 //
@@ -117,10 +118,10 @@ class STORAGE_EXPORT FileSystemBackend {
   // This method itself does *not* check if the given path exists and is a
   // regular file. At most |max_bytes_to_read| can be fetched from the file
   // stream reader.
-  virtual scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  virtual std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       FileSystemContext* context) const = 0;
 
@@ -128,9 +129,9 @@ class STORAGE_EXPORT FileSystemBackend {
   // offset |offset|.
   // This method itself does *not* check if the given path exists and is a
   // regular file.
-  virtual scoped_ptr<FileStreamWriter> CreateFileStreamWriter(
+  virtual std::unique_ptr<FileStreamWriter> CreateFileStreamWriter(
       const FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       FileSystemContext* context) const = 0;
 
   // Returns the specialized FileSystemQuotaUtil for this backend.

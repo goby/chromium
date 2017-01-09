@@ -6,31 +6,18 @@
 // session using WebMediaStreamTrack as sources.
 namespace displaySource {
   enum ErrorType {
-    // Cannot create media pipeline from the given media stream which could be
-    // appropriate for a Display session (e.g., necessary codecs are missing
-    // on the platform).
-    create_media_pipeline_error,
+    // The connection with sink cannot be established or has dropped
+    // unexpectedly.
+    connection_error,
 
-    // A new Display session cannot be started before the existing one is
-    // terminated.
-    exceeded_session_limit_error,
-
-    // Could not establish connection to the sink.
-    establish_connection_error,
-
-    // The capabilities of this Display Source and the connected  
+    // The capabilities of this Display Source and the connected
     // sink do not fit (e.g. the sink cannot play the media content of
     // the formats given by the source).
     capabilities_negotiation_error,
 
-    // There was an error while packetizing and sending the media content.
-    media_send_error,
-
-    // The TCP connection with sink has dropped unexpectedly.
-    connection_error,
-
-    // An unexpected message has arrived from the sink.
-    unexpected_message_error,
+    // There was an error in media pipeline: while encoding, packetizing or
+    // sending the media content.
+    media_pipeline_error,
 
     // The sink became unresponsive.
     timeout_error,
@@ -89,8 +76,13 @@ namespace displaySource {
 
   callback GetSinksCallback = void (SinkInfo[] result);
   callback RequestAuthenticationCallback = void (AuthenticationInfo result);
-  callback TerminateSessionCallback = void ();
- 
+
+  // The callback is used by <code>startSession, terminateSession</code>
+  // to signal completion. The callback is called with
+  // <code>chrome.runtime.lastError</code> set to error
+  // message if the call has failed.
+  [inline_doc] callback CallCompleteCallback = void ();
+
   interface Functions {
     // Queries the list of the currently available Display sinks.
     //
@@ -123,13 +115,15 @@ namespace displaySource {
     // are required by the sink; otherwise its |data| field must contain the
     // required authentication data (e.g. PIN value) and its |method| field must
     // be the same as one obtained from ‘requestAuthentication’.
-    [nocompile] static void startSession(StartSessionInfo sessionInfo);
+    // |callback| : Called when the session is started.
+    [nocompile] static void startSession(
+        StartSessionInfo sessionInfo, optional CallCompleteCallback callback);
 
     // Terminates the active Display session.
     // |sinkId| : Id of the connected sink.
     // |callback| : Called when the session is terminated.
     [nocompile] static void terminateSession(
-        long sinkId, optional TerminateSessionCallback callback);
+        long sinkId, optional CallCompleteCallback callback);
   };
 
   interface Events {
@@ -137,9 +131,6 @@ namespace displaySource {
     // or properties)
     // |sinks| the list of all currently available sinks
     static void onSinksUpdated(SinkInfo[] sinks);
-    // Event fired when the Display session is started.
-    // |sinkId| Id of the peer sink
-    [nocompile] static void onSessionStarted(long sinkId);
     // Event fired when the Display session is terminated.
     // |sinkId| Id of the peer sink
     [nocompile] static void onSessionTerminated(long sinkId);

@@ -5,8 +5,11 @@
 #ifndef CC_RESOURCES_RESOURCE_UTIL_H_
 #define CC_RESOURCES_RESOURCE_UTIL_H_
 
+#include <stddef.h>
+
 #include <limits>
 
+#include "base/macros.h"
 #include "base/numerics/safe_math.h"
 #include "cc/base/cc_export.h"
 #include "cc/base/math_util.h"
@@ -52,18 +55,6 @@ class CC_EXPORT ResourceUtil {
                                        ResourceFormat format);
 
  private:
-  // TODO(prashant.n): Replace IsSameType with std::is_same once C++11 is used
-  // on all platforms.
-  template <typename T, typename U>
-  struct IsSameType {
-    static const bool value = false;
-  };
-
-  template <typename T>
-  struct IsSameType<T, T> {
-    static const bool value = true;
-  };
-
   template <typename T>
   static inline void VerifyType();
 
@@ -158,7 +149,7 @@ T ResourceUtil::UncheckedSizeInBytesAligned(const gfx::Size& size,
 template <typename T>
 void ResourceUtil::VerifyType() {
   static_assert(
-      std::numeric_limits<T>::is_integer && !IsSameType<T, bool>::value,
+      std::numeric_limits<T>::is_integer && !std::is_same<T, bool>::value,
       "T must be non-bool integer type. Preferred type is size_t.");
 }
 

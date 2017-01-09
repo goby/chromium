@@ -5,9 +5,13 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_WRITER_DELEGATE_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_WRITER_DELEGATE_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "net/base/file_stream.h"
@@ -30,15 +34,15 @@ class STORAGE_EXPORT FileWriterDelegate : public net::URLRequest::Delegate {
   };
 
   typedef base::Callback<void(base::File::Error result,
-                              int64 bytes,
+                              int64_t bytes,
                               WriteProgressStatus write_status)>
       DelegateWriteCallback;
 
-  FileWriterDelegate(scoped_ptr<FileStreamWriter> file_writer,
+  FileWriterDelegate(std::unique_ptr<FileStreamWriter> file_writer,
                      FlushPolicy flush_policy);
   ~FileWriterDelegate() override;
 
-  void Start(scoped_ptr<net::URLRequest> request,
+  void Start(std::unique_ptr<net::URLRequest> request,
              const DelegateWriteCallback& write_callback);
 
   // Cancels the current write operation.  This will synchronously or
@@ -57,14 +61,13 @@ class STORAGE_EXPORT FileWriterDelegate : public net::URLRequest::Delegate {
   void OnSSLCertificateError(net::URLRequest* request,
                              const net::SSLInfo& ssl_info,
                              bool fatal) override;
-  void OnResponseStarted(net::URLRequest* request) override;
+  void OnResponseStarted(net::URLRequest* request, int net_error) override;
   void OnReadCompleted(net::URLRequest* request, int bytes_read) override;
 
  private:
-  void OnGetFileInfoAndStartRequest(
-      scoped_ptr<net::URLRequest> request,
-      base::File::Error error,
-      const base::File::Info& file_info);
+  void OnGetFileInfoAndStartRequest(std::unique_ptr<net::URLRequest> request,
+                                    base::File::Error error,
+                                    const base::File::Info& file_info);
   void Read();
   void OnDataReceived(int bytes_read);
   void Write();
@@ -83,7 +86,7 @@ class STORAGE_EXPORT FileWriterDelegate : public net::URLRequest::Delegate {
   WriteProgressStatus GetCompletionStatusOnError() const;
 
   DelegateWriteCallback write_callback_;
-  scoped_ptr<FileStreamWriter> file_stream_writer_;
+  std::unique_ptr<FileStreamWriter> file_stream_writer_;
   base::Time last_progress_event_time_;
   bool writing_started_;
   FlushPolicy flush_policy_;
@@ -92,7 +95,7 @@ class STORAGE_EXPORT FileWriterDelegate : public net::URLRequest::Delegate {
   int bytes_read_;
   scoped_refptr<net::IOBufferWithSize> io_buffer_;
   scoped_refptr<net::DrainableIOBuffer> cursor_;
-  scoped_ptr<net::URLRequest> request_;
+  std::unique_ptr<net::URLRequest> request_;
 
   base::WeakPtrFactory<FileWriterDelegate> weak_factory_;
 

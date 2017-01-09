@@ -5,13 +5,17 @@
 #ifndef CHROMEOS_DBUS_UPDATE_ENGINE_CLIENT_H_
 #define CHROMEOS_DBUS_UPDATE_ENGINE_CLIENT_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chromeos/chromeos_export.h"
 #include "chromeos/dbus/dbus_client.h"
 #include "chromeos/dbus/dbus_client_implementation_type.h"
+#include "third_party/cros_system_api/dbus/update_engine/dbus-constants.h"
 
 namespace chromeos {
 
@@ -129,6 +133,14 @@ class CHROMEOS_EXPORT UpdateEngineClient : public DBusClient {
   // change). On error, calls |callback| with an empty string.
   virtual void GetChannel(bool get_current_channel,
                           const GetChannelCallback& callback) = 0;
+
+  // Called once GetEolStatus() is complete. Takes one parameter;
+  // - EndOfLife Status: the end of life status of the device.
+  typedef base::Callback<void(update_engine::EndOfLifeStatus status)>
+      GetEolStatusCallback;
+
+  // Get EndOfLife status of the device and calls |callback| when completed.
+  virtual void GetEolStatus(const GetEolStatusCallback& callback) = 0;
 
   // Returns an empty UpdateCheckCallback that does nothing.
   static UpdateCheckCallback EmptyUpdateCheckCallback();

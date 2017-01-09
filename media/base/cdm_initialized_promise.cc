@@ -19,8 +19,8 @@ void CdmInitializedPromise::resolve() {
   cdm_created_cb_.Run(cdm_, "");
 }
 
-void CdmInitializedPromise::reject(MediaKeys::Exception exception_code,
-                                   uint32 system_code,
+void CdmInitializedPromise::reject(CdmPromise::Exception exception_code,
+                                   uint32_t system_code,
                                    const std::string& error_message) {
   MarkPromiseSettled();
   cdm_created_cb_.Run(nullptr, error_message);

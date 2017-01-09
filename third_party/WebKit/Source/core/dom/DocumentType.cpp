@@ -20,7 +20,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/dom/DocumentType.h"
 
 #include "core/dom/Document.h"
@@ -28,50 +27,42 @@
 
 namespace blink {
 
-DocumentType::DocumentType(Document* document, const String& name, const String& publicId, const String& systemId)
-    : Node(document, CreateOther)
-    , m_name(name)
-    , m_publicId(publicId)
-    , m_systemId(systemId)
-{
+DocumentType::DocumentType(Document* document,
+                           const String& name,
+                           const String& publicId,
+                           const String& systemId)
+    : Node(document, CreateOther),
+      m_name(name),
+      m_publicId(publicId),
+      m_systemId(systemId) {}
+
+String DocumentType::nodeName() const {
+  return name();
 }
 
-KURL DocumentType::baseURI() const
-{
-    return KURL();
+Node::NodeType DocumentType::getNodeType() const {
+  return kDocumentTypeNode;
 }
 
-String DocumentType::nodeName() const
-{
-    return name();
+Node* DocumentType::cloneNode(bool /*deep*/) {
+  return create(&document(), m_name, m_publicId, m_systemId);
 }
 
-Node::NodeType DocumentType::nodeType() const
-{
-    return DOCUMENT_TYPE_NODE;
+Node::InsertionNotificationRequest DocumentType::insertedInto(
+    ContainerNode* insertionPoint) {
+  Node::insertedInto(insertionPoint);
+
+  // DocumentType can only be inserted into a Document.
+  DCHECK(parentNode()->isDocumentNode());
+
+  document().setDoctype(this);
+
+  return InsertionDone;
 }
 
-PassRefPtrWillBeRawPtr<Node> DocumentType::cloneNode(bool /*deep*/)
-{
-    return create(&document(), m_name, m_publicId, m_systemId);
+void DocumentType::removedFrom(ContainerNode* insertionPoint) {
+  document().setDoctype(nullptr);
+  Node::removedFrom(insertionPoint);
 }
 
-Node::InsertionNotificationRequest DocumentType::insertedInto(ContainerNode* insertionPoint)
-{
-    Node::insertedInto(insertionPoint);
-
-    // DocumentType can only be inserted into a Document.
-    ASSERT(parentNode()->isDocumentNode());
-
-    document().setDoctype(this);
-
-    return InsertionDone;
-}
-
-void DocumentType::removedFrom(ContainerNode* insertionPoint)
-{
-    document().setDoctype(nullptr);
-    Node::removedFrom(insertionPoint);
-}
-
-}
+}  // namespace blink

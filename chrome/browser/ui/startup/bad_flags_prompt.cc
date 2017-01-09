@@ -7,6 +7,7 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/simple_message_box.h"
@@ -17,6 +18,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/autofill/core/common/autofill_switches.h"
+#include "components/infobars/core/infobar_delegate.h"
 #include "components/infobars/core/simple_alert_infobar_delegate.h"
 #include "components/invalidation/impl/invalidation_switches.h"
 #include "components/nacl/common/nacl_switches.h"
@@ -25,6 +27,7 @@
 #include "content/public/common/content_switches.h"
 #include "extensions/common/switches.h"
 #include "google_apis/gaia/gaia_switches.h"
+#include "media/media_features.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/vector_icons_public.h"
@@ -52,11 +55,10 @@ void ShowBadFlagsPrompt(Browser* browser) {
     switches::kSingleProcess,
 
     // These flags disable or undermine the Same Origin Policy.
-    switches::kTrustedSpdyProxy,
     translate::switches::kTranslateSecurityOrigin,
 
     // These flags undermine HTTPS / connection security.
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
     switches::kDisableWebRtcEncryption,
 #endif
     switches::kIgnoreCertificateErrors,
@@ -64,7 +66,6 @@ void ShowBadFlagsPrompt(Browser* browser) {
     invalidation::switches::kSyncAllowInsecureXmppConnection,
 
     // These flags change the URLs that handle PII.
-    autofill::switches::kWalletSecureServiceUrl,
     switches::kGaiaUrl,
     translate::switches::kTranslateScriptURL,
 
@@ -86,18 +87,11 @@ void ShowBadFlagsPrompt(Browser* browser) {
     // if they are not.
     switches::kUnsafelyTreatInsecureOriginAsSecure,
 
-    // This flag enables Web Bluetooth. Since the UI for Web Bluetooth is
-    // not yet implemented, websites could take control over paired devices
-    // without the users knowledge, so we need to show a warning for when
-    // the flag is enabled.
-    switches::kEnableWebBluetooth,
-
-    // This flag bypasses the permission UI for WebUSB as it not yet
-    // implemented. The risk is minimal because a device still needs to
-    // whitelist the requesting origin, but since this means the site can take
-    // action without the user's knowledge we need to show a warning when the
-    // flag is enabled.
-    switches::kEnableWebUsbOnAnyOrigin,
+    // This flag disables WebUSB's CORS-like checks for origin to device
+    // communication, allowing any origin to ask the user for permission to
+    // connect to a device. It is intended for manufacturers testing their
+    // existing devices until https://crbug.com/598766 is implemented.
+    switches::kDisableWebUsbSecurity,
 
     NULL
   };
@@ -106,6 +100,7 @@ void ShowBadFlagsPrompt(Browser* browser) {
     if (base::CommandLine::ForCurrentProcess()->HasSwitch(*flag)) {
       SimpleAlertInfoBarDelegate::Create(
           InfoBarService::FromWebContents(web_contents),
+          infobars::InfoBarDelegate::BAD_FLAGS_PROMPT,
           infobars::InfoBarDelegate::kNoIconID,
           gfx::VectorIconId::VECTOR_ICON_NONE,
           l10n_util::GetStringFUTF16(
@@ -133,7 +128,7 @@ void MaybeShowInvalidUserDataDirWarningDialog() {
     if (locale.empty())
       locale = kUserDataDirDialogFallbackLocale;
     ui::ResourceBundle::InitSharedInstanceWithLocale(
-        locale, NULL, ui::ResourceBundle::LOAD_COMMON_RESOURCES);
+        locale, NULL, ui::ResourceBundle::DO_NOT_LOAD_COMMON_RESOURCES);
   }
 
   const base::string16& title =
@@ -146,7 +141,7 @@ void MaybeShowInvalidUserDataDirWarningDialog() {
     ResourceBundle::CleanupSharedInstance();
 
   // More complex dialogs cannot be shown before the earliest calls here.
-  ShowMessageBox(NULL, title, message, chrome::MESSAGE_BOX_TYPE_WARNING);
+  ShowWarningMessageBox(NULL, title, message);
 }
 
 }  // namespace chrome

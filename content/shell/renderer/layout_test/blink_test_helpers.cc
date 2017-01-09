@@ -8,10 +8,11 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/test_runner/test_preferences.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/web_preferences.h"
-#include "content/shell/common/shell_switches.h"
+#include "content/shell/common/layout_test/layout_test_switches.h"
 
 namespace content {
 
@@ -20,7 +21,6 @@ void ExportLayoutTestSpecificPreferences(
     WebPreferences* to) {
   to->allow_universal_access_from_file_urls =
       from.allow_universal_access_from_file_urls;
-  to->dom_paste_enabled = from.dom_paste_allowed;
   to->javascript_can_access_clipboard = from.java_script_can_access_clipboard;
   to->xss_auditor_enabled = from.xss_auditor_enabled;
   to->editing_behavior = static_cast<EditingBehavior>(from.editing_behavior);
@@ -31,14 +31,10 @@ void ExportLayoutTestSpecificPreferences(
   to->supports_multiple_windows = from.supports_multiple_windows;
   to->loads_images_automatically = from.loads_images_automatically;
   to->plugins_enabled = from.plugins_enabled;
-  to->application_cache_enabled = from.offline_web_application_cache_enabled;
   to->tabs_to_links = from.tabs_to_links;
   to->experimental_webgl_enabled = from.experimental_webgl_enabled;
   // experimentalCSSRegionsEnabled is deprecated and ignored.
   to->hyperlink_auditing_enabled = from.hyperlink_auditing_enabled;
-  to->caret_browsing_enabled = from.caret_browsing_enabled;
-  to->allow_displaying_insecure_content =
-      from.allow_display_of_insecure_content;
   to->allow_running_insecure_content = from.allow_running_of_insecure_content;
   to->should_respect_image_orientation = from.should_respect_image_orientation;
   to->allow_file_access_from_file_urls = from.allow_file_access_from_file_urls;
@@ -51,6 +47,7 @@ void ExportLayoutTestSpecificPreferences(
       from.strict_mixed_content_checking;
   to->strict_powerful_feature_restrictions =
       from.strict_powerful_feature_restrictions;
+  to->spatial_navigation_enabled = from.spatial_navigation_enabled;
 }
 
 // Applies settings that differ between layout tests and regular mode. Some
@@ -72,7 +69,6 @@ void ApplyLayoutTestDefaultPreferences(WebPreferences* prefs) {
   prefs->application_cache_enabled = true;
   prefs->tabs_to_links = false;
   prefs->hyperlink_auditing_enabled = false;
-  prefs->allow_displaying_insecure_content = true;
   prefs->allow_running_insecure_content = false;
   prefs->disable_reading_from_canvas = false;
   prefs->strict_mixed_content_checking = false;

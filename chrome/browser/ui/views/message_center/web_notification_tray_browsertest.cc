@@ -4,11 +4,14 @@
 
 #include "chrome/browser/ui/views/message_center/web_notification_tray.h"
 
+#include <stddef.h>
+
 #include <set>
 
+#include "ash/common/system/status_area_widget.h"
+#include "ash/common/system/tray/system_tray_item.h"
 #include "ash/root_window_controller.h"
-#include "ash/system/status_area_widget.h"
-#include "ash/system/tray/system_tray_item.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -145,7 +148,7 @@ IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, WebNotifications) {
 }
 
 IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, WebNotificationPopupBubble) {
-  scoped_ptr<WebNotificationTray> tray(new WebNotificationTray());
+  std::unique_ptr<WebNotificationTray> tray(new WebNotificationTray());
   tray->message_center();
 
   // Adding a notification should show the popup bubble.
@@ -169,7 +172,7 @@ IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, WebNotificationPopupBubble) {
 using message_center::NotificationList;
 
 IN_PROC_BROWSER_TEST_F(WebNotificationTrayTest, ManyPopupNotifications) {
-  scoped_ptr<WebNotificationTray> tray(new WebNotificationTray());
+  std::unique_ptr<WebNotificationTray> tray(new WebNotificationTray());
   message_center::MessageCenter* message_center = tray->message_center();
 
   // Add the max visible popup notifications +1, ensure the correct num visible.

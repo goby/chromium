@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_HEARTBEAT_SCHEDULER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_HEARTBEAT_SCHEDULER_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/cancelable_callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -29,7 +30,6 @@ class GCMDriver;
 
 namespace policy {
 
-class EnterpriseInstallAttributes;
 class HeartbeatRegistrationHelper;
 
 // Class responsible for periodically sending heartbeats to the policy service
@@ -38,7 +38,7 @@ class HeartbeatScheduler : public gcm::GCMAppHandler,
                            gcm::GCMConnectionObserver {
  public:
   // Default interval for how often we send up a heartbeat.
-  static const int64 kDefaultHeartbeatIntervalMs;
+  static const int64_t kDefaultHeartbeatIntervalMs;
 
   // Constructor. |cloud_policy_client| will be used to send registered GCM id
   // to DM server, and can be null. |driver| can be null for tests.
@@ -57,6 +57,7 @@ class HeartbeatScheduler : public gcm::GCMAppHandler,
 
   // GCMAppHandler overrides.
   void ShutdownHandler() override;
+  void OnStoreReset() override;
   void OnMessage(const std::string& app_id,
                  const gcm::IncomingMessage& message) override;
   void OnMessagesDeleted(const std::string& app_id) override;
@@ -123,9 +124,9 @@ class HeartbeatScheduler : public gcm::GCMAppHandler,
   base::TimeDelta heartbeat_interval_;
 
   // Observers to changes in the heartbeat settings.
-  scoped_ptr<chromeos::CrosSettings::ObserverSubscription>
+  std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       heartbeat_frequency_observer_;
-  scoped_ptr<chromeos::CrosSettings::ObserverSubscription>
+  std::unique_ptr<chromeos::CrosSettings::ObserverSubscription>
       heartbeat_enabled_observer_;
 
   // The time the last heartbeat was sent.
@@ -148,7 +149,7 @@ class HeartbeatScheduler : public gcm::GCMAppHandler,
 
   // Helper class to manage registering with the GCM server, including
   // retries, etc.
-  scoped_ptr<HeartbeatRegistrationHelper> registration_helper_;
+  std::unique_ptr<HeartbeatRegistrationHelper> registration_helper_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate the weak pointers before any other members are destroyed.

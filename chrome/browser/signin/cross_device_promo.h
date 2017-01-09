@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_SIGNIN_CROSS_DEVICE_PROMO_H_
 #define CHROME_BROWSER_SIGNIN_CROSS_DEVICE_PROMO_H_
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "components/keyed_service/core/keyed_service.h"
@@ -91,6 +92,7 @@ class CrossDevicePromo : public KeyedService,
   // Profile is considered single-user.
   void OnGaiaAccountsInCookieUpdated(
       const std::vector<gaia::ListedAccount>& accounts,
+      const std::vector<gaia::ListedAccount>& signed_out_accounts,
       const GoogleServiceAuthError& error) override;
 
   // DeviceActivityFetcher::Observer:
@@ -194,7 +196,7 @@ class CrossDevicePromo : public KeyedService,
   PrefService* prefs_;
   SigninClient* signin_client_;
 
-  scoped_ptr<DeviceActivityFetcher> device_activity_fetcher_;
+  std::unique_ptr<DeviceActivityFetcher> device_activity_fetcher_;
   base::ObserverList<CrossDevicePromo::Observer> observer_list_;
 
   // Initialized from the |kParamMinutesMaxContextSwitchDuration| field trial

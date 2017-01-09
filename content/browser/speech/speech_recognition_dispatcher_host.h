@@ -5,7 +5,9 @@
 #ifndef CONTENT_BROWSER_SPEECH_SPEECH_RECOGNITION_DISPATCHER_HOST_H_
 #define CONTENT_BROWSER_SPEECH_SPEECH_RECOGNITION_DISPATCHER_HOST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_message_filter.h"
@@ -17,7 +19,6 @@ struct SpeechRecognitionHostMsg_StartRequest_Params;
 namespace content {
 
 class SpeechRecognitionManager;
-struct SpeechRecognitionResult;
 
 // SpeechRecognitionDispatcherHost is a delegate for Speech API messages used by
 // RenderMessageFilter. Basically it acts as a proxy, relaying the events coming

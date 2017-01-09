@@ -5,7 +5,9 @@
 #ifndef PDF_PDFIUM_PDFIUM_API_STRING_BUFFER_ADAPTER_H_
 #define PDF_PDFIUM_PDFIUM_API_STRING_BUFFER_ADAPTER_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/numerics/safe_math.h"
 
 namespace chrome_pdf {
@@ -40,8 +42,7 @@ class PDFiumAPIStringBufferAdapter {
 
   template <typename IntType>
   void Close(IntType actual_size) {
-    base::CheckedNumeric<size_t> unsigned_size = actual_size;
-    Close(unsigned_size.ValueOrDie());
+    Close(base::checked_cast<size_t>(actual_size));
   }
 
  private:
@@ -86,8 +87,7 @@ class PDFiumAPIStringBufferSizeInBytesAdapter {
 
   template <typename IntType>
   void Close(IntType actual_size) {
-    base::CheckedNumeric<size_t> unsigned_size = actual_size;
-    Close(unsigned_size.ValueOrDie());
+    Close(base::checked_cast<size_t>(actual_size));
   }
 
  private:

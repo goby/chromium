@@ -4,9 +4,12 @@
 
 #include "components/proximity_auth/remote_device_loader.h"
 
+#include <algorithm>
+#include <utility>
+
 #include "base/base64url.h"
 #include "base/bind.h"
-#include "components/proximity_auth/cryptauth/secure_message_delegate.h"
+#include "components/cryptauth/secure_message_delegate.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "components/proximity_auth/proximity_auth_pref_manager.h"
 
@@ -16,12 +19,12 @@ RemoteDeviceLoader::RemoteDeviceLoader(
     const std::vector<cryptauth::ExternalDeviceInfo>& unlock_keys,
     const std::string& user_id,
     const std::string& user_private_key,
-    scoped_ptr<SecureMessageDelegate> secure_message_delegate,
+    std::unique_ptr<cryptauth::SecureMessageDelegate> secure_message_delegate,
     ProximityAuthPrefManager* pref_manager)
     : remaining_unlock_keys_(unlock_keys),
       user_id_(user_id),
       user_private_key_(user_private_key),
-      secure_message_delegate_(secure_message_delegate.Pass()),
+      secure_message_delegate_(std::move(secure_message_delegate)),
       pref_manager_(pref_manager),
       weak_ptr_factory_(this) {}
 
@@ -66,9 +69,10 @@ void RemoteDeviceLoader::OnPSKDerived(
 
   // TODO(tengs): We assume that devices without a |bluetooth_address| field are
   // BLE devices. Ideally, we should have a separate field for this information.
-  RemoteDevice::BluetoothType bluetooth_type =
-      unlock_key.bluetooth_address().empty() ? RemoteDevice::BLUETOOTH_LE
-                                             : RemoteDevice::BLUETOOTH_CLASSIC;
+  cryptauth::RemoteDevice::BluetoothType bluetooth_type =
+      unlock_key.bluetooth_address().empty()
+          ? cryptauth::RemoteDevice::BLUETOOTH_LE
+          : cryptauth::RemoteDevice::BLUETOOTH_CLASSIC;
 
   std::string bluetooth_address = unlock_key.bluetooth_address();
   if (bluetooth_address.empty() && pref_manager_) {
@@ -81,11 +85,11 @@ void RemoteDeviceLoader::OnPSKDerived(
                  << " is " << bluetooth_address;
   }
 
-  remote_devices_.push_back(RemoteDevice(
+  remote_devices_.push_back(cryptauth::RemoteDevice(
       user_id_, unlock_key.friendly_device_name(), unlock_key.public_key(),
       bluetooth_type, bluetooth_address, psk, std::string()));
 
-  if (!remaining_unlock_keys_.size())
+  if (remaining_unlock_keys_.empty())
     callback_.Run(remote_devices_);
 }
 

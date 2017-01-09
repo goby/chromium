@@ -2,23 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/sys_info.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
 typedef PlatformTest SysInfoTest;
 using base::FilePath;
-
-#if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
-TEST_F(SysInfoTest, MaxSharedMemorySize) {
-  // We aren't actually testing that it's correct, just that it's sane.
-  EXPECT_GT(base::SysInfo::MaxSharedMemorySize(), 0u);
-}
-#endif
 
 TEST_F(SysInfoTest, NumProcs) {
   // We aren't actually testing that it's correct, just that it's sane.
@@ -37,15 +33,23 @@ TEST_F(SysInfoTest, AmountOfFreeDiskSpace) {
   // We aren't actually testing that it's correct, just that it's sane.
   FilePath tmp_path;
   ASSERT_TRUE(base::GetTempDir(&tmp_path));
-  EXPECT_GT(base::SysInfo::AmountOfFreeDiskSpace(tmp_path), 0)
+  EXPECT_GE(base::SysInfo::AmountOfFreeDiskSpace(tmp_path), 0)
+            << tmp_path.value();
+}
+
+TEST_F(SysInfoTest, AmountOfTotalDiskSpace) {
+  // We aren't actually testing that it's correct, just that it's sane.
+  FilePath tmp_path;
+  ASSERT_TRUE(base::GetTempDir(&tmp_path));
+  EXPECT_GT(base::SysInfo::AmountOfTotalDiskSpace(tmp_path), 0)
             << tmp_path.value();
 }
 
 #if defined(OS_WIN) || defined(OS_MACOSX)
 TEST_F(SysInfoTest, OperatingSystemVersionNumbers) {
-  int32 os_major_version = -1;
-  int32 os_minor_version = -1;
-  int32 os_bugfix_version = -1;
+  int32_t os_major_version = -1;
+  int32_t os_minor_version = -1;
+  int32_t os_bugfix_version = -1;
   base::SysInfo::OperatingSystemVersionNumbers(&os_major_version,
                                                &os_minor_version,
                                                &os_bugfix_version);
@@ -75,9 +79,9 @@ TEST_F(SysInfoTest, HardwareModelName) {
 #if defined(OS_CHROMEOS)
 
 TEST_F(SysInfoTest, GoogleChromeOSVersionNumbers) {
-  int32 os_major_version = -1;
-  int32 os_minor_version = -1;
-  int32 os_bugfix_version = -1;
+  int32_t os_major_version = -1;
+  int32_t os_minor_version = -1;
+  int32_t os_bugfix_version = -1;
   const char kLsbRelease[] =
       "FOO=1234123.34.5\n"
       "CHROMEOS_RELEASE_VERSION=1.2.3.4\n";
@@ -91,9 +95,9 @@ TEST_F(SysInfoTest, GoogleChromeOSVersionNumbers) {
 }
 
 TEST_F(SysInfoTest, GoogleChromeOSVersionNumbersFirst) {
-  int32 os_major_version = -1;
-  int32 os_minor_version = -1;
-  int32 os_bugfix_version = -1;
+  int32_t os_major_version = -1;
+  int32_t os_minor_version = -1;
+  int32_t os_bugfix_version = -1;
   const char kLsbRelease[] =
       "CHROMEOS_RELEASE_VERSION=1.2.3.4\n"
       "FOO=1234123.34.5\n";
@@ -107,9 +111,9 @@ TEST_F(SysInfoTest, GoogleChromeOSVersionNumbersFirst) {
 }
 
 TEST_F(SysInfoTest, GoogleChromeOSNoVersionNumbers) {
-  int32 os_major_version = -1;
-  int32 os_minor_version = -1;
-  int32 os_bugfix_version = -1;
+  int32_t os_major_version = -1;
+  int32_t os_minor_version = -1;
+  int32_t os_bugfix_version = -1;
   const char kLsbRelease[] = "FOO=1234123.34.5\n";
   base::SysInfo::SetChromeOSVersionInfoForTest(kLsbRelease, base::Time());
   base::SysInfo::OperatingSystemVersionNumbers(&os_major_version,
@@ -150,6 +154,16 @@ TEST_F(SysInfoTest, IsRunningOnChromeOS) {
       "CHROMEOS_RELEASE_NAME=Chromium OS\n";
   base::SysInfo::SetChromeOSVersionInfoForTest(kLsbRelease3, base::Time());
   EXPECT_TRUE(base::SysInfo::IsRunningOnChromeOS());
+}
+
+TEST_F(SysInfoTest, GetStrippedReleaseBoard) {
+  const char* kLsbRelease1 = "CHROMEOS_RELEASE_BOARD=Glimmer\n";
+  base::SysInfo::SetChromeOSVersionInfoForTest(kLsbRelease1, base::Time());
+  EXPECT_EQ("glimmer", base::SysInfo::GetStrippedReleaseBoard());
+
+  const char* kLsbRelease2 = "CHROMEOS_RELEASE_BOARD=glimmer-signed-mp-v4keys";
+  base::SysInfo::SetChromeOSVersionInfoForTest(kLsbRelease2, base::Time());
+  EXPECT_EQ("glimmer", base::SysInfo::GetStrippedReleaseBoard());
 }
 
 #endif  // OS_CHROMEOS

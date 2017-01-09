@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/app_list_view_delegate.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "apps/custom_launcher_page_contents.h"
@@ -11,13 +13,14 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/metrics/user_metrics.h"
-#include "base/prefs/pref_service.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/stl_util.h"
-#include "chrome/browser/apps/scoped_keep_alive.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/profiles/profile_info_cache.h"
+#include "chrome/browser/lifetime/scoped_keep_alive.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search/hotword_service.h"
 #include "chrome/browser/search/hotword_service_factory.h"
@@ -33,14 +36,14 @@
 #include "chrome/browser/ui/apps/chrome_app_delegate.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/chrome_pages.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/web_applications/web_app.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
-#include "components/search_engines/template_url_prepopulate_data.h"
+#include "chrome/grit/theme_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/browser/browser_thread.h"
@@ -57,18 +60,12 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_handlers/launcher_page_info.h"
-#include "grit/theme_resources.h"
 #include "ui/app_list/app_list_switches.h"
-#include "ui/app_list/app_list_view_delegate_observer.h"
 #include "ui/app_list/search_box_model.h"
 #include "ui/app_list/search_controller.h"
 #include "ui/app_list/speech_ui_model.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/views/controls/webview/webview.h"
-
-#if defined(TOOLKIT_VIEWS)
-#include "ui/views/controls/webview/webview.h"
-#endif
 
 #if defined(USE_AURA)
 #include "ui/keyboard/keyboard_util.h"
@@ -78,11 +75,6 @@
 #include "chrome/browser/ui/ash/app_list/app_sync_ui_state_watcher.h"
 #endif
 
-#if defined(OS_WIN)
-#include "chrome/browser/web_applications/web_app_win.h"
-#endif
-
-
 namespace chrome {
 const char kAppLauncherCategoryTag[] = "AppLauncher";
 }  // namespace chrome
@@ -91,29 +83,17 @@ namespace {
 
 const int kAutoLaunchDefaultTimeoutMilliSec = 50;
 
-#if defined(OS_WIN)
-void CreateShortcutInWebAppDir(
-    const base::FilePath& app_data_dir,
-    base::Callback<void(const base::FilePath&)> callback,
-    scoped_ptr<web_app::ShortcutInfo> info) {
-  content::BrowserThread::PostTaskAndReplyWithResult(
-      content::BrowserThread::FILE, FROM_HERE,
-      base::Bind(web_app::CreateShortcutInWebAppDir, app_data_dir,
-                 base::Passed(&info)),
-      callback);
-}
-#endif
-
-void PopulateUsers(const ProfileInfoCache& profile_info,
-                   const base::FilePath& active_profile_path,
+void PopulateUsers(const base::FilePath& active_profile_path,
                    app_list::AppListViewDelegate::Users* users) {
   users->clear();
-  const size_t count = profile_info.GetNumberOfProfiles();
-  for (size_t i = 0; i < count; ++i) {
+  std::vector<ProfileAttributesEntry*> entries = g_browser_process->
+      profile_manager()->GetProfileAttributesStorage().
+      GetAllProfilesAttributesSortedByName();
+  for (const auto* entry : entries) {
     app_list::AppListViewDelegate::User user;
-    user.name = profile_info.GetNameOfProfileAtIndex(i);
-    user.email = profile_info.GetUserNameOfProfileAtIndex(i);
-    user.profile_path = profile_info.GetPathOfProfileAtIndex(i);
+    user.name = entry->GetName();
+    user.email = entry->GetUserName();
+    user.profile_path = entry->GetPath();
     user.active = active_profile_path == user.profile_path;
     users->push_back(user);
   }
@@ -126,8 +106,7 @@ void GetCustomLauncherPageUrls(content::BrowserContext* browser_context,
                                std::vector<GURL>* urls) {
   // First, check the command line.
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  if (app_list::switches::IsExperimentalAppListEnabled() &&
-      command_line->HasSwitch(app_list::switches::kCustomLauncherPage)) {
+  if (command_line->HasSwitch(app_list::switches::kCustomLauncherPage)) {
     GURL custom_launcher_page_url(command_line->GetSwitchValueASCII(
         app_list::switches::kCustomLauncherPage));
 
@@ -196,7 +175,7 @@ AppListViewDelegate::AppListViewDelegate(AppListControllerDelegate* controller)
     }
   }
 
-  profile_manager->GetProfileInfoCache().AddObserver(this);
+  profile_manager->GetProfileAttributesStorage().AddObserver(this);
   speech_ui_.reset(new app_list::SpeechUIModel);
 
 #if defined(GOOGLE_CHROME_BUILD)
@@ -222,8 +201,8 @@ AppListViewDelegate::~AppListViewDelegate() {
   // by a leaky singleton. Essential shutdown work must be done by observing
   // chrome::NOTIFICATION_APP_TERMINATING.
   SetProfile(NULL);
-  g_browser_process->profile_manager()->GetProfileInfoCache().RemoveObserver(
-      this);
+  g_browser_process->profile_manager()->GetProfileAttributesStorage().
+      RemoveObserver(this);
 
   SigninManagerFactory* factory = SigninManagerFactory::GetInstance();
   if (factory)
@@ -251,6 +230,8 @@ void AppListViewDelegate::SetProfile(Profile* new_profile) {
     model_ = NULL;
   }
 
+  template_url_service_observer_.RemoveAll();
+
   profile_ = new_profile;
   if (!profile_) {
     speech_ui_->SetSpeechRecognitionState(app_list::SPEECH_RECOGNITION_OFF,
@@ -270,12 +251,9 @@ void AppListViewDelegate::SetProfile(Profile* new_profile) {
     tracked_objects::ScopedTracker tracking_profile(
         FROM_HERE_WITH_EXPLICIT_FUNCTION(
             "431326 AppListViewDelegate TemplateURL etc."));
-    template_url_service_observer_.RemoveAll();
-    if (app_list::switches::IsExperimentalAppListEnabled()) {
-      TemplateURLService* template_url_service =
-          TemplateURLServiceFactory::GetForProfile(profile_);
-      template_url_service_observer_.Add(template_url_service);
-    }
+    TemplateURLService* template_url_service =
+        TemplateURLServiceFactory::GetForProfile(profile_);
+    template_url_service_observer_.Add(template_url_service);
 
     model_ = app_list::AppListSyncableServiceFactory::GetForProfile(profile_)
                  ->GetModel();
@@ -320,19 +298,13 @@ void AppListViewDelegate::SetUpProfileSwitcher() {
   if (!profile_)
     return;
 
+#if defined(USE_ASH)
   // Don't populate the app list users if we are on the ash desktop.
-  chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
-      controller_->GetAppListWindow());
-  if (desktop == chrome::HOST_DESKTOP_TYPE_ASH)
-    return;
+  return;
+#endif  // USE_ASH
 
   // Populate the app list users.
-  PopulateUsers(g_browser_process->profile_manager()->GetProfileInfoCache(),
-                profile_->GetPath(),
-                &users_);
-
-  FOR_EACH_OBSERVER(
-      app_list::AppListViewDelegateObserver, observers_, OnProfilesChanged());
+  PopulateUsers(profile_->GetPath(), &users_);
 }
 
 void AppListViewDelegate::SetUpCustomLauncherPages() {
@@ -347,8 +319,8 @@ void AppListViewDelegate::SetUpCustomLauncherPages() {
     std::string extension_id = it->host();
     apps::CustomLauncherPageContents* page_contents =
         new apps::CustomLauncherPageContents(
-            scoped_ptr<extensions::AppDelegate>(
-                new ChromeAppDelegate(scoped_ptr<ScopedKeepAlive>())),
+            std::unique_ptr<extensions::AppDelegate>(
+                new ChromeAppDelegate(false)),
             extension_id);
     page_contents->Initialize(profile_, *it);
     custom_page_contents_.push_back(page_contents);
@@ -445,32 +417,6 @@ app_list::SpeechUIModel* AppListViewDelegate::GetSpeechUI() {
   return speech_ui_.get();
 }
 
-void AppListViewDelegate::GetShortcutPathForApp(
-    const std::string& app_id,
-    const base::Callback<void(const base::FilePath&)>& callback) {
-#if defined(OS_WIN)
-  const extensions::Extension* extension =
-      extensions::ExtensionRegistry::Get(profile_)->GetExtensionById(
-          app_id, extensions::ExtensionRegistry::EVERYTHING);
-  if (!extension) {
-    callback.Run(base::FilePath());
-    return;
-  }
-
-  base::FilePath app_data_dir(
-      web_app::GetWebAppDataDirectory(profile_->GetPath(),
-                                      extension->id(),
-                                      GURL()));
-
-  web_app::GetShortcutInfoForApp(
-      extension,
-      profile_,
-      base::Bind(CreateShortcutInWebAppDir, app_data_dir, callback));
-#else
-  callback.Run(base::FilePath());
-#endif
-}
-
 void AppListViewDelegate::StartSearch() {
   if (search_controller_) {
     search_controller_->Start(is_voice_query_);
@@ -565,38 +511,17 @@ void AppListViewDelegate::ViewClosing() {
   }
 }
 
-gfx::ImageSkia AppListViewDelegate::GetWindowIcon() {
-  return controller_->GetWindowIcon();
-}
-
-void AppListViewDelegate::OpenSettings() {
-  const extensions::Extension* extension =
-      extensions::ExtensionRegistry::Get(profile_)->GetExtensionById(
-          extension_misc::kSettingsAppId,
-          extensions::ExtensionRegistry::EVERYTHING);
-  DCHECK(extension);
-  controller_->ActivateApp(profile_,
-                           extension,
-                           AppListControllerDelegate::LAUNCH_FROM_UNKNOWN,
-                           0);
-}
-
 void AppListViewDelegate::OpenHelp() {
-  chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
-      controller_->GetAppListWindow());
-  chrome::ScopedTabbedBrowserDisplayer displayer(profile_, desktop);
+  chrome::ScopedTabbedBrowserDisplayer displayer(profile_);
   content::OpenURLParams params(GURL(chrome::kAppLauncherHelpURL),
                                 content::Referrer(),
-                                NEW_FOREGROUND_TAB,
-                                ui::PAGE_TRANSITION_LINK,
-                                false);
+                                WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                                ui::PAGE_TRANSITION_LINK, false);
   displayer.browser()->OpenURL(params);
 }
 
 void AppListViewDelegate::OpenFeedback() {
-  chrome::HostDesktopType desktop = chrome::GetHostDesktopTypeForNativeWindow(
-      controller_->GetAppListWindow());
-  Browser* browser = chrome::FindTabbedBrowser(profile_, false, desktop);
+  Browser* browser = chrome::FindTabbedBrowser(profile_, false);
   chrome::ShowFeedbackPage(browser, std::string(),
                            chrome::kAppLauncherCategoryTag);
 }
@@ -661,7 +586,7 @@ void AppListViewDelegate::OnSpeechResult(const base::string16& result,
   }
 }
 
-void AppListViewDelegate::OnSpeechSoundLevelChanged(int16 level) {
+void AppListViewDelegate::OnSpeechSoundLevelChanged(int16_t level) {
   speech_ui_->UpdateSoundLevel(level);
 }
 
@@ -761,46 +686,14 @@ AppListViewDelegate::GetUsers() const {
   return users_;
 }
 
-bool AppListViewDelegate::ShouldCenterWindow() const {
-  // Some ChromeOS devices (those that support TouchView mode) turn this flag on
-  // by default, which ensures that the app list is consistently centered on
-  // those devices. This avoids having the app list change shape and position as
-  // the user enters and exits TouchView mode.
-  if (app_list::switches::IsCenteredAppListEnabled())
-    return true;
-
-  // keyboard depends upon Aura.
-#if defined(USE_AURA)
-  // If the virtual keyboard is enabled, use the new app list position. The old
-  // position is too tall, and doesn't fit in the left-over screen space.
-  if (keyboard::IsKeyboardEnabled())
-    return true;
-#endif
-
-  return false;
-}
-
-void AppListViewDelegate::AddObserver(
-    app_list::AppListViewDelegateObserver* observer) {
-  observers_.AddObserver(observer);
-}
-
-void AppListViewDelegate::RemoveObserver(
-    app_list::AppListViewDelegateObserver* observer) {
-  observers_.RemoveObserver(observer);
-}
-
 void AppListViewDelegate::OnTemplateURLServiceChanged() {
-  if (!app_list::switches::IsExperimentalAppListEnabled())
-    return;
-
   TemplateURLService* template_url_service =
       TemplateURLServiceFactory::GetForProfile(profile_);
   const TemplateURL* default_provider =
       template_url_service->GetDefaultSearchProvider();
   bool is_google =
-      TemplateURLPrepopulateData::GetEngineType(
-          *default_provider, template_url_service->search_terms_data()) ==
+      default_provider->GetEngineType(
+          template_url_service->search_terms_data()) ==
       SEARCH_ENGINE_GOOGLE;
 
   model_->SetSearchEngineIsGoogle(is_google);
@@ -814,19 +707,12 @@ void AppListViewDelegate::OnTemplateURLServiceChanged() {
 void AppListViewDelegate::Observe(int type,
                                   const content::NotificationSource& source,
                                   const content::NotificationDetails& details) {
-  switch (type) {
-    case chrome::NOTIFICATION_APP_TERMINATING:
-      FOR_EACH_OBSERVER(
-          app_list::AppListViewDelegateObserver, observers_, OnShutdown());
+  DCHECK_EQ(chrome::NOTIFICATION_APP_TERMINATING, type);
 
-      SetProfile(NULL);  // Ensures launcher page web contents are torn down.
+  SetProfile(nullptr);  // Ensures launcher page web contents are torn down.
 
-      // SigninManagerFactory is not a leaky singleton (unlike this class), and
-      // its destructor will check that it has no remaining observers.
-      scoped_observer_.RemoveAll();
-      SigninManagerFactory::GetInstance()->RemoveObserver(this);
-      break;
-    default:
-      NOTREACHED();
-  }
+  // SigninManagerFactory is not a leaky singleton (unlike this class), and
+  // its destructor will check that it has no remaining observers.
+  scoped_observer_.RemoveAll();
+  SigninManagerFactory::GetInstance()->RemoveObserver(this);
 }

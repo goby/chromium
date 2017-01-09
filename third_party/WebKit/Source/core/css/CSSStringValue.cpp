@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/CSSStringValue.h"
 
 #include "core/css/CSSMarkup.h"
@@ -11,17 +10,14 @@
 namespace blink {
 
 CSSStringValue::CSSStringValue(const String& str)
-    : CSSValue(StringClass)
-    , m_string(str) { }
+    : CSSValue(StringClass), m_string(str) {}
 
-String CSSStringValue::customCSSText() const
-{
-    return serializeString(m_string);
+String CSSStringValue::customCSSText() const {
+  return serializeString(m_string);
 }
 
-DEFINE_TRACE_AFTER_DISPATCH(CSSStringValue)
-{
-    CSSValue::traceAfterDispatch(visitor);
+DEFINE_TRACE_AFTER_DISPATCH(CSSStringValue) {
+  CSSValue::traceAfterDispatch(visitor);
 }
 
-} // namespace blink
+}  // namespace blink

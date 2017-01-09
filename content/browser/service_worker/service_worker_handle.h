@@ -5,17 +5,14 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_HANDLE_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_HANDLE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/content_export.h"
 #include "content/common/service_worker/service_worker_types.h"
-
-namespace IPC {
-class Sender;
-}
 
 namespace content {
 
@@ -35,7 +32,7 @@ class CONTENT_EXPORT ServiceWorkerHandle
  public:
   // Creates a handle for a live version. This may return nullptr if any of
   // |context|, |provider_host| and |version| is nullptr.
-  static scoped_ptr<ServiceWorkerHandle> Create(
+  static std::unique_ptr<ServiceWorkerHandle> Create(
       base::WeakPtr<ServiceWorkerContextCore> context,
       base::WeakPtr<ServiceWorkerProviderHost> provider_host,
       ServiceWorkerVersion* version);
@@ -54,6 +51,7 @@ class CONTENT_EXPORT ServiceWorkerHandle
   int handle_id() const { return handle_id_; }
   ServiceWorkerVersion* version() { return version_.get(); }
 
+  int ref_count() const { return ref_count_; }
   bool HasNoRefCount() const { return ref_count_ <= 0; }
   void IncrementRefCount();
   void DecrementRefCount();

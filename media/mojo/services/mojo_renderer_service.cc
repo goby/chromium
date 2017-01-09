@@ -4,89 +4,110 @@
 
 #include "media/mojo/services/mojo_renderer_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/callback_helpers.h"
-#include "base/message_loop/message_loop.h"
-#include "media/base/audio_decoder.h"
-#include "media/base/audio_renderer.h"
+#include "base/optional.h"
 #include "media/base/audio_renderer_sink.h"
-#include "media/base/cdm_context.h"
-#include "media/base/decryptor.h"
-#include "media/base/media_log.h"
-#include "media/base/renderer_factory.h"
-#include "media/base/video_renderer.h"
+#include "media/base/media_keys.h"
+#include "media/base/media_url_demuxer.h"
+#include "media/base/renderer.h"
 #include "media/base/video_renderer_sink.h"
 #include "media/mojo/services/demuxer_stream_provider_shim.h"
-#include "media/mojo/services/mojo_media_client.h"
-#include "media/renderers/audio_renderer_impl.h"
-#include "media/renderers/renderer_impl.h"
-#include "media/renderers/video_renderer_impl.h"
+#include "media/mojo/services/mojo_cdm_service_context.h"
 
 namespace media {
+
+namespace {
+
+void CloseBindingOnBadMessage(mojo::StrongBindingPtr<mojom::Renderer> binding) {
+  LOG(ERROR) << __func__;
+  DCHECK(binding);
+  binding->Close();
+}
+
+}  // namespace
 
 // Time interval to update media time.
 const int kTimeUpdateIntervalMs = 50;
 
+// static
+mojo::StrongBindingPtr<mojom::Renderer> MojoRendererService::Create(
+    base::WeakPtr<MojoCdmServiceContext> mojo_cdm_service_context,
+    scoped_refptr<AudioRendererSink> audio_sink,
+    std::unique_ptr<VideoRendererSink> video_sink,
+    std::unique_ptr<media::Renderer> renderer,
+    InitiateSurfaceRequestCB initiate_surface_request_cb,
+    mojo::InterfaceRequest<mojom::Renderer> request) {
+  MojoRendererService* service = new MojoRendererService(
+      mojo_cdm_service_context, std::move(audio_sink), std::move(video_sink),
+      std::move(renderer), initiate_surface_request_cb);
+
+  mojo::StrongBindingPtr<mojom::Renderer> binding =
+      mojo::MakeStrongBinding<mojom::Renderer>(base::WrapUnique(service),
+                                               std::move(request));
+
+  service->set_bad_message_cb(base::Bind(&CloseBindingOnBadMessage, binding));
+
+  return binding;
+}
+
 MojoRendererService::MojoRendererService(
-    base::WeakPtr<CdmContextProvider> cdm_context_provider,
-    RendererFactory* renderer_factory,
-    const scoped_refptr<MediaLog>& media_log,
-    mojo::InterfaceRequest<interfaces::Renderer> request)
-    : binding_(this, request.Pass()),
-      cdm_context_provider_(cdm_context_provider),
+    base::WeakPtr<MojoCdmServiceContext> mojo_cdm_service_context,
+    scoped_refptr<AudioRendererSink> audio_sink,
+    std::unique_ptr<VideoRendererSink> video_sink,
+    std::unique_ptr<media::Renderer> renderer,
+    InitiateSurfaceRequestCB initiate_surface_request_cb)
+    : mojo_cdm_service_context_(mojo_cdm_service_context),
       state_(STATE_UNINITIALIZED),
-      last_media_time_usec_(0),
+      playback_rate_(0),
+      audio_sink_(std::move(audio_sink)),
+      video_sink_(std::move(video_sink)),
+      renderer_(std::move(renderer)),
+      initiate_surface_request_cb_(initiate_surface_request_cb),
       weak_factory_(this) {
+  DVLOG(1) << __func__;
+  DCHECK(renderer_);
+
   weak_this_ = weak_factory_.GetWeakPtr();
-  DVLOG(1) << __FUNCTION__;
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner(
-      base::MessageLoop::current()->task_runner());
-  MojoMediaClient* mojo_media_client = MojoMediaClient::Get();
-  audio_renderer_sink_ = mojo_media_client->CreateAudioRendererSink();
-  video_renderer_sink_ =
-      mojo_media_client->CreateVideoRendererSink(task_runner);
-
-  // Create renderer.
-  if (renderer_factory) {
-    renderer_ = renderer_factory->CreateRenderer(task_runner, task_runner,
-                                                 audio_renderer_sink_.get(),
-                                                 video_renderer_sink_.get());
-  } else {
-    DCHECK(mojo_media_client->GetAudioHardwareConfig());
-    scoped_ptr<AudioRenderer> audio_renderer(new AudioRendererImpl(
-        task_runner, audio_renderer_sink_.get(),
-        mojo_media_client->CreateAudioDecoders(task_runner, media_log).Pass(),
-        *mojo_media_client->GetAudioHardwareConfig(), media_log));
-    scoped_ptr<VideoRenderer> video_renderer(new VideoRendererImpl(
-        task_runner, task_runner, video_renderer_sink_.get(),
-        mojo_media_client->CreateVideoDecoders(task_runner, media_log).Pass(),
-        true, nullptr, media_log));
-    renderer_.reset(new RendererImpl(task_runner, audio_renderer.Pass(),
-                                     video_renderer.Pass()));
-  }
 }
 
-MojoRendererService::~MojoRendererService() {
-}
+MojoRendererService::~MojoRendererService() {}
 
 void MojoRendererService::Initialize(
-    interfaces::RendererClientPtr client,
-    interfaces::DemuxerStreamPtr audio,
-    interfaces::DemuxerStreamPtr video,
-    const mojo::Callback<void(bool)>& callback) {
-  DVLOG(1) << __FUNCTION__;
+    mojom::RendererClientAssociatedPtrInfo client,
+    mojom::DemuxerStreamPtr audio,
+    mojom::DemuxerStreamPtr video,
+    const base::Optional<GURL>& media_url,
+    const base::Optional<GURL>& first_party_for_cookies,
+    const InitializeCallback& callback) {
+  DVLOG(1) << __func__;
   DCHECK_EQ(state_, STATE_UNINITIALIZED);
-  client_ = client.Pass();
+
+  client_.Bind(std::move(client));
   state_ = STATE_INITIALIZING;
-  stream_provider_.reset(new DemuxerStreamProviderShim(
-      audio.Pass(),
-      video.Pass(),
-      base::Bind(&MojoRendererService::OnStreamReady, weak_this_, callback)));
+
+  if (media_url == base::nullopt) {
+    stream_provider_.reset(new DemuxerStreamProviderShim(
+        std::move(audio), std::move(video),
+        base::Bind(&MojoRendererService::OnStreamReady, weak_this_, callback)));
+    return;
+  }
+
+  DCHECK(!audio);
+  DCHECK(!video);
+  DCHECK(!media_url.value().is_empty());
+  DCHECK(first_party_for_cookies);
+  stream_provider_.reset(new MediaUrlDemuxer(nullptr, media_url.value(),
+                                             first_party_for_cookies.value()));
+  renderer_->Initialize(
+      stream_provider_.get(), this,
+      base::Bind(&MojoRendererService::OnRendererInitializeDone, weak_this_,
+                 callback));
 }
 
-void MojoRendererService::Flush(const mojo::Closure& callback) {
-  DVLOG(2) << __FUNCTION__;
+void MojoRendererService::Flush(const FlushCallback& callback) {
+  DVLOG(2) << __func__;
   DCHECK_EQ(state_, STATE_PLAYING);
 
   state_ = STATE_FLUSHING;
@@ -95,16 +116,16 @@ void MojoRendererService::Flush(const mojo::Closure& callback) {
       base::Bind(&MojoRendererService::OnFlushCompleted, weak_this_, callback));
 }
 
-void MojoRendererService::StartPlayingFrom(int64_t time_delta_usec) {
-  DVLOG(2) << __FUNCTION__ << ": " << time_delta_usec;
-  renderer_->StartPlayingFrom(
-      base::TimeDelta::FromMicroseconds(time_delta_usec));
+void MojoRendererService::StartPlayingFrom(base::TimeDelta time_delta) {
+  DVLOG(2) << __func__ << ": " << time_delta;
+  renderer_->StartPlayingFrom(time_delta);
   SchedulePeriodicMediaTimeUpdates();
 }
 
 void MojoRendererService::SetPlaybackRate(double playback_rate) {
-  DVLOG(2) << __FUNCTION__ << ": " << playback_rate;
-  DCHECK_EQ(state_, STATE_PLAYING);
+  DVLOG(2) << __func__ << ": " << playback_rate;
+  DCHECK(state_ == STATE_PLAYING || state_ == STATE_ERROR);
+  playback_rate_ = playback_rate;
   renderer_->SetPlaybackRate(playback_rate);
 }
 
@@ -113,43 +134,86 @@ void MojoRendererService::SetVolume(float volume) {
 }
 
 void MojoRendererService::SetCdm(int32_t cdm_id,
-                                 const mojo::Callback<void(bool)>& callback) {
-  if (!cdm_context_provider_) {
-    LOG(ERROR) << "CDM context provider not available.";
+                                 const SetCdmCallback& callback) {
+  if (!mojo_cdm_service_context_) {
+    DVLOG(1) << "CDM service context not available.";
     callback.Run(false);
     return;
   }
 
-  CdmContext* cdm_context = cdm_context_provider_->GetCdmContext(cdm_id);
+  scoped_refptr<MediaKeys> cdm = mojo_cdm_service_context_->GetCdm(cdm_id);
+  if (!cdm) {
+    DVLOG(1) << "CDM not found: " << cdm_id;
+    callback.Run(false);
+    return;
+  }
+
+  CdmContext* cdm_context = cdm->GetCdmContext();
   if (!cdm_context) {
-    LOG(ERROR) << "CDM context not found: " << cdm_id;
+    DVLOG(1) << "CDM context not available: " << cdm_id;
     callback.Run(false);
     return;
   }
 
   renderer_->SetCdm(cdm_context, base::Bind(&MojoRendererService::OnCdmAttached,
-                                            weak_this_, callback));
+                                            weak_this_, cdm, callback));
+}
+
+void MojoRendererService::OnError(PipelineStatus error) {
+  DVLOG(1) << __func__ << "(" << error << ")";
+  state_ = STATE_ERROR;
+  client_->OnError();
+}
+
+void MojoRendererService::OnEnded() {
+  DVLOG(1) << __func__;
+  CancelPeriodicMediaTimeUpdates();
+  client_->OnEnded();
+}
+
+void MojoRendererService::OnStatisticsUpdate(const PipelineStatistics& stats) {
+  DVLOG(3) << __func__;
+  client_->OnStatisticsUpdate(stats);
+}
+
+void MojoRendererService::OnBufferingStateChange(BufferingState state) {
+  DVLOG(2) << __func__ << "(" << state << ")";
+  client_->OnBufferingStateChange(state);
+}
+
+void MojoRendererService::OnWaitingForDecryptionKey() {
+  DVLOG(1) << __func__;
+  client_->OnWaitingForDecryptionKey();
+}
+
+void MojoRendererService::OnVideoNaturalSizeChange(const gfx::Size& size) {
+  DVLOG(2) << __func__ << "(" << size.ToString() << ")";
+  client_->OnVideoNaturalSizeChange(size);
+}
+
+void MojoRendererService::OnDurationChange(base::TimeDelta duration) {
+  client_->OnDurationChange(duration);
+}
+
+void MojoRendererService::OnVideoOpacityChange(bool opaque) {
+  DVLOG(2) << __func__ << "(" << opaque << ")";
+  client_->OnVideoOpacityChange(opaque);
 }
 
 void MojoRendererService::OnStreamReady(
-    const mojo::Callback<void(bool)>& callback) {
+    const base::Callback<void(bool)>& callback) {
   DCHECK_EQ(state_, STATE_INITIALIZING);
 
   renderer_->Initialize(
-      stream_provider_.get(),
-      base::Bind(
-          &MojoRendererService::OnRendererInitializeDone, weak_this_, callback),
-      base::Bind(&MojoRendererService::OnUpdateStatistics, weak_this_),
-      base::Bind(&MojoRendererService::OnBufferingStateChanged, weak_this_),
-      base::Bind(&MojoRendererService::OnRendererEnded, weak_this_),
-      base::Bind(&MojoRendererService::OnError, weak_this_),
-      base::Bind(base::DoNothing));
+      stream_provider_.get(), this,
+      base::Bind(&MojoRendererService::OnRendererInitializeDone, weak_this_,
+                 callback));
 }
 
 void MojoRendererService::OnRendererInitializeDone(
-    const mojo::Callback<void(bool)>& callback,
+    const base::Callback<void(bool)>& callback,
     PipelineStatus status) {
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
   DCHECK_EQ(state_, STATE_INITIALIZING);
 
   if (status != PIPELINE_OK) {
@@ -162,64 +226,70 @@ void MojoRendererService::OnRendererInitializeDone(
   callback.Run(true);
 }
 
-void MojoRendererService::OnUpdateStatistics(const PipelineStatistics& stats) {
-}
-
 void MojoRendererService::UpdateMediaTime(bool force) {
-  const uint64_t media_time = renderer_->GetMediaTime().InMicroseconds();
-  if (!force && media_time == last_media_time_usec_)
+  const base::TimeDelta media_time = renderer_->GetMediaTime();
+  if (!force && media_time == last_media_time_)
     return;
 
-  client_->OnTimeUpdate(media_time, media_time);
-  last_media_time_usec_ = media_time;
+  base::TimeDelta max_time = media_time;
+  // Allow some slop to account for delays in scheduling time update tasks.
+  if (time_update_timer_.IsRunning() && (playback_rate_ > 0))
+    max_time += base::TimeDelta::FromMilliseconds(2 * kTimeUpdateIntervalMs);
+
+  client_->OnTimeUpdate(media_time, max_time, base::TimeTicks::Now());
+  last_media_time_ = media_time;
 }
 
 void MojoRendererService::CancelPeriodicMediaTimeUpdates() {
-  DVLOG(2) << __FUNCTION__;
-  UpdateMediaTime(false);
+  DVLOG(2) << __func__;
+
   time_update_timer_.Stop();
+  UpdateMediaTime(false);
 }
 
 void MojoRendererService::SchedulePeriodicMediaTimeUpdates() {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
+
   UpdateMediaTime(true);
   time_update_timer_.Start(
-      FROM_HERE,
-      base::TimeDelta::FromMilliseconds(kTimeUpdateIntervalMs),
+      FROM_HERE, base::TimeDelta::FromMilliseconds(kTimeUpdateIntervalMs),
       base::Bind(&MojoRendererService::UpdateMediaTime, weak_this_, false));
 }
 
-void MojoRendererService::OnBufferingStateChanged(
-    BufferingState new_buffering_state) {
-  DVLOG(2) << __FUNCTION__ << "(" << new_buffering_state << ")";
-  client_->OnBufferingStateChange(
-      static_cast<interfaces::BufferingState>(new_buffering_state));
-}
-
-void MojoRendererService::OnRendererEnded() {
-  DVLOG(1) << __FUNCTION__;
-  CancelPeriodicMediaTimeUpdates();
-  client_->OnEnded();
-}
-
-void MojoRendererService::OnError(PipelineStatus error) {
-  DVLOG(1) << __FUNCTION__ << "(" << error << ")";
-  state_ = STATE_ERROR;
-  client_->OnError();
-}
-
-void MojoRendererService::OnFlushCompleted(const mojo::Closure& callback) {
-  DVLOG(1) << __FUNCTION__;
+void MojoRendererService::OnFlushCompleted(const FlushCallback& callback) {
+  DVLOG(1) << __func__;
   DCHECK_EQ(state_, STATE_FLUSHING);
   state_ = STATE_PLAYING;
   callback.Run();
 }
 
 void MojoRendererService::OnCdmAttached(
-    const mojo::Callback<void(bool)>& callback,
+    scoped_refptr<MediaKeys> cdm,
+    const base::Callback<void(bool)>& callback,
     bool success) {
-  DVLOG(1) << __FUNCTION__ << "(" << success << ")";
+  DVLOG(1) << __func__ << "(" << success << ")";
+
+  if (success)
+    cdm_ = cdm;
+
   callback.Run(success);
+}
+
+void MojoRendererService::InitiateScopedSurfaceRequest(
+    const InitiateScopedSurfaceRequestCallback& callback) {
+  if (initiate_surface_request_cb_.is_null()) {
+    // |renderer_| is likely not of type MediaPlayerRenderer.
+    // This is an unexpected call, and the connection should be closed.
+    mojo::ReportBadMessage("Unexpected call to InitiateScopedSurfaceRequest.");
+
+    // This may cause |this| to be destructed.
+    DCHECK(!bad_message_cb_.is_null());
+    bad_message_cb_.Run();
+
+    return;
+  }
+
+  callback.Run(initiate_surface_request_cb_.Run());
 }
 
 }  // namespace media

@@ -23,107 +23,142 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/graphics/DecodingImageGenerator.h"
 
-#include "SkData.h"
-#include "SkImageInfo.h"
 #include "platform/PlatformInstrumentation.h"
-#include "platform/RuntimeEnabledFeatures.h"
 #include "platform/SharedBuffer.h"
-#include "platform/TraceEvent.h"
 #include "platform/graphics/ImageFrameGenerator.h"
 #include "platform/image-decoders/ImageDecoder.h"
+#include "platform/image-decoders/SegmentReader.h"
+#include "platform/tracing/TraceEvent.h"
+#include "third_party/skia/include/core/SkData.h"
+#include <memory>
 
 namespace blink {
 
-DecodingImageGenerator::DecodingImageGenerator(PassRefPtr<ImageFrameGenerator> frameGenerator, const SkImageInfo& info, size_t index)
-    : SkImageGenerator(info)
-    , m_frameGenerator(frameGenerator)
-    , m_frameIndex(index)
-    , m_generationId(0)
-{
+DecodingImageGenerator::DecodingImageGenerator(
+    PassRefPtr<ImageFrameGenerator> frameGenerator,
+    const SkImageInfo& info,
+    PassRefPtr<SegmentReader> data,
+    bool allDataReceived,
+    size_t index,
+    uint32_t uniqueID)
+    : SkImageGenerator(info, uniqueID),
+      m_frameGenerator(frameGenerator),
+      m_data(data),
+      m_allDataReceived(allDataReceived),
+      m_frameIndex(index),
+      m_canYUVDecode(false) {}
+
+DecodingImageGenerator::~DecodingImageGenerator() {}
+
+SkData* DecodingImageGenerator::onRefEncodedData(GrContext* ctx) {
+  TRACE_EVENT0("blink", "DecodingImageGenerator::refEncodedData");
+
+  // The GPU only wants the data if it has all been received, since the GPU
+  // only wants a complete texture. getAsSkData() may require copying, so
+  // skip it and just return nullptr to avoid a slowdown. (See
+  // crbug.com/568016 for details about such a slowdown.)
+  // TODO (scroggo): Stop relying on the internal knowledge of how Skia uses
+  // this. skbug.com/5485
+  if (ctx && !m_allDataReceived)
+    return nullptr;
+
+  // Other clients are serializers, which want the data even if it requires
+  // copying, and even if the data is incomplete. (Otherwise they would
+  // potentially need to decode the partial image in order to re-encode it.)
+  return m_data->getAsSkData().release();
 }
 
-DecodingImageGenerator::~DecodingImageGenerator()
-{
+bool DecodingImageGenerator::onGetPixels(const SkImageInfo& info,
+                                         void* pixels,
+                                         size_t rowBytes,
+                                         SkPMColor table[],
+                                         int* tableCount) {
+  TRACE_EVENT1("blink", "DecodingImageGenerator::getPixels", "frame index",
+               static_cast<int>(m_frameIndex));
+
+  // Implementation doesn't support scaling yet, so make sure we're not given a
+  // different size.
+  if (info.width() != getInfo().width() || info.height() != getInfo().height())
+    return false;
+
+  if (info.colorType() != getInfo().colorType()) {
+    // blink::ImageFrame may have changed the owning SkBitmap to
+    // kOpaque_SkAlphaType after fully decoding the image frame, so if we see a
+    // request for opaque, that is ok even if our initial alpha type was not
+    // opaque.
+    return false;
+  }
+
+  PlatformInstrumentation::willDecodeLazyPixelRef(uniqueID());
+  bool decoded = m_frameGenerator->decodeAndScale(
+      m_data.get(), m_allDataReceived, m_frameIndex, getInfo(), pixels,
+      rowBytes);
+  PlatformInstrumentation::didDecodeLazyPixelRef();
+
+  return decoded;
 }
 
-SkData* DecodingImageGenerator::onRefEncodedData()
-{
-    // FIXME: If the image has been clipped or scaled, do not return the original
-    // encoded data, since on playback it will not be known how the clipping/scaling
-    // was done.
-    RefPtr<SharedBuffer> buffer = nullptr;
-    bool allDataReceived = false;
-    m_frameGenerator->copyData(&buffer, &allDataReceived);
-    if (buffer && allDataReceived)
-        return SkData::NewWithCopy(buffer->data(), buffer->size());
-    return 0;
+bool DecodingImageGenerator::onQueryYUV8(SkYUVSizeInfo* sizeInfo,
+                                         SkYUVColorSpace* colorSpace) const {
+  // YUV decoding does not currently support progressive decoding. See comment
+  // in ImageFrameGenerator.h.
+  if (!m_canYUVDecode || !m_allDataReceived)
+    return false;
+
+  TRACE_EVENT1("blink", "DecodingImageGenerator::queryYUV8", "sizes",
+               static_cast<int>(m_frameIndex));
+
+  if (colorSpace)
+    *colorSpace = kJPEG_SkYUVColorSpace;
+
+  return m_frameGenerator->getYUVComponentSizes(m_data.get(), sizeInfo);
 }
 
-bool DecodingImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels, size_t rowBytes,
-    SkPMColor ctable[], int* ctableCount)
-{
-    TRACE_EVENT1("blink", "DecodingImageGenerator::getPixels", "index", static_cast<int>(m_frameIndex));
+bool DecodingImageGenerator::onGetYUV8Planes(const SkYUVSizeInfo& sizeInfo,
+                                             void* planes[3]) {
+  // YUV decoding does not currently support progressive decoding. See comment
+  // in ImageFrameGenerator.h.
+  ASSERT(m_canYUVDecode && m_allDataReceived);
 
-    // Implementation doesn't support scaling yet so make sure we're not given a different size.
-    if (info.width() != getInfo().width() || info.height() != getInfo().height())
-        return false;
+  TRACE_EVENT1("blink", "DecodingImageGenerator::getYUV8Planes", "frame index",
+               static_cast<int>(m_frameIndex));
 
-    if (info.colorType() != getInfo().colorType()) {
-        // ImageFrame may have changed the owning SkBitmap to kOpaque_SkAlphaType after sniffing the encoded data, so if we see a request
-        // for opaque, that is ok even if our initial alphatype was not opaque.
-        return false;
-    }
+  PlatformInstrumentation::willDecodeLazyPixelRef(uniqueID());
+  bool decoded =
+      m_frameGenerator->decodeToYUV(m_data.get(), m_frameIndex, sizeInfo.fSizes,
+                                    planes, sizeInfo.fWidthBytes);
+  PlatformInstrumentation::didDecodeLazyPixelRef();
 
-    PlatformInstrumentation::willDecodeLazyPixelRef(m_generationId);
-    bool decoded = m_frameGenerator->decodeAndScale(getInfo(), m_frameIndex, pixels, rowBytes);
-    PlatformInstrumentation::didDecodeLazyPixelRef();
-
-    return decoded;
+  return decoded;
 }
 
-bool DecodingImageGenerator::onGetYUV8Planes(SkISize sizes[3], void* planes[3], size_t rowBytes[3], SkYUVColorSpace* colorSpace)
-{
-    if (!RuntimeEnabledFeatures::decodeToYUVEnabled())
-        return false;
+SkImageGenerator* DecodingImageGenerator::create(SkData* data) {
+  RefPtr<SegmentReader> segmentReader =
+      SegmentReader::createFromSkData(sk_ref_sp(data));
+  // We just need the size of the image, so we have to temporarily create an
+  // ImageDecoder. Since we only need the size, the premul and gamma settings
+  // don't really matter.
+  std::unique_ptr<ImageDecoder> decoder = ImageDecoder::create(
+      segmentReader, true, ImageDecoder::AlphaPremultiplied,
+      ColorBehavior::transformToGlobalTarget());
+  if (!decoder || !decoder->isSizeAvailable())
+    return nullptr;
 
-    if (!planes || !planes[0])
-        return m_frameGenerator->getYUVComponentSizes(sizes);
+  const IntSize size = decoder->size();
+  const SkImageInfo info =
+      SkImageInfo::MakeN32(size.width(), size.height(), kPremul_SkAlphaType,
+                           decoder->colorSpaceForSkImages());
 
-    TRACE_EVENT0("blink", "DecodingImageGenerator::onGetYUV8Planes");
-    PlatformInstrumentation::willDecodeLazyPixelRef(m_generationId);
-    bool decoded = m_frameGenerator->decodeToYUV(sizes, planes, rowBytes);
-    PlatformInstrumentation::didDecodeLazyPixelRef();
-    if (colorSpace)
-        *colorSpace = kJPEG_SkYUVColorSpace;
-    return decoded;
+  RefPtr<ImageFrameGenerator> frame =
+      ImageFrameGenerator::create(SkISize::Make(size.width(), size.height()),
+                                  false, decoder->colorBehavior());
+  if (!frame)
+    return nullptr;
+
+  return new DecodingImageGenerator(frame, info, segmentReader.release(), true,
+                                    0);
 }
 
-SkImageGenerator* DecodingImageGenerator::create(SkData* data)
-{
-    RefPtr<SharedBuffer> buffer = SharedBuffer::create(data->bytes(), data->size());
-
-    // We just need the size of the image, so we have to temporarily create an ImageDecoder. Since
-    // we only need the size, it doesn't really matter about premul or not, or gamma settings.
-    OwnPtr<ImageDecoder> decoder = ImageDecoder::create(*buffer.get(), ImageDecoder::AlphaPremultiplied, ImageDecoder::GammaAndColorProfileApplied);
-    if (!decoder)
-        return 0;
-
-    decoder->setData(buffer.get(), true);
-    if (!decoder->isSizeAvailable())
-        return 0;
-
-    const IntSize size = decoder->size();
-    const SkImageInfo info = SkImageInfo::MakeN32Premul(size.width(), size.height());
-
-    RefPtr<ImageFrameGenerator> frame = ImageFrameGenerator::create(SkISize::Make(size.width(), size.height()), buffer, true, false);
-    if (!frame)
-        return 0;
-
-    return new DecodingImageGenerator(frame, info, 0);
-}
-
-} // namespace blink
-
+}  // namespace blink

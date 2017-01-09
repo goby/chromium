@@ -5,7 +5,8 @@
 #ifndef NetworkInformation_h
 #define NetworkInformation_h
 
-#include "core/dom/ActiveDOMObject.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
+#include "core/dom/SuspendableObject.h"
 #include "core/events/EventTarget.h"
 #include "core/page/NetworkStateNotifier.h"
 #include "public/platform/WebConnectionType.h"
@@ -15,59 +16,64 @@ namespace blink {
 class ExecutionContext;
 
 class NetworkInformation final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<NetworkInformation>
-    , public ActiveDOMObject
-    , public NetworkStateNotifier::NetworkStateObserver {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(NetworkInformation);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(NetworkInformation);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static NetworkInformation* create(ExecutionContext*);
-    ~NetworkInformation() override;
+    : public EventTargetWithInlineData,
+      public ActiveScriptWrappable,
+      public SuspendableObject,
+      public NetworkStateNotifier::NetworkStateObserver {
+  USING_GARBAGE_COLLECTED_MIXIN(NetworkInformation);
+  DEFINE_WRAPPERTYPEINFO();
 
-    String type() const;
-    double downlinkMax() const;
+ public:
+  static NetworkInformation* create(ExecutionContext*);
+  ~NetworkInformation() override;
 
-    // NetworkStateObserver overrides.
-    void connectionChange(WebConnectionType, double downlinkMaxMbps) override;
+  String type() const;
+  double downlinkMax() const;
 
-    // EventTarget overrides.
-    const AtomicString& interfaceName() const override;
-    ExecutionContext* executionContext() const override;
-    void removeAllEventListeners() override;
+  // NetworkStateObserver overrides.
+  void connectionChange(WebConnectionType, double downlinkMaxMbps) override;
 
-    // ActiveDOMObject overrides.
-    bool hasPendingActivity() const override;
-    void stop() override;
+  // EventTarget overrides.
+  const AtomicString& interfaceName() const override;
+  ExecutionContext* getExecutionContext() const override;
+  void removeAllEventListeners() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  // ScriptWrappable
+  bool hasPendingActivity() const final;
 
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(change);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(typechange); // Deprecated
+  // SuspendableObject overrides.
+  void contextDestroyed() override;
 
-protected:
-    // EventTarget overrides.
-    bool addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
-    bool removeEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener>, const EventListenerOptions&) override;
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit NetworkInformation(ExecutionContext*);
-    void startObserving();
-    void stopObserving();
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(change);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(typechange);  // Deprecated
 
-    // Touched only on context thread.
-    WebConnectionType m_type;
+ protected:
+  // EventTarget overrides.
+  void addedEventListener(const AtomicString& eventType,
+                          RegisteredEventListener&) final;
+  void removedEventListener(const AtomicString& eventType,
+                            const RegisteredEventListener&) final;
 
-    // Touched only on context thread.
-    double m_downlinkMaxMbps;
+ private:
+  explicit NetworkInformation(ExecutionContext*);
+  void startObserving();
+  void stopObserving();
 
-    // Whether this object is listening for events from NetworkStateNotifier.
-    bool m_observing;
+  // Touched only on context thread.
+  WebConnectionType m_type;
 
-    // Whether ActiveDOMObject::stop has been called.
-    bool m_contextStopped;
+  // Touched only on context thread.
+  double m_downlinkMaxMbps;
+
+  // Whether this object is listening for events from NetworkStateNotifier.
+  bool m_observing;
+
+  // Whether SuspendableObject::stop has been called.
+  bool m_contextStopped;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // NetworkInformation_h
+#endif  // NetworkInformation_h

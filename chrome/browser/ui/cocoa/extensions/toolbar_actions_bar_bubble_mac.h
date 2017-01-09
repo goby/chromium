@@ -7,7 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 
 class ToolbarActionsBarBubbleDelegate;
@@ -19,6 +20,9 @@ class ToolbarActionsBarBubbleDelegate;
   // Whether or not the bubble has been acknowledged.
   BOOL acknowledged_;
 
+  // True if the bubble is anchored to an action in the toolbar actions bar.
+  BOOL anchoredToAction_;
+
   // The action button. The exact meaning of this is dependent on the bubble.
   // Required.
   NSButton* actionButton_;
@@ -29,17 +33,24 @@ class ToolbarActionsBarBubbleDelegate;
   // The dismiss button. Optional.
   NSButton* dismissButton_;
 
-  // The "learn more" link-style button. Optional.
-  NSButton* learnMoreButton_;
+  // The extra view text as a link-style button. Optional.
+  NSButton* link_;
+
+  // The extra view text as a label. Optional.
+  NSTextField* label_;
+
+  // The extra view icon that can accompany the extra view text. Optional.
+  NSImageView* iconView_;
 
   // This bubble's delegate.
-  scoped_ptr<ToolbarActionsBarBubbleDelegate> delegate_;
+  std::unique_ptr<ToolbarActionsBarBubbleDelegate> delegate_;
 }
 
 // Creates the bubble for a parent window but does not show it.
 - (id)initWithParentWindow:(NSWindow*)parentWindow
                anchorPoint:(NSPoint)anchorPoint
-                  delegate:(scoped_ptr<ToolbarActionsBarBubbleDelegate>)
+          anchoredToAction:(BOOL)anchoredToAction
+                  delegate:(std::unique_ptr<ToolbarActionsBarBubbleDelegate>)
                                delegate;
 
 // Toggles animation for testing purposes.
@@ -48,7 +59,9 @@ class ToolbarActionsBarBubbleDelegate;
 @property(readonly, nonatomic) NSButton* actionButton;
 @property(readonly, nonatomic) NSTextField* itemList;
 @property(readonly, nonatomic) NSButton* dismissButton;
-@property(readonly, nonatomic) NSButton* learnMoreButton;
+@property(readonly, nonatomic) NSButton* link;
+@property(readonly, nonatomic) NSTextField* label;
+@property(readonly, nonatomic) NSImageView* iconView;
 
 @end
 

@@ -4,6 +4,7 @@
 
 #include "components/omnibox/browser/autocomplete_input.h"
 
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -12,8 +13,8 @@
 #include "components/omnibox/browser/omnibox_field_trial.h"
 #include "components/url_formatter/url_fixer.h"
 #include "components/url_formatter/url_formatter.h"
-#include "net/base/net_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 #include "url/url_canon_ip.h"
 #include "url/url_util.h"
 
@@ -119,34 +120,11 @@ AutocompleteInput::AutocompleteInput(
        canonicalized_url.SchemeIsFileSystem() ||
        !canonicalized_url.host().empty()))
     canonicalized_url_ = canonicalized_url;
-
-  size_t chars_removed = RemoveForcedQueryStringIfNecessary(type_, &text_);
-  AdjustCursorPositionIfNecessary(chars_removed, &cursor_position_);
-  if (chars_removed) {
-    // Remove spaces between opening question mark and first actual character.
-    base::string16 trimmed_text;
-    if ((base::TrimWhitespace(text_, base::TRIM_LEADING, &trimmed_text) &
-         base::TRIM_LEADING) != 0) {
-      AdjustCursorPositionIfNecessary(text_.length() - trimmed_text.length(),
-                                      &cursor_position_);
-      text_ = trimmed_text;
-    }
-  }
 }
+
+AutocompleteInput::AutocompleteInput(const AutocompleteInput& other) = default;
 
 AutocompleteInput::~AutocompleteInput() {
-}
-
-// static
-size_t AutocompleteInput::RemoveForcedQueryStringIfNecessary(
-    metrics::OmniboxInputType::Type type,
-    base::string16* text) {
-  if ((type != metrics::OmniboxInputType::FORCED_QUERY) || text->empty() ||
-      (*text)[0] != L'?')
-    return 0;
-  // Drop the leading '?'.
-  text->erase(0, 1);
-  return 1;
 }
 
 // static
@@ -159,7 +137,8 @@ std::string AutocompleteInput::TypeToString(
       return "deprecated-requested-url";
     case metrics::OmniboxInputType::URL:          return "url";
     case metrics::OmniboxInputType::QUERY:        return "query";
-    case metrics::OmniboxInputType::FORCED_QUERY: return "forced-query";
+    case metrics::OmniboxInputType::DEPRECATED_FORCED_QUERY:
+      return "deprecated-forced-query";
   }
   return std::string();
 }
@@ -175,12 +154,6 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   size_t first_non_white = text.find_first_not_of(base::kWhitespaceUTF16, 0);
   if (first_non_white == base::string16::npos)
     return metrics::OmniboxInputType::INVALID;  // All whitespace.
-
-  if (text[first_non_white] == L'?') {
-    // If the first non-whitespace character is a '?', we magically treat this
-    // as a query.
-    return metrics::OmniboxInputType::FORCED_QUERY;
-  }
 
   // Ask our parsing back-end to help us understand what the user typed.  We
   // use the URLFixerUpper here because we want to be smart about what we
@@ -281,13 +254,6 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   // between an HTTP URL and a query, or the scheme is HTTP or HTTPS, in which
   // case we should reject invalid formulations.
 
-  // If we have an empty host it can't be a valid HTTP[S] URL.  (This should
-  // only trigger for input that begins with a colon, which GURL will parse as a
-  // valid, non-standard URL; for standard URLs, an empty host would have
-  // resulted in an invalid |canonicalized_url| above.)
-  if (!canonicalized_url->has_host())
-    return metrics::OmniboxInputType::QUERY;
-
   // Determine the host family.  We get this information by (re-)canonicalizing
   // the already-canonicalized host rather than using the user's original input,
   // in case fixup affected the result here (e.g. an input that looks like an
@@ -299,7 +265,7 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   // Check if the canonicalized host has a known TLD, which we'll want to know
   // below.
   const size_t registry_length =
-      net::registry_controlled_domains::GetRegistryLength(
+      net::registry_controlled_domains::GetCanonicalHostRegistryLength(
           canonicalized_url->host(),
           net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
           net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
@@ -426,18 +392,6 @@ metrics::OmniboxInputType::Type AutocompleteInput::Parse(
   if (has_known_tld || (canonicalized_url->host() == "localhost") ||
       canonicalized_url->has_port())
     return metrics::OmniboxInputType::URL;
-
-  // If the input looks like a word followed by a pound sign and possibly more
-  // characters ("c#" or "c# foo"), this is almost certainly an attempt to
-  // search.  We try to be conservative here by not firing on cases like "c/#"
-  // or "c?#" that might actually indicate some cryptic attempt to access an
-  // intranet host, and by placing this check late enough that other tests
-  // (e.g., for a non-empty TLD or a non-empty scheme) will have already
-  // returned URL.
-  if (!OmniboxFieldTrial::PreventUWYTDefaultForNonURLInputs() &&
-      !parts->path.is_valid() && !canonicalized_url->has_query() &&
-      canonicalized_url->has_ref())
-    return metrics::OmniboxInputType::QUERY;
 
   // No scheme, username, port, and no known TLD on the host.
   // This could be:

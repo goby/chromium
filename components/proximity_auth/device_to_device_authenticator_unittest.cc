@@ -4,13 +4,17 @@
 
 #include "components/proximity_auth/device_to_device_authenticator.h"
 
+#include <utility>
+
 #include "base/base64url.h"
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/rand_util.h"
 #include "base/timer/mock_timer.h"
+#include "components/cryptauth/fake_secure_message_delegate.h"
 #include "components/proximity_auth/connection.h"
-#include "components/proximity_auth/cryptauth/fake_secure_message_delegate.h"
 #include "components/proximity_auth/device_to_device_responder_operations.h"
 #include "components/proximity_auth/proximity_auth_test_util.h"
 #include "components/proximity_auth/secure_context.h"
@@ -59,7 +63,7 @@ void SaveValidateHelloMessageResult(bool* validated_out,
 // Connection implementation for testing.
 class FakeConnection : public Connection {
  public:
-  FakeConnection(const RemoteDevice& remote_device)
+  FakeConnection(const cryptauth::RemoteDevice& remote_device)
       : Connection(remote_device), connection_blocked_(false) {}
   ~FakeConnection() override {}
 
@@ -81,9 +85,9 @@ class FakeConnection : public Connection {
 
  protected:
   // Connection:
-  void SendMessageImpl(scoped_ptr<WireMessage> message) override {
+  void SendMessageImpl(std::unique_ptr<WireMessage> message) override {
     const WireMessage& message_alias = *message;
-    message_buffer_.push_back(message.Pass());
+    message_buffer_.push_back(std::move(message));
     OnDidSendMessage(message_alias, !connection_blocked_);
   }
 
@@ -100,10 +104,10 @@ class DeviceToDeviceAuthenticatorForTest : public DeviceToDeviceAuthenticator {
  public:
   DeviceToDeviceAuthenticatorForTest(
       Connection* connection,
-      scoped_ptr<SecureMessageDelegate> secure_message_delegate)
+      std::unique_ptr<cryptauth::SecureMessageDelegate> secure_message_delegate)
       : DeviceToDeviceAuthenticator(connection,
                                     kAccountId,
-                                    secure_message_delegate.Pass()),
+                                    std::move(secure_message_delegate)),
         timer_(nullptr) {}
   ~DeviceToDeviceAuthenticatorForTest() override {}
 
@@ -111,15 +115,15 @@ class DeviceToDeviceAuthenticatorForTest : public DeviceToDeviceAuthenticator {
 
  private:
   // DeviceToDeviceAuthenticator:
-  scoped_ptr<base::Timer> CreateTimer() override {
+  std::unique_ptr<base::Timer> CreateTimer() override {
     bool retain_user_task = false;
     bool is_repeating = false;
 
-    scoped_ptr<base::MockTimer> timer(
+    std::unique_ptr<base::MockTimer> timer(
         new base::MockTimer(retain_user_task, is_repeating));
 
     timer_ = timer.get();
-    return timer.Pass();
+    return std::move(timer);
   }
 
   // This instance is owned by the super class.
@@ -135,9 +139,9 @@ class ProximityAuthDeviceToDeviceAuthenticatorTest : public testing::Test {
   ProximityAuthDeviceToDeviceAuthenticatorTest()
       : remote_device_(CreateClassicRemoteDeviceForTest()),
         connection_(remote_device_),
-        secure_message_delegate_(new FakeSecureMessageDelegate),
+        secure_message_delegate_(new cryptauth::FakeSecureMessageDelegate),
         authenticator_(&connection_,
-                       make_scoped_ptr(secure_message_delegate_)) {}
+                       base::WrapUnique(secure_message_delegate_)) {}
   ~ProximityAuthDeviceToDeviceAuthenticatorTest() override {}
 
   void SetUp() override {
@@ -210,22 +214,22 @@ class ProximityAuthDeviceToDeviceAuthenticatorTest : public testing::Test {
   }
 
   void OnAuthenticationResult(Authenticator::Result result,
-                              scoped_ptr<SecureContext> secure_context) {
-    secure_context_ = secure_context.Pass();
+                              std::unique_ptr<SecureContext> secure_context) {
+    secure_context_ = std::move(secure_context);
     OnAuthenticationResultProxy(result);
   }
 
   MOCK_METHOD1(OnAuthenticationResultProxy, void(Authenticator::Result result));
 
   // Contains information about the remote device.
-  const RemoteDevice remote_device_;
+  const cryptauth::RemoteDevice remote_device_;
 
   // Simulates the connection to the remote device.
   FakeConnection connection_;
 
   // The SecureMessageDelegate used by the authenticator.
   // Owned by |authenticator_|.
-  FakeSecureMessageDelegate* secure_message_delegate_;
+  cryptauth::FakeSecureMessageDelegate* secure_message_delegate_;
 
   // The DeviceToDeviceAuthenticator under test.
   DeviceToDeviceAuthenticatorForTest authenticator_;
@@ -237,7 +241,7 @@ class ProximityAuthDeviceToDeviceAuthenticatorTest : public testing::Test {
   std::string session_symmetric_key_;
 
   // Stores the SecureContext returned after authentication succeeds.
-  scoped_ptr<SecureContext> secure_context_;
+  std::unique_ptr<SecureContext> secure_context_;
 
   DISALLOW_COPY_AND_ASSIGN(ProximityAuthDeviceToDeviceAuthenticatorTest);
 };
@@ -337,10 +341,10 @@ TEST_F(ProximityAuthDeviceToDeviceAuthenticatorTest,
   // completes.
   WireMessage wire_message(base::RandBytesAsString(300u));
   connection_.SendMessage(
-      make_scoped_ptr(new WireMessage(base::RandBytesAsString(300u))));
+      base::MakeUnique<WireMessage>(base::RandBytesAsString(300u)));
   connection_.OnBytesReceived(wire_message.Serialize());
   connection_.SendMessage(
-      make_scoped_ptr(new WireMessage(base::RandBytesAsString(300u))));
+      base::MakeUnique<WireMessage>(base::RandBytesAsString(300u)));
   connection_.OnBytesReceived(wire_message.Serialize());
 }
 

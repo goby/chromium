@@ -5,16 +5,15 @@
 #ifndef CHROME_BROWSER_CUSTOM_HANDLERS_REGISTER_PROTOCOL_HANDLER_PERMISSION_REQUEST_H_
 #define CHROME_BROWSER_CUSTOM_HANDLERS_REGISTER_PROTOCOL_HANDLER_PERMISSION_REQUEST_H_
 
-#include "chrome/browser/ui/website_settings/permission_bubble_request.h"
+#include "base/macros.h"
+#include "chrome/browser/permissions/permission_request.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 
 class ProtocolHandlerRegistry;
 
-// This class provides display data for a permission bubble request, shown when
-// a page wants to register a protocol handler and was triggered by a user
-// action.
-class RegisterProtocolHandlerPermissionRequest
-    : public PermissionBubbleRequest {
+// This class provides display data for a permission request, shown when a page
+// wants to register a protocol handler and was triggered by a user action.
+class RegisterProtocolHandlerPermissionRequest : public PermissionRequest {
  public:
   RegisterProtocolHandlerPermissionRequest(
       ProtocolHandlerRegistry* registry,
@@ -23,23 +22,20 @@ class RegisterProtocolHandlerPermissionRequest
       bool user_gesture);
   ~RegisterProtocolHandlerPermissionRequest() override;
 
-  // PermissionBubbleRequest:
-  gfx::VectorIconId GetVectorIconId() const override;
-  int GetIconId() const override;
-  base::string16 GetMessageText() const override;
+ private:
+  // PermissionRequest:
+  IconId GetIconId() const override;
   base::string16 GetMessageTextFragment() const override;
-  bool HasUserGesture() const override;
-  GURL GetRequestingHostname() const override;
+  GURL GetOrigin() const override;
   void PermissionGranted() override;
   void PermissionDenied() override;
   void Cancelled() override;
   void RequestFinished() override;
+  PermissionRequestType GetPermissionRequestType() const override;
 
- private:
   ProtocolHandlerRegistry* registry_;
   ProtocolHandler handler_;
-  GURL url_;
-  bool user_gesture_;
+  GURL origin_;
 
   DISALLOW_COPY_AND_ASSIGN(RegisterProtocolHandlerPermissionRequest);
 };

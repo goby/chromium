@@ -5,7 +5,7 @@
 #include "chrome/browser/extensions/test_blacklist_state_fetcher.h"
 
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/url_request_test_util.h"
 
 namespace extensions {
@@ -62,7 +62,7 @@ bool TestBlacklistStateFetcher::HandleFetcher(int fetcher_id) {
   std::string id = request.id();
 
   ClientCRXListInfoResponse response;
-  if (ContainsKey(verdicts_, id))
+  if (base::ContainsKey(verdicts_, id))
     response.set_verdict(verdicts_[id]);
   else
     response.set_verdict(ClientCRXListInfoResponse::NOT_IN_BLACKLIST);

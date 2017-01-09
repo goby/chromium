@@ -4,16 +4,19 @@
 
 #include "device/battery/battery_status_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
 #include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "device/battery/battery_monitor_impl.h"
 #include "device/battery/battery_status_manager.h"
 
 namespace device {
 
 BatteryStatusService::BatteryStatusService()
-    : main_thread_task_runner_(base::MessageLoop::current()->task_runner()),
+    : main_thread_task_runner_(base::ThreadTaskRunnerHandle::Get()),
       update_callback_(base::Bind(&BatteryStatusService::NotifyConsumers,
                                   base::Unretained(this))),
       status_updated_(false),
@@ -32,7 +35,7 @@ BatteryStatusService* BatteryStatusService::GetInstance() {
       base::LeakySingletonTraits<BatteryStatusService>>::get();
 }
 
-scoped_ptr<BatteryStatusService::BatteryUpdateSubscription>
+std::unique_ptr<BatteryStatusService::BatteryUpdateSubscription>
 BatteryStatusService::AddCallback(const BatteryUpdateCallback& callback) {
   DCHECK(main_thread_task_runner_->BelongsToCurrentThread());
   DCHECK(!is_shutdown_);
@@ -98,8 +101,8 @@ BatteryStatusService::GetUpdateCallbackForTesting() const {
 }
 
 void BatteryStatusService::SetBatteryManagerForTesting(
-    scoped_ptr<BatteryStatusManager> test_battery_manager) {
-  battery_fetcher_ = test_battery_manager.Pass();
+    std::unique_ptr<BatteryStatusManager> test_battery_manager) {
+  battery_fetcher_ = std::move(test_battery_manager);
   status_ = BatteryStatus();
   status_updated_ = false;
 }

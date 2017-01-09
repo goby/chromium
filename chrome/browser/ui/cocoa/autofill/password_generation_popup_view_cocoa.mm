@@ -11,11 +11,10 @@
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_view.h"
 #include "chrome/browser/ui/autofill/popup_constants.h"
-#include "chrome/browser/ui/chrome_style.h"
 #include "chrome/browser/ui/cocoa/autofill/password_generation_popup_view_bridge.h"
-#import "chrome/browser/ui/cocoa/l10n_util.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/autofill/core/browser/popup_item_ids.h"
-#include "grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/controls/hyperlink_text_view.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -41,22 +40,22 @@ const CGFloat kDividerHeight = 1;
 const CGFloat kPasswordSectionVerticalSeparation = 5;
 
 NSColor* DividerColor() {
-  return gfx::SkColorToCalibratedNSColor(
+  return skia::SkColorToCalibratedNSColor(
       PasswordGenerationPopupView::kDividerColor);
 }
 
 NSColor* HelpTextBackgroundColor() {
-  return gfx::SkColorToCalibratedNSColor(
+  return skia::SkColorToCalibratedNSColor(
       PasswordGenerationPopupView::kExplanatoryTextBackgroundColor);
 }
 
 NSColor* HelpTextColor() {
-  return gfx::SkColorToCalibratedNSColor(
+  return skia::SkColorToCalibratedNSColor(
       PasswordGenerationPopupView::kExplanatoryTextColor);
 }
 
 NSColor* HelpLinkColor() {
-  return gfx::SkColorToCalibratedNSColor(chrome_style::GetLinkColor());
+  return skia::SkColorToCalibratedNSColor(chrome_style::GetLinkColor());
 }
 
 }  // namespace
@@ -107,7 +106,7 @@ NSColor* HelpLinkColor() {
                      withFont:[self textFont]
                  messageColor:HelpTextColor()];
     [helpTextView_ addLinkRange:controller_->HelpTextLinkRange().ToNSRange()
-                        withURL:@"about:blank"  // using a link here is bad ui
+                        withURL:nil
                       linkColor:HelpLinkColor()];
     [helpTextView_ setDelegate:self];
     [helpTextView_ setDrawsBackground:YES];

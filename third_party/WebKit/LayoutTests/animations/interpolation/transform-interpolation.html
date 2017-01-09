@@ -38,7 +38,7 @@
 <script>
 assertInterpolation({
   property: 'transform',
-  from: '',
+  from: neutralKeyframe,
   to: 'translate(20px)',
 }, [
   {at: -1, is: 'translate(0px)'},
@@ -320,6 +320,18 @@ assertInterpolation({
   {at: 0.75, is: 'scale3d(17.5, 0.875, 1.75)'},
   {at: 1, is: 'scale3d(20, 1, 2)'},
   {at: 2, is: 'scale3d(30, 1.5, 3)'},
+]);
+assertInterpolation({
+  property: 'transform',
+  from: 'scaleX(0)',
+  to: 'scaleY(0)',
+}, [
+  {at: -1, is: 'scale(-1, 2)'},
+  {at: 0, is: 'scale(0, 1)'},
+  {at: 0.25, is: 'scale(0.25, 0.75)'},
+  {at: 0.75, is: 'scale(0.75, 0.25)'},
+  {at: 1, is: 'scale(1, 0)'},
+  {at: 2, is: 'scale(2, -1)'},
 ]);
 assertInterpolation({
   property: 'transform',

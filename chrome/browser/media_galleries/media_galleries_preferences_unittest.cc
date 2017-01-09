@@ -6,17 +6,20 @@
 
 #include "chrome/browser/media_galleries/media_galleries_preferences.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/test_extension_system.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
 #include "chrome/browser/media_galleries/media_galleries_test_util.h"
@@ -24,15 +27,16 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/storage_monitor/media_storage_util.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "components/storage_monitor/test_storage_monitor.h"
+#include "components/sync/model/string_ordinal.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/permissions/media_galleries_permission.h"
-#include "sync/api/string_ordinal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -178,8 +182,8 @@ class MediaGalleriesPreferencesTest : public testing::Test {
 
   void RemovePersistedDefaultGalleryValues() {
     PrefService* prefs = profile_->GetPrefs();
-    scoped_ptr<ListPrefUpdate> update(new ListPrefUpdate(
-        prefs, prefs::kMediaGalleriesRememberedGalleries));
+    std::unique_ptr<ListPrefUpdate> update(
+        new ListPrefUpdate(prefs, prefs::kMediaGalleriesRememberedGalleries));
     base::ListValue* list = update->Get();
 
     for (base::ListValue::iterator iter = list->begin();
@@ -207,8 +211,8 @@ class MediaGalleriesPreferencesTest : public testing::Test {
       VerifyGalleryInfo(it->second, it->first);
       if (it->second.type != MediaGalleryPrefInfo::kAutoDetected &&
           it->second.type != MediaGalleryPrefInfo::kBlackListed) {
-        if (!ContainsKey(expected_galleries_for_all, it->first) &&
-            !ContainsKey(expected_galleries_for_regular, it->first)) {
+        if (!base::ContainsKey(expected_galleries_for_all, it->first) &&
+            !base::ContainsKey(expected_galleries_for_regular, it->first)) {
           EXPECT_FALSE(gallery_prefs_->NonAutoGalleryHasPermission(it->first));
         } else {
           EXPECT_TRUE(gallery_prefs_->NonAutoGalleryHasPermission(it->first));
@@ -260,9 +264,7 @@ class MediaGalleriesPreferencesTest : public testing::Test {
     return gallery_prefs_.get();
   }
 
-  uint64 default_galleries_count() {
-    return default_galleries_count_;
-  }
+  uint64_t default_galleries_count() { return default_galleries_count_; }
 
   void AddGalleryExpectation(MediaGalleryPrefId id, base::string16 display_name,
                              std::string device_id,
@@ -374,10 +376,10 @@ class MediaGalleriesPreferencesTest : public testing::Test {
 #endif
 
   TestStorageMonitor monitor_;
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<MediaGalleriesPreferences> gallery_prefs_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<MediaGalleriesPreferences> gallery_prefs_;
 
-  uint64 default_galleries_count_;
+  uint64_t default_galleries_count_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaGalleriesPreferencesTest);
 };

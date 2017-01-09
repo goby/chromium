@@ -6,13 +6,14 @@
 #define CONTENT_RENDERER_SPEECH_RECOGNITION_DISPATCHER_H_
 
 #include <map>
+#include <memory>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/sync_socket.h"
 #include "content/public/common/speech_recognition_result.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "media/media_features.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
 #include "third_party/WebKit/public/web/WebSpeechRecognitionHandle.h"
@@ -24,11 +25,10 @@ class AudioParameters;
 
 namespace content {
 class RenderViewImpl;
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
 class SpeechRecognitionAudioSink;
 #endif
 struct SpeechRecognitionError;
-struct SpeechRecognitionResult;
 
 // SpeechRecognitionDispatcher is a delegate for methods used by WebKit for
 // scripted JS speech APIs. It's the complement of
@@ -45,6 +45,7 @@ class SpeechRecognitionDispatcher : public RenderViewObserver,
  private:
   // RenderViewObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   // blink::WebSpeechRecognizer implementation.
   void start(const blink::WebSpeechRecognitionHandle&,
@@ -78,13 +79,13 @@ class SpeechRecognitionDispatcher : public RenderViewObserver,
   // The WebKit client class that we use to send events back to the JS world.
   blink::WebSpeechRecognizerClient* recognizer_client_;
 
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   // Media stream audio track that the speech recognition connects to.
   // Accessed on the render thread.
   blink::WebMediaStreamTrack audio_track_;
 
   // Audio sink used to provide audio from the track.
-  scoped_ptr<SpeechRecognitionAudioSink> speech_audio_sink_;
+  std::unique_ptr<SpeechRecognitionAudioSink> speech_audio_sink_;
 #endif
 
   typedef std::map<int, blink::WebSpeechRecognitionHandle> HandleMap;

@@ -19,28 +19,32 @@
 
 #include "components/history/core/browser/history_service.h"
 
+#include <stdint.h>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/history/core/browser/history_database_params.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/test/database_test_utils.h"
 #include "components/history/core/test/test_history_database.h"
-#include "sync/api/attachments/attachment_id.h"
-#include "sync/api/fake_sync_change_processor.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_change_processor.h"
-#include "sync/api/sync_change_processor_wrapper_for_test.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/sync_merge_result.h"
-#include "sync/internal_api/public/attachments/attachment_service_proxy_for_test.h"
-#include "sync/protocol/history_delete_directive_specifics.pb.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/attachments/attachment_id.h"
+#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
+#include "components/sync/model/fake_sync_change_processor.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_change_processor.h"
+#include "components/sync/model/sync_change_processor_wrapper_for_test.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/sync_merge_result.h"
+#include "components/sync/protocol/history_delete_directive_specifics.pb.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace history {
@@ -62,11 +66,11 @@ class HistoryServiceTest : public testing::Test {
   // testing::Test
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-    history_dir_ = temp_dir_.path().AppendASCII("HistoryServiceTest");
+    history_dir_ = temp_dir_.GetPath().AppendASCII("HistoryServiceTest");
     ASSERT_TRUE(base::CreateDirectory(history_dir_));
     history_service_.reset(new history::HistoryService);
     if (!history_service_->Init(
-            std::string(), TestHistoryDatabaseParamsForPath(history_dir_))) {
+            TestHistoryDatabaseParamsForPath(history_dir_))) {
       history_service_.reset();
       ADD_FAILURE();
     }
@@ -80,7 +84,7 @@ class HistoryServiceTest : public testing::Test {
     // test.
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::MessageLoop::QuitWhenIdleClosure());
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   void CleanupHistoryService() {
@@ -96,7 +100,7 @@ class HistoryServiceTest : public testing::Test {
     // moving to the next test. Note: if this never terminates, somebody is
     // probably leaking a reference to the history backend, so it never calls
     // our destroy task.
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
   // Fills the query_url_row_ and query_url_visits_ structures with the
@@ -108,7 +112,7 @@ class HistoryServiceTest : public testing::Test {
         true,
         base::Bind(&HistoryServiceTest::SaveURLAndQuit, base::Unretained(this)),
         &tracker_);
-    base::MessageLoop::current()->Run();  // Will be exited in SaveURLAndQuit.
+    base::RunLoop().Run();  // Will be exited in SaveURLAndQuit.
     return query_url_success_;
   }
 
@@ -135,7 +139,7 @@ class HistoryServiceTest : public testing::Test {
         base::Bind(&HistoryServiceTest::OnRedirectQueryComplete,
                    base::Unretained(this)),
         &tracker_);
-    base::MessageLoop::current()->Run();  // Will be exited in *QueryComplete.
+    base::RunLoop().Run();  // Will be exited in *QueryComplete.
   }
 
   // Callback for QueryRedirects.
@@ -157,7 +161,7 @@ class HistoryServiceTest : public testing::Test {
   // When non-NULL, this will be deleted on tear down and we will block until
   // the backend thread has completed. This allows tests for the history
   // service to use this feature, but other tests to ignore this.
-  scoped_ptr<history::HistoryService> history_service_;
+  std::unique_ptr<history::HistoryService> history_service_;
 
   // names of the database files
   base::FilePath history_dir_;
@@ -220,9 +224,11 @@ TEST_F(HistoryServiceTest, AddRedirect) {
   EXPECT_TRUE(QueryURL(history_service_.get(), first_redirects[0]));
   EXPECT_EQ(1, query_url_row_.visit_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  int64 first_visit = query_url_visits_[0].visit_id;
-  EXPECT_EQ(ui::PAGE_TRANSITION_LINK | ui::PAGE_TRANSITION_CHAIN_START,
-            query_url_visits_[0].transition);
+  int64_t first_visit = query_url_visits_[0].visit_id;
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      query_url_visits_[0].transition,
+      ui::PageTransitionFromInt(ui::PAGE_TRANSITION_LINK |
+                                ui::PAGE_TRANSITION_CHAIN_START)));
   EXPECT_EQ(0, query_url_visits_[0].referring_visit);  // No referrer.
 
   // The second page should be a server redirect type with a referrer of the
@@ -230,9 +236,11 @@ TEST_F(HistoryServiceTest, AddRedirect) {
   EXPECT_TRUE(QueryURL(history_service_.get(), first_redirects[1]));
   EXPECT_EQ(1, query_url_row_.visit_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  int64 second_visit = query_url_visits_[0].visit_id;
-  EXPECT_EQ(ui::PAGE_TRANSITION_SERVER_REDIRECT | ui::PAGE_TRANSITION_CHAIN_END,
-            query_url_visits_[0].transition);
+  int64_t second_visit = query_url_visits_[0].visit_id;
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      query_url_visits_[0].transition,
+      ui::PageTransitionFromInt(ui::PAGE_TRANSITION_SERVER_REDIRECT |
+                                ui::PAGE_TRANSITION_CHAIN_END)));
   EXPECT_EQ(first_visit, query_url_visits_[0].referring_visit);
 
   // Check that the redirect finding function successfully reports it.
@@ -265,8 +273,10 @@ TEST_F(HistoryServiceTest, AddRedirect) {
   EXPECT_TRUE(QueryURL(history_service_.get(), second_redirects[1]));
   EXPECT_EQ(1, query_url_row_.visit_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_CLIENT_REDIRECT | ui::PAGE_TRANSITION_CHAIN_END,
-            query_url_visits_[0].transition);
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      query_url_visits_[0].transition,
+      ui::PageTransitionFromInt(ui::PAGE_TRANSITION_CLIENT_REDIRECT |
+                                ui::PAGE_TRANSITION_CHAIN_END)));
   EXPECT_EQ(second_visit, query_url_visits_[0].referring_visit);
 }
 
@@ -284,8 +294,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(1, query_url_row_.visit_count());
   EXPECT_EQ(1, query_url_row_.typed_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_TYPED,
-            ui::PageTransitionStripQualifier(query_url_visits_[0].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[0].transition,
+                                           ui::PAGE_TRANSITION_TYPED));
 
   // Add more visits on the same host.  None of these should be promoted since
   // there is already a typed visit.
@@ -300,8 +310,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(1, query_url_row_.visit_count());
   EXPECT_EQ(0, query_url_row_.typed_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_LINK,
-            ui::PageTransitionStripQualifier(query_url_visits_[0].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[0].transition,
+                                           ui::PAGE_TRANSITION_LINK));
 
   // No path.
   const GURL test_url3("http://intranet_host/");
@@ -313,8 +323,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(1, query_url_row_.visit_count());
   EXPECT_EQ(0, query_url_row_.typed_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_LINK,
-            ui::PageTransitionStripQualifier(query_url_visits_[0].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[0].transition,
+                                           ui::PAGE_TRANSITION_LINK));
 
   // Different scheme.
   const GURL test_url4("https://intranet_host/");
@@ -326,8 +336,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(1, query_url_row_.visit_count());
   EXPECT_EQ(0, query_url_row_.typed_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_LINK,
-            ui::PageTransitionStripQualifier(query_url_visits_[0].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[0].transition,
+                                           ui::PAGE_TRANSITION_LINK));
 
   // Different transition.
   const GURL test_url5("http://intranet_host/another_path");
@@ -340,8 +350,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(1, query_url_row_.visit_count());
   EXPECT_EQ(0, query_url_row_.typed_count());
   ASSERT_EQ(1U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_AUTO_BOOKMARK,
-            ui::PageTransitionStripQualifier(query_url_visits_[0].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[0].transition,
+                                           ui::PAGE_TRANSITION_AUTO_BOOKMARK));
 
   // Original URL.
   history_service_->AddPage(
@@ -352,8 +362,8 @@ TEST_F(HistoryServiceTest, MakeIntranetURLsTyped) {
   EXPECT_EQ(2, query_url_row_.visit_count());
   EXPECT_EQ(1, query_url_row_.typed_count());
   ASSERT_EQ(2U, query_url_visits_.size());
-  EXPECT_EQ(ui::PAGE_TRANSITION_LINK,
-            ui::PageTransitionStripQualifier(query_url_visits_[1].transition));
+  EXPECT_TRUE(ui::PageTransitionCoreTypeIs(query_url_visits_[1].transition,
+                                           ui::PAGE_TRANSITION_LINK));
 }
 
 TEST_F(HistoryServiceTest, Typed) {
@@ -462,7 +472,7 @@ TEST_F(HistoryServiceTest, MostVisitedURLs) {
       base::Bind(&HistoryServiceTest::OnMostVisitedURLsAvailable,
                  base::Unretained(this)),
       &tracker_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(2U, most_visited_urls_.size());
   EXPECT_EQ(url0, most_visited_urls_[0].url);
@@ -479,7 +489,7 @@ TEST_F(HistoryServiceTest, MostVisitedURLs) {
       base::Bind(&HistoryServiceTest::OnMostVisitedURLsAvailable,
                  base::Unretained(this)),
       &tracker_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(3U, most_visited_urls_.size());
   EXPECT_EQ(url0, most_visited_urls_[0].url);
@@ -497,7 +507,7 @@ TEST_F(HistoryServiceTest, MostVisitedURLs) {
       base::Bind(&HistoryServiceTest::OnMostVisitedURLsAvailable,
                  base::Unretained(this)),
       &tracker_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(3U, most_visited_urls_.size());
   EXPECT_EQ(url2, most_visited_urls_[0].url);
@@ -515,7 +525,7 @@ TEST_F(HistoryServiceTest, MostVisitedURLs) {
       base::Bind(&HistoryServiceTest::OnMostVisitedURLsAvailable,
                  base::Unretained(this)),
       &tracker_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(3U, most_visited_urls_.size());
   EXPECT_EQ(url1, most_visited_urls_[0].url);
@@ -538,7 +548,7 @@ TEST_F(HistoryServiceTest, MostVisitedURLs) {
       base::Bind(&HistoryServiceTest::OnMostVisitedURLsAvailable,
                  base::Unretained(this)),
       &tracker_);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_EQ(4U, most_visited_urls_.size());
   EXPECT_EQ(url1, most_visited_urls_[0].url);
@@ -591,13 +601,13 @@ TEST_F(HistoryServiceTest, HistoryDBTask) {
   int invoke_count = 0;
   bool done_invoked = false;
   history_service_->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
+      std::unique_ptr<history::HistoryDBTask>(
           new HistoryDBTaskImpl(&invoke_count, &done_invoked)),
       &task_tracker);
   // Run the message loop. When HistoryDBTaskImpl::DoneRunOnMainThread runs,
   // it will stop the message loop. If the test hangs here, it means
   // DoneRunOnMainThread isn't being invoked correctly.
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   CleanupHistoryService();
   // WARNING: history has now been deleted.
   history_service_.reset();
@@ -611,7 +621,7 @@ TEST_F(HistoryServiceTest, HistoryDBTaskCanceled) {
   int invoke_count = 0;
   bool done_invoked = false;
   history_service_->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
+      std::unique_ptr<history::HistoryDBTask>(
           new HistoryDBTaskImpl(&invoke_count, &done_invoked)),
       &task_tracker);
   task_tracker.TryCancelAll();
@@ -629,7 +639,7 @@ TEST_F(HistoryServiceTest, ProcessLocalDeleteDirectiveSyncOnline) {
   ASSERT_TRUE(history_service_.get());
 
   const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 10; ++i) {
+  for (int64_t i = 1; i <= 10; ++i) {
     base::Time t =
         base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
     history_service_->AddPage(test_url, t, NULL, 0, GURL(),
@@ -647,16 +657,16 @@ TEST_F(HistoryServiceTest, ProcessLocalDeleteDirectiveSyncOnline) {
 
   syncer::FakeSyncChangeProcessor change_processor;
 
-  EXPECT_FALSE(
-      history_service_->MergeDataAndStartSyncing(
-                            syncer::HISTORY_DELETE_DIRECTIVES,
-                            syncer::SyncDataList(),
-                            scoped_ptr<syncer::SyncChangeProcessor>(
-                                new syncer::SyncChangeProcessorWrapperForTest(
-                                    &change_processor)),
-                            scoped_ptr<syncer::SyncErrorFactory>())
-          .error()
-          .IsSet());
+  EXPECT_FALSE(history_service_
+                   ->MergeDataAndStartSyncing(
+                       syncer::HISTORY_DELETE_DIRECTIVES,
+                       syncer::SyncDataList(),
+                       std::unique_ptr<syncer::SyncChangeProcessor>(
+                           new syncer::SyncChangeProcessorWrapperForTest(
+                               &change_processor)),
+                       std::unique_ptr<syncer::SyncErrorFactory>())
+                   .error()
+                   .IsSet());
 
   syncer::SyncError err =
       history_service_->ProcessLocalDeleteDirective(delete_directive);
@@ -675,7 +685,7 @@ TEST_F(HistoryServiceTest, ProcessLocalDeleteDirectiveSyncOnline) {
 void CheckDirectiveProcessingResult(
     base::Time timeout,
     const syncer::FakeSyncChangeProcessor* change_processor,
-    uint32 num_changes) {
+    uint32_t num_changes) {
   if (base::Time::Now() > timeout ||
       change_processor->changes().size() >= num_changes) {
     return;
@@ -693,7 +703,7 @@ void CheckDirectiveProcessingResult(
 TEST_F(HistoryServiceTest, ProcessGlobalIdDeleteDirective) {
   ASSERT_TRUE(history_service_.get());
   const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 20; i++) {
+  for (int64_t i = 1; i <= 20; i++) {
     base::Time t =
         base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
     history_service_->AddPage(test_url, t, NULL, 0, GURL(),
@@ -738,16 +748,15 @@ TEST_F(HistoryServiceTest, ProcessGlobalIdDeleteDirective) {
       syncer::AttachmentServiceProxyForTest::Create()));
 
   syncer::FakeSyncChangeProcessor change_processor;
-  EXPECT_FALSE(
-      history_service_->MergeDataAndStartSyncing(
-                            syncer::HISTORY_DELETE_DIRECTIVES,
-                            directives,
-                            scoped_ptr<syncer::SyncChangeProcessor>(
-                                new syncer::SyncChangeProcessorWrapperForTest(
-                                    &change_processor)),
-                            scoped_ptr<syncer::SyncErrorFactory>())
-          .error()
-          .IsSet());
+  EXPECT_FALSE(history_service_
+                   ->MergeDataAndStartSyncing(
+                       syncer::HISTORY_DELETE_DIRECTIVES, directives,
+                       std::unique_ptr<syncer::SyncChangeProcessor>(
+                           new syncer::SyncChangeProcessorWrapperForTest(
+                               &change_processor)),
+                       std::unique_ptr<syncer::SyncErrorFactory>())
+                   .error()
+                   .IsSet());
 
   // Inject a task to check status and keep message loop filled before directive
   // processing finishes.
@@ -756,7 +765,7 @@ TEST_F(HistoryServiceTest, ProcessGlobalIdDeleteDirective) {
       base::Bind(&CheckDirectiveProcessingResult,
                  base::Time::Now() + base::TimeDelta::FromSeconds(10),
                  &change_processor, 2));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
   ASSERT_EQ(5, query_url_row_.visit_count());
   EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(1),
@@ -784,7 +793,7 @@ TEST_F(HistoryServiceTest, ProcessGlobalIdDeleteDirective) {
 TEST_F(HistoryServiceTest, ProcessTimeRangeDeleteDirective) {
   ASSERT_TRUE(history_service_.get());
   const GURL test_url("http://www.google.com/");
-  for (int64 i = 1; i <= 10; ++i) {
+  for (int64_t i = 1; i <= 10; ++i) {
     base::Time t =
         base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(i);
     history_service_->AddPage(test_url, t, NULL, 0, GURL(),
@@ -823,16 +832,15 @@ TEST_F(HistoryServiceTest, ProcessTimeRangeDeleteDirective) {
       syncer::AttachmentServiceProxyForTest::Create()));
 
   syncer::FakeSyncChangeProcessor change_processor;
-  EXPECT_FALSE(
-      history_service_->MergeDataAndStartSyncing(
-                            syncer::HISTORY_DELETE_DIRECTIVES,
-                            directives,
-                            scoped_ptr<syncer::SyncChangeProcessor>(
-                                new syncer::SyncChangeProcessorWrapperForTest(
-                                    &change_processor)),
-                            scoped_ptr<syncer::SyncErrorFactory>())
-          .error()
-          .IsSet());
+  EXPECT_FALSE(history_service_
+                   ->MergeDataAndStartSyncing(
+                       syncer::HISTORY_DELETE_DIRECTIVES, directives,
+                       std::unique_ptr<syncer::SyncChangeProcessor>(
+                           new syncer::SyncChangeProcessorWrapperForTest(
+                               &change_processor)),
+                       std::unique_ptr<syncer::SyncErrorFactory>())
+                   .error()
+                   .IsSet());
 
   // Inject a task to check status and keep message loop filled before
   // directive processing finishes.
@@ -841,7 +849,7 @@ TEST_F(HistoryServiceTest, ProcessTimeRangeDeleteDirective) {
       base::Bind(&CheckDirectiveProcessingResult,
                  base::Time::Now() + base::TimeDelta::FromSeconds(10),
                  &change_processor, 2));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(QueryURL(history_service_.get(), test_url));
   ASSERT_EQ(3, query_url_row_.visit_count());
   EXPECT_EQ(base::Time::UnixEpoch() + base::TimeDelta::FromMicroseconds(1),

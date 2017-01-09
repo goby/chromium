@@ -14,9 +14,6 @@
  *      </settings-downloads-page>
  *      ... other pages ...
  *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-downloads-page
  */
 Polymer({
   is: 'settings-downloads-page',
@@ -29,6 +26,12 @@ Polymer({
       type: Object,
       notify: true,
     },
+
+    /**
+     * Dictionary defining page visibility.
+     * @type {!DownloadsPageVisibility}
+     */
+    pageVisibility: Object,
   },
 
   /** @private */

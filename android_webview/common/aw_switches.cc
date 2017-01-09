@@ -6,7 +6,7 @@
 
 namespace switches {
 
-const char kDisablePageVisibility[] = "disable-page-visibility";
+const char kSyncOnDrawHardware[] = "sync-on-draw-hardware";
 const char kWebViewSandboxedRenderer[] = "webview-sandboxed-renderer";
 
 }  // namespace switches

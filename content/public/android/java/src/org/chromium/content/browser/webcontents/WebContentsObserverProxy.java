@@ -9,7 +9,6 @@ import org.chromium.base.ObserverList.RewindableIterator;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
-import org.chromium.base.annotations.MainDex;
 import org.chromium.content_public.browser.WebContentsObserver;
 
 /**
@@ -17,7 +16,6 @@ import org.chromium.content_public.browser.WebContentsObserver;
  * avoiding redundant JNI-related work when there are multiple Java-based observers.
  */
 @JNINamespace("content")
-@MainDex
 class WebContentsObserverProxy extends WebContentsObserver {
     private long mNativeWebContentsObserverProxy;
     private final ObserverList<WebContentsObserver> mObservers;
@@ -79,6 +77,15 @@ class WebContentsObserverProxy extends WebContentsObserver {
 
     @Override
     @CalledByNative
+    public void didFinishNavigation(
+            boolean isMainFrame, boolean isErrorPage, boolean hasCommitted) {
+        for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
+            mObserversIterator.next().didFinishNavigation(isMainFrame, isErrorPage, hasCommitted);
+        }
+    }
+
+    @Override
+    @CalledByNative
     public void didStartLoading(String url) {
         for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
             mObserversIterator.next().didStartLoading(url);
@@ -123,6 +130,30 @@ class WebContentsObserverProxy extends WebContentsObserver {
 
     @Override
     @CalledByNative
+    public void wasShown() {
+        for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
+            mObserversIterator.next().wasShown();
+        }
+    }
+
+    @Override
+    @CalledByNative
+    public void wasHidden() {
+        for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
+            mObserversIterator.next().wasHidden();
+        }
+    }
+
+    @Override
+    @CalledByNative
+    public void titleWasSet(String title) {
+        for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
+            mObserversIterator.next().titleWasSet(title);
+        }
+    }
+
+    @Override
+    @CalledByNative
     public void didNavigateAnyFrame(String url, String baseUrl, boolean isReload) {
         for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
             mObserversIterator.next().didNavigateAnyFrame(url, baseUrl, isReload);
@@ -140,10 +171,10 @@ class WebContentsObserverProxy extends WebContentsObserver {
     @Override
     @CalledByNative
     public void didStartProvisionalLoadForFrame(long frameId, long parentFrameId,
-            boolean isMainFrame, String validatedUrl, boolean isErrorPage, boolean isIframeSrcdoc) {
+            boolean isMainFrame, String validatedUrl, boolean isErrorPage) {
         for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
             mObserversIterator.next().didStartProvisionalLoadForFrame(
-                    frameId, parentFrameId, isMainFrame, validatedUrl, isErrorPage, isIframeSrcdoc);
+                    frameId, parentFrameId, isMainFrame, validatedUrl, isErrorPage);
         }
     }
 
@@ -210,14 +241,6 @@ class WebContentsObserverProxy extends WebContentsObserver {
     public void didStartNavigationToPendingEntry(String url) {
         for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
             mObserversIterator.next().didStartNavigationToPendingEntry(url);
-        }
-    }
-
-    @Override
-    @CalledByNative
-    public void mediaSessionStateChanged(boolean isControllable, boolean isSuspended) {
-        for (mObserversIterator.rewind(); mObserversIterator.hasNext();) {
-            mObserversIterator.next().mediaSessionStateChanged(isControllable, isSuspended);
         }
     }
 

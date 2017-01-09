@@ -6,37 +6,45 @@
 #define USBInterface_h
 
 #include "bindings/core/v8/ScriptWrappable.h"
+#include "device/usb/public/interfaces/device.mojom-blink.h"
 #include "platform/heap/Heap.h"
-#include "public/platform/modules/webusb/WebUSBDeviceInfo.h"
 
 namespace blink {
 
 class ExceptionState;
 class USBAlternateInterface;
 class USBConfiguration;
+class USBDevice;
 
-class USBInterface
-    : public GarbageCollected<USBInterface>
-    , public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static USBInterface* create(const USBConfiguration*, size_t interfaceIndex);
-    static USBInterface* create(const USBConfiguration*, size_t interfaceNumber, ExceptionState&);
+class USBInterface : public GarbageCollected<USBInterface>,
+                     public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    USBInterface(const USBConfiguration*, size_t interfaceIndex);
+ public:
+  static USBInterface* create(const USBConfiguration*, size_t interfaceIndex);
+  static USBInterface* create(const USBConfiguration*,
+                              size_t interfaceNumber,
+                              ExceptionState&);
 
-    const WebUSBDeviceInfo::Interface& info() const;
+  USBInterface(const USBDevice*,
+               size_t configurationIndex,
+               size_t interfaceIndex);
 
-    uint8_t interfaceNumber() const;
-    HeapVector<Member<USBAlternateInterface>> alternates() const;
+  const device::usb::blink::InterfaceInfo& info() const;
 
-    DECLARE_TRACE();
+  uint8_t interfaceNumber() const { return info().interface_number; }
+  USBAlternateInterface* alternate() const;
+  HeapVector<Member<USBAlternateInterface>> alternates() const;
+  bool claimed() const;
 
-private:
-    Member<const USBConfiguration> m_configuration;
-    const size_t m_interfaceIndex;
+  DECLARE_TRACE();
+
+ private:
+  Member<const USBDevice> m_device;
+  const size_t m_configurationIndex;
+  const size_t m_interfaceIndex;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // USBInterface_h
+#endif  // USBInterface_h

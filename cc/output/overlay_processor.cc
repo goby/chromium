@@ -8,8 +8,34 @@
 #include "cc/output/overlay_strategy_single_on_top.h"
 #include "cc/output/overlay_strategy_underlay.h"
 #include "cc/quads/draw_quad.h"
+#include "cc/resources/resource_provider.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/transform.h"
+
+namespace {
+
+#if defined(OS_ANDROID)
+// Utility class to make sure that we notify resource that they're promotable
+// before returning from ProcessForOverlays.
+class SendPromotionHintsBeforeReturning {
+ public:
+  SendPromotionHintsBeforeReturning(cc::ResourceProvider* resource_provider,
+                                    cc::OverlayCandidateList* candidates)
+      : resource_provider_(resource_provider), candidates_(candidates) {}
+  ~SendPromotionHintsBeforeReturning() {
+    resource_provider_->SendPromotionHints(
+        candidates_->promotable_resource_hints_);
+  }
+
+ private:
+  cc::ResourceProvider* resource_provider_;
+  cc::OverlayCandidateList* candidates_;
+
+  DISALLOW_COPY_AND_ASSIGN(SendPromotionHintsBeforeReturning);
+};
+#endif
+
+}  // namespace
 
 namespace cc {
 
@@ -34,57 +60,65 @@ gfx::Rect OverlayProcessor::GetAndResetOverlayDamage() {
 
 bool OverlayProcessor::ProcessForCALayers(
     ResourceProvider* resource_provider,
-    RenderPassList* render_passes,
+    RenderPass* render_pass,
     OverlayCandidateList* overlay_candidates,
     CALayerOverlayList* ca_layer_overlays,
     gfx::Rect* damage_rect) {
-  RenderPass* root_render_pass = render_passes->back().get();
-
   OverlayCandidateValidator* overlay_validator =
       surface_->GetOverlayCandidateValidator();
   if (!overlay_validator || !overlay_validator->AllowCALayerOverlays())
     return false;
 
-  if (!ProcessForCALayerOverlays(
-          resource_provider, gfx::RectF(root_render_pass->output_rect),
-          root_render_pass->quad_list, ca_layer_overlays))
+  if (!ProcessForCALayerOverlays(resource_provider,
+                                 gfx::RectF(render_pass->output_rect),
+                                 render_pass->quad_list, ca_layer_overlays))
     return false;
 
   // CALayer overlays are all-or-nothing. If all quads were replaced with
   // layers then clear the list and remove the backbuffer from the overcandidate
   // list.
   overlay_candidates->clear();
-  render_passes->back()->quad_list.clear();
-  overlay_damage_rect_ = root_render_pass->output_rect;
+  overlay_damage_rect_ = render_pass->output_rect;
   *damage_rect = gfx::Rect();
   return true;
 }
 
 void OverlayProcessor::ProcessForOverlays(ResourceProvider* resource_provider,
-                                          RenderPassList* render_passes,
+                                          RenderPass* render_pass,
                                           OverlayCandidateList* candidates,
                                           CALayerOverlayList* ca_layer_overlays,
                                           gfx::Rect* damage_rect) {
+#if defined(OS_ANDROID)
+  // Be sure to send out notifications, regardless of whether we get to
+  // processing for overlays or not.  If we don't, then we should notify that
+  // they are not promotable.
+  SendPromotionHintsBeforeReturning notifier(resource_provider, candidates);
+#endif
+
+  // If we have any copy requests, we can't remove any quads for overlays or
+  // CALayers because the framebuffer would be missing the removed quads'
+  // contents.
+  if (!render_pass->copy_requests.empty()) {
+    // If overlay processing was skipped for a frame there's no way to be sure
+    // of the state of the previous frame, so reset.
+    previous_frame_underlay_rect_ = gfx::Rect();
+    return;
+  }
+
   // First attempt to process for CALayers.
-  if (ProcessForCALayers(resource_provider, render_passes, candidates,
+  if (ProcessForCALayers(resource_provider, render_pass, candidates,
                          ca_layer_overlays, damage_rect)) {
     return;
   }
 
   // Only if that fails, attempt hardware overlay strategies.
   for (const auto& strategy : strategies_) {
-    if (!strategy->Attempt(resource_provider, render_passes, candidates))
+    if (!strategy->Attempt(resource_provider, render_pass, candidates))
       continue;
 
     UpdateDamageRect(candidates, damage_rect);
     return;
   }
-}
-
-void OverlayProcessor::SkipProcessForOverlays() {
-  // If overlay processing was skipped for a frame there's no way to be sure
-  // of the state of the previous frame, so reset.
-  previous_frame_underlay_rect_ = gfx::Rect();
 }
 
 // Subtract on-top overlays from the damage rect, unless the overlays use

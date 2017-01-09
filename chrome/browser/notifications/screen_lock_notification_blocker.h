@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_NOTIFICATIONS_SCREEN_LOCK_NOTIFICATION_BLOCKER_H_
 #define CHROME_BROWSER_NOTIFICATIONS_SCREEN_LOCK_NOTIFICATION_BLOCKER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/timer/timer.h"
 #include "ui/message_center/notification_blocker.h"
@@ -23,7 +23,7 @@ class ScreenLockNotificationBlocker
   // message_center::NotificationBlocker overrides:
   void CheckState() override;
   bool ShouldShowNotificationAsPopup(
-      const message_center::NotifierId& notifier_id) const override;
+      const message_center::Notification& notification) const override;
 
  private:
   bool is_locked_;

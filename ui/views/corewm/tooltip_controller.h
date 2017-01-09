@@ -6,8 +6,9 @@
 #define UI_VIEWS_COREWM_TOOLTIP_CONTROLLER_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/timer/timer.h"
 #include "ui/aura/window_observer.h"
@@ -34,12 +35,11 @@ class VIEWS_EXPORT TooltipController : public aura::client::TooltipClient,
                                        public ui::EventHandler,
                                        public aura::WindowObserver {
  public:
-  explicit TooltipController(scoped_ptr<Tooltip> tooltip);
+  explicit TooltipController(std::unique_ptr<Tooltip> tooltip);
   ~TooltipController() override;
 
   // Overridden from aura::client::TooltipClient.
-  int GetMaxWidth(const gfx::Point& location,
-                  aura::Window* context) const override;
+  int GetMaxWidth(const gfx::Point& location) const override;
   void UpdateTooltip(aura::Window* target) override;
   void SetTooltipShownTimeout(aura::Window* target, int timeout_in_ms) override;
   void SetTooltipsEnabled(bool enable) override;
@@ -88,7 +88,7 @@ class VIEWS_EXPORT TooltipController : public aura::client::TooltipClient,
   aura::Window* tooltip_window_at_mouse_press_;
   base::string16 tooltip_text_at_mouse_press_;
 
-  scoped_ptr<Tooltip> tooltip_;
+  std::unique_ptr<Tooltip> tooltip_;
 
   base::RepeatingTimer tooltip_timer_;
 

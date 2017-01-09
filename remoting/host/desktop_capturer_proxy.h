@@ -5,8 +5,10 @@
 #ifndef REMOTING_HOST_DESKTOP_CAPTURER_PROXY_H_
 #define REMOTING_HOST_DESKTOP_CAPTURER_PROXY_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
@@ -15,33 +17,45 @@ namespace base {
 class SingleThreadTaskRunner;
 }  // namespace base
 
-namespace remoting {
+namespace webrtc {
+class DesktopCaptureOptions;
+}  // namespace webrtc
 
-namespace protocol {
-class CursorShapeInfo;
-}  // namespace protocol
+namespace remoting {
 
 // DesktopCapturerProxy is responsible for calling webrtc::DesktopCapturer on
 // the capturer thread and then returning results to the caller's thread.
+// GetSourceList() and SelectSource() functions are not implemented by this
+// class, they always return false.
 class DesktopCapturerProxy : public webrtc::DesktopCapturer {
  public:
-  DesktopCapturerProxy(
-      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner,
-      scoped_ptr<webrtc::DesktopCapturer> capturer);
+  explicit DesktopCapturerProxy(
+      scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner);
   ~DesktopCapturerProxy() override;
+
+  // CreateCapturer() should be used if the capturer needs to be created on the
+  // capturer thread. Alternatively the capturer can be passed to
+  // set_capturer().
+  void CreateCapturer(const webrtc::DesktopCaptureOptions& options);
+  void set_capturer(std::unique_ptr<webrtc::DesktopCapturer> capturer);
 
   // webrtc::DesktopCapturer interface.
   void Start(Callback* callback) override;
-  void Capture(const webrtc::DesktopRegion& rect) override;
+  void SetSharedMemoryFactory(std::unique_ptr<webrtc::SharedMemoryFactory>
+                                  shared_memory_factory) override;
+  void CaptureFrame() override;
+  bool GetSourceList(SourceList* sources) override;
+  bool SelectSource(SourceId id) override;
 
  private:
   class Core;
 
-  void OnFrameCaptured(scoped_ptr<webrtc::DesktopFrame> frame);
+  void OnFrameCaptured(webrtc::DesktopCapturer::Result result,
+                       std::unique_ptr<webrtc::DesktopFrame> frame);
 
   base::ThreadChecker thread_checker_;
 
-  scoped_ptr<Core> core_;
+  std::unique_ptr<Core> core_;
   scoped_refptr<base::SingleThreadTaskRunner> capture_task_runner_;
   webrtc::DesktopCapturer::Callback* callback_;
 

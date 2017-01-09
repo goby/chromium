@@ -5,6 +5,8 @@
 #ifndef CONTENT_RENDERER_P2P_SOCKET_CLIENT_H_
 #define CONTENT_RENDERER_P2P_SOCKET_CLIENT_H_
 
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/memory/ref_counted.h"
@@ -31,6 +33,8 @@ class P2PSocketClient : public base::RefCountedThreadSafe<P2PSocketClient> {
   static scoped_refptr<P2PSocketClient> Create(
       P2PSocketType type,
       const net::IPEndPoint& local_address,
+      uint16_t min_port,
+      uint16_t max_port,
       const net::IPEndPoint& remote_address,
       P2PSocketClientDelegate* delegate);
 

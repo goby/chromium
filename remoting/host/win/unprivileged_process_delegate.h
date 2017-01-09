@@ -5,11 +5,14 @@
 #ifndef REMOTING_HOST_WIN_UNPRIVILEGED_PROCESS_DELEGATE_H_
 #define REMOTING_HOST_WIN_UNPRIVILEGED_PROCESS_DELEGATE_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/win/scoped_handle.h"
 #include "ipc/ipc_listener.h"
@@ -36,7 +39,7 @@ class UnprivilegedProcessDelegate
  public:
   UnprivilegedProcessDelegate(
       scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-      scoped_ptr<base::CommandLine> target_command);
+      std::unique_ptr<base::CommandLine> target_command);
   ~UnprivilegedProcessDelegate() override;
 
   // WorkerProcessLauncher::Delegate implementation.
@@ -48,7 +51,7 @@ class UnprivilegedProcessDelegate
  private:
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
   void ReportFatalError();
@@ -58,11 +61,11 @@ class UnprivilegedProcessDelegate
   scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;
 
   // Command line of the launched process.
-  scoped_ptr<base::CommandLine> target_command_;
+  std::unique_ptr<base::CommandLine> target_command_;
 
   // The server end of the IPC channel used to communicate to the worker
   // process.
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
 
   WorkerProcessLauncher* event_handler_;
 

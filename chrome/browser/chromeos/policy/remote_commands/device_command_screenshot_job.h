@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_REMOTE_COMMANDS_DEVICE_COMMAND_SCREENSHOT_JOB_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_REMOTE_COMMANDS_DEVICE_COMMAND_SCREENSHOT_JOB_H_
 
+#include <stddef.h>
+
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task_runner.h"
 #include "base/timer/timer.h"
@@ -81,11 +83,13 @@ class DeviceCommandScreenshotJob : public RemoteCommandJob,
 
     // Creates a new fully configured instance of an UploadJob. This method
     // may be called any number of times.
-    virtual scoped_ptr<UploadJob> CreateUploadJob(const GURL&,
-                                                  UploadJob::Delegate*) = 0;
+    virtual std::unique_ptr<UploadJob> CreateUploadJob(
+        const GURL&,
+        UploadJob::Delegate*) = 0;
   };
 
-  explicit DeviceCommandScreenshotJob(scoped_ptr<Delegate> screenshot_delegate);
+  explicit DeviceCommandScreenshotJob(
+      std::unique_ptr<Delegate> screenshot_delegate);
   ~DeviceCommandScreenshotJob() override;
 
   // RemoteCommandJob:
@@ -127,10 +131,10 @@ class DeviceCommandScreenshotJob : public RemoteCommandJob,
   std::map<int, scoped_refptr<base::RefCountedBytes>> screenshots_;
 
   // The Delegate is used to acquire screenshots and create UploadJobs.
-  scoped_ptr<Delegate> screenshot_delegate_;
+  std::unique_ptr<Delegate> screenshot_delegate_;
 
   // The upload job instance that will upload the screenshots.
-  scoped_ptr<UploadJob> upload_job_;
+  std::unique_ptr<UploadJob> upload_job_;
 
   base::WeakPtrFactory<DeviceCommandScreenshotJob> weak_ptr_factory_;
 

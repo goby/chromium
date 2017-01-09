@@ -2,9 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
+
 #include <locale>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/at_exit.h"
@@ -14,23 +19,27 @@
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_local.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/test/chromedriver/logging.h"
 #include "chrome/test/chromedriver/net/port_server.h"
 #include "chrome/test/chromedriver/server/http_handler.h"
 #include "chrome/test/chromedriver/version.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/server/http_server.h"
 #include "net/server/http_server_request_info.h"
 #include "net/server/http_server_response_info.h"
@@ -38,12 +47,25 @@
 
 namespace {
 
-const char kLocalHostAddress[] = "127.0.0.1";
 const int kBufferSize = 100 * 1024 * 1024;  // 100 MB
 
 typedef base::Callback<
     void(const net::HttpServerRequestInfo&, const HttpResponseSenderFunc&)>
     HttpRequestHandlerFunc;
+
+int ListenOnIPv4(net::ServerSocket* socket, uint16_t port, bool allow_remote) {
+  std::string binding_ip = net::IPAddress::IPv4Localhost().ToString();
+  if (allow_remote)
+    binding_ip = net::IPAddress::IPv4AllZeros().ToString();
+  return socket->ListenWithAddressAndPort(binding_ip, port, 1);
+}
+
+int ListenOnIPv6(net::ServerSocket* socket, uint16_t port, bool allow_remote) {
+  std::string binding_ip = net::IPAddress::IPv6Localhost().ToString();
+  if (allow_remote)
+    binding_ip = net::IPAddress::IPv6AllZeros().ToString();
+  return socket->ListenWithAddressAndPort(binding_ip, port, 1);
+}
 
 class HttpServer : public net::HttpServer::Delegate {
  public:
@@ -53,14 +75,20 @@ class HttpServer : public net::HttpServer::Delegate {
 
   ~HttpServer() override {}
 
-  bool Start(uint16 port, bool allow_remote) {
-    std::string binding_ip = kLocalHostAddress;
-    if (allow_remote)
-      binding_ip = "0.0.0.0";
-    scoped_ptr<net::ServerSocket> server_socket(
-        new net::TCPServerSocket(NULL, net::NetLog::Source()));
-    server_socket->ListenWithAddressAndPort(binding_ip, port, 1);
-    server_.reset(new net::HttpServer(server_socket.Pass(), this));
+  bool Start(uint16_t port, bool allow_remote) {
+    std::unique_ptr<net::ServerSocket> server_socket(
+        new net::TCPServerSocket(NULL, net::NetLogSource()));
+    if (ListenOnIPv4(server_socket.get(), port, allow_remote) != net::OK) {
+      // This will work on an IPv6-only host, but we will be IPv4-only on
+      // dual-stack hosts.
+      // TODO(samuong): change this to listen on both IPv4 and IPv6.
+      VLOG(0) << "listen on IPv4 failed, trying IPv6";
+      if (ListenOnIPv6(server_socket.get(), port, allow_remote) != net::OK) {
+        VLOG(1) << "listen on both IPv4 and IPv6 failed, giving up";
+        return false;
+      }
+    }
+    server_.reset(new net::HttpServer(std::move(server_socket), this));
     net::IPEndPoint address;
     return server_->GetLocalAddress(&address) == net::OK;
   }
@@ -86,7 +114,7 @@ class HttpServer : public net::HttpServer::Delegate {
 
  private:
   void OnResponse(int connection_id,
-                  scoped_ptr<net::HttpServerResponseInfo> response) {
+                  std::unique_ptr<net::HttpServerResponseInfo> response) {
     // Don't support keep-alive, since there's no way to detect if the
     // client is HTTP/1.0. In such cases, the client may hang waiting for
     // the connection to close (e.g., python 2.7 urllib).
@@ -97,14 +125,14 @@ class HttpServer : public net::HttpServer::Delegate {
   }
 
   HttpRequestHandlerFunc handle_request_func_;
-  scoped_ptr<net::HttpServer> server_;
+  std::unique_ptr<net::HttpServer> server_;
   base::WeakPtrFactory<HttpServer> weak_factory_;  // Should be last.
 };
 
 void SendResponseOnCmdThread(
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const HttpResponseSenderFunc& send_response_on_io_func,
-    scoped_ptr<net::HttpServerResponseInfo> response) {
+    std::unique_ptr<net::HttpServerResponseInfo> response) {
   io_task_runner->PostTask(
       FROM_HERE, base::Bind(send_response_on_io_func, base::Passed(&response)));
 }
@@ -116,14 +144,14 @@ void HandleRequestOnCmdThread(
     const HttpResponseSenderFunc& send_response_func) {
   if (!whitelisted_ips.empty()) {
     std::string peer_address = request.peer.ToStringWithoutPort();
-    if (peer_address != kLocalHostAddress &&
+    if (peer_address != net::IPAddress::IPv4Localhost().ToString() &&
         std::find(whitelisted_ips.begin(), whitelisted_ips.end(),
                   peer_address) == whitelisted_ips.end()) {
       LOG(WARNING) << "unauthorized access from " << request.peer.ToString();
-      scoped_ptr<net::HttpServerResponseInfo> response(
+      std::unique_ptr<net::HttpServerResponseInfo> response(
           new net::HttpServerResponseInfo(net::HTTP_UNAUTHORIZED));
       response->SetBody("Unauthorized access", "text/plain");
-      send_response_func.Run(response.Pass());
+      send_response_func.Run(std::move(response));
       return;
     }
   }
@@ -153,10 +181,10 @@ void StopServerOnIOThread() {
   delete server;
 }
 
-void StartServerOnIOThread(uint16 port,
+void StartServerOnIOThread(uint16_t port,
                            bool allow_remote,
                            const HttpRequestHandlerFunc& handle_request_func) {
-  scoped_ptr<HttpServer> temp_server(new HttpServer(handle_request_func));
+  std::unique_ptr<HttpServer> temp_server(new HttpServer(handle_request_func));
   if (!temp_server->Start(port, allow_remote)) {
     printf("Port not available. Exiting...\n");
     exit(1);
@@ -164,12 +192,12 @@ void StartServerOnIOThread(uint16 port,
   lazy_tls_server.Pointer()->Set(temp_server.release());
 }
 
-void RunServer(uint16 port,
+void RunServer(uint16_t port,
                bool allow_remote,
                const std::vector<std::string>& whitelisted_ips,
                const std::string& url_base,
                int adb_port,
-               scoped_ptr<PortServer> port_server) {
+               std::unique_ptr<PortServer> port_server) {
   base::Thread io_thread("ChromeDriver IO");
   CHECK(io_thread.StartWithOptions(
       base::Thread::Options(base::MessageLoop::TYPE_IO, 0)));
@@ -177,11 +205,11 @@ void RunServer(uint16 port,
   base::MessageLoop cmd_loop;
   base::RunLoop cmd_run_loop;
   HttpHandler handler(cmd_run_loop.QuitClosure(), io_thread.task_runner(),
-                      url_base, adb_port, port_server.Pass());
+                      url_base, adb_port, std::move(port_server));
   HttpRequestHandlerFunc handle_request_func =
       base::Bind(&HandleRequestOnCmdThread, &handler, whitelisted_ips);
 
-  io_thread.message_loop()->PostTask(
+  io_thread.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&StartServerOnIOThread, port, allow_remote,
                  base::Bind(&HandleRequestOnIOThread, cmd_loop.task_runner(),
@@ -192,8 +220,8 @@ void RunServer(uint16 port,
   // destroyed, which waits until all pending tasks have been completed.
   // This assumes the response is sent synchronously as part of the IO task.
   cmd_run_loop.Run();
-  io_thread.message_loop()
-      ->PostTask(FROM_HERE, base::Bind(&StopServerOnIOThread));
+  io_thread.task_runner()->PostTask(FROM_HERE,
+                                    base::Bind(&StopServerOnIOThread));
 }
 
 }  // namespace
@@ -212,12 +240,12 @@ int main(int argc, char *argv[]) {
 #endif
 
   // Parse command line flags.
-  uint16 port = 9515;
+  uint16_t port = 9515;
   int adb_port = 5037;
   bool allow_remote = false;
   std::vector<std::string> whitelisted_ips;
   std::string url_base;
-  scoped_ptr<PortServer> port_server;
+  std::unique_ptr<PortServer> port_server;
   if (cmd_line->HasSwitch("h") || cmd_line->HasSwitch("help")) {
     std::string options;
     const char* const kOptionAndDescriptions[] = {
@@ -253,7 +281,7 @@ int main(int argc, char *argv[]) {
       printf("Invalid port. Exiting...\n");
       return 1;
     }
-    port = static_cast<uint16>(cmd_line_port);
+    port = static_cast<uint16_t>(cmd_line_port);
   }
   if (cmd_line->HasSwitch("adb-port")) {
     if (!base::StringToInt(cmd_line->GetSwitchValueASCII("adb-port"),
@@ -280,9 +308,9 @@ int main(int argc, char *argv[]) {
   }
   if (cmd_line->HasSwitch("url-base"))
     url_base = cmd_line->GetSwitchValueASCII("url-base");
-  if (url_base.empty() || url_base[0] != '/')
+  if (url_base.empty() || url_base.front() != '/')
     url_base = "/" + url_base;
-  if (url_base[url_base.length() - 1] != '/')
+  if (url_base.back() != '/')
     url_base = url_base + "/";
   if (cmd_line->HasSwitch("whitelisted-ips")) {
     allow_remote = true;
@@ -307,7 +335,7 @@ int main(int argc, char *argv[]) {
     printf("Unable to initialize logging. Exiting...\n");
     return 1;
   }
-  RunServer(port, allow_remote, whitelisted_ips,
-            url_base, adb_port, port_server.Pass());
+  RunServer(port, allow_remote, whitelisted_ips, url_base, adb_port,
+            std::move(port_server));
   return 0;
 }

@@ -57,11 +57,16 @@
 #define MEDIA_AUDIO_WIN_AUDIO_LOW_LATENCY_INPUT_WIN_H_
 
 #include <Audioclient.h>
+#include <endpointvolume.h>
 #include <MMDeviceAPI.h>
+#include <stddef.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
@@ -70,7 +75,7 @@
 #include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
 #include "media/audio/agc_audio_stream.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/media_export.h"
 
 namespace media {
@@ -145,10 +150,10 @@ class MEDIA_EXPORT WASAPIAudioInputStream
   size_t packet_size_bytes_;
 
   // Length of the audio endpoint buffer.
-  uint32 endpoint_buffer_size_frames_;
+  uint32_t endpoint_buffer_size_frames_;
 
   // Contains the unique name of the selected endpoint device.
-  // Note that AudioManagerBase::kDefaultDeviceId represents the default
+  // Note that AudioDeviceDescription::kDefaultDeviceId represents the default
   // device role and is not a valid ID as such.
   std::string device_id_;
 
@@ -192,6 +197,10 @@ class MEDIA_EXPORT WASAPIAudioInputStream
   // This interface does only work with shared-mode streams.
   base::win::ScopedComPtr<ISimpleAudioVolume> simple_audio_volume_;
 
+  // The IAudioEndpointVolume allows a client to control the volume level of
+  // the whole system.
+  base::win::ScopedComPtr<IAudioEndpointVolume> system_audio_volume_;
+
   // The audio engine will signal this event each time a buffer has been
   // recorded.
   base::win::ScopedHandle audio_samples_ready_event_;
@@ -201,7 +210,13 @@ class MEDIA_EXPORT WASAPIAudioInputStream
 
   // Extra audio bus used for storage of deinterleaved data for the OnData
   // callback.
-  scoped_ptr<media::AudioBus> audio_bus_;
+  std::unique_ptr<media::AudioBus> audio_bus_;
+
+  // Never set it through external API. Only used when |device_id_| ==
+  // kLoopbackWithMuteDeviceId.
+  // True, if we have muted the system audio for the stream capturing, and
+  // indicates that we need to unmute the system audio when stopping capturing.
+  bool mute_done_;
 
   DISALLOW_COPY_AND_ASSIGN(WASAPIAudioInputStream);
 };

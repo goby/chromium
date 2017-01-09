@@ -4,14 +4,15 @@
 
 #include "google_apis/gcm/engine/mcs_client.h"
 
+#include <stddef.h>
 #include <set>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
@@ -26,7 +27,7 @@ namespace gcm {
 
 namespace {
 
-typedef scoped_ptr<google::protobuf::MessageLite> MCSProto;
+typedef std::unique_ptr<google::protobuf::MessageLite> MCSProto;
 
 // The category of messages intended for the GCM client itself from MCS.
 const char kMCSCategory[] = "com.google.android.gsf.gtalkservice";
@@ -86,12 +87,12 @@ class CollapseKey {
 
   std::string token() const { return token_; }
   std::string app_id() const { return app_id_; }
-  int64 device_user_id() const { return device_user_id_; }
+  int64_t device_user_id() const { return device_user_id_; }
 
  private:
   const std::string token_;
   const std::string app_id_;
-  const int64 device_user_id_;
+  const int64_t device_user_id_;
 };
 
 CollapseKey::CollapseKey(const mcs_proto::DataMessageStanza& message)
@@ -119,13 +120,13 @@ struct ReliablePacketInfo {
   ~ReliablePacketInfo();
 
   // The stream id with which the message was sent.
-  uint32 stream_id;
+  uint32_t stream_id;
 
   // If reliable delivery was requested, the persistent id of the message.
   std::string persistent_id;
 
   // The type of message itself (for easier lookup).
-  uint8 tag;
+  uint8_t tag;
 
   // The protobuf of the message itself.
   MCSProto protobuf;
@@ -154,10 +155,9 @@ std::string MCSClient::GetStateString() const {
       return "CONNECTING";
     case CONNECTED:
       return "CONNECTED";
-    default:
-      NOTREACHED();
-      return std::string();
   }
+  NOTREACHED();
+  return std::string();
 }
 
 MCSClient::MCSClient(const std::string& version_string,
@@ -188,7 +188,7 @@ void MCSClient::Initialize(
     const ErrorCallback& error_callback,
     const OnMessageReceivedCallback& message_received_callback,
     const OnMessageSentCallback& message_sent_callback,
-    scoped_ptr<GCMStore::LoadResult> load_result) {
+    std::unique_ptr<GCMStore::LoadResult> load_result) {
   DCHECK_EQ(state_, UNINITIALIZED);
 
   state_ = LOADED;
@@ -227,12 +227,12 @@ void MCSClient::Initialize(
   restored_unackeds_server_ids_ = load_result->incoming_messages;
 
   // First go through and order the outgoing messages by recency.
-  std::map<uint64, google::protobuf::MessageLite*> ordered_messages;
+  std::map<uint64_t, google::protobuf::MessageLite*> ordered_messages;
   std::vector<PersistentId> expired_ttl_ids;
   for (GCMStore::OutgoingMessageMap::iterator iter =
            load_result->outgoing_messages.begin();
        iter != load_result->outgoing_messages.end(); ++iter) {
-    uint64 timestamp = 0;
+    uint64_t timestamp = 0;
     if (!base::StringToUint64(iter->first, &timestamp)) {
       LOG(ERROR) << "Invalid restored message.";
       // TODO(fgorski): Error: data unreadable
@@ -259,8 +259,8 @@ void MCSClient::Initialize(
 
   // Now go through and add the outgoing messages to the send queue in their
   // appropriate order (oldest at front, most recent at back).
-  for (std::map<uint64, google::protobuf::MessageLite*>::iterator
-           iter = ordered_messages.begin();
+  for (std::map<uint64_t, google::protobuf::MessageLite*>::iterator iter =
+           ordered_messages.begin();
        iter != ordered_messages.end(); ++iter) {
     ReliablePacketInfo* packet_info = new ReliablePacketInfo();
     packet_info->protobuf.reset(iter->second);
@@ -285,7 +285,7 @@ void MCSClient::Initialize(
   heartbeat_manager_.SetClientHeartbeatIntervalMs(min_interval_ms);
 }
 
-void MCSClient::Login(uint64 android_id, uint64 security_token) {
+void MCSClient::Login(uint64_t android_id, uint64_t security_token) {
   DCHECK_EQ(state_, LOADED);
   DCHECK(android_id_ == 0 || android_id_ == android_id);
   DCHECK(security_token_ == 0 || security_token_ == security_token);
@@ -316,7 +316,7 @@ void MCSClient::SendMessage(const MCSMessage& message) {
     return;
   }
 
-  scoped_ptr<ReliablePacketInfo> packet_info(new ReliablePacketInfo());
+  std::unique_ptr<ReliablePacketInfo> packet_info(new ReliablePacketInfo());
   packet_info->tag = message.tag();
   packet_info->protobuf = message.CloneProtobuf();
 
@@ -333,7 +333,7 @@ void MCSClient::SendMessage(const MCSMessage& message) {
       ReliablePacketInfo* original_packet = collapse_key_map_[collapse_key];
       DVLOG(1) << "Found matching collapse key, Reusing persistent id of "
                << original_packet->persistent_id;
-      original_packet->protobuf = packet_info->protobuf.Pass();
+      original_packet->protobuf = std::move(packet_info->protobuf);
       SetPersistentId(original_packet->persistent_id,
                       original_packet->protobuf.get());
       gcm_store_->OverwriteOutgoingMessage(
@@ -377,8 +377,8 @@ void MCSClient::SendMessage(const MCSMessage& message) {
   MaybeSendMessage();
 }
 
-void MCSClient::UpdateHeartbeatTimer(scoped_ptr<base::Timer> timer) {
-  heartbeat_manager_.UpdateHeartbeatTimer(timer.Pass());
+void MCSClient::UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) {
+  heartbeat_manager_.UpdateHeartbeatTimer(std::move(timer));
 }
 
 void MCSClient::AddHeartbeatInterval(const std::string& scope,
@@ -566,7 +566,7 @@ void MCSClient::SendPacketToWire(ReliablePacketInfo* packet_info) {
     mcs_proto::DataMessageStanza* data_message =
         reinterpret_cast<mcs_proto::DataMessageStanza*>(
             packet_info->protobuf.get());
-    uint64 sent = data_message->sent();
+    uint64_t sent = data_message->sent();
     DCHECK_GT(sent, 0U);
     int queued = (clock_->Now().ToInternalValue() /
         base::Time::kMicrosecondsPerSecond) - sent;
@@ -605,12 +605,12 @@ void MCSClient::SendPacketToWire(ReliablePacketInfo* packet_info) {
 }
 
 void MCSClient::HandleMCSDataMesssage(
-    scoped_ptr<google::protobuf::MessageLite> protobuf) {
+    std::unique_ptr<google::protobuf::MessageLite> protobuf) {
   mcs_proto::DataMessageStanza* data_message =
       reinterpret_cast<mcs_proto::DataMessageStanza*>(protobuf.get());
   // TODO(zea): implement a proper status manager rather than hardcoding these
   // values.
-  scoped_ptr<mcs_proto::DataMessageStanza> response(
+  std::unique_ptr<mcs_proto::DataMessageStanza> response(
       new mcs_proto::DataMessageStanza());
   response->set_from(kGCMFromField);
   response->set_sent(clock_->Now().ToInternalValue() /
@@ -631,15 +631,15 @@ void MCSClient::HandleMCSDataMesssage(
   }
 
   if (send) {
-    SendMessage(MCSMessage(kDataMessageStanzaTag, response.Pass()));
+    SendMessage(MCSMessage(kDataMessageStanzaTag, std::move(response)));
   }
 }
 
 void MCSClient::HandlePacketFromWire(
-    scoped_ptr<google::protobuf::MessageLite> protobuf) {
+    std::unique_ptr<google::protobuf::MessageLite> protobuf) {
   if (!protobuf.get())
     return;
-  uint8 tag = GetMCSProtoTag(*protobuf);
+  uint8_t tag = GetMCSProtoTag(*protobuf);
   PersistentId persistent_id = GetPersistentId(*protobuf);
   StreamId last_stream_id_received = GetLastStreamIdReceived(*protobuf);
 
@@ -720,9 +720,8 @@ void MCSClient::HandlePacketFromWire(
 
       // Pass the login response on up.
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::Bind(message_received_callback_,
-                     MCSMessage(tag, protobuf.Pass())));
+          FROM_HERE, base::Bind(message_received_callback_,
+                                MCSMessage(tag, std::move(protobuf))));
 
       // If there are pending messages, attempt to send one.
       if (!to_send_.empty()) {
@@ -785,15 +784,14 @@ void MCSClient::HandlePacketFromWire(
       mcs_proto::DataMessageStanza* data_message =
           reinterpret_cast<mcs_proto::DataMessageStanza*>(protobuf.get());
       if (data_message->category() == kMCSCategory) {
-        HandleMCSDataMesssage(protobuf.Pass());
+        HandleMCSDataMesssage(std::move(protobuf));
         return;
       }
 
       DCHECK(protobuf.get());
       base::ThreadTaskRunnerHandle::Get()->PostTask(
-          FROM_HERE,
-          base::Bind(message_received_callback_,
-                     MCSMessage(tag, protobuf.Pass())));
+          FROM_HERE, base::Bind(message_received_callback_,
+                                MCSMessage(tag, std::move(protobuf))));
       return;
     }
     default:

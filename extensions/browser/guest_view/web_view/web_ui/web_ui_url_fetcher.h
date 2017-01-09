@@ -5,8 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_GUEST_VIEW_WEB_VIEW_WEB_UI_URL_FETCHER_H
 #define EXTENSIONS_BROWSER_GUEST_VIEW_WEB_VIEW_WEB_UI_URL_FETCHER_H
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
@@ -27,11 +29,12 @@ class WebUIURLFetcher : public net::URLFetcherDelegate {
   // Parameters:
   // - whether the request is success.
   // - If yes, the content of the file.
-  using WebUILoadFileCallback = base::Callback<void(bool, const std::string&)>;
+  using WebUILoadFileCallback =
+      base::Callback<void(bool, std::unique_ptr<std::string>)>;
 
   WebUIURLFetcher(content::BrowserContext* context,
                   int render_process_id,
-                  int render_view_id,
+                  int render_frame_id,
                   const GURL& url,
                   const WebUILoadFileCallback& callback);
   ~WebUIURLFetcher() override;
@@ -44,10 +47,10 @@ class WebUIURLFetcher : public net::URLFetcherDelegate {
 
   content::BrowserContext* context_;
   int render_process_id_;
-  int render_view_id_;
+  int render_frame_id_;
   GURL url_;
   WebUILoadFileCallback callback_;
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(WebUIURLFetcher);
 };

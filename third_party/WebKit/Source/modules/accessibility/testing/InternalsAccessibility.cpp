@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "InternalsAccessibility.h"
 
 #include "core/testing/Internals.h"
@@ -10,9 +9,8 @@
 
 namespace blink {
 
-unsigned InternalsAccessibility::numberOfLiveAXObjects(Internals&)
-{
-    return AXObject::numberOfLiveAXObjects();
+unsigned InternalsAccessibility::numberOfLiveAXObjects(Internals&) {
+  return AXObject::numberOfLiveAXObjects();
 }
 
-} // namespace blink
+}  // namespace blink

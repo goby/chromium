@@ -5,8 +5,8 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_EXTENSION_ERROR_UI_DEFAULT_H_
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_ERROR_UI_DEFAULT_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/extensions/extension_error_ui.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "extensions/common/extension.h"
@@ -57,7 +57,7 @@ class ExtensionErrorUIDefault : public ExtensionErrorUI {
   // The browser the bubble view was shown into.
   Browser* browser_;
 
-  scoped_ptr<ExtensionGlobalError> global_error_;
+  std::unique_ptr<ExtensionGlobalError> global_error_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionErrorUIDefault);
 };

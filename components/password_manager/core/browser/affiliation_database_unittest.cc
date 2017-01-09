@@ -4,9 +4,12 @@
 
 #include "components/password_manager/core/browser/affiliation_database.h"
 
+#include <stdint.h>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "sql/test/scoped_error_ignorer.h"
+#include "base/macros.h"
+#include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -25,9 +28,9 @@ const char kTestFacetURI6[] = "https://zeta.example.com";
 
 const char kTestAndroidFacetURI[] = "android://hash@com.example.android";
 
-const int64 kTestTimeUs1 = 1000000;
-const int64 kTestTimeUs2 = 2000000;
-const int64 kTestTimeUs3 = 3000000;
+const int64_t kTestTimeUs1 = 1000000;
+const int64_t kTestTimeUs2 = 2000000;
+const int64_t kTestTimeUs3 = 3000000;
 
 void ExpectEquivalenceClassesAreEqual(
     const AffiliatedFacetsWithUpdateTime& expectation,
@@ -90,13 +93,13 @@ class AffiliationDatabaseTest : public testing::Test {
   AffiliationDatabase& db() { return *db_; }
 
   base::FilePath db_path() {
-    return temp_directory_.path().Append(
+    return temp_directory_.GetPath().Append(
         FILE_PATH_LITERAL("Test Affiliation Database"));
   }
 
  private:
   base::ScopedTempDir temp_directory_;
-  scoped_ptr<AffiliationDatabase> db_;
+  std::unique_ptr<AffiliationDatabase> db_;
 
   DISALLOW_COPY_AND_ASSIGN(AffiliationDatabaseTest);
 };
@@ -109,22 +112,22 @@ TEST_F(AffiliationDatabaseTest, Store) {
 
   // Verify that duplicate equivalence classes are not allowed to be stored.
   {
-    sql::ScopedErrorIgnorer error_ignorer;
-    error_ignorer.IgnoreError(SQLITE_CONSTRAINT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CONSTRAINT);
     AffiliatedFacetsWithUpdateTime duplicate = TestEquivalenceClass1();
     EXPECT_FALSE(db().Store(duplicate));
-    EXPECT_TRUE(error_ignorer.CheckIgnoredErrors());
+    EXPECT_TRUE(expecter.SawExpectedErrors());
   }
 
   // Verify that intersecting equivalence classes are not allowed to be stored.
   {
-    sql::ScopedErrorIgnorer error_ignorer;
-    error_ignorer.IgnoreError(SQLITE_CONSTRAINT);
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CONSTRAINT);
     AffiliatedFacetsWithUpdateTime intersecting;
     intersecting.facets.push_back(FacetURI::FromCanonicalSpec(kTestFacetURI3));
     intersecting.facets.push_back(FacetURI::FromCanonicalSpec(kTestFacetURI4));
     EXPECT_FALSE(db().Store(intersecting));
-    EXPECT_TRUE(error_ignorer.CheckIgnoredErrors());
+    EXPECT_TRUE(expecter.SawExpectedErrors());
   }
 }
 

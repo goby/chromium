@@ -4,11 +4,13 @@
 
 #include "jingle/notifier/listener/push_client.h"
 
+#include <memory>
+
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "jingle/notifier/base/notifier_options.h"
 #include "net/url_request/url_request_test_util.h"
@@ -35,7 +37,7 @@ class PushClientTest : public testing::Test {
 
 // Make sure calling CreateDefault on the IO thread doesn't blow up.
 TEST_F(PushClientTest, CreateDefaultOnIOThread) {
-  const scoped_ptr<PushClient> push_client(
+  const std::unique_ptr<PushClient> push_client(
       PushClient::CreateDefault(notifier_options_));
 }
 
@@ -43,17 +45,16 @@ TEST_F(PushClientTest, CreateDefaultOnIOThread) {
 TEST_F(PushClientTest, CreateDefaultOffIOThread) {
   base::Thread thread("Non-IO thread");
   EXPECT_TRUE(thread.Start());
-  thread.message_loop()->PostTask(
-      FROM_HERE,
-      base::Bind(base::IgnoreResult(&PushClient::CreateDefault),
-                 notifier_options_));
+  thread.task_runner()->PostTask(
+      FROM_HERE, base::Bind(base::IgnoreResult(&PushClient::CreateDefault),
+                            notifier_options_));
   thread.Stop();
 }
 
 // Make sure calling CreateDefaultOnIOThread on the IO thread doesn't
 // blow up.
 TEST_F(PushClientTest, CreateDefaultOnIOThreadOnIOThread) {
-  const scoped_ptr<PushClient> push_client(
+  const std::unique_ptr<PushClient> push_client(
       PushClient::CreateDefaultOnIOThread(notifier_options_));
 }
 

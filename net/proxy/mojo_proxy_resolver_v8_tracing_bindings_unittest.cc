@@ -8,6 +8,7 @@
 #include <utility>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -22,20 +23,19 @@ class MojoProxyResolverV8TracingBindingsTest : public testing::Test {
                     MojoProxyResolverV8TracingBindingsTest>(this));
   }
 
-  void Alert(const mojo::String& message) {
-    alerts_.push_back(message.To<std::string>());
+  void Alert(const std::string& message) { alerts_.push_back(message); }
+
+  void OnError(int32_t line_number, const std::string& message) {
+    errors_.push_back(std::make_pair(line_number, message));
   }
 
-  void OnError(int32_t line_number, const mojo::String& message) {
-    errors_.push_back(std::make_pair(line_number, message.To<std::string>()));
-  }
-
-  void ResolveDns(interfaces::HostResolverRequestInfoPtr request_info,
+  void ResolveDns(std::unique_ptr<HostResolver::RequestInfo> request_info,
                   interfaces::HostResolverRequestClientPtr client) {}
 
  protected:
-  scoped_ptr<MojoProxyResolverV8TracingBindings<
-      MojoProxyResolverV8TracingBindingsTest>> bindings_;
+  std::unique_ptr<MojoProxyResolverV8TracingBindings<
+      MojoProxyResolverV8TracingBindingsTest>>
+      bindings_;
 
   std::vector<std::string> alerts_;
   std::vector<std::pair<int, std::string>> errors_;
@@ -49,7 +49,7 @@ TEST_F(MojoProxyResolverV8TracingBindingsTest, Basic) {
   bindings_->OnError(-1, base::ASCIIToUTF16("error"));
 
   EXPECT_TRUE(bindings_->GetHostResolver());
-  EXPECT_FALSE(bindings_->GetBoundNetLog().net_log());
+  EXPECT_FALSE(bindings_->GetNetLogWithSource().net_log());
 
   ASSERT_EQ(1u, alerts_.size());
   EXPECT_EQ("alert", alerts_[0]);

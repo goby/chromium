@@ -8,10 +8,9 @@
 #include "base/logging.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/web_contents.h"
-#include "content/shell/browser/blink_test_controller.h"
+#include "content/shell/browser/layout_test/blink_test_controller.h"
 #include "content/shell/browser/shell_javascript_dialog.h"
 #include "content/shell/common/shell_switches.h"
-#include "net/base/net_util.h"
 
 namespace content {
 
@@ -24,7 +23,6 @@ LayoutTestJavaScriptDialogManager::~LayoutTestJavaScriptDialogManager() {
 void LayoutTestJavaScriptDialogManager::RunJavaScriptDialog(
     WebContents* web_contents,
     const GURL& origin_url,
-    const std::string& accept_lang,
     JavaScriptMessageType javascript_message_type,
     const base::string16& message_text,
     const base::string16& default_prompt_text,
@@ -36,7 +34,6 @@ void LayoutTestJavaScriptDialogManager::RunJavaScriptDialog(
 
 void LayoutTestJavaScriptDialogManager::RunBeforeUnloadDialog(
     WebContents* web_contents,
-    const base::string16& message_text,
     bool is_reload,
     const DialogClosedCallback& callback) {
   callback.Run(true, base::string16());

@@ -5,11 +5,11 @@
 #ifndef CONTENT_RENDERER_FETCHERS_MANIFEST_FETCHER_H_
 #define CONTENT_RENDERER_FETCHERS_MANIFEST_FETCHER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "third_party/WebKit/public/platform/WebURLResponse.h"
 
@@ -21,7 +21,7 @@ class WebFrame;
 
 namespace content {
 
-class ResourceFetcher;
+class AssociatedResourceFetcher;
 
 // Helper class to download a Web Manifest. When an instance is created, the
 // caller need to call Start() and wait for the passed callback to be executed.
@@ -49,7 +49,7 @@ class CONTENT_EXPORT ManifestFetcher {
 
   bool completed_;
   Callback callback_;
-  scoped_ptr<ResourceFetcher> fetcher_;
+  std::unique_ptr<AssociatedResourceFetcher> fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(ManifestFetcher);
 };

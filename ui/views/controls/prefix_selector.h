@@ -5,6 +5,10 @@
 #ifndef UI_VIEWS_CONTROLS_PREFIX_SELECTOR_H_
 #define UI_VIEWS_CONTROLS_PREFIX_SELECTOR_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
 #include "ui/base/ime/text_input_client.h"
@@ -13,12 +17,13 @@
 namespace views {
 
 class PrefixDelegate;
+class View;
 
 // PrefixSelector is used to change the selection in a view as the user
 // types characters.
 class VIEWS_EXPORT PrefixSelector : public ui::TextInputClient {
  public:
-  explicit PrefixSelector(PrefixDelegate* delegate);
+  PrefixSelector(PrefixDelegate* delegate, View* host_view);
   ~PrefixSelector() override;
 
   // Invoked from the view when it loses focus.
@@ -32,10 +37,11 @@ class VIEWS_EXPORT PrefixSelector : public ui::TextInputClient {
   void InsertChar(const ui::KeyEvent& event) override;
   ui::TextInputType GetTextInputType() const override;
   ui::TextInputMode GetTextInputMode() const override;
+  base::i18n::TextDirection GetTextDirection() const override;
   int GetTextInputFlags() const override;
   bool CanComposeInline() const override;
   gfx::Rect GetCaretBounds() const override;
-  bool GetCompositionCharacterBounds(uint32 index,
+  bool GetCompositionCharacterBounds(uint32_t index,
                                      gfx::Rect* rect) const override;
   bool HasCompositionText() const override;
   bool GetTextRange(gfx::Range* range) const override;
@@ -49,10 +55,10 @@ class VIEWS_EXPORT PrefixSelector : public ui::TextInputClient {
   bool ChangeTextDirectionAndLayoutAlignment(
       base::i18n::TextDirection direction) override;
   void ExtendSelectionAndDelete(size_t before, size_t after) override;
-  void EnsureCaretInRect(const gfx::Rect& rect) override;
+  void EnsureCaretNotInRect(const gfx::Rect& rect) override;
 
-  bool IsEditCommandEnabled(int command_id) override;
-  void SetEditCommandForNextKeyEvent(int command_id) override;
+  bool IsTextEditCommandEnabled(ui::TextEditCommand command) const override;
+  void SetTextEditCommandForNextKeyEvent(ui::TextEditCommand command) override;
 
  private:
   // Invoked when text is typed. Tries to change the selection appropriately.
@@ -65,6 +71,8 @@ class VIEWS_EXPORT PrefixSelector : public ui::TextInputClient {
   void ClearText();
 
   PrefixDelegate* prefix_delegate_;
+
+  View* host_view_;
 
   // Time OnTextInput() was last invoked.
   base::TimeTicks time_of_last_key_;

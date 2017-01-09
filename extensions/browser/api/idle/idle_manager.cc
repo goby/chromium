@@ -6,6 +6,7 @@
 
 #include <utility>
 
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "content/public/browser/browser_context.h"
 #include "extensions/browser/api/idle/idle_api_constants.h"
@@ -47,14 +48,14 @@ DefaultEventDelegate::~DefaultEventDelegate() {
 
 void DefaultEventDelegate::OnStateChanged(const std::string& extension_id,
                                           ui::IdleState new_state) {
-  scoped_ptr<base::ListValue> args(new base::ListValue());
+  std::unique_ptr<base::ListValue> args(new base::ListValue());
   args->Append(IdleManager::CreateIdleValue(new_state));
-  scoped_ptr<Event> event(new Event(events::IDLE_ON_STATE_CHANGED,
-                                    idle::OnStateChanged::kEventName,
-                                    args.Pass()));
+  std::unique_ptr<Event> event(new Event(events::IDLE_ON_STATE_CHANGED,
+                                         idle::OnStateChanged::kEventName,
+                                         std::move(args)));
   event->restrict_to_browser_context = context_;
   EventRouter::Get(context_)
-      ->DispatchEventToExtension(extension_id, event.Pass());
+      ->DispatchEventToExtension(extension_id, std::move(event));
 }
 
 void DefaultEventDelegate::RegisterObserver(EventRouter::Observer* observer) {
@@ -169,7 +170,7 @@ void IdleManager::OnListenerRemoved(const EventListenerInfo& details) {
   }
 }
 
-void IdleManager::QueryState(int threshold, QueryStateCallback notify) {
+void IdleManager::QueryState(int threshold, const QueryStateCallback& notify) {
   DCHECK(thread_checker_.CalledOnValidThread());
   idle_time_provider_->CalculateIdleState(threshold, notify);
 }
@@ -180,7 +181,8 @@ void IdleManager::SetThreshold(const std::string& extension_id, int threshold) {
 }
 
 // static
-base::StringValue* IdleManager::CreateIdleValue(ui::IdleState idle_state) {
+std::unique_ptr<base::StringValue> IdleManager::CreateIdleValue(
+    ui::IdleState idle_state) {
   const char* description;
 
   if (idle_state == ui::IDLE_STATE_ACTIVE) {
@@ -191,19 +193,19 @@ base::StringValue* IdleManager::CreateIdleValue(ui::IdleState idle_state) {
     description = keys::kStateLocked;
   }
 
-  return new base::StringValue(description);
+  return base::MakeUnique<base::StringValue>(description);
 }
 
 void IdleManager::SetEventDelegateForTest(
-    scoped_ptr<EventDelegate> event_delegate) {
+    std::unique_ptr<EventDelegate> event_delegate) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  event_delegate_ = event_delegate.Pass();
+  event_delegate_ = std::move(event_delegate);
 }
 
 void IdleManager::SetIdleTimeProviderForTest(
-    scoped_ptr<IdleTimeProvider> idle_time_provider) {
+    std::unique_ptr<IdleTimeProvider> idle_time_provider) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  idle_time_provider_ = idle_time_provider.Pass();
+  idle_time_provider_ = std::move(idle_time_provider);
 }
 
 IdleMonitor* IdleManager::GetMonitor(const std::string& extension_id) {

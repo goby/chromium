@@ -4,15 +4,15 @@
 
 #include "chrome/browser/supervised_user/supervised_user_whitelist_service.h"
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/metrics/user_metrics_action.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "chrome/browser/component_updater/supervised_user_whitelist_installer.h"
@@ -20,12 +20,14 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/sync_merge_result.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/sync_merge_result.h"
+#include "components/sync/protocol/sync.pb.h"
 
 const char kName[] = "name";
 
@@ -115,7 +117,7 @@ void SupervisedUserWhitelistService::LoadWhitelistForTesting(
     const base::FilePath& path) {
   bool result = registered_whitelists_.insert(id).second;
   DCHECK(result);
-  OnWhitelistReady(id, title, path);
+  OnWhitelistReady(id, title, base::FilePath(), path);
 }
 
 void SupervisedUserWhitelistService::UnloadWhitelist(const std::string& id) {
@@ -142,8 +144,8 @@ syncer::SyncMergeResult
 SupervisedUserWhitelistService::MergeDataAndStartSyncing(
     syncer::ModelType type,
     const syncer::SyncDataList& initial_sync_data,
-    scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-    scoped_ptr<syncer::SyncErrorFactory> error_handler) {
+    std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+    std::unique_ptr<syncer::SyncErrorFactory> error_handler) {
   DCHECK_EQ(syncer::SUPERVISED_USER_WHITELISTS, type);
 
   syncer::SyncChangeList change_list;
@@ -278,7 +280,7 @@ void SupervisedUserWhitelistService::AddNewWhitelist(
   base::RecordAction(base::UserMetricsAction("ManagedUsers_Whitelist_Added"));
 
   RegisterWhitelist(whitelist.id(), whitelist.name(), FROM_SYNC);
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   SetWhitelistProperties(dict.get(), whitelist);
   pref_dict->SetWithoutPathExpansion(whitelist.id(), dict.release());
 }
@@ -330,6 +332,7 @@ void SupervisedUserWhitelistService::NotifyWhitelistsChanged() {
 void SupervisedUserWhitelistService::OnWhitelistReady(
     const std::string& id,
     const base::string16& title,
+    const base::FilePath& large_icon_path,
     const base::FilePath& whitelist_path) {
   // If we did not register the whitelist or it has been unregistered in the
   // mean time, ignore it.
@@ -337,7 +340,7 @@ void SupervisedUserWhitelistService::OnWhitelistReady(
     return;
 
   SupervisedUserSiteList::Load(
-      title, whitelist_path,
+      id, title, large_icon_path, whitelist_path,
       base::Bind(&SupervisedUserWhitelistService::OnWhitelistLoaded,
                  weak_ptr_factory_.GetWeakPtr(), id, base::TimeTicks::Now()));
 }

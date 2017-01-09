@@ -7,6 +7,7 @@
 
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/single_thread_task_runner.h"
 
@@ -18,10 +19,8 @@ namespace base {
 // Sample usage:
 // class Foo : public RefCountedDeleteOnMessageLoop<Foo> {
 //
-//   Foo(const scoped_refptr<SingleThreadTaskRunner>& loop)
-//       : RefCountedDeleteOnMessageLoop<Foo>(loop) {
-//     ...
-//   }
+//   Foo(scoped_refptr<SingleThreadTaskRunner> loop)
+//       : RefCountedDeleteOnMessageLoop<Foo>(std::move(loop)) {}
 //   ...
 //  private:
 //   friend class RefCountedDeleteOnMessageLoop<Foo>;
@@ -34,13 +33,11 @@ namespace base {
 template <class T>
 class RefCountedDeleteOnMessageLoop : public subtle::RefCountedThreadSafeBase {
  public:
-  // This constructor will accept a MessageL00pProxy object, but new code should
-  // prefer a SingleThreadTaskRunner. A SingleThreadTaskRunner for the
-  // MessageLoop on the current thread can be acquired by calling
-  // MessageLoop::current()->task_runner().
+  // A SingleThreadTaskRunner for the current thread can be acquired by calling
+  // ThreadTaskRunnerHandle::Get().
   RefCountedDeleteOnMessageLoop(
-      const scoped_refptr<SingleThreadTaskRunner>& task_runner)
-      : task_runner_(task_runner) {
+      scoped_refptr<SingleThreadTaskRunner> task_runner)
+      : task_runner_(std::move(task_runner)) {
     DCHECK(task_runner_);
   }
 

@@ -18,7 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGPolygonElement.h"
 
 #include "platform/graphics/Path.h"
@@ -26,17 +25,14 @@
 namespace blink {
 
 inline SVGPolygonElement::SVGPolygonElement(Document& document)
-    : SVGPolyElement(SVGNames::polygonTag, document)
-{
-}
+    : SVGPolyElement(SVGNames::polygonTag, document) {}
 
 DEFINE_NODE_FACTORY(SVGPolygonElement)
 
-Path SVGPolygonElement::asPath() const
-{
-    Path path = asPathFromPoints();
-    path.closeSubpath();
-    return path;
+Path SVGPolygonElement::asPath() const {
+  Path path = asPathFromPoints();
+  path.closeSubpath();
+  return path;
 }
 
-}
+}  // namespace blink

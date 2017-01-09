@@ -5,11 +5,12 @@
 #ifndef NET_PROXY_MULTI_THREADED_PROXY_RESOLVER_H_
 #define NET_PROXY_MULTI_THREADED_PROXY_RESOLVER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "net/base/net_export.h"
 #include "net/proxy/proxy_resolver_factory.h"
 
@@ -56,16 +57,17 @@ class NET_EXPORT_PRIVATE MultiThreadedProxyResolverFactory
 
   int CreateProxyResolver(
       const scoped_refptr<ProxyResolverScriptData>& pac_script,
-      scoped_ptr<ProxyResolver>* resolver,
+      std::unique_ptr<ProxyResolver>* resolver,
       const CompletionCallback& callback,
-      scoped_ptr<Request>* request) override;
+      std::unique_ptr<Request>* request) override;
 
  private:
   class Job;
 
   // Invoked to create a ProxyResolverFactory instance to pass to a
   // MultiThreadedProxyResolver instance.
-  virtual scoped_ptr<ProxyResolverFactory> CreateProxyResolverFactory() = 0;
+  virtual std::unique_ptr<ProxyResolverFactory>
+  CreateProxyResolverFactory() = 0;
 
   void RemoveJob(Job* job);
 

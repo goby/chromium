@@ -8,6 +8,7 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/login/help_app_launcher.h"
@@ -29,7 +30,6 @@ class ResetScreen : public ResetModel,
   ~ResetScreen() override;
 
   // ResetModel implementation:
-  void PrepareToShow() override;
   void Show() override;
   void Hide() override;
   void OnViewDestroyed(ResetView* view) override;

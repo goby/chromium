@@ -13,6 +13,7 @@
 #include "base/test/test_timeouts.h"
 #include "base/threading/thread_checker_impl.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
 
@@ -25,7 +26,10 @@ namespace {
 class PostTaskAndReplyTester
     : public base::RefCountedThreadSafe<PostTaskAndReplyTester> {
  public:
-  PostTaskAndReplyTester() : finished_(false), test_event_(false, false) {}
+  PostTaskAndReplyTester()
+      : finished_(false),
+        test_event_(WaitableEvent::ResetPolicy::AUTOMATIC,
+                    WaitableEvent::InitialState::NOT_SIGNALED) {}
 
   void RunTest() {
     ASSERT_TRUE(thread_checker_.CalledOnValidThread());
@@ -68,8 +72,10 @@ class PostTaskAndReplyTester
 }  // namespace
 
 TEST_F(WorkerPoolTest, PostTask) {
-  WaitableEvent test_event(false, false);
-  WaitableEvent long_test_event(false, false);
+  WaitableEvent test_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                           WaitableEvent::InitialState::NOT_SIGNALED);
+  WaitableEvent long_test_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                                WaitableEvent::InitialState::NOT_SIGNALED);
 
   WorkerPool::PostTask(FROM_HERE,
                        base::Bind(&WaitableEvent::Signal,

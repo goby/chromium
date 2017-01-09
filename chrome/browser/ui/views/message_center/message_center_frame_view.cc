@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/views/message_center/message_center_frame_view.h"
 
+#include "build/build_config.h"
 #include "ui/base/hit_test.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/shadow_value.h"
@@ -16,11 +17,11 @@ namespace message_center {
 MessageCenterFrameView::MessageCenterFrameView() {
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
   const int kBorderWidth = 1;
-  SetBorder(views::Border::CreateSolidBorder(
+  SetBorder(views::CreateSolidBorder(
       kBorderWidth, message_center::kMessageCenterBorderColor));
 #else
   const int kShadowBlur = 8;
-  SetBorder(scoped_ptr<views::Border>(new views::ShadowBorder(
+  SetBorder(std::unique_ptr<views::Border>(new views::ShadowBorder(
       gfx::ShadowValue(gfx::Vector2d(0, 0), kShadowBlur,
                        message_center::kMessageCenterShadowColor))));
 #endif

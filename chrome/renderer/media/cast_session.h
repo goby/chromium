@@ -5,12 +5,12 @@
 #ifndef CHROME_RENDERER_MEDIA_CAST_SESSION_H_
 #define CHROME_RENDERER_MEDIA_CAST_SESSION_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "media/cast/cast_config.h"
 #include "net/base/ip_endpoint.h"
 
@@ -21,16 +21,11 @@ class SingleThreadTaskRunner;
 }  // namespace base
 
 namespace media {
-class VideoFrame;
 namespace cast {
 class AudioFrameInput;
 class VideoFrameInput;
 }  // namespace cast
 }  // namespace media
-
-namespace content {
-class P2PSocketClient;
-}  // namespace content
 
 class CastSessionDelegate;
 
@@ -39,14 +34,16 @@ class CastSessionDelegate;
 // CastSessionDelegate on the IO thread.
 class CastSession : public base::RefCounted<CastSession> {
  public:
-  typedef base::Callback<void(const scoped_refptr<
-      media::cast::AudioFrameInput>&)> AudioFrameInputAvailableCallback;
-  typedef base::Callback<void(const scoped_refptr<
-      media::cast::VideoFrameInput>&)> VideoFrameInputAvailableCallback;
-  typedef base::Callback<void(const std::vector<char>&)> SendPacketCallback;
-  typedef base::Callback<void(scoped_ptr<base::BinaryValue>)> EventLogsCallback;
-  typedef base::Callback<void(scoped_ptr<base::DictionaryValue>)> StatsCallback;
-  typedef base::Callback<void(const std::string&)> ErrorCallback;
+  using AudioFrameInputAvailableCallback =
+      base::Callback<void(const scoped_refptr<media::cast::AudioFrameInput>&)>;
+  using VideoFrameInputAvailableCallback =
+      base::Callback<void(const scoped_refptr<media::cast::VideoFrameInput>&)>;
+  using SendPacketCallback = base::Callback<void(const std::vector<char>&)>;
+  using EventLogsCallback =
+      base::Callback<void(std::unique_ptr<base::BinaryValue>)>;
+  using StatsCallback =
+      base::Callback<void(std::unique_ptr<base::DictionaryValue>)>;
+  using ErrorCallback = base::Callback<void(const std::string&)>;
 
   CastSession();
 
@@ -58,19 +55,25 @@ class CastSession : public base::RefCounted<CastSession> {
   // error message. Both |callback| and |error_callback| will be made on
   // the main thread.
   // |StartUDP()| must be called before these methods.
-  void StartAudio(const media::cast::AudioSenderConfig& config,
+  void StartAudio(const media::cast::FrameSenderConfig& config,
                   const AudioFrameInputAvailableCallback& callback,
                   const ErrorCallback& error_callback);
-  void StartVideo(const media::cast::VideoSenderConfig& config,
+  void StartVideo(const media::cast::FrameSenderConfig& config,
                   const VideoFrameInputAvailableCallback& callback,
                   const ErrorCallback& error_callback);
+
+  // Start remoting a stream. |error_callback| will be invoked when any error
+  // occurs. |StartUDP()| must be called before calling this method.
+  void StartRemotingStream(int32_t stream_id,
+                           const media::cast::FrameSenderConfig& config,
+                           const ErrorCallback& error_callback);
 
   // This will create the Cast transport and connect to |remote_endpoint|.
   // |options| is a dictionary which contain optional configuration for the
   // udp transport.
   // Must be called before initialization of audio or video.
   void StartUDP(const net::IPEndPoint& remote_endpoint,
-                scoped_ptr<base::DictionaryValue> options,
+                std::unique_ptr<base::DictionaryValue> options,
                 const ErrorCallback& error_callback);
 
   // Creates or destroys event subscriber for the audio or video stream.
@@ -97,7 +100,7 @@ class CastSession : public base::RefCounted<CastSession> {
   // CastSessionDelegate lives only on the IO thread. It is always
   // safe to post task on the IO thread to access CastSessionDelegate
   // because it is owned by this object.
-  scoped_ptr<CastSessionDelegate> delegate_;
+  std::unique_ptr<CastSessionDelegate> delegate_;
 
   // Proxy to the IO task runner.
   const scoped_refptr<base::SingleThreadTaskRunner> io_task_runner_;

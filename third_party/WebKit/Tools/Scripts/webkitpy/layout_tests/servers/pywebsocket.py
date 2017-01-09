@@ -28,15 +28,11 @@
 
 """A class to help start/stop the PyWebSocket server as used by the layout tests."""
 
-import logging
 import os
 import sys
 import time
 
 from webkitpy.layout_tests.servers import server_base
-from webkitpy.thirdparty import mod_pywebsocket
-
-_log = logging.getLogger(__name__)
 
 
 _WS_LOG_PREFIX = 'pywebsocket.ws.log-'
@@ -71,7 +67,7 @@ class PyWebSocket(server_base.ServerBase):
             '--cgi-paths', '/',
             '--log-file', self._error_log,
             '--websock-handlers-map-file', self._filesystem.join(self._web_socket_tests, 'handler_map.txt'),
-            ]
+        ]
         # TODO(burnik): Check if this is really needed (and why). If not, just set PYTHONPATH.
         self._env = self._port_obj.setup_environ_for_server()
         self._env['PYTHONPATH'] = (pywebsocket_base + os.pathsep + self._env.get('PYTHONPATH', ''))

@@ -7,6 +7,7 @@
 #include <list>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/synchronization/lock.h"
 
@@ -81,11 +82,15 @@ scoped_refptr<VideoFrame> VideoFramePool::PoolImpl::CreateFrame(
   if (!frame.get()) {
     frame = VideoFrame::CreateZeroInitializedFrame(
         format, coded_size, visible_rect, natural_size, timestamp);
-    LOG_IF(ERROR, !frame.get()) << "Failed to create a video frame";
+    // This can happen if the arguments are not valid.
+    if (!frame) {
+      LOG(ERROR) << "Failed to create a video frame";
+      return nullptr;
+    }
   }
 
   scoped_refptr<VideoFrame> wrapped_frame = VideoFrame::WrapVideoFrame(
-      frame, frame->visible_rect(), frame->natural_size());
+      frame, frame->format(), frame->visible_rect(), frame->natural_size());
   wrapped_frame->AddDestructionObserver(
       base::Bind(&VideoFramePool::PoolImpl::FrameReleased, this, frame));
   return wrapped_frame;

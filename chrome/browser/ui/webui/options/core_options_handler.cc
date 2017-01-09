@@ -4,14 +4,19 @@
 
 #include "chrome/browser/ui/webui/options/core_options_handler.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -24,6 +29,7 @@
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/locale_settings.h"
 #include "components/proxy_config/proxy_config_pref_names.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/url_formatter/url_fixer.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_types.h"
@@ -34,7 +40,6 @@
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/extension.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
@@ -254,19 +259,18 @@ base::Value* CoreOptionsHandler::FetchPref(const std::string& pref_name) {
 }
 
 void CoreOptionsHandler::ObservePref(const std::string& pref_name) {
-  if (g_browser_process->local_state()->FindPreference(pref_name.c_str())) {
+  if (g_browser_process->local_state()->FindPreference(pref_name)) {
     local_state_registrar_.Add(
-        pref_name.c_str(),
+        pref_name,
         base::Bind(&CoreOptionsHandler::OnPreferenceChanged,
                    base::Unretained(this),
                    local_state_registrar_.prefs()));
   }
   // TODO(pneubeck): change this to if/else once kProxy is only used as a user
   // pref. Currently, it is both a user and a local state pref.
-  if (Profile::FromWebUI(web_ui())->GetPrefs()->FindPreference(
-          pref_name.c_str())) {
+  if (Profile::FromWebUI(web_ui())->GetPrefs()->FindPreference(pref_name)) {
     registrar_.Add(
-        pref_name.c_str(),
+        pref_name,
         base::Bind(&CoreOptionsHandler::OnPreferenceChanged,
                    base::Unretained(this),
                    registrar_.prefs()));
@@ -274,10 +278,10 @@ void CoreOptionsHandler::ObservePref(const std::string& pref_name) {
 }
 
 void CoreOptionsHandler::StopObservingPref(const std::string& pref_name) {
-  if (g_browser_process->local_state()->FindPreference(pref_name.c_str()))
-    local_state_registrar_.Remove(pref_name.c_str());
+  if (g_browser_process->local_state()->FindPreference(pref_name))
+    local_state_registrar_.Remove(pref_name);
   else
-    registrar_.Remove(pref_name.c_str());
+    registrar_.Remove(pref_name);
 }
 
 void CoreOptionsHandler::SetPref(const std::string& pref_name,
@@ -289,7 +293,7 @@ void CoreOptionsHandler::SetPref(const std::string& pref_name,
     // Also check if the pref is user modifiable (don't even try to run the
     // filter function if the user is not allowed to change the pref).
     const PrefService::Preference* pref =
-        pref_service->FindPreference(pref_name.c_str());
+        pref_service->FindPreference(pref_name);
     if ((pref && !pref->IsUserModifiable()) || !iter->second.Run(value)) {
       // Reject the change; remind the page of the true value.
       NotifyPrefChanged(pref_name, std::string());
@@ -298,12 +302,12 @@ void CoreOptionsHandler::SetPref(const std::string& pref_name,
   }
 
   switch (value->GetType()) {
-    case base::Value::TYPE_BOOLEAN:
-    case base::Value::TYPE_INTEGER:
-    case base::Value::TYPE_DOUBLE:
-    case base::Value::TYPE_STRING:
-    case base::Value::TYPE_LIST:
-      pref_service->Set(pref_name.c_str(), *value);
+    case base::Value::Type::BOOLEAN:
+    case base::Value::Type::INTEGER:
+    case base::Value::Type::DOUBLE:
+    case base::Value::Type::STRING:
+    case base::Value::Type::LIST:
+      pref_service->Set(pref_name, *value);
       break;
 
     default:
@@ -317,7 +321,7 @@ void CoreOptionsHandler::SetPref(const std::string& pref_name,
 void CoreOptionsHandler::ClearPref(const std::string& pref_name,
                                    const std::string& metric) {
   PrefService* pref_service = FindServiceForPref(pref_name);
-  pref_service->ClearPref(pref_name.c_str());
+  pref_service->ClearPref(pref_name);
 
   if (!metric.empty())
     content::RecordComputedAction(metric);
@@ -329,7 +333,7 @@ void CoreOptionsHandler::ProcessUserMetric(const base::Value* value,
     return;
 
   std::string metric_string = metric;
-  if (value->IsType(base::Value::TYPE_BOOLEAN)) {
+  if (value->IsType(base::Value::Type::BOOLEAN)) {
     bool bool_value;
     CHECK(value->GetAsBoolean(&bool_value));
     metric_string += bool_value ? "_Enable" : "_Disable";
@@ -341,39 +345,39 @@ void CoreOptionsHandler::ProcessUserMetric(const base::Value* value,
 void CoreOptionsHandler::NotifyPrefChanged(
     const std::string& pref_name,
     const std::string& controlling_pref_name) {
-  scoped_ptr<base::Value> value(
+  std::unique_ptr<base::Value> value(
       CreateValueForPref(pref_name, controlling_pref_name));
-  DispatchPrefChangeNotification(pref_name, value.Pass());
+  DispatchPrefChangeNotification(pref_name, std::move(value));
 }
 
 void CoreOptionsHandler::DispatchPrefChangeNotification(
     const std::string& name,
-    scoped_ptr<base::Value> value) {
+    std::unique_ptr<base::Value> value) {
   std::pair<PreferenceCallbackMap::const_iterator,
             PreferenceCallbackMap::const_iterator> range =
       pref_callback_map_.equal_range(name);
   base::ListValue result_value;
-  result_value.Append(new base::StringValue(name.c_str()));
-  result_value.Append(value.release());
+  result_value.AppendString(name);
+  result_value.Append(std::move(value));
   for (PreferenceCallbackMap::const_iterator iter = range.first;
        iter != range.second; ++iter) {
     const std::string& callback_function = iter->second;
-    web_ui()->CallJavascriptFunction(callback_function, result_value);
+    web_ui()->CallJavascriptFunctionUnsafe(callback_function, result_value);
   }
 }
 
 base::Value* CoreOptionsHandler::CreateValueForPref(
     const std::string& pref_name,
     const std::string& controlling_pref_name) {
-  const PrefService* pref_service = FindServiceForPref(pref_name.c_str());
+  const PrefService* pref_service = FindServiceForPref(pref_name);
   const PrefService::Preference* pref =
-      pref_service->FindPreference(pref_name.c_str());
+      pref_service->FindPreference(pref_name);
   if (!pref) {
     NOTREACHED();
     return base::Value::CreateNullValue().release();
   }
   const PrefService::Preference* controlling_pref =
-      pref_service->FindPreference(controlling_pref_name.c_str());
+      pref_service->FindPreference(controlling_pref_name);
   if (!controlling_pref)
     controlling_pref = pref;
 
@@ -427,10 +431,10 @@ PrefService* CoreOptionsHandler::FindServiceForPref(
   // Find which PrefService contains the given pref. Pref names should not
   // be duplicated across services, however if they are, prefer the user's
   // prefs.
-  if (user_prefs->FindPreference(pref_name.c_str()))
+  if (user_prefs->FindPreference(pref_name))
     return user_prefs;
 
-  if (g_browser_process->local_state()->FindPreference(pref_name.c_str()))
+  if (g_browser_process->local_state()->FindPreference(pref_name))
     return g_browser_process->local_state();
 
   return user_prefs;
@@ -443,7 +447,7 @@ void CoreOptionsHandler::HandleFetchPrefs(const base::ListValue* args) {
 
   // Get callback JS function name.
   const base::Value* callback;
-  if (!args->Get(0, &callback) || !callback->IsType(base::Value::TYPE_STRING))
+  if (!args->Get(0, &callback) || !callback->IsType(base::Value::Type::STRING))
     return;
 
   base::string16 callback_function;
@@ -458,17 +462,17 @@ void CoreOptionsHandler::HandleFetchPrefs(const base::ListValue* args) {
     if (!args->Get(i, &list_member))
       break;
 
-    if (!list_member->IsType(base::Value::TYPE_STRING))
+    if (!list_member->IsType(base::Value::Type::STRING))
       continue;
 
     std::string pref_name;
     if (!list_member->GetAsString(&pref_name))
       continue;
 
-    result_value.Set(pref_name.c_str(), FetchPref(pref_name));
+    result_value.Set(pref_name, FetchPref(pref_name));
   }
-  web_ui()->CallJavascriptFunction(base::UTF16ToASCII(callback_function),
-                                   result_value);
+  web_ui()->CallJavascriptFunctionUnsafe(base::UTF16ToASCII(callback_function),
+                                         result_value);
 }
 
 void CoreOptionsHandler::HandleObservePrefs(const base::ListValue* args) {
@@ -489,7 +493,7 @@ void CoreOptionsHandler::HandleObservePrefs(const base::ListValue* args) {
 
     // Just ignore bad pref identifiers for now.
     std::string pref_name;
-    if (!list_member->IsType(base::Value::TYPE_STRING) ||
+    if (!list_member->IsType(base::Value::Type::STRING) ||
         !list_member->GetAsString(&pref_name))
       continue;
 
@@ -537,11 +541,11 @@ void CoreOptionsHandler::HandleSetPref(const base::ListValue* args,
   if (!args->Get(1, &value))
     return;
 
-  scoped_ptr<base::Value> temp_value;
+  std::unique_ptr<base::Value> temp_value;
 
   switch (type) {
     case TYPE_BOOLEAN:
-      if (!value->IsType(base::Value::TYPE_BOOLEAN)) {
+      if (!value->IsType(base::Value::Type::BOOLEAN)) {
         NOTREACHED();
         return;
       }
@@ -559,13 +563,13 @@ void CoreOptionsHandler::HandleSetPref(const base::ListValue* args,
       break;
     }
     case TYPE_DOUBLE:
-      if (!value->IsType(base::Value::TYPE_DOUBLE)) {
+      if (!value->IsType(base::Value::Type::DOUBLE)) {
         NOTREACHED();
         return;
       }
       break;
     case TYPE_STRING:
-      if (!value->IsType(base::Value::TYPE_STRING)) {
+      if (!value->IsType(base::Value::Type::STRING)) {
         NOTREACHED();
         return;
       }
@@ -590,7 +594,7 @@ void CoreOptionsHandler::HandleSetPref(const base::ListValue* args,
       }
       temp_value = base::JSONReader::Read(json_string);
       value = temp_value.get();
-      if (!value->IsType(base::Value::TYPE_LIST)) {
+      if (!value || !value->IsType(base::Value::Type::LIST)) {
         NOTREACHED();
         return;
       }
@@ -644,14 +648,14 @@ void CoreOptionsHandler::HandleDisableExtension(const base::ListValue* args) {
 void CoreOptionsHandler::UpdateClearPluginLSOData() {
   base::FundamentalValue enabled(
           plugin_status_pref_setter_.IsClearPluginLSODataEnabled());
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.OptionsPage.setClearPluginLSODataEnabled", enabled);
 }
 
 void CoreOptionsHandler::UpdatePepperFlashSettingsEnabled() {
   base::FundamentalValue enabled(
           plugin_status_pref_setter_.IsPepperFlashSettingsEnabled());
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       "options.OptionsPage.setPepperFlashSettingsEnabled", enabled);
 }
 

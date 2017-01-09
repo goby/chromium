@@ -5,8 +5,9 @@
 #include "remoting/host/curtain_mode.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
-#include "base/win/windows_version.h"
 #include "remoting/host/client_session_control.h"
 
 namespace remoting {
@@ -26,11 +27,6 @@ CurtainModeWin::CurtainModeWin() {
 }
 
 bool CurtainModeWin::Activate() {
-  if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-    LOG(ERROR) << "Curtain mode is not supported on Windows XP/2003";
-    return false;
-  }
-
   DWORD session_id;
   if (!ProcessIdToSessionId(GetCurrentProcessId(), &session_id)) {
     PLOG(ERROR) << "Failed to map the current PID to session ID";
@@ -43,14 +39,14 @@ bool CurtainModeWin::Activate() {
 }
 
 // static
-scoped_ptr<CurtainMode> CurtainMode::Create(
+std::unique_ptr<CurtainMode> CurtainMode::Create(
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner,
     base::WeakPtr<ClientSessionControl> client_session_control) {
   // |client_session_control| is not used because the client session is
   // disconnected as soon as the session is re-attached to the local console.
   // See RdpDesktopSession for more details.
-  return make_scoped_ptr(new CurtainModeWin());
+  return base::WrapUnique(new CurtainModeWin());
 }
 
 }  // namespace remoting

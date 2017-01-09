@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_NOTIFICATION_DOWNLOAD_ITEM_NOTIFICATION_H_
 #define CHROME_BROWSER_DOWNLOAD_NOTIFICATION_DOWNLOAD_ITEM_NOTIFICATION_H_
 
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "chrome/browser/download/download_commands.h"
 #include "chrome/browser/download/notification/download_notification.h"
@@ -13,12 +14,12 @@
 #include "chrome/browser/notifications/notification_delegate.h"
 #include "chrome/browser/notifications/notification_test_util.h"
 #include "content/public/browser/download_item.h"
-#include "grit/theme_resources.h"
-#include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
 #include "ui/native_theme/native_theme.h"
+
+class SkBitmap;
 
 namespace test {
 class DownloadItemNotificationTest;
@@ -27,6 +28,8 @@ class DownloadItemNotificationTest;
 namespace gfx {
 enum class VectorIconId;
 }
+
+class DownloadNotificationManagerForProfile;
 
 class DownloadItemNotification : public DownloadNotification,
                                  public ImageDecoder::ImageRequest {
@@ -100,7 +103,8 @@ class DownloadItemNotification : public DownloadNotification,
   Profile* profile() const;
 
   // Returns the list of possible extra (all except the default) actions.
-  scoped_ptr<std::vector<DownloadCommands::Command>> GetExtraActions() const;
+  std::unique_ptr<std::vector<DownloadCommands::Command>> GetExtraActions()
+      const;
 
   // Flag to show the notification on next update. If true, the notification
   // goes visible. The initial value is true so it gets shown on initial update.
@@ -115,9 +119,9 @@ class DownloadItemNotification : public DownloadNotification,
   content::DownloadItem::DownloadState previous_download_state_ =
       content::DownloadItem::MAX_DOWNLOAD_STATE;  // As uninitialized state
   bool previous_dangerous_state_ = false;
-  scoped_ptr<Notification> notification_;
+  std::unique_ptr<Notification> notification_;
   content::DownloadItem* item_;
-  scoped_ptr<std::vector<DownloadCommands::Command>> button_actions_;
+  std::unique_ptr<std::vector<DownloadCommands::Command>> button_actions_;
 
   // Status of the preview image decode.
   ImageDecodeStatus image_decode_status_ = NOT_STARTED;

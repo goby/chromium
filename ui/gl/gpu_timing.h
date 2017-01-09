@@ -5,11 +5,13 @@
 #ifndef UI_GL_GPU_TIMING_H_
 #define UI_GL_GPU_TIMING_H_
 
+#include <stdint.h>
+
 #include <memory>
 #include <queue>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/gl/gl_export.h"
 
 // The gpu_timing classes handles the abstraction of GL GPU Timing extensions
@@ -41,7 +43,7 @@
 //     The constructor and destructor of this object handles the actual
 //     creation and deletion of the GL Queries within GL.
 
-namespace gfx {
+namespace gl {
 
 class GLContextReal;
 class GPUTimingClient;
@@ -96,8 +98,8 @@ class GL_EXPORT GPUTimer {
 
   bool IsAvailable();
 
-  void GetStartEndTimestamps(int64* start, int64* end);
-  int64 GetDeltaElapsed();
+  void GetStartEndTimestamps(int64_t* start, int64_t* end);
+  int64_t GetDeltaElapsed();
 
  private:
   friend class GPUTimingClient;
@@ -126,7 +128,7 @@ class GL_EXPORT GPUTimingClient
  public:
   explicit GPUTimingClient(GPUTimingImpl* gpu_timing = nullptr);
 
-  scoped_ptr<GPUTimer> CreateGPUTimer(bool prefer_elapsed_time);
+  std::unique_ptr<GPUTimer> CreateGPUTimer(bool prefer_elapsed_time);
   bool IsAvailable();
 
   const char* GetTimerTypeName() const;
@@ -138,8 +140,8 @@ class GL_EXPORT GPUTimingClient
   // discarded.
   bool CheckAndResetTimerErrors();
 
-  int64 GetCurrentCPUTime();
-  void SetCpuTimeForTesting(const base::Callback<int64(void)>& cpu_time);
+  int64_t GetCurrentCPUTime();
+  void SetCpuTimeForTesting(const base::Callback<int64_t(void)>& cpu_time);
 
   bool IsForceTimeElapsedQuery();
   void ForceTimeElapsedQuery();
@@ -157,6 +159,6 @@ class GL_EXPORT GPUTimingClient
   DISALLOW_COPY_AND_ASSIGN(GPUTimingClient);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GPU_TIMING_H_

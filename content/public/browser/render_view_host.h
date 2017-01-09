@@ -6,18 +6,17 @@
 #define CONTENT_PUBLIC_BROWSER_RENDER_VIEW_HOST_H_
 
 #include "base/callback_forward.h"
+#include "base/files/file_path.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "content/public/common/file_chooser_params.h"
+#include "content/public/common/drop_data.h"
 #include "content/public/common/page_zoom.h"
 #include "ipc/ipc_sender.h"
 #include "mojo/public/cpp/system/core.h"
-#include "third_party/WebKit/public/web/WebDragOperation.h"
-
-class GURL;
+#include "third_party/WebKit/public/platform/WebDragOperation.h"
 
 namespace base {
 class FilePath;
-class Value;
 }
 
 namespace blink {
@@ -32,15 +31,11 @@ class Size;
 
 namespace content {
 
-class ChildProcessSecurityPolicy;
 class RenderFrameHost;
 class RenderProcessHost;
 class RenderViewHostDelegate;
 class RenderWidgetHost;
-class SessionStorageNamespace;
 class SiteInstance;
-struct DropData;
-struct FileChooserFileInfo;
 struct WebPreferences;
 
 // A RenderViewHost is responsible for creating and talking to a RenderView
@@ -101,14 +96,6 @@ class CONTENT_EXPORT RenderViewHost : public IPC::Sender {
   // Returns true if the current focused element is editable.
   virtual bool IsFocusedElementEditable() = 0;
 
-  // Copies the image at location x, y to the clipboard (if there indeed is an
-  // image at that location).
-  virtual void CopyImageAt(int x, int y) = 0;
-
-  // Saves the image at location x, y to the disk (if there indeed is an
-  // image at that location).
-  virtual void SaveImageAt(int x, int y) = 0;
-
   // Notifies the listener that a directory enumeration is complete.
   virtual void DirectoryEnumerationFinished(
       int request_id,
@@ -117,33 +104,6 @@ class CONTENT_EXPORT RenderViewHost : public IPC::Sender {
   // Tells the renderer not to add scrollbars with height and width below a
   // threshold.
   virtual void DisableScrollbarsForThreshold(const gfx::Size& size) = 0;
-
-  // Notifies the renderer that a a drag operation that it started has ended,
-  // either in a drop or by being cancelled.
-  virtual void DragSourceEndedAt(
-      int client_x, int client_y, int screen_x, int screen_y,
-      blink::WebDragOperation operation) = 0;
-
-  // Notifies the renderer that we're done with the drag and drop operation.
-  // This allows the renderer to reset some state.
-  virtual void DragSourceSystemDragEnded() = 0;
-
-  // D&d drop target messages that get sent to WebKit.
-  virtual void DragTargetDragEnter(
-      const DropData& drop_data,
-      const gfx::Point& client_pt,
-      const gfx::Point& screen_pt,
-      blink::WebDragOperationsMask operations_allowed,
-      int key_modifiers) = 0;
-  virtual void DragTargetDragOver(
-      const gfx::Point& client_pt,
-      const gfx::Point& screen_pt,
-      blink::WebDragOperationsMask operations_allowed,
-      int key_modifiers) = 0;
-  virtual void DragTargetDragLeave() = 0;
-  virtual void DragTargetDrop(const gfx::Point& client_pt,
-                              const gfx::Point& screen_pt,
-                              int key_modifiers) = 0;
 
   // Instructs the RenderView to automatically resize and send back updates
   // for the new size.
@@ -166,13 +126,6 @@ class CONTENT_EXPORT RenderViewHost : public IPC::Sender {
   // the given point.
   virtual void ExecutePluginActionAtLocation(
       const gfx::Point& location, const blink::WebPluginAction& action) = 0;
-
-  // Notifies the Listener that one or more files have been chosen by the user
-  // from a file chooser dialog for the form. |permissions| is the file
-  // selection mode in which the chooser dialog was created.
-  virtual void FilesSelectedInChooser(
-      const std::vector<content::FileChooserFileInfo>& files,
-      FileChooserParams::Mode permissions) = 0;
 
   virtual RenderViewHostDelegate* GetDelegate() const = 0;
 
@@ -214,15 +167,6 @@ class CONTENT_EXPORT RenderViewHost : public IPC::Sender {
 
   // Notify the render view host to select the word around the caret.
   virtual void SelectWordAroundCaret() = 0;
-
-#if defined(OS_ANDROID)
-  // Selects and zooms to the find result nearest to the point (x,y)
-  // defined in find-in-page coordinates.
-  virtual void ActivateNearestFindResult(int request_id, float x, float y) = 0;
-
-  // Asks the renderer to send the rects of the current find matches.
-  virtual void RequestFindMatchRects(int current_version) = 0;
-#endif
 
  private:
   // This interface should only be implemented inside content.

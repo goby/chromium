@@ -8,6 +8,8 @@
 #include <lmcons.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <strsafe.h>
 #include <userenv.h>
 #include <winspool.h>
@@ -39,7 +41,7 @@ namespace {
 const wchar_t kIePath[] = L"Internet Explorer\\iexplore.exe";
 
 const char kChromeInstallUrl[] =
-    "http://google.com/cloudprint/learn/chrome.html";
+    "https://google.com/cloudprint/learn/chrome.html";
 
 const wchar_t kCloudPrintRegKey[] = L"Software\\Google\\CloudPrint";
 
@@ -54,15 +56,12 @@ const wchar_t kDocumentTypePlaceHolder[] = L"%%Document_Type%%";
 const wchar_t kJobTitlePlaceHolder[] = L"%%Job_Title%%";
 
 struct MonitorData {
-  scoped_ptr<base::AtExitManager> at_exit_manager;
+  std::unique_ptr<base::AtExitManager> at_exit_manager;
 };
 
 struct PortData {
-  PortData() : job_id(0), printer_handle(NULL), file(0) {
-  }
-  ~PortData() {
-    Close();
-  }
+  PortData() : job_id(0), printer_handle(NULL), file(0) {}
+  ~PortData() { Close(); }
   void Close() {
     if (printer_handle) {
       ClosePrinter(printer_handle);
@@ -79,39 +78,31 @@ struct PortData {
   base::FilePath file_path;
 };
 
-typedef struct {
-  ACCESS_MASK granted_access;
-} XcvUiData;
+typedef struct { ACCESS_MASK granted_access; } XcvUiData;
 
+MONITORUI g_monitor_ui = {sizeof(MONITORUI), MonitorUiAddPortUi,
+                          MonitorUiConfigureOrDeletePortUI,
+                          MonitorUiConfigureOrDeletePortUI};
 
-MONITORUI g_monitor_ui = {
-  sizeof(MONITORUI),
-  MonitorUiAddPortUi,
-  MonitorUiConfigureOrDeletePortUI,
-  MonitorUiConfigureOrDeletePortUI
-};
-
-MONITOR2 g_monitor_2 = {
-  sizeof(MONITOR2),
-  Monitor2EnumPorts,
-  Monitor2OpenPort,
-  NULL,           // OpenPortEx is not supported.
-  Monitor2StartDocPort,
-  Monitor2WritePort,
-  Monitor2ReadPort,
-  Monitor2EndDocPort,
-  Monitor2ClosePort,
-  NULL,           // AddPort is not supported.
-  NULL,           // AddPortEx is not supported.
-  NULL,           // ConfigurePort is not supported.
-  NULL,           // DeletePort is not supported.
-  NULL,
-  NULL,           // SetPortTimeOuts is not supported.
-  Monitor2XcvOpenPort,
-  Monitor2XcvDataPort,
-  Monitor2XcvClosePort,
-  Monitor2Shutdown
-};
+MONITOR2 g_monitor_2 = {sizeof(MONITOR2),
+                        Monitor2EnumPorts,
+                        Monitor2OpenPort,
+                        NULL,  // OpenPortEx is not supported.
+                        Monitor2StartDocPort,
+                        Monitor2WritePort,
+                        Monitor2ReadPort,
+                        Monitor2EndDocPort,
+                        Monitor2ClosePort,
+                        NULL,  // AddPort is not supported.
+                        NULL,  // AddPortEx is not supported.
+                        NULL,  // ConfigurePort is not supported.
+                        NULL,  // DeletePort is not supported.
+                        NULL,
+                        NULL,  // SetPortTimeOuts is not supported.
+                        Monitor2XcvOpenPort,
+                        Monitor2XcvDataPort,
+                        Monitor2XcvClosePort,
+                        Monitor2Shutdown};
 
 base::FilePath GetLocalAppDataLow() {
   wchar_t system_buffer[MAX_PATH];
@@ -148,9 +139,7 @@ void DeleteLeakedFiles(const base::FilePath& dir) {
 // On success returns TRUE and the first title_chars characters of the job title
 // are copied into title.
 // On failure returns FALSE and title is unmodified.
-bool GetJobTitle(HANDLE printer_handle,
-                 DWORD job_id,
-                 base::string16 *title) {
+bool GetJobTitle(HANDLE printer_handle, DWORD job_id, base::string16* title) {
   DCHECK(printer_handle != NULL);
   DCHECK(title != NULL);
   DWORD bytes_needed = 0;
@@ -159,12 +148,8 @@ bool GetJobTitle(HANDLE printer_handle,
     LOG(ERROR) << "Unable to get bytes needed for job info.";
     return false;
   }
-  scoped_ptr<BYTE[]> buffer(new BYTE[bytes_needed]);
-  if (!GetJob(printer_handle,
-              job_id,
-              1,
-              buffer.get(),
-              bytes_needed,
+  std::unique_ptr<BYTE[]> buffer(new BYTE[bytes_needed]);
+  if (!GetJob(printer_handle, job_id, 1, buffer.get(), bytes_needed,
               &bytes_needed)) {
     LOG(ERROR) << "Unable to get job info.";
     return false;
@@ -188,19 +173,15 @@ void HandlePortUi(HWND hwnd, const base::string16& caption) {
 bool GetUserToken(HANDLE* primary_token) {
   HANDLE token = NULL;
   if (!OpenThreadToken(GetCurrentThread(),
-                      TOKEN_QUERY|TOKEN_DUPLICATE|TOKEN_ASSIGN_PRIMARY,
-                      FALSE,
-                      &token)) {
+                       TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY,
+                       FALSE, &token)) {
     LOG(ERROR) << "Unable to get thread token.";
     return false;
   }
   base::win::ScopedHandle token_scoped(token);
-  if (!DuplicateTokenEx(token,
-                        TOKEN_QUERY|TOKEN_DUPLICATE|TOKEN_ASSIGN_PRIMARY,
-                        NULL,
-                        SecurityImpersonation,
-                        TokenPrimary,
-                        primary_token)) {
+  if (!DuplicateTokenEx(
+          token, TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY, NULL,
+          SecurityImpersonation, TokenPrimary, primary_token)) {
     LOG(ERROR) << "Unable to get primary thread token.";
     return false;
   }
@@ -235,7 +216,8 @@ base::string16 EscapeCommandLineArg(const base::string16& arg) {
     if (arg[i] == '\\') {
       // Find the extent of this run of backslashes.
       size_t start = i, end = start + 1;
-      for (; end < arg.size() && arg[end] == '\\'; ++end) {}
+      for (; end < arg.size() && arg[end] == '\\'; ++end) {
+      }
       size_t backslash_count = end - start;
 
       // Backslashes are escapes only if the run is followed by a double quote.
@@ -275,9 +257,9 @@ bool LaunchPrintCommandFromTemplate(const base::string16& command_template,
   base::ReplaceFirstSubstringAfterOffset(
       &command_string, 0, kDocumentTypePlaceHolder, kXpsMimeType);
   // Substitude the place holder with the job title wrapped in quotes.
-  base::ReplaceFirstSubstringAfterOffset(
-      &command_string, 0, kJobTitlePlaceHolder,
-      EscapeCommandLineArg(job_title));
+  base::ReplaceFirstSubstringAfterOffset(&command_string, 0,
+                                         kJobTitlePlaceHolder,
+                                         EscapeCommandLineArg(job_title));
 
   base::CommandLine command = base::CommandLine::FromString(command_string);
 
@@ -298,6 +280,8 @@ void LaunchChromeDownloadPage() {
   }
   base::win::ScopedHandle token_scoped(token);
 
+  // Consider using the shell to invoke the default browser instead of hardcoded
+  // reference to IE which might not be available on the system.
   base::FilePath ie_path;
   PathService::Get(base::DIR_PROGRAM_FILESX86, &ie_path);
   ie_path = ie_path.Append(kIePath);
@@ -323,11 +307,9 @@ bool ValidateCurrentUser() {
   if (base::win::GetVersion() >= base::win::VERSION_VISTA) {
     DWORD session_id = 0;
     DWORD dummy;
-    if (!GetTokenInformation(token_scoped.Get(),
-                             TokenSessionId,
-                             reinterpret_cast<void *>(&session_id),
-                             sizeof(DWORD),
-                             &dummy)) {
+    if (!GetTokenInformation(token_scoped.Get(), TokenSessionId,
+                             reinterpret_cast<void*>(&session_id),
+                             sizeof(DWORD), &dummy)) {
       return false;
     }
     if (session_id == 0) {
@@ -401,8 +383,8 @@ bool LaunchPrintCommand(const base::FilePath& xps_path,
                         const base::string16& job_title) {
   base::string16 command_template = GetPrintCommandTemplate();
   if (!command_template.empty()) {
-    return LaunchPrintCommandFromTemplate(
-        command_template, xps_path, job_title);
+    return LaunchPrintCommandFromTemplate(command_template, xps_path,
+                                          job_title);
   } else {
     return LaunchChromePrintDialog(xps_path, job_title);
   }
@@ -411,8 +393,8 @@ bool LaunchPrintCommand(const base::FilePath& xps_path,
 BOOL WINAPI Monitor2EnumPorts(HANDLE,
                               wchar_t*,
                               DWORD level,
-                              BYTE*  ports,
-                              DWORD   ports_size,
+                              BYTE* ports,
+                              DWORD ports_size,
                               DWORD* needed_bytes,
                               DWORD* returned) {
   if (needed_bytes == NULL) {
@@ -425,14 +407,14 @@ BOOL WINAPI Monitor2EnumPorts(HANDLE,
   } else if (level == 2) {
     *needed_bytes = sizeof(PORT_INFO_2);
   } else {
-    LOG(ERROR) << "Level "  << level << "is not supported.";
+    LOG(ERROR) << "Level " << level << "is not supported.";
     SetLastError(ERROR_INVALID_LEVEL);
     return FALSE;
   }
   *needed_bytes += static_cast<DWORD>(cloud_print::kPortNameSize);
   if (ports_size < *needed_bytes) {
-    LOG(WARNING) << *needed_bytes << " bytes are required.  Only "
-                 << ports_size << " were allocated.";
+    LOG(WARNING) << *needed_bytes << " bytes are required.  Only " << ports_size
+                 << " were allocated.";
     SetLastError(ERROR_INSUFFICIENT_BUFFER);
     return FALSE;
   }
@@ -452,20 +434,17 @@ BOOL WINAPI Monitor2EnumPorts(HANDLE,
   // strings immediately after the PORT_INFO_X structure will cause
   // EnumPorts to fail until the spooler is restarted.
   // This is NOT mentioned in the documentation.
-  wchar_t* string_target =
-      reinterpret_cast<wchar_t*>(ports + ports_size -
-      cloud_print::kPortNameSize);
+  wchar_t* string_target = reinterpret_cast<wchar_t*>(
+      ports + ports_size - cloud_print::kPortNameSize);
   if (level == 1) {
     PORT_INFO_1* port_info = reinterpret_cast<PORT_INFO_1*>(ports);
     port_info->pName = string_target;
-    StringCbCopy(port_info->pName,
-                 cloud_print::kPortNameSize,
+    StringCbCopy(port_info->pName, cloud_print::kPortNameSize,
                  cloud_print::kPortName);
   } else {
     PORT_INFO_2* port_info = reinterpret_cast<PORT_INFO_2*>(ports);
     port_info->pPortName = string_target;
-    StringCbCopy(port_info->pPortName,
-                 cloud_print::kPortNameSize,
+    StringCbCopy(port_info->pPortName, cloud_print::kPortNameSize,
                  cloud_print::kPortName);
     port_info->pMonitorName = NULL;
     port_info->pDescription = NULL;
@@ -574,14 +553,12 @@ BOOL WINAPI Monitor2EndDocPort(HANDLE port_handle) {
     base::CloseFile(port_data->file);
     port_data->file = NULL;
     bool delete_file = true;
-    int64 file_size = 0;
+    int64_t file_size = 0;
     base::GetFileSize(port_data->file_path, &file_size);
     if (file_size > 0) {
       base::string16 job_title;
       if (port_data->printer_handle != NULL) {
-        GetJobTitle(port_data->printer_handle,
-                    port_data->job_id,
-                    &job_title);
+        GetJobTitle(port_data->printer_handle, port_data->job_id, &job_title);
       }
       if (LaunchPrintCommand(port_data->file_path, job_title)) {
         delete_file = false;
@@ -592,10 +569,7 @@ BOOL WINAPI Monitor2EndDocPort(HANDLE port_handle) {
   }
   if (port_data->printer_handle != NULL) {
     // Tell the spooler that the job is complete.
-    SetJob(port_data->printer_handle,
-           port_data->job_id,
-           0,
-           NULL,
+    SetJob(port_data->printer_handle, port_data->job_id, 0, NULL,
            JOB_CONTROL_SENT_TO_PRINTER);
   }
   port_data->Close();
@@ -655,17 +629,16 @@ DWORD WINAPI Monitor2XcvDataPort(HANDLE xcv_handle,
   // dynamic creation of ports.
   if (lstrcmp(L"MonitorUI", data_name) == 0) {
     DWORD dll_path_len = 0;
-    base::FilePath dll_path(GetPortMonitorDllName());
+    base::FilePath dll_path(L"gcp_portmon.dll");
     dll_path_len = static_cast<DWORD>(dll_path.value().length());
     if (output_data_bytes_needed != NULL) {
       *output_data_bytes_needed = dll_path_len;
     }
     if (output_data_bytes < dll_path_len) {
-        return ERROR_INSUFFICIENT_BUFFER;
+      return ERROR_INSUFFICIENT_BUFFER;
     } else {
-        ret_val = StringCbCopy(reinterpret_cast<wchar_t*>(output_data),
-                               output_data_bytes,
-                               dll_path.value().c_str());
+      ret_val = StringCbCopy(reinterpret_cast<wchar_t*>(output_data),
+                             output_data_bytes, dll_path.value().c_str());
     }
   } else {
     return ERROR_INVALID_PARAMETER;
@@ -693,10 +666,9 @@ BOOL WINAPI MonitorUiConfigureOrDeletePortUI(const wchar_t*,
   return TRUE;
 }
 
-}   // namespace cloud_print
+}  // namespace cloud_print
 
-MONITOR2* WINAPI InitializePrintMonitor2(MONITORINIT*,
-                                         HANDLE* handle) {
+MONITOR2* WINAPI InitializePrintMonitor2(MONITORINIT*, HANDLE* handle) {
   if (handle == NULL) {
     SetLastError(ERROR_INVALID_PARAMETER);
     return NULL;
@@ -715,4 +687,3 @@ MONITOR2* WINAPI InitializePrintMonitor2(MONITORINIT*,
 MONITORUI* WINAPI InitializePrintMonitorUI(void) {
   return &cloud_print::g_monitor_ui;
 }
-

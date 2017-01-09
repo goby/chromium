@@ -2,15 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "chrome/browser/ui/cocoa/download/download_shelf_controller.h"
+
 #import <Cocoa/Cocoa.h>
+
+#include <memory>
+#include <utility>
 
 #import "base/mac/scoped_block.h"
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/run_loop.h"
 #include "chrome/browser/download/download_shelf.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/download/download_item_controller.h"
-#import "chrome/browser/ui/cocoa/download/download_shelf_controller.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/view_resizer_pong.h"
 #include "content/public/test/mock_download_item.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -26,17 +30,18 @@ using ::testing::AnyNumber;
 // DownloadItemController.
 @interface WrappedMockDownloadItem : NSObject {
  @private
-  scoped_ptr<content::MockDownloadItem> download_;
+  std::unique_ptr<content::MockDownloadItem> download_;
 }
-- (id)initWithMockDownload:(scoped_ptr<content::MockDownloadItem>)download;
+- (id)initWithMockDownload:(std::unique_ptr<content::MockDownloadItem>)download;
 - (content::DownloadItem*)download;
 - (content::MockDownloadItem*)mockDownload;
 @end
 
 @implementation WrappedMockDownloadItem
-- (id)initWithMockDownload:(scoped_ptr<content::MockDownloadItem>)download {
+- (id)initWithMockDownload:
+    (std::unique_ptr<content::MockDownloadItem>)download {
   if ((self = [super init])) {
-    download_ = download.Pass();
+    download_ = std::move(download);
   }
   return self;
 }
@@ -135,7 +140,7 @@ class DownloadShelfControllerTest : public CocoaProfileTest {
 };
 
 id DownloadShelfControllerTest::CreateItemController() {
-  scoped_ptr<content::MockDownloadItem> download(
+  std::unique_ptr<content::MockDownloadItem> download(
       new ::testing::NiceMock<content::MockDownloadItem>);
   ON_CALL(*download.get(), GetOpened())
       .WillByDefault(Return(false));
@@ -143,7 +148,8 @@ id DownloadShelfControllerTest::CreateItemController() {
       .WillByDefault(Return(content::DownloadItem::IN_PROGRESS));
 
   base::scoped_nsobject<WrappedMockDownloadItem> wrappedMockDownload(
-      [[WrappedMockDownloadItem alloc] initWithMockDownload:download.Pass()]);
+      [[WrappedMockDownloadItem alloc]
+          initWithMockDownload:std::move(download)]);
 
   id item_controller =
       [OCMockObject mockForClass:[DownloadItemController class]];
@@ -386,11 +392,14 @@ TEST_F(DownloadShelfControllerTest, ViewVisibility) {
   [shelf_ showDownloadShelf:YES isUserAction:NO];
   EXPECT_FALSE([[shelf_ view] isHidden]);
 
+  base::RunLoop run_loop;
+  base::RunLoop* const run_loop_ptr = &run_loop;
+
   [shelf_ setCloseAnimationHandler:^{
-      base::MessageLoop::current()->QuitNow();
+    run_loop_ptr->Quit();
   }];
   [shelf_ showDownloadShelf:NO isUserAction:NO];
-  base::MessageLoop::current()->Run();
+  run_loop.Run();
   EXPECT_TRUE([[shelf_ view] isHidden]);
 
   [shelf_ showDownloadShelf:YES isUserAction:NO];

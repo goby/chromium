@@ -28,139 +28,202 @@
 
 #include "bindings/core/v8/ScopedPersistent.h"
 #include "bindings/core/v8/ScriptState.h"
+#include "bindings/core/v8/ScriptWrappableVisitor.h"
 #include "bindings/core/v8/V8HiddenValue.h"
 #include "bindings/core/v8/WrapperTypeInfo.h"
 #include "core/CoreExport.h"
-#include "core/inspector/ScriptDebuggerBase.h"
 #include "gin/public/isolate_holder.h"
 #include "gin/public/v8_idle_task_runner.h"
+#include "platform/heap/Handle.h"
 #include "wtf/HashMap.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/OwnPtr.h"
 #include "wtf/Vector.h"
+#include <memory>
 #include <v8.h>
 
 namespace blink {
 
+class ActiveScriptWrappable;
 class DOMDataStore;
 class StringCache;
-class V8Debugger;
+class ThreadDebugger;
+class V8PrivateProperty;
 struct WrapperTypeInfo;
 
 typedef WTF::Vector<DOMDataStore*> DOMDataStoreList;
 
 class CORE_EXPORT V8PerIsolateData {
-    USING_FAST_MALLOC(V8PerIsolateData);
-    WTF_MAKE_NONCOPYABLE(V8PerIsolateData);
-public:
-    class EndOfScopeTask {
-        USING_FAST_MALLOC(EndOfScopeTask);
-    public:
-        virtual ~EndOfScopeTask() { }
-        virtual void run() = 0;
-    };
+  USING_FAST_MALLOC(V8PerIsolateData);
+  WTF_MAKE_NONCOPYABLE(V8PerIsolateData);
 
-    static v8::Isolate* initialize();
+ public:
+  class EndOfScopeTask {
+    USING_FAST_MALLOC(EndOfScopeTask);
 
-    static V8PerIsolateData* from(v8::Isolate* isolate)
-    {
-        ASSERT(isolate);
-        ASSERT(isolate->GetData(gin::kEmbedderBlink));
-        return static_cast<V8PerIsolateData*>(isolate->GetData(gin::kEmbedderBlink));
+   public:
+    virtual ~EndOfScopeTask() {}
+    virtual void run() = 0;
+  };
+
+  // Disables the UseCounter.
+  // UseCounter depends on the current context, but it's not available during
+  // the initialization of v8::Context and the global object.  So we need to
+  // disable the UseCounter while the initialization of the context and global
+  // object.
+  // TODO(yukishiino): Come up with an idea to remove this hack.
+  class UseCounterDisabledScope {
+    STACK_ALLOCATED();
+
+   public:
+    explicit UseCounterDisabledScope(V8PerIsolateData* perIsolateData)
+        : m_perIsolateData(perIsolateData),
+          m_originalUseCounterDisabled(m_perIsolateData->m_useCounterDisabled) {
+      m_perIsolateData->m_useCounterDisabled = true;
+    }
+    ~UseCounterDisabledScope() {
+      m_perIsolateData->m_useCounterDisabled = m_originalUseCounterDisabled;
     }
 
-    static void willBeDestroyed(v8::Isolate*);
-    static void destroy(v8::Isolate*);
-    static v8::Isolate* mainThreadIsolate();
+   private:
+    V8PerIsolateData* m_perIsolateData;
+    const bool m_originalUseCounterDisabled;
+  };
 
-    static void enableIdleTasks(v8::Isolate*, PassOwnPtr<gin::V8IdleTaskRunner>);
+  static v8::Isolate* initialize();
 
-    bool destructionPending() const { return m_destructionPending; }
-    v8::Isolate* isolate() { return m_isolateHolder->isolate(); }
+  static V8PerIsolateData* from(v8::Isolate* isolate) {
+    ASSERT(isolate);
+    ASSERT(isolate->GetData(gin::kEmbedderBlink));
+    return static_cast<V8PerIsolateData*>(
+        isolate->GetData(gin::kEmbedderBlink));
+  }
 
-    StringCache* stringCache() { return m_stringCache.get(); }
+  static void willBeDestroyed(v8::Isolate*);
+  static void destroy(v8::Isolate*);
+  static v8::Isolate* mainThreadIsolate();
 
-    v8::Persistent<v8::Value>& ensureLiveRoot();
+  static void enableIdleTasks(v8::Isolate*,
+                              std::unique_ptr<gin::V8IdleTaskRunner>);
 
-    int recursionLevel() const { return m_recursionLevel; }
-    int incrementRecursionLevel() { return ++m_recursionLevel; }
-    int decrementRecursionLevel() { return --m_recursionLevel; }
-    bool isHandlingRecursionLevelError() const { return m_isHandlingRecursionLevelError; }
-    void setIsHandlingRecursionLevelError(bool value) { m_isHandlingRecursionLevelError = value; }
+  v8::Isolate* isolate() { return m_isolateHolder->isolate(); }
 
-    bool isReportingException() const { return m_isReportingException; }
-    void setReportingException(bool value) { m_isReportingException = value; }
+  StringCache* getStringCache() { return m_stringCache.get(); }
 
-    bool performingMicrotaskCheckpoint() const { return m_performingMicrotaskCheckpoint; }
-    void setPerformingMicrotaskCheckpoint(bool performingMicrotaskCheckpoint) { m_performingMicrotaskCheckpoint = performingMicrotaskCheckpoint; }
+  v8::Persistent<v8::Value>& ensureLiveRoot();
 
-#if ENABLE(ASSERT)
-    int internalScriptRecursionLevel() const { return m_internalScriptRecursionLevel; }
-    int incrementInternalScriptRecursionLevel() { return ++m_internalScriptRecursionLevel; }
-    int decrementInternalScriptRecursionLevel() { return --m_internalScriptRecursionLevel; }
-#endif
+  bool isHandlingRecursionLevelError() const {
+    return m_isHandlingRecursionLevelError;
+  }
+  void setIsHandlingRecursionLevelError(bool value) {
+    m_isHandlingRecursionLevelError = value;
+  }
 
-    V8HiddenValue* hiddenValue() { return m_hiddenValue.get(); }
+  bool isReportingException() const { return m_isReportingException; }
+  void setReportingException(bool value) { m_isReportingException = value; }
 
-    v8::Local<v8::FunctionTemplate> domTemplate(const void* domTemplateKey, v8::FunctionCallback = 0, v8::Local<v8::Value> data = v8::Local<v8::Value>(), v8::Local<v8::Signature> = v8::Local<v8::Signature>(), int length = 0);
-    v8::Local<v8::FunctionTemplate> existingDOMTemplate(const void* domTemplateKey);
-    void setDOMTemplate(const void* domTemplateKey, v8::Local<v8::FunctionTemplate>);
+  V8HiddenValue* hiddenValue() { return m_hiddenValue.get(); }
+  V8PrivateProperty* privateProperty() { return m_privateProperty.get(); }
 
-    bool hasInstance(const WrapperTypeInfo* untrusted, v8::Local<v8::Value>);
-    v8::Local<v8::Object> findInstanceInPrototypeChain(const WrapperTypeInfo*, v8::Local<v8::Value>);
+  // Accessors to the cache of interface templates.
+  v8::Local<v8::FunctionTemplate> findInterfaceTemplate(const DOMWrapperWorld&,
+                                                        const void* key);
+  void setInterfaceTemplate(const DOMWrapperWorld&,
+                            const void* key,
+                            v8::Local<v8::FunctionTemplate>);
 
-    v8::Local<v8::Context> ensureScriptRegexpContext();
-    void clearScriptRegexpContext();
+  // Accessor to the cache of cross-origin accessible operation's templates.
+  // Created templates get automatically cached.
+  v8::Local<v8::FunctionTemplate> findOrCreateOperationTemplate(
+      const DOMWrapperWorld&,
+      const void* key,
+      v8::FunctionCallback,
+      v8::Local<v8::Value> data,
+      v8::Local<v8::Signature>,
+      int length);
 
-    const char* previousSamplingState() const { return m_previousSamplingState; }
-    void setPreviousSamplingState(const char* name) { m_previousSamplingState = name; }
+  bool hasInstance(const WrapperTypeInfo* untrusted, v8::Local<v8::Value>);
+  v8::Local<v8::Object> findInstanceInPrototypeChain(const WrapperTypeInfo*,
+                                                     v8::Local<v8::Value>);
 
-    // EndOfScopeTasks are run by V8RecursionScope when control is returning
-    // to C++ from script, after executing a script task (e.g. callback,
-    // event) or microtasks (e.g. promise). This is explicitly needed for
-    // Indexed DB transactions per spec, but should in general be avoided.
-    void addEndOfScopeTask(PassOwnPtr<EndOfScopeTask>);
-    void runEndOfScopeTasks();
-    void clearEndOfScopeTasks();
+  v8::Local<v8::Context> ensureScriptRegexpContext();
+  void clearScriptRegexpContext();
 
-    void setScriptDebugger(PassOwnPtr<ScriptDebuggerBase>);
+  // EndOfScopeTasks are run when control is returning
+  // to C++ from script, after executing a script task (e.g. callback,
+  // event) or microtasks (e.g. promise). This is explicitly needed for
+  // Indexed DB transactions per spec, but should in general be avoided.
+  void addEndOfScopeTask(std::unique_ptr<EndOfScopeTask>);
+  void runEndOfScopeTasks();
+  void clearEndOfScopeTasks();
 
-private:
-    V8PerIsolateData();
-    ~V8PerIsolateData();
+  void setThreadDebugger(std::unique_ptr<ThreadDebugger>);
+  ThreadDebugger* threadDebugger();
 
-    typedef HashMap<const void*, v8::Eternal<v8::FunctionTemplate>> DOMTemplateMap;
-    DOMTemplateMap& currentDOMTemplateMap();
-    bool hasInstance(const WrapperTypeInfo* untrusted, v8::Local<v8::Value>, DOMTemplateMap&);
-    v8::Local<v8::Object> findInstanceInPrototypeChain(const WrapperTypeInfo*, v8::Local<v8::Value>, DOMTemplateMap&);
+  using ActiveScriptWrappableSet =
+      HeapHashSet<WeakMember<ActiveScriptWrappable>>;
+  void addActiveScriptWrappable(ActiveScriptWrappable*);
+  const ActiveScriptWrappableSet* activeScriptWrappables() const {
+    return m_activeScriptWrappables.get();
+  }
 
-    bool m_destructionPending;
-    OwnPtr<gin::IsolateHolder> m_isolateHolder;
-    DOMTemplateMap m_domTemplateMapForMainWorld;
-    DOMTemplateMap m_domTemplateMapForNonMainWorld;
-    OwnPtr<StringCache> m_stringCache;
-    OwnPtr<V8HiddenValue> m_hiddenValue;
-    ScopedPersistent<v8::Value> m_liveRoot;
-    RefPtr<ScriptState> m_scriptRegexpScriptState;
+  void setScriptWrappableVisitor(
+      std::unique_ptr<ScriptWrappableVisitor> visitor) {
+    m_scriptWrappableVisitor = std::move(visitor);
+  }
+  ScriptWrappableVisitor* scriptWrappableVisitor() {
+    return m_scriptWrappableVisitor.get();
+  }
 
-    const char* m_previousSamplingState;
+ private:
+  V8PerIsolateData();
+  ~V8PerIsolateData();
 
-    bool m_constructorMode;
-    friend class ConstructorMode;
+  static void useCounterCallback(v8::Isolate*, v8::Isolate::UseCounterFeature);
 
-    int m_recursionLevel;
-    bool m_isHandlingRecursionLevelError;
-    bool m_isReportingException;
+  typedef HashMap<const void*, v8::Eternal<v8::FunctionTemplate>>
+      V8FunctionTemplateMap;
+  V8FunctionTemplateMap& selectInterfaceTemplateMap(const DOMWrapperWorld&);
+  V8FunctionTemplateMap& selectOperationTemplateMap(const DOMWrapperWorld&);
+  bool hasInstance(const WrapperTypeInfo* untrusted,
+                   v8::Local<v8::Value>,
+                   V8FunctionTemplateMap&);
+  v8::Local<v8::Object> findInstanceInPrototypeChain(const WrapperTypeInfo*,
+                                                     v8::Local<v8::Value>,
+                                                     V8FunctionTemplateMap&);
 
-#if ENABLE(ASSERT)
-    int m_internalScriptRecursionLevel;
-#endif
-    bool m_performingMicrotaskCheckpoint;
+  std::unique_ptr<gin::IsolateHolder> m_isolateHolder;
 
-    Vector<OwnPtr<EndOfScopeTask>> m_endOfScopeTasks;
-    OwnPtr<ScriptDebuggerBase> m_scriptDebugger;
+  // m_interfaceTemplateMapFor{,Non}MainWorld holds function templates for
+  // the inerface objects.
+  V8FunctionTemplateMap m_interfaceTemplateMapForMainWorld;
+  V8FunctionTemplateMap m_interfaceTemplateMapForNonMainWorld;
+  // m_operationTemplateMapFor{,Non}MainWorld holds function templates for
+  // the cross-origin accessible DOM operations.
+  V8FunctionTemplateMap m_operationTemplateMapForMainWorld;
+  V8FunctionTemplateMap m_operationTemplateMapForNonMainWorld;
+
+  std::unique_ptr<StringCache> m_stringCache;
+  std::unique_ptr<V8HiddenValue> m_hiddenValue;
+  std::unique_ptr<V8PrivateProperty> m_privateProperty;
+  ScopedPersistent<v8::Value> m_liveRoot;
+  RefPtr<ScriptState> m_scriptRegexpScriptState;
+
+  bool m_constructorMode;
+  friend class ConstructorMode;
+
+  bool m_useCounterDisabled;
+  friend class UseCounterDisabledScope;
+
+  bool m_isHandlingRecursionLevelError;
+  bool m_isReportingException;
+
+  Vector<std::unique_ptr<EndOfScopeTask>> m_endOfScopeTasks;
+  std::unique_ptr<ThreadDebugger> m_threadDebugger;
+
+  Persistent<ActiveScriptWrappableSet> m_activeScriptWrappables;
+  std::unique_ptr<ScriptWrappableVisitor> m_scriptWrappableVisitor;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // V8PerIsolateData_h
+#endif  // V8PerIsolateData_h

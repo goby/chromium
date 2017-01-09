@@ -5,8 +5,12 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_PRINTING_HOST_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_PRINTING_HOST_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/renderer_host/pepper/pepper_print_settings_manager.h"
 #include "content/common/content_export.h"
@@ -21,7 +25,7 @@ class CONTENT_EXPORT PepperPrintingHost : public ppapi::host::ResourceHost {
       ppapi::host::PpapiHost* host,
       PP_Instance instance,
       PP_Resource resource,
-      scoped_ptr<PepperPrintSettingsManager> print_settings_manager);
+      std::unique_ptr<PepperPrintSettingsManager> print_settings_manager);
   ~PepperPrintingHost() override;
 
   // ppapi::host::ResourceHost implementation.
@@ -35,7 +39,7 @@ class CONTENT_EXPORT PepperPrintingHost : public ppapi::host::ResourceHost {
   void PrintSettingsCallback(ppapi::host::ReplyMessageContext reply_context,
                              PepperPrintSettingsManager::Result result);
 
-  scoped_ptr<PepperPrintSettingsManager> print_settings_manager_;
+  std::unique_ptr<PepperPrintSettingsManager> print_settings_manager_;
 
   base::WeakPtrFactory<PepperPrintingHost> weak_factory_;
 

@@ -29,7 +29,6 @@ namespace storage {
 class FileSystemBackend;
 }
 
-class GURL;
 class Profile;
 
 // Implements a platform or feature specific part of ChromeContentBrowserClient.
@@ -60,6 +59,9 @@ class ChromeContentBrowserClientParts {
       base::CommandLine* command_line,
       content::RenderProcessHost* process,
       Profile* profile) {}
+
+  // Called when the ResourceDispatcherHost is created.
+  virtual void ResourceDispatcherHostCreated() {}
 };
 
 #endif  // CHROME_BROWSER_CHROME_CONTENT_BROWSER_CLIENT_PARTS_H_

@@ -5,7 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_API_SOCKETS_TCP_SOCKETS_TCP_API_H_
 #define EXTENSIONS_BROWSER_API_SOCKETS_TCP_SOCKETS_TCP_API_H_
 
+#include <stddef.h>
+
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "extensions/browser/api/socket/socket_api.h"
 #include "extensions/common/api/sockets_tcp.h"
 
@@ -23,7 +26,7 @@ class TCPSocketAsyncApiFunction : public SocketAsyncApiFunction {
  protected:
   ~TCPSocketAsyncApiFunction() override;
 
-  scoped_ptr<SocketResourceManagerInterface> CreateSocketResourceManager()
+  std::unique_ptr<SocketResourceManagerInterface> CreateSocketResourceManager()
       override;
 
   ResumableTCPSocket* GetTcpSocket(int socket_id);
@@ -34,7 +37,7 @@ class TCPSocketExtensionWithDnsLookupFunction
  protected:
   ~TCPSocketExtensionWithDnsLookupFunction() override;
 
-  scoped_ptr<SocketResourceManagerInterface> CreateSocketResourceManager()
+  std::unique_ptr<SocketResourceManagerInterface> CreateSocketResourceManager()
       override;
 
   ResumableTCPSocket* GetTcpSocket(int socket_id);
@@ -55,7 +58,7 @@ class SocketsTcpCreateFunction : public TCPSocketAsyncApiFunction {
 
  private:
   FRIEND_TEST_ALL_PREFIXES(SocketsTcpUnitTest, Create);
-  scoped_ptr<sockets_tcp::Create::Params> params_;
+  std::unique_ptr<sockets_tcp::Create::Params> params_;
 };
 
 class SocketsTcpUpdateFunction : public TCPSocketAsyncApiFunction {
@@ -72,7 +75,7 @@ class SocketsTcpUpdateFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::Update::Params> params_;
+  std::unique_ptr<sockets_tcp::Update::Params> params_;
 };
 
 class SocketsTcpSetPausedFunction : public TCPSocketAsyncApiFunction {
@@ -89,7 +92,7 @@ class SocketsTcpSetPausedFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::SetPaused::Params> params_;
+  std::unique_ptr<sockets_tcp::SetPaused::Params> params_;
   TCPSocketEventDispatcher* socket_event_dispatcher_;
 };
 
@@ -108,7 +111,7 @@ class SocketsTcpSetKeepAliveFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::SetKeepAlive::Params> params_;
+  std::unique_ptr<sockets_tcp::SetKeepAlive::Params> params_;
 };
 
 class SocketsTcpSetNoDelayFunction : public TCPSocketAsyncApiFunction {
@@ -125,7 +128,7 @@ class SocketsTcpSetNoDelayFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::SetNoDelay::Params> params_;
+  std::unique_ptr<sockets_tcp::SetNoDelay::Params> params_;
 };
 
 class SocketsTcpConnectFunction
@@ -149,7 +152,7 @@ class SocketsTcpConnectFunction
   void StartConnect();
   void OnCompleted(int net_result);
 
-  scoped_ptr<sockets_tcp::Connect::Params> params_;
+  std::unique_ptr<sockets_tcp::Connect::Params> params_;
   TCPSocketEventDispatcher* socket_event_dispatcher_;
 };
 
@@ -167,7 +170,7 @@ class SocketsTcpDisconnectFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::Disconnect::Params> params_;
+  std::unique_ptr<sockets_tcp::Disconnect::Params> params_;
 };
 
 class SocketsTcpSendFunction : public TCPSocketAsyncApiFunction {
@@ -187,7 +190,7 @@ class SocketsTcpSendFunction : public TCPSocketAsyncApiFunction {
   void OnCompleted(int net_result);
   void SetSendResult(int net_result, int bytes_sent);
 
-  scoped_ptr<sockets_tcp::Send::Params> params_;
+  std::unique_ptr<sockets_tcp::Send::Params> params_;
   scoped_refptr<net::IOBuffer> io_buffer_;
   size_t io_buffer_size_;
 };
@@ -206,7 +209,7 @@ class SocketsTcpCloseFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::Close::Params> params_;
+  std::unique_ptr<sockets_tcp::Close::Params> params_;
 };
 
 class SocketsTcpGetInfoFunction : public TCPSocketAsyncApiFunction {
@@ -223,7 +226,7 @@ class SocketsTcpGetInfoFunction : public TCPSocketAsyncApiFunction {
   void Work() override;
 
  private:
-  scoped_ptr<sockets_tcp::GetInfo::Params> params_;
+  std::unique_ptr<sockets_tcp::GetInfo::Params> params_;
 };
 
 class SocketsTcpGetSocketsFunction : public TCPSocketAsyncApiFunction {
@@ -252,12 +255,12 @@ class SocketsTcpSecureFunction : public TCPSocketAsyncApiFunction {
   void AsyncWorkStart() override;
 
  private:
-  virtual void TlsConnectDone(scoped_ptr<extensions::TLSSocket> sock,
+  virtual void TlsConnectDone(std::unique_ptr<extensions::TLSSocket> sock,
                               int result);
 
   bool paused_;
   bool persistent_;
-  scoped_ptr<sockets_tcp::Secure::Params> params_;
+  std::unique_ptr<sockets_tcp::Secure::Params> params_;
   scoped_refptr<net::URLRequestContextGetter> url_request_getter_;
 
   DISALLOW_COPY_AND_ASSIGN(SocketsTcpSecureFunction);

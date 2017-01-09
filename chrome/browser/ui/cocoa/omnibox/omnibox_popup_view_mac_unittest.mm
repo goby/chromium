@@ -4,13 +4,18 @@
 
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_popup_view_mac.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_view_mac.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/omnibox/browser/autocomplete_input.h"
+#include "components/omnibox/browser/autocomplete_result.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/text_elider.h"

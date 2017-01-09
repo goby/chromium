@@ -4,8 +4,12 @@
 
 #include "components/update_client/test_configurator.h"
 
+#include "base/sequenced_task_runner.h"
+#include "base/single_thread_task_runner.h"
 #include "base/version.h"
+#include "components/prefs/pref_service.h"
 #include "components/update_client/component_patcher_operation.h"
+#include "net/url_request/url_request_test_util.h"
 #include "url/gurl.h"
 
 namespace update_client {
@@ -25,10 +29,12 @@ TestConfigurator::TestConfigurator(
     const scoped_refptr<base::SequencedTaskRunner>& worker_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& network_task_runner)
     : worker_task_runner_(worker_task_runner),
+      brand_("TEST"),
       initial_time_(0),
       ondemand_time_(0),
-      context_(new net::TestURLRequestContextGetter(network_task_runner)) {
-}
+      enabled_cup_signing_(false),
+      enabled_component_updates_(true),
+      context_(new net::TestURLRequestContextGetter(network_task_runner)) {}
 
 TestConfigurator::~TestConfigurator() {
 }
@@ -54,11 +60,21 @@ int TestConfigurator::UpdateDelay() const {
 }
 
 std::vector<GURL> TestConfigurator::UpdateUrl() const {
+  if (!update_check_url_.is_empty())
+    return std::vector<GURL>(1, update_check_url_);
+
   return MakeDefaultUrls();
 }
 
 std::vector<GURL> TestConfigurator::PingUrl() const {
+  if (!ping_url_.is_empty())
+    return std::vector<GURL>(1, ping_url_);
+
   return UpdateUrl();
+}
+
+std::string TestConfigurator::GetProdId() const {
+  return "fake_prodid";
 }
 
 base::Version TestConfigurator::GetBrowserVersion() const {
@@ -68,6 +84,10 @@ base::Version TestConfigurator::GetBrowserVersion() const {
 
 std::string TestConfigurator::GetChannel() const {
   return "fake_channel_string";
+}
+
+std::string TestConfigurator::GetBrand() const {
+  return brand_;
 }
 
 std::string TestConfigurator::GetLang() const {
@@ -82,6 +102,10 @@ std::string TestConfigurator::ExtraRequestParams() const {
   return "extra=\"foo\"";
 }
 
+std::string TestConfigurator::GetDownloadPreference() const {
+  return download_preference_;
+}
+
 net::URLRequestContextGetter* TestConfigurator::RequestContext() const {
   return context_.get();
 }
@@ -91,12 +115,24 @@ scoped_refptr<OutOfProcessPatcher> TestConfigurator::CreateOutOfProcessPatcher()
   return NULL;
 }
 
-bool TestConfigurator::DeltasEnabled() const {
+bool TestConfigurator::EnabledDeltas() const {
   return true;
 }
 
-bool TestConfigurator::UseBackgroundDownloader() const {
+bool TestConfigurator::EnabledComponentUpdates() const {
+  return enabled_component_updates_;
+}
+
+bool TestConfigurator::EnabledBackgroundDownloader() const {
   return false;
+}
+
+bool TestConfigurator::EnabledCupSigning() const {
+  return enabled_cup_signing_;
+}
+
+void TestConfigurator::SetBrand(const std::string& brand) {
+  brand_ = brand;
 }
 
 void TestConfigurator::SetOnDemandTime(int seconds) {
@@ -107,10 +143,40 @@ void TestConfigurator::SetInitialDelay(int seconds) {
   initial_time_ = seconds;
 }
 
+void TestConfigurator::SetEnabledCupSigning(bool enabled_cup_signing) {
+  enabled_cup_signing_ = enabled_cup_signing;
+}
+
+void TestConfigurator::SetEnabledComponentUpdates(
+    bool enabled_component_updates) {
+  enabled_component_updates_ = enabled_component_updates;
+}
+
+void TestConfigurator::SetDownloadPreference(
+    const std::string& download_preference) {
+  download_preference_ = download_preference;
+}
+
+void TestConfigurator::SetUpdateCheckUrl(const GURL& url) {
+  update_check_url_ = url;
+}
+
+void TestConfigurator::SetPingUrl(const GURL& url) {
+  ping_url_ = url;
+}
+
 scoped_refptr<base::SequencedTaskRunner>
 TestConfigurator::GetSequencedTaskRunner() const {
   DCHECK(worker_task_runner_.get());
   return worker_task_runner_;
+}
+
+PrefService* TestConfigurator::GetPrefService() const {
+  return nullptr;
+}
+
+bool TestConfigurator::IsPerUserInstall() const {
+  return true;
 }
 
 }  // namespace update_client

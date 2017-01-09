@@ -226,6 +226,9 @@ MockGSSAPILibrary::SecurityContextQuery::SecurityContextQuery(
   }
 }
 
+MockGSSAPILibrary::SecurityContextQuery::SecurityContextQuery(
+    const SecurityContextQuery& other) = default;
+
 MockGSSAPILibrary::SecurityContextQuery::~SecurityContextQuery() {}
 
 MockGSSAPILibrary::MockGSSAPILibrary() {
@@ -477,4 +480,3 @@ OM_uint32 MockGSSAPILibrary::inquire_context(
 }  // namespace test
 
 }  // namespace net
-

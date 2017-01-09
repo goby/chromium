@@ -5,6 +5,8 @@
 #ifndef PPAPI_CPP_TEXT_INPUT_CONTROLLER_H_
 #define PPAPI_CPP_TEXT_INPUT_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "ppapi/c/ppb_text_input_controller.h"
@@ -17,7 +19,6 @@
 namespace pp {
 
 class Rect;
-class Instance;
 
 /// This class can be used for giving hints to the browser about the text input
 /// status of plugins.

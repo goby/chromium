@@ -5,11 +5,14 @@
 #ifndef COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_ORIGIN_IDENTIFIER_VALUE_MAP_H_
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_ORIGIN_IDENTIFIER_VALUE_MAP_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/content_settings/core/common/content_settings.h"
 
 class GURL;
@@ -71,7 +74,8 @@ class OriginIdentifierValueMap {
   // |OriginIdentifierValueMap| (also |GetRuleIterator|) before the iterator
   // has been destroyed. If |lock| is non-NULL, the returned |RuleIterator|
   // locks it and releases it when it is destroyed.
-  scoped_ptr<RuleIterator> GetRuleIterator(
+  // Returns nullptr to indicate the RuleIterator is empty.
+  std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
       base::Lock* lock) const;

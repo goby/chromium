@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/KeyframeStyleRuleCSSStyleDeclaration.h"
 
 #include "core/css/CSSKeyframeRule.h"
@@ -10,15 +9,14 @@
 
 namespace blink {
 
-KeyframeStyleRuleCSSStyleDeclaration::KeyframeStyleRuleCSSStyleDeclaration(MutableStylePropertySet& propertySetArg, CSSKeyframeRule* parentRule)
-    : StyleRuleCSSStyleDeclaration(propertySetArg, parentRule)
-{
+KeyframeStyleRuleCSSStyleDeclaration::KeyframeStyleRuleCSSStyleDeclaration(
+    MutableStylePropertySet& propertySetArg,
+    CSSKeyframeRule* parentRule)
+    : StyleRuleCSSStyleDeclaration(propertySetArg, parentRule) {}
+
+void KeyframeStyleRuleCSSStyleDeclaration::didMutate(MutationType type) {
+  StyleRuleCSSStyleDeclaration::didMutate(type);
+  toCSSKeyframesRule(m_parentRule->parentRule())->styleChanged();
 }
 
-void KeyframeStyleRuleCSSStyleDeclaration::didMutate(MutationType type)
-{
-    StyleRuleCSSStyleDeclaration::didMutate(type);
-    toCSSKeyframesRule(m_parentRule->parentRule())->styleChanged();
-}
-
-} // namespace blink
+}  // namespace blink

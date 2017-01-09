@@ -20,10 +20,8 @@ class MockPasswordStore : public PasswordStore {
   MockPasswordStore();
 
   MOCK_METHOD1(RemoveLogin, void(const autofill::PasswordForm&));
-  MOCK_METHOD3(GetLogins,
-               void(const autofill::PasswordForm&,
-                    PasswordStore::AuthorizationPromptPolicy prompt_policy,
-                    PasswordStoreConsumer*));
+  MOCK_METHOD2(GetLogins,
+               void(const PasswordStore::FormDigest&, PasswordStoreConsumer*));
   MOCK_METHOD1(AddLogin, void(const autofill::PasswordForm&));
   MOCK_METHOD1(UpdateLogin, void(const autofill::PasswordForm&));
   MOCK_METHOD2(UpdateLoginWithPrimaryKey,
@@ -37,26 +35,32 @@ class MockPasswordStore : public PasswordStore {
                PasswordStoreChangeList(const autofill::PasswordForm&));
   MOCK_METHOD1(RemoveLoginImpl,
                PasswordStoreChangeList(const autofill::PasswordForm&));
+  MOCK_METHOD3(RemoveLoginsByURLAndTimeImpl,
+               PasswordStoreChangeList(const base::Callback<bool(const GURL&)>&,
+                                       base::Time,
+                                       base::Time));
   MOCK_METHOD2(RemoveLoginsCreatedBetweenImpl,
                PasswordStoreChangeList(base::Time, base::Time));
   MOCK_METHOD2(RemoveLoginsSyncedBetweenImpl,
                PasswordStoreChangeList(base::Time, base::Time));
-  MOCK_METHOD2(RemoveStatisticsCreatedBetweenImpl,
-               bool(base::Time, base::Time));
-  ScopedVector<autofill::PasswordForm> FillMatchingLogins(
-      const autofill::PasswordForm& form,
-      PasswordStore::AuthorizationPromptPolicy prompt_policy) override {
-    return ScopedVector<autofill::PasswordForm>();
+  MOCK_METHOD3(RemoveStatisticsByOriginAndTimeImpl,
+               bool(const base::Callback<bool(const GURL&)>&,
+                    base::Time,
+                    base::Time));
+  MOCK_METHOD1(
+      DisableAutoSignInForOriginsImpl,
+      PasswordStoreChangeList(const base::Callback<bool(const GURL&)>&));
+  std::vector<std::unique_ptr<autofill::PasswordForm>> FillMatchingLogins(
+      const PasswordStore::FormDigest& form) override {
+    return std::vector<std::unique_ptr<autofill::PasswordForm>>();
   }
   MOCK_METHOD1(FillAutofillableLogins,
-               bool(ScopedVector<autofill::PasswordForm>*));
+               bool(std::vector<std::unique_ptr<autofill::PasswordForm>>*));
   MOCK_METHOD1(FillBlacklistLogins,
-               bool(ScopedVector<autofill::PasswordForm>*));
+               bool(std::vector<std::unique_ptr<autofill::PasswordForm>>*));
   MOCK_METHOD1(NotifyLoginsChanged, void(const PasswordStoreChangeList&));
-  // GMock doesn't allow to return noncopyable types.
-  std::vector<scoped_ptr<InteractionsStats>> GetSiteStatsImpl(
-      const GURL& origin_domain) override;
-  MOCK_METHOD1(GetSiteStatsMock, std::vector<InteractionsStats*>(const GURL&));
+  MOCK_METHOD1(GetSiteStatsImpl,
+               std::vector<InteractionsStats>(const GURL& origin_domain));
   MOCK_METHOD1(AddSiteStatsImpl, void(const InteractionsStats&));
   MOCK_METHOD1(RemoveSiteStatsImpl, void(const GURL&));
 

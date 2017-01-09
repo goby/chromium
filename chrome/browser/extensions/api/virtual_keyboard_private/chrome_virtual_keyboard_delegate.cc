@@ -5,10 +5,11 @@
 #include "chrome/browser/extensions/api/virtual_keyboard_private/chrome_virtual_keyboard_delegate.h"
 
 #include <string>
+#include <utility>
 
 #include "ash/shell.h"
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
@@ -76,7 +77,7 @@ bool ChromeVirtualKeyboardDelegate::GetKeyboardConfig(
   // crbug.com/529474.
   results->SetBoolean("a11ymode", keyboard::GetAccessibilityKeyboardEnabled());
   results->SetBoolean("hotrodmode", keyboard::GetHotrodKeyboardEnabled());
-  scoped_ptr<base::ListValue> features(new base::ListValue());
+  std::unique_ptr<base::ListValue> features(new base::ListValue());
   features->AppendString(GenerateFeatureFlag(
       "floatingvirtualkeyboard", keyboard::IsFloatingVirtualKeyboardEnabled()));
   features->AppendString(
@@ -87,7 +88,7 @@ bool ChromeVirtualKeyboardDelegate::GetKeyboardConfig(
       GenerateFeatureFlag("voiceinput", keyboard::IsVoiceInputEnabled()));
   features->AppendString(GenerateFeatureFlag("experimental",
       keyboard::IsExperimentalInputViewEnabled()));
-  results->Set("features", features.Pass());
+  results->Set("features", std::move(features));
   return true;
 }
 
@@ -139,7 +140,7 @@ bool ChromeVirtualKeyboardDelegate::LockKeyboard(bool state) {
   if (!controller)
     return false;
 
-  keyboard::KeyboardController::GetInstance()->set_lock_keyboard(state);
+  keyboard::KeyboardController::GetInstance()->set_keyboard_locked(state);
   return true;
 }
 
@@ -154,7 +155,7 @@ bool ChromeVirtualKeyboardDelegate::SendKeyEvent(const std::string& type,
                                           char_value,
                                           key_code,
                                           key_name,
-                                          modifiers,
+                                          modifiers | ui::EF_IS_SYNTHESIZED,
                                           window->GetHost());
 }
 

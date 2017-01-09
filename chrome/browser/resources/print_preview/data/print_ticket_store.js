@@ -110,6 +110,14 @@ cr.define('print_preview', function() {
         new print_preview.ticket_items.PageRange(this.documentInfo_);
 
     /**
+     * Scaling ticket item.
+     * @type {!print_preview.ticket_items.Scaling}
+     * @private
+     */
+    this.scaling_ = new print_preview.ticket_items.Scaling(
+        this.appState_, this.destinationStore_, this.documentInfo_);
+
+    /**
      * Custom margins ticket item.
      * @type {!print_preview.ticket_items.CustomMargins}
      * @private
@@ -183,14 +191,6 @@ cr.define('print_preview', function() {
      */
     this.selectionOnly_ =
         new print_preview.ticket_items.SelectionOnly(this.documentInfo_);
-
-    /**
-     * Print friendly ticket item.
-     * @type {!print_preview.ticket_items.DistillPage}
-     * @private
-     */
-    this.distillPage_ = new print_preview.ticket_items.DistillPage(
-        this.documentInfo_);
 
     /**
      * Vendor ticket items.
@@ -275,10 +275,6 @@ cr.define('print_preview', function() {
       return this.headerFooter_;
     },
 
-    get distillPage() {
-      return this.distillPage_;
-    },
-
     get mediaSize() {
       return this.mediaSize_;
     },
@@ -293,6 +289,10 @@ cr.define('print_preview', function() {
 
     get pageRange() {
       return this.pageRange_;
+    },
+
+    get scaling() {
+      return this.scaling_;
     },
 
     get selectionOnly() {
@@ -384,6 +384,12 @@ cr.define('print_preview', function() {
         this.fitToPage_.updateValue(
             /** @type {!Object} */(this.appState_.getField(
             print_preview.AppState.Field.IS_FIT_TO_PAGE_ENABLED)));
+      }
+      if (this.appState_.hasField(
+          print_preview.AppState.Field.SCALING)) {
+        this.scaling_.updateValue(
+            /** @type {!Object} */(this.appState_.getField(
+            print_preview.AppState.Field.SCALING)));
       }
       if (this.appState_.hasField(
           print_preview.AppState.Field.IS_CSS_BACKGROUND_ENABLED)) {

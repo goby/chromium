@@ -8,15 +8,12 @@
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/common/extensions/api/feedback_private.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
+#include "extensions/browser/extension_function.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace extensions {
 
-extern char kFeedbackExtensionId[];
-
 class FeedbackService;
-
-using extensions::api::feedback_private::SystemInformation;
 
 class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
  public:
@@ -24,9 +21,15 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
   ~FeedbackPrivateAPI() override;
 
   FeedbackService* GetService() const;
+
   void RequestFeedback(const std::string& description_template,
                        const std::string& category_tag,
                        const GURL& page_url);
+
+  void RequestFeedbackForFlow(const std::string& description_template,
+                              const std::string& category_tag,
+                              const GURL& page_url,
+                              api::feedback_private::FeedbackFlow flow);
 
   // BrowserContextKeyedAPI implementation.
   static BrowserContextKeyedAPIFactory<FeedbackPrivateAPI>*
@@ -47,7 +50,7 @@ class FeedbackPrivateAPI : public BrowserContextKeyedAPI {
 };
 
 // Feedback strings.
-class FeedbackPrivateGetStringsFunction : public ChromeSyncExtensionFunction {
+class FeedbackPrivateGetStringsFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getStrings",
                              FEEDBACKPRIVATE_GETSTRINGS)
@@ -60,21 +63,21 @@ class FeedbackPrivateGetStringsFunction : public ChromeSyncExtensionFunction {
  protected:
   ~FeedbackPrivateGetStringsFunction() override {}
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 
  private:
   static base::Closure* test_callback_;
 };
 
-class FeedbackPrivateGetUserEmailFunction : public ChromeSyncExtensionFunction {
+class FeedbackPrivateGetUserEmailFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("feedbackPrivate.getUserEmail",
                              FEEDBACKPRIVATE_GETUSEREMAIL);
 
  protected:
   ~FeedbackPrivateGetUserEmailFunction() override {}
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 class FeedbackPrivateGetSystemInformationFunction
@@ -89,7 +92,7 @@ class FeedbackPrivateGetSystemInformationFunction
 
  private:
   void OnCompleted(
-      const std::vector<linked_ptr<SystemInformation> >& sys_info);
+      const std::vector<api::feedback_private::SystemInformation>& sys_info);
 };
 
 class FeedbackPrivateSendFeedbackFunction
@@ -104,6 +107,17 @@ class FeedbackPrivateSendFeedbackFunction
 
  private:
   void OnCompleted(bool success);
+};
+
+class FeedbackPrivateLogSrtPromptResultFunction
+    : public UIThreadExtensionFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("feedbackPrivate.logSrtPromptResult",
+                             FEEDBACKPRIVATE_LOGSRTPROMPTRESULT);
+
+ protected:
+  ~FeedbackPrivateLogSrtPromptResultFunction() override {}
+  AsyncExtensionFunction::ResponseAction Run() override;
 };
 
 }  // namespace extensions

@@ -5,10 +5,13 @@
 #ifndef CONTENT_RENDERER_MEDIA_CDM_PEPPER_CDM_WRAPPER_H_
 #define CONTENT_RENDERER_MEDIA_CDM_PEPPER_CDM_WRAPPER_H_
 
-#if !defined(ENABLE_PEPPER_CDMS)
+#include "ppapi/features/features.h"
+
+#if !BUILDFLAG(ENABLE_PEPPER_CDMS)
 #error This file should only be included when ENABLE_PEPPER_CDMS is defined
 #endif
 
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
@@ -36,9 +39,10 @@ class PepperCdmWrapper {
 
 // Callback used to create a PepperCdmWrapper. This may return null if the
 // Pepper CDM can not be created.
-typedef base::Callback<scoped_ptr<PepperCdmWrapper>(
+typedef base::Callback<std::unique_ptr<PepperCdmWrapper>(
     const std::string& pluginType,
-    const GURL& security_origin)> CreatePepperCdmCB;
+    const GURL& security_origin)>
+    CreatePepperCdmCB;
 
 }  // namespace content
 

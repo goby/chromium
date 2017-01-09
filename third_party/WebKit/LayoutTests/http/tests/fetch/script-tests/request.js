@@ -16,6 +16,8 @@ test(function() {
     assert_equals(request.method, 'GET', 'Request.method should match');
     assert_equals(request.referrer, 'about:client',
                   'Request.referrer should be about:client');
+    assert_equals(request.referrerPolicy, '',
+                  'Request.referrerPolicy should be empty');
     assert_true(request.headers instanceof Headers,
                 'Request.headers should be Headers');
 
@@ -331,6 +333,15 @@ test(function() {
   }, 'Request: valid method names and normalize test');
 
 test(function() {
+    assert_throws(new TypeError(),
+                  function() { new Request('http://user@localhost/'); },
+                  'Request with a URL with username must throw.');
+    assert_throws(new TypeError(),
+                  function() { new Request('http://user:pass@localhost/'); },
+                  'Request with a URL with username and password must throw.');
+  }, 'Request construction with URLs with credentials.');
+
+test(function() {
     var req = new Request(URL);
     assert_false(req.bodyUsed,
                  'Request should not be flagged as used if it has not been ' +
@@ -388,6 +399,7 @@ test(function() {
 
 test(function() {
     assert_equals(new Request(URL).referrer, 'about:client');
+    assert_equals(new Request(URL).referrerPolicy, '');
   }, 'Request without RequestInit.');
 
 test(function() {
@@ -458,6 +470,37 @@ test(function() {
 
     assert_equals(new Request(URL, {referrer: referrer}).referrer, expected);
   }, 'Request with a relative referrer');
+
+test(() => {
+    assert_equals(new Request('/', {referrerPolicy: ''}).referrerPolicy, '');
+    assert_equals(new Request('/', {referrerPolicy: 'no-referrer'})
+        .referrerPolicy, 'no-referrer');
+    assert_equals(new Request('/',
+        {referrerPolicy: 'no-referrer-when-downgrade'}).referrerPolicy,
+        'no-referrer-when-downgrade');
+    assert_equals(new Request('/', {referrerPolicy: 'origin'})
+        .referrerPolicy, 'origin');
+    assert_equals(new Request('/', {referrerPolicy: 'origin-when-cross-origin'})
+        .referrerPolicy, 'origin-when-cross-origin');
+    assert_equals(new Request('/', {referrerPolicy: 'unsafe-url'})
+        .referrerPolicy, 'unsafe-url');
+    assert_throws(
+        {name: 'TypeError'},
+        () => new Request('/', {referrerPolicy: 'invalid'}),
+        'Setting invalid referrer policy should be thrown.');
+  }, 'Referrer policy settings');
+
+test(() => {
+    let r = new Request('/', {referrerPolicy: 'origin'});
+    assert_equals(r.referrerPolicy, 'origin', 'original policy');
+
+    assert_equals(new Request(r, {foo: 32}).referrerPolicy,
+        'origin', 'kept original policy');
+    assert_equals(new Request(r, {mode: 44}).referrerPolicy,
+        '', 'cleared policy');
+    assert_equals(new Request(r, {referrerPolicy: 'unsafe-url'}).referrerPolicy,
+        'unsafe-url', 'overriden policy');
+  }, 'Referrer policy should be cleared when any members are set');
 
 // Spec: https://fetch.spec.whatwg.org/#dom-request
 // Step 21:
@@ -605,6 +648,31 @@ async_test(function(t) {
           assert_equals(result, "sample+string=1234567890");
         })
       .then(function() {
+          // Alphanumeric characters and *-._ shouldn't be percent-encoded.
+          // The others must.
+          var params = new URLSearchParams();
+          params.append('\0\x1f!)*+,-./:?[^_{~\x7f\u0080',
+                        '\0\x1f!)*+,-./:?[^_{~\x7f\u0080');
+          request = new Request(URL, {method: 'POST', body: params});
+          return request.text();
+        })
+      .then(function(result) {
+          assert_equals(
+              result,
+              "%00%1F%21%29*%2B%2C-.%2F%3A%3F%5B%5E_%7B%7E%7F%C2%80=" +
+                  "%00%1F%21%29*%2B%2C-.%2F%3A%3F%5B%5E_%7B%7E%7F%C2%80");
+        })
+      .then(function() {
+          // CR and LF shouldn't be normalized into CRLF.
+          var params = new URLSearchParams();
+          params.append('\r \n \r\n', '\r \n \r\n');
+          request = new Request(URL, {method: 'POST', body: params});
+          return request.text();
+        })
+      .then(function(result) {
+          assert_equals(result, "%0D+%0A+%0D%0A=%0D+%0A+%0D%0A");
+        })
+      .then(function() {
           t.done();
         })
       .catch(unreached_rejection(t));
@@ -738,5 +806,17 @@ promise_test(function(t) {
           assert_equals(req.headers.get('Content-Type'), 'Text/Html');
         });
   }, 'Extract a MIME type (1)');
+
+promise_test(function(t) {
+    var req = new Request('http://localhost/',
+                          {method: 'POST',
+                           credentials: 'include',
+                           body: 'this is a body'});
+
+    return req.text()
+        .then(t => {
+           assert_equals(t, 'this is a body');
+        });
+  }, 'Credentials and body can both be set.');
 
 done();

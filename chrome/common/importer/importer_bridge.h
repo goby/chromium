@@ -8,7 +8,7 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "build/build_config.h"
@@ -28,7 +28,6 @@ namespace importer {
 #if defined(OS_WIN)
 struct ImporterIE7PasswordInfo;
 #endif
-struct ImporterURlRow;
 struct SearchEngineInfo;
 }
 

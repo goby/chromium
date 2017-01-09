@@ -29,11 +29,13 @@
 import os
 import platform
 import sys
+import time
 
-from webkitpy.common.system import environment, executive, filesystem, platforminfo, user, workspace
+from webkitpy.common.system import executive, filesystem, platforminfo, user, workspace
 
 
 class SystemHost(object):
+
     def __init__(self):
         self.executable = sys.executable
         self.executive = executive.Executive()
@@ -44,9 +46,7 @@ class SystemHost(object):
         self.stdin = sys.stdin
         self.stdout = sys.stdout
         self.stderr = sys.stderr
-
-    def copy_current_environment(self):
-        return environment.Environment(os.environ.copy())
+        self.environ = os.environ
 
     def print_(self, *args, **kwargs):
         sep = kwargs.get('sep', ' ')
@@ -56,3 +56,6 @@ class SystemHost(object):
 
     def exit(self, returncode):
         sys.exit(returncode)
+
+    def time(self):
+        return time.time()

@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/audio_output_devices/AudioOutputDeviceClient.h"
 
 #include "core/dom/Document.h"
@@ -11,26 +10,30 @@
 
 namespace blink {
 
-const char* AudioOutputDeviceClient::supplementName()
-{
-    return "AudioOutputDeviceClient";
+const char* AudioOutputDeviceClient::supplementName() {
+  return "AudioOutputDeviceClient";
 }
 
-AudioOutputDeviceClient* AudioOutputDeviceClient::from(ExecutionContext* context)
-{
-    if (!context->isDocument())
-        return nullptr;
+AudioOutputDeviceClient* AudioOutputDeviceClient::from(
+    ExecutionContext* context) {
+  if (!context || !context->isDocument())
+    return nullptr;
 
-    const Document* document = toDocument(context);
-    if (!document->frame() || !document->frame()->isLocalFrame())
-        return nullptr;
+  const Document* document = toDocument(context);
+  if (!document->frame())
+    return nullptr;
 
-    return static_cast<AudioOutputDeviceClient*>(WillBeHeapSupplement<LocalFrame>::from(document->frame(), supplementName()));
+  return static_cast<AudioOutputDeviceClient*>(
+      Supplement<LocalFrame>::from(document->frame(), supplementName()));
 }
 
-void provideAudioOutputDeviceClientTo(LocalFrame& frame, PassOwnPtrWillBeRawPtr<AudioOutputDeviceClient> client)
-{
-    frame.provideSupplement(AudioOutputDeviceClient::supplementName(), client);
+void provideAudioOutputDeviceClientTo(LocalFrame& frame,
+                                      AudioOutputDeviceClient* client) {
+  frame.provideSupplement(AudioOutputDeviceClient::supplementName(), client);
 }
 
-} // namespace blink
+DEFINE_TRACE(AudioOutputDeviceClient) {
+  Supplement<LocalFrame>::trace(visitor);
+}
+
+}  // namespace blink

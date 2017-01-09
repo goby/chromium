@@ -3,15 +3,22 @@
 // found in the LICENSE file.
 
 #include <map>
+#include <memory>
 #include <vector>
 
 // Include views_test_base.h first because the definition of None in X.h
 // conflicts with the definition of None in gtest-type-util.h
 #include "ui/views/test/views_test_base.h"
 
-#include "base/memory/scoped_ptr.h"
+#include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "ui/aura/client/drag_drop_delegate.h"
+#include "ui/aura/test/test_screen.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
@@ -19,13 +26,11 @@
 #include "ui/events/event_utils.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/gfx/x/x11_types.h"
-#include "ui/views/widget/desktop_aura/desktop_cursor_loader_updater.h"
 #include "ui/views/widget/desktop_aura/desktop_drag_drop_client_aurax11.h"
 #include "ui/views/widget/desktop_aura/desktop_native_cursor_manager.h"
 #include "ui/views/widget/desktop_aura/desktop_native_widget_aura.h"
 #include "ui/views/widget/desktop_aura/x11_move_loop.h"
 #include "ui/views/widget/widget.h"
-#include "ui/wm/public/drag_drop_delegate.h"
 
 #include <X11/Xlib.h>
 
@@ -116,9 +121,11 @@ class SimpleTestDragDropClient : public DesktopDragDropClientAuraX11 {
   // Returns true if the move loop is running.
   bool IsMoveLoopRunning();
 
+  Widget* drag_widget() { return DesktopDragDropClientAuraX11::drag_widget(); }
+
  private:
   // DesktopDragDropClientAuraX11:
-  scoped_ptr<X11MoveLoop> CreateMoveLoop(
+  std::unique_ptr<X11MoveLoop> CreateMoveLoop(
       X11MoveLoopDelegate* delegate) override;
   XID FindWindowFor(const gfx::Point& screen_point) override;
 
@@ -280,10 +287,10 @@ bool SimpleTestDragDropClient::IsMoveLoopRunning() {
   return loop_->IsRunning();
 }
 
-scoped_ptr<X11MoveLoop> SimpleTestDragDropClient::CreateMoveLoop(
+std::unique_ptr<X11MoveLoop> SimpleTestDragDropClient::CreateMoveLoop(
     X11MoveLoopDelegate* delegate) {
   loop_ = new TestMoveLoop(delegate);
-  return make_scoped_ptr(loop_);
+  return base::WrapUnique(loop_);
 }
 
 XID SimpleTestDragDropClient::FindWindowFor(const gfx::Point& screen_point) {
@@ -383,6 +390,11 @@ class DesktopDragDropClientAuraX11Test : public ViewsTestBase {
   int StartDragAndDrop() {
     ui::OSExchangeData data;
     data.SetString(base::ASCIIToUTF16("Test"));
+    SkBitmap drag_bitmap;
+    drag_bitmap.allocN32Pixels(10, 10);
+    drag_bitmap.eraseARGB(0xFF, 0, 0, 0);
+    gfx::ImageSkia drag_image(gfx::ImageSkia::CreateFrom1xBitmap(drag_bitmap));
+    data.provider().SetDragImage(drag_image, gfx::Vector2d());
 
     return client_->StartDragAndDrop(
         data,
@@ -396,6 +408,7 @@ class DesktopDragDropClientAuraX11Test : public ViewsTestBase {
   // ViewsTestBase:
   void SetUp() override {
     ViewsTestBase::SetUp();
+    views_delegate()->set_use_desktop_native_widgets(true);
 
     // Create widget to initiate the drags.
     widget_.reset(new Widget);
@@ -406,8 +419,7 @@ class DesktopDragDropClientAuraX11Test : public ViewsTestBase {
     widget_->Init(params);
     widget_->Show();
 
-    cursor_manager_.reset(new DesktopNativeCursorManager(
-        DesktopCursorLoaderUpdater::Create()));
+    cursor_manager_.reset(new DesktopNativeCursorManager());
 
     client_.reset(new TestDragDropClient(widget_->GetNativeWindow(),
                                          cursor_manager_.get()));
@@ -426,11 +438,11 @@ class DesktopDragDropClientAuraX11Test : public ViewsTestBase {
   }
 
  private:
-  scoped_ptr<TestDragDropClient> client_;
-  scoped_ptr<DesktopNativeCursorManager> cursor_manager_;
+  std::unique_ptr<TestDragDropClient> client_;
+  std::unique_ptr<DesktopNativeCursorManager> cursor_manager_;
 
   // The widget used to initiate drags.
-  scoped_ptr<Widget> widget_;
+  std::unique_ptr<Widget> widget_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopDragDropClientAuraX11Test);
 };
@@ -522,21 +534,60 @@ void BasicStep3(TestDragDropClient* client, XID toplevel) {
 TEST_F(DesktopDragDropClientAuraX11Test, Basic) {
   XID toplevel = 1;
 
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(&BasicStep2,
-                                         client(),
-                                         toplevel));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&BasicStep2, client(), toplevel));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY, result);
 
   // Do another drag and drop to test that the data is properly cleaned up as a
   // result of the XdndFinished message.
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         base::Bind(&BasicStep3,
-                                         client(),
-                                         toplevel));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&BasicStep3, client(), toplevel));
   result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY, result);
+}
+
+void HighDPIStep(TestDragDropClient* client) {
+  float scale =
+      display::Screen::GetScreen()->GetPrimaryDisplay().device_scale_factor();
+  // Start dragging at 100, 100 in native coordinates.
+  gfx::Point mouse_position_in_screen_pixel(100, 100);
+  client->OnMouseMovement(mouse_position_in_screen_pixel, 0,
+                          ui::EventTimeForNow());
+
+  EXPECT_EQ(gfx::ScaleToFlooredPoint(gfx::Point(100, 100), 1.f / scale),
+            client->drag_widget()->GetWindowBoundsInScreen().origin());
+
+  // Drag the mouse down 200 pixels.
+  mouse_position_in_screen_pixel.Offset(200, 0);
+  client->OnMouseMovement(mouse_position_in_screen_pixel, 0,
+                          ui::EventTimeForNow());
+  EXPECT_EQ(gfx::ScaleToFlooredPoint(gfx::Point(300, 100), 1.f / scale),
+            client->drag_widget()->GetWindowBoundsInScreen().origin());
+
+  client->OnMouseReleased();
+}
+
+TEST_F(DesktopDragDropClientAuraX11Test, HighDPI200) {
+  aura::TestScreen* screen =
+      static_cast<aura::TestScreen*>(display::Screen::GetScreen());
+  screen->SetDeviceScaleFactor(2.0f);
+
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&HighDPIStep, client()));
+  int result = StartDragAndDrop();
+  EXPECT_EQ(ui::DragDropTypes::DRAG_NONE, result);
+}
+
+TEST_F(DesktopDragDropClientAuraX11Test, HighDPI150) {
+  aura::TestScreen* screen =
+      static_cast<aura::TestScreen*>(display::Screen::GetScreen());
+  screen->SetDeviceScaleFactor(1.5f);
+
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&HighDPIStep, client()));
+  int result = StartDragAndDrop();
+  EXPECT_EQ(ui::DragDropTypes::DRAG_NONE, result);
 }
 
 namespace {
@@ -567,9 +618,8 @@ void TargetDoesNotRespondStep2(TestDragDropClient* client) {
 // DNDCollectionWindow is an example of an XdndAware target which does not
 // respond to XdndPosition messages at all.
 TEST_F(DesktopDragDropClientAuraX11Test, TargetDoesNotRespond) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&TargetDoesNotRespondStep2, client()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&TargetDoesNotRespondStep2, client()));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE, result);
 }
@@ -613,9 +663,8 @@ void QueuePositionStep2(TestDragDropClient* client) {
 // Test that XdndPosition messages are queued till the pending XdndPosition
 // message is acked via an XdndStatus message.
 TEST_F(DesktopDragDropClientAuraX11Test, QueuePosition) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&QueuePositionStep2, client()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&QueuePositionStep2, client()));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY, result);
 }
@@ -666,9 +715,8 @@ void TargetChangesStep2(TestDragDropClient* client) {
 
 // Test the behavior when the target changes during a drag.
 TEST_F(DesktopDragDropClientAuraX11Test, TargetChanges) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&TargetChangesStep2, client()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&TargetChangesStep2, client()));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY, result);
 }
@@ -736,16 +784,14 @@ void RejectAfterMouseReleaseStep3(TestDragDropClient* client) {
 // Test that the source sends XdndLeave instead of XdndDrop if the drag
 // operation is rejected after the mouse is released.
 TEST_F(DesktopDragDropClientAuraX11Test, RejectAfterMouseRelease) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&RejectAfterMouseReleaseStep2, client()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&RejectAfterMouseReleaseStep2, client()));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE, result);
 
   // Repeat the test but reject the drop in the XdndFinished message instead.
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&RejectAfterMouseReleaseStep3, client()));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&RejectAfterMouseReleaseStep3, client()));
   result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_NONE, result);
 }
@@ -848,8 +894,7 @@ class DesktopDragDropClientAuraX11ChromeSourceTargetTest
     widget_->Init(params);
     widget_->Show();
 
-    cursor_manager_.reset(new DesktopNativeCursorManager(
-        DesktopCursorLoaderUpdater::Create()));
+    cursor_manager_.reset(new DesktopNativeCursorManager());
 
     client_.reset(new SimpleTestDragDropClient(widget_->GetNativeWindow(),
                                                cursor_manager_.get()));
@@ -868,11 +913,11 @@ class DesktopDragDropClientAuraX11ChromeSourceTargetTest
   }
 
  private:
-  scoped_ptr<SimpleTestDragDropClient> client_;
-  scoped_ptr<DesktopNativeCursorManager> cursor_manager_;
+  std::unique_ptr<SimpleTestDragDropClient> client_;
+  std::unique_ptr<DesktopNativeCursorManager> cursor_manager_;
 
   // The widget used to initiate drags.
-  scoped_ptr<Widget> widget_;
+  std::unique_ptr<Widget> widget_;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopDragDropClientAuraX11ChromeSourceTargetTest);
 };
@@ -883,7 +928,7 @@ void ChromeSourceTargetStep2(SimpleTestDragDropClient* client,
                              int modifier_flags) {
   EXPECT_TRUE(client->IsMoveLoopRunning());
 
-  scoped_ptr<Widget> target_widget(new Widget);
+  std::unique_ptr<Widget> target_widget(new Widget);
   Widget::InitParams target_params(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
   target_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   target_params.native_widget =
@@ -892,8 +937,9 @@ void ChromeSourceTargetStep2(SimpleTestDragDropClient* client,
   target_widget->Init(target_params);
   target_widget->Show();
 
-  TestDragDropDelegate* delegate = new TestDragDropDelegate;
-  aura::client::SetDragDropDelegate(target_widget->GetNativeWindow(), delegate);
+  std::unique_ptr<TestDragDropDelegate> delegate(new TestDragDropDelegate);
+  aura::client::SetDragDropDelegate(target_widget->GetNativeWindow(),
+                                    delegate.get());
 
   client->SetTopmostXWindow(
       target_widget->GetNativeView()->GetHost()->GetAcceleratedWidget());
@@ -943,9 +989,8 @@ void ChromeSourceTargetStep2(SimpleTestDragDropClient* client,
 }  // namespace
 
 TEST_F(DesktopDragDropClientAuraX11ChromeSourceTargetTest, Basic) {
-  base::MessageLoop::current()->PostTask(
-      FROM_HERE,
-      base::Bind(&ChromeSourceTargetStep2, client(), ui::EF_NONE));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::Bind(&ChromeSourceTargetStep2, client(), ui::EF_NONE));
   int result = StartDragAndDrop();
   EXPECT_EQ(ui::DragDropTypes::DRAG_COPY, result);
 }
@@ -953,7 +998,7 @@ TEST_F(DesktopDragDropClientAuraX11ChromeSourceTargetTest, Basic) {
 // Test that if 'Ctrl' is pressed during a drag and drop operation, that
 // the aura::client::DragDropDelegate is properly notified.
 TEST_F(DesktopDragDropClientAuraX11ChromeSourceTargetTest, CtrlPressed) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
       base::Bind(&ChromeSourceTargetStep2, client(), ui::EF_CONTROL_DOWN));
   int result = StartDragAndDrop();

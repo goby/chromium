@@ -10,13 +10,12 @@
 #include "base/format_macros.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/spellchecker/spellcheck_custom_dictionary.h"
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
 #include "chrome/browser/sync/test/integration/dictionary_load_observer.h"
-#include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
-#include "chrome/browser/sync/test/integration/single_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "content/public/test/test_utils.h"
@@ -26,16 +25,16 @@ class DictionarySyncIntegrationTestHelper {
  public:
   // Same as SpellcheckCustomDictionary::AddWord/RemoveWord, except does not
   // write to disk.
-  static bool ApplyChange(
-      SpellcheckCustomDictionary* dictionary,
-      SpellcheckCustomDictionary::Change& change) {
-    int result = change.Sanitize(dictionary->GetWords());
-    dictionary->Apply(change);
-    dictionary->Notify(change);
-    dictionary->Sync(change);
+  static bool ApplyChange(SpellcheckCustomDictionary* dictionary,
+                          SpellcheckCustomDictionary::Change* change) {
+    int result = change->Sanitize(dictionary->GetWords());
+    dictionary->Apply(*change);
+    dictionary->Notify(*change);
+    dictionary->Sync(*change);
     return !result;
   }
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(DictionarySyncIntegrationTestHelper);
 };
 
@@ -57,7 +56,8 @@ void LoadDictionary(SpellcheckCustomDictionary* dictionary) {
   if (dictionary->IsLoaded())
     return;
   base::RunLoop run_loop;
-  DictionaryLoadObserver observer(content::GetQuitTaskForRunLoop(&run_loop));
+  DictionaryLoadObserver observer(
+      content::GetDeferredQuitTaskForRunLoop(&run_loop));
   dictionary->AddObserver(&observer);
   dictionary->Load();
   content::RunThisRunLoop(&run_loop);
@@ -98,80 +98,6 @@ bool DictionariesMatch() {
   return true;
 }
 
-namespace {
-
-// Helper class used in the implementation of AwaitDictionariesMatch.
-class DictionaryMatchStatusChecker : public MultiClientStatusChangeChecker {
- public:
-  DictionaryMatchStatusChecker();
-  ~DictionaryMatchStatusChecker() override;
-
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
-};
-
-DictionaryMatchStatusChecker::DictionaryMatchStatusChecker()
-    : MultiClientStatusChangeChecker(
-        sync_datatype_helper::test()->GetSyncServices()) {}
-
-DictionaryMatchStatusChecker::~DictionaryMatchStatusChecker() {}
-
-bool DictionaryMatchStatusChecker::IsExitConditionSatisfied() {
-  return DictionariesMatch();
-}
-
-std::string DictionaryMatchStatusChecker::GetDebugMessage() const {
-  return "Waiting for matching dictionaries";
-}
-
-// Helper class used in the implementation of AwaitNumDictionaryEntries.
-class NumDictionaryEntriesStatusChecker
-    : public SingleClientStatusChangeChecker {
- public:
-  NumDictionaryEntriesStatusChecker(int index, size_t num_words);
-  ~NumDictionaryEntriesStatusChecker() override;
-
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
-
- private:
-  int index_;
-  size_t num_words_;
-};
-
-NumDictionaryEntriesStatusChecker::NumDictionaryEntriesStatusChecker(
-    int index, size_t num_words)
-  : SingleClientStatusChangeChecker(
-      sync_datatype_helper::test()->GetSyncService(index)),
-  index_(index),
-  num_words_(num_words) {}
-
-NumDictionaryEntriesStatusChecker::~NumDictionaryEntriesStatusChecker() {}
-
-bool NumDictionaryEntriesStatusChecker::IsExitConditionSatisfied() {
-  return GetDictionarySize(index_) == num_words_;
-}
-
-std::string NumDictionaryEntriesStatusChecker::GetDebugMessage() const {
-  return base::StringPrintf(
-      "Waiting for client %d: %" PRIuS " / %" PRIuS " words downloaded",
-      index_, GetDictionarySize(index_), num_words_);
-}
-
-}  // namespace
-
-bool AwaitDictionariesMatch() {
-  DictionaryMatchStatusChecker checker;
-  checker.Wait();
-  return !checker.TimedOut();
-}
-
-bool AwaitNumDictionaryEntries(int index, size_t num_words) {
-  NumDictionaryEntriesStatusChecker checker(index, num_words);
-  checker.Wait();
-  return !checker.TimedOut();
-}
-
 bool DictionaryMatchesVerifier(int index) {
   const std::set<std::string>& expected = GetVerifierDictionary()->GetWords();
   const std::set<std::string>& actual = GetDictionary(index)->GetWords();
@@ -183,10 +109,18 @@ bool AddWord(int index, const std::string& word) {
   SpellcheckCustomDictionary::Change dictionary_change;
   dictionary_change.AddWord(word);
   bool result = DictionarySyncIntegrationTestHelper::ApplyChange(
-      GetDictionary(index), dictionary_change);
+      GetDictionary(index), &dictionary_change);
   if (sync_datatype_helper::test()->use_verifier()) {
     result &= DictionarySyncIntegrationTestHelper::ApplyChange(
-        GetVerifierDictionary(), dictionary_change);
+        GetVerifierDictionary(), &dictionary_change);
+  }
+  return result;
+}
+
+bool AddWords(int index, int n, const std::string& prefix) {
+  bool result = true;
+  for (int i = 0; i < n; ++i) {
+    result &= AddWord(index, prefix + base::IntToString(i));
   }
   return result;
 }
@@ -195,12 +129,41 @@ bool RemoveWord(int index, const std::string& word) {
   SpellcheckCustomDictionary::Change dictionary_change;
   dictionary_change.RemoveWord(word);
   bool result = DictionarySyncIntegrationTestHelper::ApplyChange(
-      GetDictionary(index), dictionary_change);
+      GetDictionary(index), &dictionary_change);
   if (sync_datatype_helper::test()->use_verifier()) {
     result &= DictionarySyncIntegrationTestHelper::ApplyChange(
-        GetVerifierDictionary(), dictionary_change);
+        GetVerifierDictionary(), &dictionary_change);
   }
   return result;
 }
 
 }  // namespace dictionary_helper
+
+DictionaryMatchChecker::DictionaryMatchChecker()
+    : MultiClientStatusChangeChecker(
+          sync_datatype_helper::test()->GetSyncServices()) {}
+
+bool DictionaryMatchChecker::IsExitConditionSatisfied() {
+  return dictionary_helper::DictionariesMatch();
+}
+
+std::string DictionaryMatchChecker::GetDebugMessage() const {
+  return "Waiting for matching dictionaries";
+}
+
+NumDictionaryEntriesChecker::NumDictionaryEntriesChecker(int index,
+                                                         size_t num_words)
+    : SingleClientStatusChangeChecker(
+          sync_datatype_helper::test()->GetSyncService(index)),
+      index_(index),
+      num_words_(num_words) {}
+
+bool NumDictionaryEntriesChecker::IsExitConditionSatisfied() {
+  return dictionary_helper::GetDictionarySize(index_) == num_words_;
+}
+
+std::string NumDictionaryEntriesChecker::GetDebugMessage() const {
+  return base::StringPrintf(
+      "Waiting for client %d: %" PRIuS " / %" PRIuS " words downloaded", index_,
+      dictionary_helper::GetDictionarySize(index_), num_words_);
+}

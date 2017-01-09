@@ -6,20 +6,21 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <sys/prctl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include <limits>
+#include <memory>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/posix/eintr_wrapper.h"
 #include "build/build_config.h"
 #include "components/nacl/common/nacl_switches.h"
@@ -38,7 +39,7 @@ namespace nacl {
 
 namespace {
 
-// This is a poor man's check on whether we are sandboxed.
+// This is a simplistic check of whether we are sandboxed.
 bool IsSandboxed() {
   int proc_fd = open("/proc/self/exe", O_RDONLY);
   if (proc_fd >= 0) {
@@ -191,7 +192,7 @@ void NaClSandbox::InitializeLayerTwoSandbox(bool uses_nonsfi_mode) {
   layer_two_is_nonsfi_ = true;
 #else
   CHECK(!uses_nonsfi_mode);
-  layer_two_enabled_ = nacl::InitializeBPFSandbox(proc_fd_.Pass());
+  layer_two_enabled_ = nacl::InitializeBPFSandbox(std::move(proc_fd_));
 #endif
 }
 

@@ -5,13 +5,10 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_OVERSCROLL_CONTROLLER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_OVERSCROLL_CONTROLLER_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
-
-namespace ui {
-class LatencyInfo;
-}
+#include "base/macros.h"
+#include "third_party/WebKit/public/platform/WebGestureEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 
 namespace content {
 
@@ -92,9 +89,7 @@ class OverscrollController {
   // and the over scroll amount (i.e. |overscroll_mode_|, |overscroll_delta_x_|
   // and |overscroll_delta_y_|). Returns true if overscroll was handled by the
   // delegate.
-  bool ProcessOverscroll(float delta_x,
-                         float delta_y,
-                         blink::WebInputEvent::Type event_type);
+  bool ProcessOverscroll(float delta_x, float delta_y, bool is_touchpad);
 
   // Completes the desired action from the current gesture.
   void CompleteAction();
@@ -102,6 +97,9 @@ class OverscrollController {
   // Sets the overscroll mode (and triggers callback in the delegate when
   // appropriate).
   void SetOverscrollMode(OverscrollMode new_mode);
+
+  // Whether this event should be processed or not handled by the controller.
+  bool ShouldProcessEvent(const blink::WebInputEvent& event);
 
   // The current state of overscroll gesture.
   OverscrollMode overscroll_mode_;

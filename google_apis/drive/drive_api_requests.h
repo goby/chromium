@@ -5,12 +5,16 @@
 #ifndef GOOGLE_APIS_DRIVE_DRIVE_API_REQUESTS_H_
 #define GOOGLE_APIS_DRIVE_DRIVE_API_REQUESTS_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/callback_forward.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/time/time.h"
@@ -25,12 +29,14 @@ namespace google_apis {
 // Callback used for requests that the server returns FileList data
 // formatted into JSON value.
 typedef base::Callback<void(DriveApiErrorCode error,
-                            scoped_ptr<FileList> entry)> FileListCallback;
+                            std::unique_ptr<FileList> entry)>
+    FileListCallback;
 
 // Callback used for requests that the server returns ChangeList data
 // formatted into JSON value.
 typedef base::Callback<void(DriveApiErrorCode error,
-                            scoped_ptr<ChangeList> entry)> ChangeListCallback;
+                            std::unique_ptr<ChangeList> entry)>
+    ChangeListCallback;
 
 namespace drive {
 
@@ -118,7 +124,8 @@ template<class DataType>
 class DriveApiDataRequest : public DriveApiPartialFieldRequest {
  public:
   typedef base::Callback<void(DriveApiErrorCode error,
-                              scoped_ptr<DataType> data)> Callback;
+                              std::unique_ptr<DataType> data)>
+      Callback;
 
   // |callback| is called when the request finishes either by success or by
   // failure. On success, a JSON Value object is passed. It must not be null.
@@ -152,21 +159,21 @@ class DriveApiDataRequest : public DriveApiPartialFieldRequest {
   }
 
   void RunCallbackOnPrematureFailure(DriveApiErrorCode error) override {
-    callback_.Run(error, scoped_ptr<DataType>());
+    callback_.Run(error, std::unique_ptr<DataType>());
   }
 
  private:
   // Parses the |json| string by using DataType::CreateFrom.
-  static scoped_ptr<DataType> Parse(const std::string& json) {
-    scoped_ptr<base::Value> value = ParseJson(json);
-    return value ? DataType::CreateFrom(*value) : scoped_ptr<DataType>();
+  static std::unique_ptr<DataType> Parse(const std::string& json) {
+    std::unique_ptr<base::Value> value = ParseJson(json);
+    return value ? DataType::CreateFrom(*value) : std::unique_ptr<DataType>();
   }
 
   // Receives the parsed result and invokes the callback.
-  void OnDataParsed(DriveApiErrorCode error, scoped_ptr<DataType> value) {
+  void OnDataParsed(DriveApiErrorCode error, std::unique_ptr<DataType> value) {
     if (!value)
       error = DRIVE_PARSE_ERROR;
-    callback_.Run(error, value.Pass());
+    callback_.Run(error, std::move(value));
     OnProcessURLFetchResultsComplete();
   }
 
@@ -636,8 +643,8 @@ class ChangesListRequest : public DriveApiDataRequest<ChangeList> {
     page_token_ = page_token;
   }
 
-  int64 start_change_id() const { return start_change_id_; }
-  void set_start_change_id(int64 start_change_id) {
+  int64_t start_change_id() const { return start_change_id_; }
+  void set_start_change_id(int64_t start_change_id) {
     start_change_id_ = start_change_id;
   }
 
@@ -650,7 +657,7 @@ class ChangesListRequest : public DriveApiDataRequest<ChangeList> {
   bool include_deleted_;
   int max_results_;
   std::string page_token_;
-  int64 start_change_id_;
+  int64_t start_change_id_;
 
   DISALLOW_COPY_AND_ASSIGN(ChangesListRequest);
 };
@@ -818,7 +825,7 @@ class InitiateUploadNewFileRequest : public InitiateUploadRequestBase {
   InitiateUploadNewFileRequest(RequestSender* sender,
                                const DriveApiUrlGenerator& url_generator,
                                const std::string& content_type,
-                               int64 content_length,
+                               int64_t content_length,
                                const std::string& parent_resource_id,
                                const std::string& title,
                                const InitiateUploadCallback& callback);
@@ -873,7 +880,7 @@ class InitiateUploadExistingFileRequest : public InitiateUploadRequestBase {
   InitiateUploadExistingFileRequest(RequestSender* sender,
                                     const DriveApiUrlGenerator& url_generator,
                                     const std::string& content_type,
-                                    int64 content_length,
+                                    int64_t content_length,
                                     const std::string& resource_id,
                                     const std::string& etag,
                                     const InitiateUploadCallback& callback);
@@ -924,9 +931,9 @@ class InitiateUploadExistingFileRequest : public InitiateUploadRequestBase {
 };
 
 // Callback used for ResumeUpload() and GetUploadStatus().
-typedef base::Callback<void(
-    const UploadRangeResponse& response,
-    scoped_ptr<FileResource> new_resource)> UploadRangeCallback;
+typedef base::Callback<void(const UploadRangeResponse& response,
+                            std::unique_ptr<FileResource> new_resource)>
+    UploadRangeCallback;
 
 //============================ ResumeUploadRequest ===========================
 
@@ -937,9 +944,9 @@ class ResumeUploadRequest : public ResumeUploadRequestBase {
   // |callback| must not be null. |progress_callback| may be null.
   ResumeUploadRequest(RequestSender* sender,
                       const GURL& upload_location,
-                      int64 start_position,
-                      int64 end_position,
-                      int64 content_length,
+                      int64_t start_position,
+                      int64_t end_position,
+                      int64_t content_length,
                       const std::string& content_type,
                       const base::FilePath& local_file_path,
                       const UploadRangeCallback& callback,
@@ -949,11 +956,11 @@ class ResumeUploadRequest : public ResumeUploadRequestBase {
  protected:
   // UploadRangeRequestBase overrides.
   void OnRangeRequestComplete(const UploadRangeResponse& response,
-                              scoped_ptr<base::Value> value) override;
+                              std::unique_ptr<base::Value> value) override;
   // content::UrlFetcherDelegate overrides.
   void OnURLFetchUploadProgress(const net::URLFetcher* source,
-                                int64 current,
-                                int64 total) override;
+                                int64_t current,
+                                int64_t total) override;
 
  private:
   const UploadRangeCallback callback_;
@@ -971,14 +978,14 @@ class GetUploadStatusRequest : public GetUploadStatusRequestBase {
   // |callback| must not be null.
   GetUploadStatusRequest(RequestSender* sender,
                          const GURL& upload_url,
-                         int64 content_length,
+                         int64_t content_length,
                          const UploadRangeCallback& callback);
   ~GetUploadStatusRequest() override;
 
  protected:
   // UploadRangeRequestBase overrides.
   void OnRangeRequestComplete(const UploadRangeResponse& response,
-                              scoped_ptr<base::Value> value) override;
+                              std::unique_ptr<base::Value> value) override;
 
  private:
   const UploadRangeCallback callback_;
@@ -999,7 +1006,7 @@ class MultipartUploadNewFileDelegate : public MultipartUploadRequestBase {
                                  const std::string& title,
                                  const std::string& parent_resource_id,
                                  const std::string& content_type,
-                                 int64 content_length,
+                                 int64_t content_length,
                                  const base::Time& modified_date,
                                  const base::Time& last_viewed_by_me_date,
                                  const base::FilePath& local_file_path,
@@ -1036,7 +1043,7 @@ class MultipartUploadExistingFileDelegate : public MultipartUploadRequestBase {
       const std::string& resource_id,
       const std::string& parent_resource_id,
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const base::Time& modified_date,
       const base::Time& last_viewed_by_me_date,
       const base::FilePath& local_file_path,
@@ -1133,9 +1140,8 @@ class PermissionsInsertRequest : public EntryActionRequest {
 // Request that is operated by single BatchableDelegate.
 class SingleBatchableDelegateRequest : public UrlFetchRequestBase {
  public:
-  // The instance takes ownership of |delegate|.
   SingleBatchableDelegateRequest(RequestSender* sender,
-                                 BatchableDelegate* delegate);
+                                 std::unique_ptr<BatchableDelegate> delegate);
   ~SingleBatchableDelegateRequest() override;
 
  private:
@@ -1148,9 +1154,9 @@ class SingleBatchableDelegateRequest : public UrlFetchRequestBase {
   void RunCallbackOnPrematureFailure(DriveApiErrorCode code) override;
   void ProcessURLFetchResults(const net::URLFetcher* source) override;
   void OnURLFetchUploadProgress(const net::URLFetcher* source,
-                                int64 current,
-                                int64 total) override;
-  scoped_ptr<BatchableDelegate> delegate_;
+                                int64_t current,
+                                int64_t total) override;
+  std::unique_ptr<BatchableDelegate> delegate_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
@@ -1165,10 +1171,10 @@ class BatchUploadChildEntry {
  public:
   explicit BatchUploadChildEntry(BatchableDelegate* request);
   ~BatchUploadChildEntry();
-  scoped_ptr<BatchableDelegate> request;
+  std::unique_ptr<BatchableDelegate> request;
   bool prepared;
-  int64 data_offset;
-  int64 data_size;
+  int64_t data_offset;
+  int64_t data_size;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(BatchUploadChildEntry);
@@ -1213,8 +1219,8 @@ class BatchUploadRequest : public UrlFetchRequestBase {
 
   // content::UrlFetcherDelegate overrides.
   void OnURLFetchUploadProgress(const net::URLFetcher* source,
-                                int64 current,
-                                int64 total) override;
+                                int64_t current,
+                                int64_t total) override;
 
  private:
   typedef void* RequestID;
@@ -1246,7 +1252,7 @@ class BatchUploadRequest : public UrlFetchRequestBase {
   ContentTypeAndData upload_content_;
 
   // Last reported progress value.
-  int64 last_progress_value_;
+  int64_t last_progress_value_;
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.

@@ -4,36 +4,40 @@
 
 #include "content/test/test_blink_web_unit_test_support.h"
 
+#include "base/feature_list.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
-#include "components/scheduler/renderer/renderer_scheduler_impl.h"
-#include "components/scheduler/renderer/webthread_impl_for_renderer_scheduler.h"
-#include "components/scheduler/test/lazy_scheduler_message_loop_delegate_for_tests.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+#include "cc/blink/web_layer_impl.h"
+#include "cc/test/test_shared_bitmap_manager.h"
+#include "cc/trees/layer_tree_settings.h"
+#include "content/app/mojo/mojo_init.h"
+#include "content/child/web_url_loader_impl.h"
 #include "content/test/mock_webclipboard_impl.h"
 #include "content/test/web_gesture_curve_mock.h"
-#include "content/test/web_layer_tree_view_impl_for_testing.h"
-#include "content/test/weburl_loader_mock_factory.h"
 #include "media/base/media.h"
+#include "media/media_features.h"
 #include "net/cookies/cookie_monster.h"
 #include "storage/browser/database/vfs_backend.h"
+#include "third_party/WebKit/public/platform/WebConnectionType.h"
 #include "third_party/WebKit/public/platform/WebData.h"
-#include "third_party/WebKit/public/platform/WebFileSystem.h"
 #include "third_party/WebKit/public/platform/WebPluginListBuilder.h"
-#include "third_party/WebKit/public/platform/WebStorageArea.h"
-#include "third_party/WebKit/public/platform/WebStorageNamespace.h"
 #include "third_party/WebKit/public/platform/WebString.h"
+#include "third_party/WebKit/public/platform/WebThread.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDatabase.h"
+#include "third_party/WebKit/public/platform/scheduler/renderer/renderer_scheduler.h"
+#include "third_party/WebKit/public/platform/scheduler/test/renderer_scheduler_test_support.h"
 #include "third_party/WebKit/public/web/WebKit.h"
+#include "third_party/WebKit/public/web/WebNetworkStateNotifier.h"
 #include "third_party/WebKit/public/web/WebRuntimeFeatures.h"
-#include "third_party/WebKit/public/web/WebSecurityPolicy.h"
-#include "third_party/WebKit/public/web/WebStorageEventDispatcher.h"
 #include "v8/include/v8.h"
 
 #if defined(OS_MACOSX)
@@ -42,7 +46,13 @@
 #endif
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
-#include "gin/v8_initializer.h"
+#include "gin/v8_initializer.h"  // nogncheck
+#endif
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+#include "content/renderer/media/rtc_certificate.h"
+#include "third_party/WebKit/public/platform/WebRTCCertificateGenerator.h"
+#include "third_party/webrtc/base/rtccertificate.h"
 #endif
 
 namespace {
@@ -86,7 +96,7 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
   base::mac::ScopedNSAutoreleasePool autorelease_pool;
 #endif
 
-  url_loader_factory_.reset(new WebURLLoaderMockFactory());
+  url_loader_factory_ = blink::WebURLLoaderMockFactory::create();
   mock_clipboard_.reset(new MockWebClipboardImpl());
 
 #ifdef V8_USE_EXTERNAL_STARTUP_DATA
@@ -95,7 +105,7 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
 #endif
 
   scoped_refptr<base::SingleThreadTaskRunner> dummy_task_runner;
-  scoped_ptr<base::ThreadTaskRunnerHandle> dummy_task_runner_handle;
+  std::unique_ptr<base::ThreadTaskRunnerHandle> dummy_task_runner_handle;
   if (!base::ThreadTaskRunnerHandle::IsSet()) {
     // Dummy task runner is initialized here because the blink::initialize
     // creates IsolateHolder which needs the current task runner handle. There
@@ -108,27 +118,37 @@ TestBlinkWebUnitTestSupport::TestBlinkWebUnitTestSupport() {
     dummy_task_runner_handle.reset(
         new base::ThreadTaskRunnerHandle(dummy_task_runner));
   }
-  renderer_scheduler_ = make_scoped_ptr(new scheduler::RendererSchedulerImpl(
-      scheduler::LazySchedulerMessageLoopDelegateForTests::Create()));
+  renderer_scheduler_ = blink::scheduler::CreateRendererSchedulerForTests();
   web_thread_ = renderer_scheduler_->CreateMainThread();
+  shared_bitmap_manager_.reset(new cc::TestSharedBitmapManager);
+
+  // Set up a FeatureList instance, so that code using that API will not hit a
+  // an error that it's not set. Cleared by ClearInstanceForTesting() below.
+  base::FeatureList::SetInstance(base::WrapUnique(new base::FeatureList));
+
+  // Initialize mojo firstly to enable Blink initialization to use it.
+  InitializeMojo();
 
   blink::initialize(this);
   blink::setLayoutTestMode(true);
-  blink::WebRuntimeFeatures::enableApplicationCache(true);
   blink::WebRuntimeFeatures::enableDatabase(true);
   blink::WebRuntimeFeatures::enableNotifications(true);
-  blink::WebRuntimeFeatures::enableTouch(true);
+  blink::WebRuntimeFeatures::enableTouchEventFeatureDetection(true);
 
-  // Initialize libraries for media and enable the media player.
+  // Initialize NetworkStateNotifier.
+  blink::WebNetworkStateNotifier::setWebConnection(
+      blink::WebConnectionType::WebConnectionTypeUnknown,
+      std::numeric_limits<double>::infinity());
+
+  // Initialize libraries for media.
   media::InitializeMediaLibrary();
-  blink::WebRuntimeFeatures::enableMediaPlayer(true);
 
   file_utilities_.set_sandbox_enabled(false);
 
   if (!file_system_root_.CreateUniqueTempDir()) {
     LOG(WARNING) << "Failed to create a temp dir for the filesystem."
                     "FileSystem feature will be disabled.";
-    DCHECK(file_system_root_.path().empty());
+    DCHECK(file_system_root_.GetPath().empty());
   }
 
 #if defined(OS_WIN)
@@ -146,10 +166,12 @@ TestBlinkWebUnitTestSupport::~TestBlinkWebUnitTestSupport() {
   mock_clipboard_.reset();
   if (renderer_scheduler_)
     renderer_scheduler_->Shutdown();
-  blink::shutdown();
+
+  // Clear the FeatureList that was registered in the constructor.
+  base::FeatureList::ClearInstanceForTesting();
 }
 
-blink::WebBlobRegistry* TestBlinkWebUnitTestSupport::blobRegistry() {
+blink::WebBlobRegistry* TestBlinkWebUnitTestSupport::getBlobRegistry() {
   return &blob_registry_;
 }
 
@@ -169,37 +191,23 @@ blink::WebIDBFactory* TestBlinkWebUnitTestSupport::idbFactory() {
   return NULL;
 }
 
-blink::WebMimeRegistry* TestBlinkWebUnitTestSupport::mimeRegistry() {
-  return &mime_registry_;
-}
-
 blink::WebURLLoader* TestBlinkWebUnitTestSupport::createURLLoader() {
-  return url_loader_factory_->CreateURLLoader(
-      BlinkPlatformImpl::createURLLoader());
+  // This loader should be used only for process-local resources such as
+  // data URLs.
+  blink::WebURLLoader* default_loader =
+      new WebURLLoaderImpl(nullptr, nullptr, nullptr);
+  return url_loader_factory_->createURLLoader(default_loader);
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::userAgent() {
   return blink::WebString::fromUTF8("test_runner/0.0.0.0");
 }
 
-blink::WebData TestBlinkWebUnitTestSupport::loadResource(const char* name) {
-  if (!strcmp(name, "deleteButton")) {
-    // Create a red 30x30 square.
-    const char red_square[] =
-        "\x89\x50\x4e\x47\x0d\x0a\x1a\x0a\x00\x00\x00\x0d\x49\x48\x44\x52"
-        "\x00\x00\x00\x1e\x00\x00\x00\x1e\x04\x03\x00\x00\x00\xc9\x1e\xb3"
-        "\x91\x00\x00\x00\x30\x50\x4c\x54\x45\x00\x00\x00\x80\x00\x00\x00"
-        "\x80\x00\x80\x80\x00\x00\x00\x80\x80\x00\x80\x00\x80\x80\x80\x80"
-        "\x80\xc0\xc0\xc0\xff\x00\x00\x00\xff\x00\xff\xff\x00\x00\x00\xff"
-        "\xff\x00\xff\x00\xff\xff\xff\xff\xff\x7b\x1f\xb1\xc4\x00\x00\x00"
-        "\x09\x70\x48\x59\x73\x00\x00\x0b\x13\x00\x00\x0b\x13\x01\x00\x9a"
-        "\x9c\x18\x00\x00\x00\x17\x49\x44\x41\x54\x78\x01\x63\x98\x89\x0a"
-        "\x18\x50\xb9\x33\x47\xf9\xa8\x01\x32\xd4\xc2\x03\x00\x33\x84\x0d"
-        "\x02\x3a\x91\xeb\xa5\x00\x00\x00\x00\x49\x45\x4e\x44\xae\x42\x60"
-        "\x82";
-    return blink::WebData(red_square, arraysize(red_square));
-  }
-  return BlinkPlatformImpl::loadResource(name);
+std::unique_ptr<cc::SharedBitmap>
+TestBlinkWebUnitTestSupport::allocateSharedBitmap(
+    const blink::WebSize& size) {
+  return shared_bitmap_manager_
+      ->AllocateSharedBitmap(gfx::Size(size.width, size.height));
 }
 
 blink::WebString TestBlinkWebUnitTestSupport::queryLocalizedString(
@@ -224,6 +232,8 @@ blink::WebString TestBlinkWebUnitTestSupport::queryLocalizedString(
       return base::ASCIIToUTF16("<<ThisWeekLabel>>");
     case blink::WebLocalizedString::ValidationValueMissing:
       return base::ASCIIToUTF16("<<ValidationValueMissing>>");
+    case blink::WebLocalizedString::ValidationValueMissingForSelect:
+      return base::ASCIIToUTF16("<<ValidationValueMissingForSelect>>");
     case blink::WebLocalizedString::WeekFormatTemplate:
       return base::ASCIIToUTF16("Week $2, $1");
     default:
@@ -281,76 +291,9 @@ blink::WebGestureCurve* TestBlinkWebUnitTestSupport::createFlingAnimationCurve(
   return new WebGestureCurveMock(velocity, cumulative_scroll);
 }
 
-blink::WebUnitTestSupport* TestBlinkWebUnitTestSupport::unitTestSupport() {
-  return this;
-}
-
-void TestBlinkWebUnitTestSupport::registerMockedURL(
-    const blink::WebURL& url,
-    const blink::WebURLResponse& response,
-    const blink::WebString& file_path) {
-  url_loader_factory_->RegisterURL(url, response, file_path);
-}
-
-void TestBlinkWebUnitTestSupport::registerMockedErrorURL(
-    const blink::WebURL& url,
-    const blink::WebURLResponse& response,
-    const blink::WebURLError& error) {
-  url_loader_factory_->RegisterErrorURL(url, response, error);
-}
-
-void TestBlinkWebUnitTestSupport::unregisterMockedURL(
-    const blink::WebURL& url) {
-  url_loader_factory_->UnregisterURL(url);
-}
-
-void TestBlinkWebUnitTestSupport::unregisterAllMockedURLs() {
-  url_loader_factory_->UnregisterAllURLs();
-}
-
-void TestBlinkWebUnitTestSupport::serveAsynchronousMockedRequests() {
-  url_loader_factory_->ServeAsynchronousRequests();
-}
-
-void TestBlinkWebUnitTestSupport::setLoaderDelegate(
-    blink::WebURLLoaderTestDelegate* delegate) {
-  url_loader_factory_->set_delegate(delegate);
-}
-
-blink::WebString TestBlinkWebUnitTestSupport::webKitRootDir() {
-  base::FilePath path;
-  PathService::Get(base::DIR_SOURCE_ROOT, &path);
-  path = path.Append(FILE_PATH_LITERAL("third_party/WebKit"));
-  path = base::MakeAbsoluteFilePath(path);
-  CHECK(!path.empty());
-  std::string path_ascii = path.MaybeAsASCII();
-  CHECK(!path_ascii.empty());
-  return blink::WebString::fromUTF8(path_ascii.c_str());
-}
-
-blink::WebLayerTreeView*
-TestBlinkWebUnitTestSupport::createLayerTreeViewForTesting() {
-  scoped_ptr<WebLayerTreeViewImplForTesting> view(
-      new WebLayerTreeViewImplForTesting());
-
-  view->Initialize();
-  return view.release();
-}
-
-blink::WebData TestBlinkWebUnitTestSupport::readFromFile(
-    const blink::WebString& path) {
-  base::FilePath file_path = base::FilePath::FromUTF16Unsafe(path);
-
-  std::string buffer;
-  base::ReadFileToString(file_path, &buffer);
-
-  return blink::WebData(buffer.data(), buffer.size());
-}
-
-bool TestBlinkWebUnitTestSupport::getBlobItems(
-    const blink::WebString& uuid,
-    blink::WebVector<blink::WebBlobData::Item*>* items) {
-  return blob_registry_.GetBlobItems(uuid, items);
+blink::WebURLLoaderMockFactory*
+TestBlinkWebUnitTestSupport::getURLLoaderMockFactory() {
+  return url_loader_factory_.get();
 }
 
 blink::WebThread* TestBlinkWebUnitTestSupport::currentThread() {
@@ -359,20 +302,55 @@ blink::WebThread* TestBlinkWebUnitTestSupport::currentThread() {
   return BlinkPlatformImpl::currentThread();
 }
 
-void TestBlinkWebUnitTestSupport::enterRunLoop() {
-  DCHECK(base::MessageLoop::current());
-  DCHECK(!base::MessageLoop::current()->is_running());
-  base::MessageLoop::current()->Run();
-}
-
-void TestBlinkWebUnitTestSupport::exitRunLoop() {
-  base::MessageLoop::current()->QuitWhenIdle();
-}
-
 void TestBlinkWebUnitTestSupport::getPluginList(
-    bool refresh, blink::WebPluginListBuilder* builder) {
+    bool refresh,
+    const blink::WebSecurityOrigin& mainFrameOrigin,
+    blink::WebPluginListBuilder* builder) {
   builder->addPlugin("pdf", "pdf", "pdf-files");
   builder->addMediaTypeToLastPlugin("application/pdf", "pdf");
+}
+
+#if BUILDFLAG(ENABLE_WEBRTC)
+namespace {
+
+class TestWebRTCCertificateGenerator
+    : public blink::WebRTCCertificateGenerator {
+  void generateCertificate(
+      const blink::WebRTCKeyParams& key_params,
+      std::unique_ptr<blink::WebRTCCertificateCallback> callback) override {
+    NOTIMPLEMENTED();
+  }
+  void generateCertificateWithExpiration(
+      const blink::WebRTCKeyParams& key_params,
+      uint64_t expires_ms,
+      std::unique_ptr<blink::WebRTCCertificateCallback> callback) override {
+    NOTIMPLEMENTED();
+  }
+  bool isSupportedKeyParams(const blink::WebRTCKeyParams& key_params) override {
+    return false;
+  }
+  std::unique_ptr<blink::WebRTCCertificate> fromPEM(
+      blink::WebString pem_private_key,
+      blink::WebString pem_certificate) override {
+    rtc::scoped_refptr<rtc::RTCCertificate> certificate =
+        rtc::RTCCertificate::FromPEM(rtc::RTCCertificatePEM(
+            pem_private_key.utf8(), pem_certificate.utf8()));
+    if (!certificate)
+      return nullptr;
+    return base::MakeUnique<RTCCertificate>(certificate);
+  }
+};
+
+}  // namespace
+#endif  // BUILDFLAG(ENABLE_WEBRTC)
+
+blink::WebRTCCertificateGenerator*
+TestBlinkWebUnitTestSupport::createRTCCertificateGenerator() {
+#if BUILDFLAG(ENABLE_WEBRTC)
+  return new TestWebRTCCertificateGenerator();
+#else
+  return nullptr;
+#endif
 }
 
 }  // namespace content

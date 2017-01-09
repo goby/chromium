@@ -37,9 +37,6 @@ import template_expander
 
 class RuntimeFeatureWriter(in_generator.Writer):
     class_name = 'RuntimeEnabledFeatures'
-    filters = {
-        'enable_conditional': name_utilities.enable_conditional_if_endif,
-    }
 
     # FIXME: valid_values and defaults should probably roll into one object.
     valid_values = {
@@ -47,9 +44,13 @@ class RuntimeFeatureWriter(in_generator.Writer):
     }
     defaults = {
         'condition': None,
-        'implied_by': [],
-        'depends_on': [],
         'custom': False,
+        'depends_on': [],
+        'feature_policy': None,
+        'implied_by': [],
+        'origin_trial_feature_name': None,
+        'origin_trial_os': [],
+        'settable_from_internals': False,
         'status': None,
     }
 
@@ -86,11 +87,11 @@ class RuntimeFeatureWriter(in_generator.Writer):
             'standard_features': self._standard_features,
         }
 
-    @template_expander.use_jinja(class_name + '.h.tmpl', filters=filters)
+    @template_expander.use_jinja(class_name + '.h.tmpl')
     def generate_header(self):
         return self._template_inputs()
 
-    @template_expander.use_jinja(class_name + '.cpp.tmpl', filters=filters)
+    @template_expander.use_jinja(class_name + '.cpp.tmpl')
     def generate_implementation(self):
         return self._template_inputs()
 

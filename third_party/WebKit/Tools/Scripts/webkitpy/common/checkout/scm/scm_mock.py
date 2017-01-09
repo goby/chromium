@@ -31,6 +31,10 @@ from webkitpy.common.system.executive_mock import MockExecutive
 
 
 class MockSCM(object):
+
+    # Arguments are generally unused in methods that return canned values below.
+    # pylint: disable=unused-argument
+
     executable_name = "MockSCM"
 
     def __init__(self, filesystem=None, executive=None):
@@ -38,6 +42,13 @@ class MockSCM(object):
         self.added_paths = set()
         self._filesystem = filesystem or MockFileSystem()
         self._executive = executive or MockExecutive()
+        self._local_commits = []
+
+    def add_all(self, pathspec=None):
+        if not pathspec:
+            pathspec = self.checkout_root
+        for path in self._filesystem.glob(pathspec):
+            self.add_list(self._filesystem.files_under(path))
 
     def add(self, destination_path, return_exit_code=False):
         self.add_list([destination_path], return_exit_code)
@@ -47,13 +58,16 @@ class MockSCM(object):
         if return_exit_code:
             return 0
 
-    def has_working_directory_changes(self):
+    def has_working_directory_changes(self, pathspec=None):
         return False
 
     def ensure_cleanly_tracking_remote_master(self):
         pass
 
     def current_branch(self):
+        return "mock-branch-name"
+
+    def current_branch_or_ref(self):
         return "mock-branch-name"
 
     def checkout_branch(self, name):
@@ -91,8 +105,14 @@ class MockSCM(object):
     def timestamp_of_revision(self, path, revision):
         return '2013-02-01 08:48:05 +0000'
 
-    def commit_locally_with_message(self, message, commit_all_working_directory_changes=True):
-        pass
+    def commit_locally_with_message(self, message):
+        self._local_commits.append([message])
+
+    def local_commits(self):
+        """For testing purposes, returns the internal recording of commits made via commit_locally_with_message.
+        Format as [ message, commit_all_working_directory_changes, author ].
+        """
+        return self._local_commits
 
     def delete(self, path):
         return self.delete_list([path])

@@ -4,6 +4,10 @@
 
 #include "extensions/browser/api/app_current_window_internal/app_current_window_internal_api.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/command_line.h"
 #include "extensions/browser/app_window/app_window.h"
 #include "extensions/browser/app_window/app_window_client.h"
@@ -68,7 +72,7 @@ void GetBoundsFields(const Bounds& bounds_spec, gfx::Rect* bounds) {
 // Copy the constraint value from the API to our internal representation of
 // content size constraints. A value of zero resets the constraints. The insets
 // are used to transform window constraints to content constraints.
-void GetConstraintWidth(const scoped_ptr<int>& width,
+void GetConstraintWidth(const std::unique_ptr<int>& width,
                         const gfx::Insets& insets,
                         gfx::Size* size) {
   if (!width.get())
@@ -78,7 +82,7 @@ void GetConstraintWidth(const scoped_ptr<int>& width,
                              : kUnboundedSize);
 }
 
-void GetConstraintHeight(const scoped_ptr<int>& height,
+void GetConstraintHeight(const std::unique_ptr<int>& height,
                          const gfx::Insets& insets,
                          gfx::Size* size) {
   if (!height.get())
@@ -116,94 +120,95 @@ BoundsType GetBoundsType(const std::string& type_as_string) {
 
 }  // namespace bounds
 
-bool AppCurrentWindowInternalExtensionFunction::RunSync() {
+bool AppCurrentWindowInternalExtensionFunction::PreRunValidation(
+    std::string* error) {
   AppWindowRegistry* registry = AppWindowRegistry::Get(browser_context());
   DCHECK(registry);
   content::WebContents* web_contents = GetSenderWebContents();
-  if (!web_contents)
-    // No need to set an error, since we won't return to the caller anyway if
-    // there's no RVH.
-    return false;
-  AppWindow* window = registry->GetAppWindowForWebContents(web_contents);
-  if (!window) {
-    error_ = kNoAssociatedAppWindow;
+  if (!web_contents) {
+    *error = "No valid web contents";
     return false;
   }
-  return RunWithWindow(window);
-}
-
-bool AppCurrentWindowInternalFocusFunction::RunWithWindow(AppWindow* window) {
-  window->GetBaseWindow()->Activate();
+  window_ = registry->GetAppWindowForWebContents(web_contents);
+  if (!window_) {
+    *error = kNoAssociatedAppWindow;
+    return false;
+  }
   return true;
 }
 
-bool AppCurrentWindowInternalFullscreenFunction::RunWithWindow(
-    AppWindow* window) {
-  window->Fullscreen();
-  return true;
+ExtensionFunction::ResponseAction AppCurrentWindowInternalFocusFunction::Run() {
+  window()->GetBaseWindow()->Activate();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalMaximizeFunction::RunWithWindow(
-    AppWindow* window) {
-  window->Maximize();
-  return true;
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalFullscreenFunction::Run() {
+  window()->Fullscreen();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalMinimizeFunction::RunWithWindow(
-    AppWindow* window) {
-  window->Minimize();
-  return true;
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalMaximizeFunction::Run() {
+  window()->Maximize();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalRestoreFunction::RunWithWindow(AppWindow* window) {
-  window->Restore();
-  return true;
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalMinimizeFunction::Run() {
+  window()->Minimize();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalDrawAttentionFunction::RunWithWindow(
-    AppWindow* window) {
-  window->GetBaseWindow()->FlashFrame(true);
-  return true;
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalRestoreFunction::Run() {
+  window()->Restore();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalClearAttentionFunction::RunWithWindow(
-    AppWindow* window) {
-  window->GetBaseWindow()->FlashFrame(false);
-  return true;
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalDrawAttentionFunction::Run() {
+  window()->GetBaseWindow()->FlashFrame(true);
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalShowFunction::RunWithWindow(AppWindow* window) {
-  scoped_ptr<Show::Params> params(Show::Params::Create(*args_));
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalClearAttentionFunction::Run() {
+  window()->GetBaseWindow()->FlashFrame(false);
+  return RespondNow(NoArguments());
+}
+
+ExtensionFunction::ResponseAction AppCurrentWindowInternalShowFunction::Run() {
+  std::unique_ptr<Show::Params> params(Show::Params::Create(*args_));
   CHECK(params.get());
   if (params->focused && !*params->focused)
-    window->Show(AppWindow::SHOW_INACTIVE);
+    window()->Show(AppWindow::SHOW_INACTIVE);
   else
-    window->Show(AppWindow::SHOW_ACTIVE);
-  return true;
+    window()->Show(AppWindow::SHOW_ACTIVE);
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalHideFunction::RunWithWindow(AppWindow* window) {
-  window->Hide();
-  return true;
+ExtensionFunction::ResponseAction AppCurrentWindowInternalHideFunction::Run() {
+  window()->Hide();
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetBoundsFunction::RunWithWindow(
-    AppWindow* window) {
-  scoped_ptr<SetBounds::Params> params(SetBounds::Params::Create(*args_));
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetBoundsFunction::Run() {
+  std::unique_ptr<SetBounds::Params> params(SetBounds::Params::Create(*args_));
   CHECK(params.get());
 
   bounds::BoundsType bounds_type = bounds::GetBoundsType(params->bounds_type);
   if (bounds_type == bounds::INVALID_TYPE) {
     NOTREACHED();
-    error_ = kInvalidParameters;
-    return false;
+    return RespondNow(Error(kInvalidParameters));
   }
 
   // Start with the current bounds, and change any values that are specified in
   // the incoming parameters.
-  gfx::Rect original_window_bounds = window->GetBaseWindow()->GetBounds();
+  gfx::Rect original_window_bounds = window()->GetBaseWindow()->GetBounds();
   gfx::Rect window_bounds = original_window_bounds;
-  gfx::Insets frame_insets = window->GetBaseWindow()->GetFrameInsets();
+  gfx::Insets frame_insets = window()->GetBaseWindow()->GetFrameInsets();
   const Bounds& bounds_spec = params->bounds;
 
   switch (bounds_type) {
@@ -231,7 +236,7 @@ bool AppCurrentWindowInternalSetBoundsFunction::RunWithWindow(
       window_bounds.Inset(-frame_insets);
       break;
     }
-    default:
+    case bounds::INVALID_TYPE:
       NOTREACHED();
   }
 
@@ -239,22 +244,23 @@ bool AppCurrentWindowInternalSetBoundsFunction::RunWithWindow(
     if (original_window_bounds.size() != window_bounds.size()) {
       SizeConstraints constraints(
           SizeConstraints::AddFrameToConstraints(
-              window->GetBaseWindow()->GetContentMinimumSize(), frame_insets),
+              window()->GetBaseWindow()->GetContentMinimumSize(), frame_insets),
           SizeConstraints::AddFrameToConstraints(
-              window->GetBaseWindow()->GetContentMaximumSize(), frame_insets));
+              window()->GetBaseWindow()->GetContentMaximumSize(),
+              frame_insets));
 
       window_bounds.set_size(constraints.ClampSize(window_bounds.size()));
     }
 
-    window->GetBaseWindow()->SetBounds(window_bounds);
+    window()->GetBaseWindow()->SetBounds(window_bounds);
   }
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetSizeConstraintsFunction::RunWithWindow(
-    AppWindow* window) {
-  scoped_ptr<SetSizeConstraints::Params> params(
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetSizeConstraintsFunction::Run() {
+  std::unique_ptr<SetSizeConstraints::Params> params(
       SetSizeConstraints::Params::Create(*args_));
   CHECK(params.get());
 
@@ -262,14 +268,13 @@ bool AppCurrentWindowInternalSetSizeConstraintsFunction::RunWithWindow(
   if (bounds_type != bounds::INNER_BOUNDS &&
       bounds_type != bounds::OUTER_BOUNDS) {
     NOTREACHED();
-    error_ = kInvalidParameters;
-    return false;
+    return RespondNow(Error(kInvalidParameters));
   }
 
   gfx::Size original_min_size =
-      window->GetBaseWindow()->GetContentMinimumSize();
+      window()->GetBaseWindow()->GetContentMinimumSize();
   gfx::Size original_max_size =
-      window->GetBaseWindow()->GetContentMaximumSize();
+      window()->GetBaseWindow()->GetContentMaximumSize();
   gfx::Size min_size = original_min_size;
   gfx::Size max_size = original_max_size;
   const app_current_window_internal::SizeConstraints& constraints =
@@ -279,7 +284,7 @@ bool AppCurrentWindowInternalSetSizeConstraintsFunction::RunWithWindow(
   // constraints.
   gfx::Insets insets;
   if (bounds_type == bounds::OUTER_BOUNDS)
-    insets = window->GetBaseWindow()->GetFrameInsets();
+    insets = window()->GetBaseWindow()->GetFrameInsets();
 
   GetConstraintWidth(constraints.min_width, insets, &min_size);
   GetConstraintWidth(constraints.max_width, insets, &max_size);
@@ -287,19 +292,20 @@ bool AppCurrentWindowInternalSetSizeConstraintsFunction::RunWithWindow(
   GetConstraintHeight(constraints.max_height, insets, &max_size);
 
   if (min_size != original_min_size || max_size != original_max_size)
-    window->SetContentSizeConstraints(min_size, max_size);
+    window()->SetContentSizeConstraints(min_size, max_size);
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetIconFunction::RunWithWindow(AppWindow* window) {
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetIconFunction::Run() {
   if (AppWindowClient::Get()->IsCurrentChannelOlderThanDev() &&
       extension()->location() != extensions::Manifest::COMPONENT) {
-    error_ = kDevChannelOnly;
-    return false;
+    // TODO(devlin): Can't this be done in the feature files?
+    return RespondNow(Error(kDevChannelOnly));
   }
 
-  scoped_ptr<SetIcon::Params> params(SetIcon::Params::Create(*args_));
+  std::unique_ptr<SetIcon::Params> params(SetIcon::Params::Create(*args_));
   CHECK(params.get());
   // The |icon_url| parameter may be a blob url (e.g. an image fetched with an
   // XMLHttpRequest) or a resource url.
@@ -307,20 +313,16 @@ bool AppCurrentWindowInternalSetIconFunction::RunWithWindow(AppWindow* window) {
   if (!url.is_valid())
     url = extension()->GetResourceURL(params->icon_url);
 
-  window->SetAppIconUrl(url);
-  return true;
+  window()->SetAppIconUrl(url);
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetShapeFunction::RunWithWindow(
-    AppWindow* window) {
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetShapeFunction::Run() {
+  if (!window()->GetBaseWindow()->IsFrameless())
+    return RespondNow(Error(kRequiresFramelessWindow));
 
-  if (!window->GetBaseWindow()->IsFrameless()) {
-    error_ = kRequiresFramelessWindow;
-    return false;
-  }
-
-  scoped_ptr<SetShape::Params> params(
-      SetShape::Params::Create(*args_));
+  std::unique_ptr<SetShape::Params> params(SetShape::Params::Create(*args_));
   const Region& shape = params->region;
 
   // Build a region from the supplied list of rects.
@@ -328,17 +330,13 @@ bool AppCurrentWindowInternalSetShapeFunction::RunWithWindow(
   // input region so that the entire window accepts input events.
   // To specify an empty input region (so the window ignores all input),
   // |rects| should be an empty list.
-  scoped_ptr<SkRegion> region(new SkRegion);
+  std::unique_ptr<SkRegion> region(new SkRegion);
   if (shape.rects) {
-    for (std::vector<linked_ptr<RegionRect> >::const_iterator i =
-             shape.rects->begin();
-         i != shape.rects->end();
-         ++i) {
-      const RegionRect& inputRect = **i;
-      int32_t x = inputRect.left;
-      int32_t y = inputRect.top;
-      int32_t width = inputRect.width;
-      int32_t height = inputRect.height;
+    for (const RegionRect& input_rect : *shape.rects) {
+      int32_t x = input_rect.left;
+      int32_t y = input_rect.top;
+      int32_t width = input_rect.width;
+      int32_t height = input_rect.height;
 
       SkIRect rect = SkIRect::MakeXYWH(x, y, width, height);
       region->op(rect, SkRegion::kUnion_Op);
@@ -347,33 +345,33 @@ bool AppCurrentWindowInternalSetShapeFunction::RunWithWindow(
     region.reset(NULL);
   }
 
-  window->UpdateShape(region.Pass());
+  window()->UpdateShape(std::move(region));
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetAlwaysOnTopFunction::RunWithWindow(
-    AppWindow* window) {
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetAlwaysOnTopFunction::Run() {
+  // TODO(devlin): Can't this be done with the feature files?
   if (!extension()->permissions_data()->HasAPIPermission(
           extensions::APIPermission::kAlwaysOnTopWindows)) {
-    error_ = kAlwaysOnTopPermission;
-    return false;
+    return RespondNow(Error(kAlwaysOnTopPermission));
   }
 
-  scoped_ptr<SetAlwaysOnTop::Params> params(
+  std::unique_ptr<SetAlwaysOnTop::Params> params(
       SetAlwaysOnTop::Params::Create(*args_));
   CHECK(params.get());
-  window->SetAlwaysOnTop(params->always_on_top);
-  return true;
+  window()->SetAlwaysOnTop(params->always_on_top);
+  return RespondNow(NoArguments());
 }
 
-bool AppCurrentWindowInternalSetVisibleOnAllWorkspacesFunction::RunWithWindow(
-    AppWindow* window) {
-  scoped_ptr<SetVisibleOnAllWorkspaces::Params> params(
+ExtensionFunction::ResponseAction
+AppCurrentWindowInternalSetVisibleOnAllWorkspacesFunction::Run() {
+  std::unique_ptr<SetVisibleOnAllWorkspaces::Params> params(
       SetVisibleOnAllWorkspaces::Params::Create(*args_));
   CHECK(params.get());
-  window->GetBaseWindow()->SetVisibleOnAllWorkspaces(params->always_visible);
-  return true;
+  window()->GetBaseWindow()->SetVisibleOnAllWorkspaces(params->always_visible);
+  return RespondNow(NoArguments());
 }
 
 }  // namespace extensions

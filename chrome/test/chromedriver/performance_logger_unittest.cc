@@ -4,6 +4,11 @@
 
 #include "chrome/test/chromedriver/performance_logger.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
 #include "base/json/json_reader.h"
@@ -28,7 +33,7 @@ struct DevToolsCommand {
   ~DevToolsCommand() {}
 
   std::string method;
-  scoped_ptr<base::DictionaryValue> params;
+  std::unique_ptr<base::DictionaryValue> params;
 };
 
 class FakeDevToolsClient : public StubDevToolsClient {
@@ -61,7 +66,7 @@ class FakeDevToolsClient : public StubDevToolsClient {
   Status SendCommandAndGetResult(
       const std::string& method,
       const base::DictionaryValue& params,
-      scoped_ptr<base::DictionaryValue>* result) override {
+      std::unique_ptr<base::DictionaryValue>* result) override {
     sent_commands_.push_back(new DevToolsCommand(method,
                                                  params.DeepCopy()));
     return Status(kOk);
@@ -116,23 +121,24 @@ void FakeLog::AddEntryTimestamped(const base::Time& timestamp,
   entries_.push_back(new LogEntry(timestamp, level, source, message));
 }
 
-scoped_ptr<base::DictionaryValue> ParseDictionary(const std::string& json) {
+std::unique_ptr<base::DictionaryValue> ParseDictionary(
+    const std::string& json) {
   std::string error;
-  scoped_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
       json, base::JSON_PARSE_RFC, nullptr, &error);
   if (value == nullptr) {
     SCOPED_TRACE(json.c_str());
     SCOPED_TRACE(error.c_str());
     ADD_FAILURE();
-    return scoped_ptr<base::DictionaryValue>();
+    return std::unique_ptr<base::DictionaryValue>();
   }
   base::DictionaryValue* dict = nullptr;
   if (!value->GetAsDictionary(&dict)) {
     SCOPED_TRACE("JSON object is not a dictionary");
     ADD_FAILURE();
-    return scoped_ptr<base::DictionaryValue>();
+    return std::unique_ptr<base::DictionaryValue>();
   }
-  return scoped_ptr<base::DictionaryValue>(dict->DeepCopy());
+  return std::unique_ptr<base::DictionaryValue>(dict->DeepCopy());
 }
 
 void ValidateLogEntry(const LogEntry *entry,
@@ -142,7 +148,8 @@ void ValidateLogEntry(const LogEntry *entry,
   EXPECT_EQ(Log::kInfo, entry->level);
   EXPECT_LT(0, entry->timestamp.ToTimeT());
 
-  scoped_ptr<base::DictionaryValue> message(ParseDictionary(entry->message));
+  std::unique_ptr<base::DictionaryValue> message(
+      ParseDictionary(entry->message));
   std::string webview;
   EXPECT_TRUE(message->GetString("webview", &webview));
   EXPECT_EQ(expected_webview, webview);
@@ -256,7 +263,7 @@ class FakeBrowserwideClient : public FakeDevToolsClient {
 
   // Overridden from DevToolsClient:
   Status HandleEventsUntil(const ConditionalFunc& conditional_func,
-                           const base::TimeDelta& timeout) override {
+                           const Timeout& timeout) override {
     TriggerEvent("Tracing.tracingComplete");
     events_handled_ = true;
     return Status(kOk);
@@ -311,12 +318,12 @@ TEST(PerformanceLogger, RecordTraceEvents) {
   logger.OnConnected(&client);
   base::DictionaryValue params;
   base::ListValue* trace_events = new base::ListValue();
-  base::DictionaryValue* event1 = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> event1(new base::DictionaryValue());
   event1->SetString("cat", "foo");
-  trace_events->Append(event1);
-  base::DictionaryValue* event2 = new base::DictionaryValue();
+  trace_events->Append(event1->CreateDeepCopy());
+  std::unique_ptr<base::DictionaryValue> event2(new base::DictionaryValue());
   event2->SetString("cat", "bar");
-  trace_events->Append(event2);
+  trace_events->Append(event2->CreateDeepCopy());
   params.Set("value", trace_events);
   ASSERT_EQ(kOk, client.TriggerEvent("Tracing.dataCollected", params).code());
 
@@ -368,7 +375,8 @@ TEST(PerformanceLogger, WarnWhenTraceBufferFull) {
   LogEntry* entry = log.GetEntries()[0];
   EXPECT_EQ(Log::kWarning, entry->level);
   EXPECT_LT(0, entry->timestamp.ToTimeT());
-  scoped_ptr<base::DictionaryValue> message(ParseDictionary(entry->message));
+  std::unique_ptr<base::DictionaryValue> message(
+      ParseDictionary(entry->message));
   std::string webview;
   EXPECT_TRUE(message->GetString("webview", &webview));
   EXPECT_EQ(DevToolsClientImpl::kBrowserwideDevToolsClientId, webview);

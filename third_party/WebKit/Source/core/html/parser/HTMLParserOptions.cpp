@@ -23,7 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/parser/HTMLParserOptions.h"
 
 #include "bindings/core/v8/ScriptController.h"
@@ -34,11 +33,11 @@
 
 namespace blink {
 
-HTMLParserOptions::HTMLParserOptions(Document* document)
-{
-    LocalFrame* frame = document ? document->frame() : 0;
-    scriptEnabled = frame && frame->script().canExecuteScripts(NotAboutToExecuteScript);
-    pluginsEnabled = frame && frame->loader().allowPlugins(NotAboutToInstantiatePlugin);
+HTMLParserOptions::HTMLParserOptions(Document* document) {
+  LocalFrame* frame = document ? document->frame() : 0;
+  scriptEnabled =
+      frame && frame->script().canExecuteScripts(NotAboutToExecuteScript);
+  pluginsEnabled =
+      frame && frame->loader().allowPlugins(NotAboutToInstantiatePlugin);
 }
-
 }

@@ -4,21 +4,23 @@
 
 #include "content/browser/media/capture/web_contents_audio_input_stream.h"
 
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "content/browser/media/capture/audio_mirroring_manager.h"
-#include "content/browser/media/capture/web_contents_capture_util.h"
 #include "content/browser/media/capture/web_contents_tracker.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_media_capture_id.h"
 #include "media/audio/virtual_audio_input_stream.h"
 #include "media/audio/virtual_audio_output_stream.h"
+#include "media/audio/virtual_audio_sink.h"
 #include "media/base/bind_to_current_loop.h"
 
 namespace content {
@@ -28,10 +30,12 @@ class WebContentsAudioInputStream::Impl
       public AudioMirroringManager::MirroringDestination {
  public:
   // Takes ownership of |mixer_stream|.  The rest outlive this instance.
-  Impl(int render_process_id, int main_render_frame_id,
+  Impl(int render_process_id,
+       int main_render_frame_id,
        AudioMirroringManager* mirroring_manager,
        const scoped_refptr<WebContentsTracker>& tracker,
-       media::VirtualAudioInputStream* mixer_stream);
+       media::VirtualAudioInputStream* mixer_stream,
+       bool is_duplication);
 
   // Open underlying VirtualAudioInputStream and start tracker.
   bool Open();
@@ -74,6 +78,10 @@ class WebContentsAudioInputStream::Impl
   void StartMirroring();
   void StopMirroring();
 
+  // Increment/decrement the capturer count on the UI BrowserThread.
+  void IncrementCapturerCount();
+  void DecrementCapturerCount();
+
   // Invoked on the UI thread to make sure WebContents muting is turned off for
   // successful audio capture.
   void UnmuteWebContentsAudio();
@@ -85,9 +93,12 @@ class WebContentsAudioInputStream::Impl
                                  const MatchesCallback& results_callback);
   media::AudioOutputStream* AddInput(
       const media::AudioParameters& params) override;
+  media::AudioPushSink* AddPushInput(
+      const media::AudioParameters& params) override;
 
   // Callback which is run when |stream| is closed.  Deletes |stream|.
   void ReleaseInput(media::VirtualAudioOutputStream* stream);
+  void ReleasePushInput(media::VirtualAudioSink* sink);
 
   // Called by WebContentsTracker when the target of the audio mirroring has
   // changed.
@@ -100,7 +111,7 @@ class WebContentsAudioInputStream::Impl
   const scoped_refptr<WebContentsTracker> tracker_;
   // The AudioInputStream implementation that handles the audio conversion and
   // mixing details.
-  const scoped_ptr<media::VirtualAudioInputStream> mixer_stream_;
+  const std::unique_ptr<media::VirtualAudioInputStream> mixer_stream_;
 
   State state_;
 
@@ -111,16 +122,22 @@ class WebContentsAudioInputStream::Impl
   // Current callback used to consume the resulting mixed audio data.
   AudioInputCallback* callback_;
 
+  // If true, this WebContentsAudioInputStream will request a duplication of
+  // audio data, instead of exclusive access to pull the audio data.
+  bool is_duplication_;
+
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(Impl);
 };
 
 WebContentsAudioInputStream::Impl::Impl(
-    int render_process_id, int main_render_frame_id,
+    int render_process_id,
+    int main_render_frame_id,
     AudioMirroringManager* mirroring_manager,
     const scoped_refptr<WebContentsTracker>& tracker,
-    media::VirtualAudioInputStream* mixer_stream)
+    media::VirtualAudioInputStream* mixer_stream,
+    bool is_duplication)
     : initial_render_process_id_(render_process_id),
       initial_main_render_frame_id_(main_render_frame_id),
       mirroring_manager_(mirroring_manager),
@@ -128,10 +145,11 @@ WebContentsAudioInputStream::Impl::Impl(
       mixer_stream_(mixer_stream),
       state_(CONSTRUCTED),
       is_target_lost_(false),
-      callback_(NULL) {
+      callback_(NULL),
+      is_duplication_(is_duplication) {
   DCHECK(mirroring_manager_);
-  DCHECK(tracker_.get());
-  DCHECK(mixer_stream_.get());
+  DCHECK(tracker_);
+  DCHECK(mixer_stream_);
 
   // WAIS::Impl can be constructed on any thread, but will DCHECK that all
   // its methods from here on are called from the same thread.
@@ -151,12 +169,20 @@ bool WebContentsAudioInputStream::Impl::Open() {
     return false;
 
   state_ = OPENED;
-
   tracker_->Start(
       initial_render_process_id_, initial_main_render_frame_id_,
       base::Bind(&Impl::OnTargetChanged, this));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::Bind(&Impl::IncrementCapturerCount, this));
 
   return true;
+}
+
+void WebContentsAudioInputStream::Impl::IncrementCapturerCount() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (WebContents* contents = tracker_->web_contents())
+    contents->IncrementCapturerCount(gfx::Size());
 }
 
 void WebContentsAudioInputStream::Impl::Start(AudioInputCallback* callback) {
@@ -208,12 +234,21 @@ void WebContentsAudioInputStream::Impl::Close() {
 
   if (state_ == OPENED) {
     state_ = CONSTRUCTED;
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                            base::Bind(&Impl::DecrementCapturerCount, this));
     tracker_->Stop();
     mixer_stream_->Close();
   }
 
   DCHECK_EQ(CONSTRUCTED, state_);
   state_ = CLOSED;
+}
+
+void WebContentsAudioInputStream::Impl::DecrementCapturerCount() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (WebContents* contents = tracker_->web_contents())
+    contents->DecrementCapturerCount();
 }
 
 void WebContentsAudioInputStream::Impl::ReportError() {
@@ -227,23 +262,19 @@ void WebContentsAudioInputStream::Impl::ReportError() {
 void WebContentsAudioInputStream::Impl::StartMirroring() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&AudioMirroringManager::StartMirroring,
-                 base::Unretained(mirroring_manager_),
-                 make_scoped_refptr(this)));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&AudioMirroringManager::StartMirroring,
+                                     base::Unretained(mirroring_manager_),
+                                     base::RetainedRef(this)));
 }
 
 void WebContentsAudioInputStream::Impl::StopMirroring() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  BrowserThread::PostTask(
-      BrowserThread::IO,
-      FROM_HERE,
-      base::Bind(&AudioMirroringManager::StopMirroring,
-                 base::Unretained(mirroring_manager_),
-                 make_scoped_refptr(this)));
+  BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
+                          base::Bind(&AudioMirroringManager::StopMirroring,
+                                     base::Unretained(mirroring_manager_),
+                                     base::RetainedRef(this)));
 }
 
 void WebContentsAudioInputStream::Impl::UnmuteWebContentsAudio() {
@@ -286,7 +317,7 @@ void WebContentsAudioInputStream::Impl::QueryForMatchesOnUIThread(
     }
   }
 
-  results_callback.Run(matches);
+  results_callback.Run(matches, is_duplication_);
 }
 
 media::AudioOutputStream* WebContentsAudioInputStream::Impl::AddInput(
@@ -302,6 +333,20 @@ media::AudioOutputStream* WebContentsAudioInputStream::Impl::AddInput(
 
 void WebContentsAudioInputStream::Impl::ReleaseInput(
     media::VirtualAudioOutputStream* stream) {
+  delete stream;
+}
+
+media::AudioPushSink* WebContentsAudioInputStream::Impl::AddPushInput(
+    const media::AudioParameters& params) {
+  // Note: The closure created here holds a reference to "this," which will
+  // guarantee the VirtualAudioInputStream (mixer_stream_) outlives the
+  // VirtualAudioSink.
+  return new media::VirtualAudioSink(params, mixer_stream_.get(),
+                                     base::Bind(&Impl::ReleasePushInput, this));
+}
+
+void WebContentsAudioInputStream::Impl::ReleasePushInput(
+    media::VirtualAudioSink* stream) {
   delete stream;
 }
 
@@ -326,29 +371,33 @@ WebContentsAudioInputStream* WebContentsAudioInputStream::Create(
     const media::AudioParameters& params,
     const scoped_refptr<base::SingleThreadTaskRunner>& worker_task_runner,
     AudioMirroringManager* audio_mirroring_manager) {
-  int render_process_id;
-  int main_render_frame_id;
-  if (!WebContentsCaptureUtil::ExtractTabCaptureTarget(
-          device_id, &render_process_id, &main_render_frame_id)) {
+  WebContentsMediaCaptureId media_id;
+  if (!WebContentsMediaCaptureId::Parse(device_id, &media_id)) {
     return NULL;
   }
 
   return new WebContentsAudioInputStream(
-      render_process_id, main_render_frame_id,
-      audio_mirroring_manager,
-      new WebContentsTracker(false),
+      media_id.render_process_id, media_id.main_render_frame_id,
+      audio_mirroring_manager, new WebContentsTracker(false),
       new media::VirtualAudioInputStream(
           params, worker_task_runner,
-          media::VirtualAudioInputStream::AfterCloseCallback()));
+          media::VirtualAudioInputStream::AfterCloseCallback()),
+      !media_id.disable_local_echo);
 }
 
 WebContentsAudioInputStream::WebContentsAudioInputStream(
-    int render_process_id, int main_render_frame_id,
+    int render_process_id,
+    int main_render_frame_id,
     AudioMirroringManager* mirroring_manager,
     const scoped_refptr<WebContentsTracker>& tracker,
-    media::VirtualAudioInputStream* mixer_stream)
-    : impl_(new Impl(render_process_id, main_render_frame_id,
-                     mirroring_manager, tracker, mixer_stream)) {}
+    media::VirtualAudioInputStream* mixer_stream,
+    bool is_duplication)
+    : impl_(new Impl(render_process_id,
+                     main_render_frame_id,
+                     mirroring_manager,
+                     tracker,
+                     mixer_stream,
+                     is_duplication)) {}
 
 WebContentsAudioInputStream::~WebContentsAudioInputStream() {}
 

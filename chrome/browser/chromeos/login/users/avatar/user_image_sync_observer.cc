@@ -5,19 +5,19 @@
 #include "chrome/browser/chromeos/login/users/avatar/user_image_sync_observer.h"
 
 #include "base/bind.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/screens/user_image_screen.h"
 #include "chrome/browser/chromeos/login/users/avatar/user_image_manager.h"
 #include "chrome/browser/chromeos/login/users/chrome_user_manager.h"
+#include "chrome/browser/chromeos/login/users/default_user_image/default_user_images.h"
 #include "chrome/browser/chromeos/login/wizard_controller.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/common/pref_names.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/scoped_user_pref_update.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "components/user_manager/user.h"
-#include "components/user_manager/user_image/default_user_images.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/notification_service.h"
@@ -31,8 +31,8 @@ const char kUserImageInfo[] = "user_image_info";
 const char kImageIndex[] = "image_index";
 
 bool IsIndexSupported(int index) {
-  return (index >= user_manager::kFirstDefaultImageIndex &&
-          index < user_manager::kDefaultImagesCount) ||
+  return (index >= default_user_image::kFirstDefaultImageIndex &&
+          index < default_user_image::kDefaultImagesCount) ||
          (index == user_manager::User::USER_IMAGE_PROFILE);
 }
 
@@ -105,8 +105,8 @@ void UserImageSyncObserver::OnInitialSync() {
     UpdateLocalImageFromSynced();
     local_image_updated = true;
   }
-  FOR_EACH_OBSERVER(UserImageSyncObserver::Observer, observer_list_,
-      OnInitialSync(local_image_updated));
+  for (auto& observer : observer_list_)
+    observer.OnInitialSync(local_image_updated);
 }
 
 void UserImageSyncObserver::OnPreferenceChanged(const std::string& pref_name) {
@@ -199,4 +199,3 @@ bool UserImageSyncObserver::CanUpdateLocalImageNow() {
 }
 
 }  // namespace chromeos
-

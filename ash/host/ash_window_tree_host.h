@@ -5,22 +5,20 @@
 #ifndef ASH_HOST_ASH_WINDOW_TREE_HOST_H_
 #define ASH_HOST_ASH_WINDOW_TREE_HOST_H_
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/callback_forward.h"
 
 namespace aura {
-class Window;
 class WindowTreeHost;
 }
 
 namespace gfx {
 class Insets;
-class Rect;
 }
 
 namespace ui {
-class EventSource;
-class KeyEvent;
 class LocatedEvent;
 }
 
@@ -31,12 +29,15 @@ class RootWindowTransformer;
 
 class ASH_EXPORT AshWindowTreeHost {
  public:
+  using Factory =
+      base::Callback<AshWindowTreeHost*(const AshWindowTreeHostInitParams&)>;
   AshWindowTreeHost();
   virtual ~AshWindowTreeHost() {}
 
   // Creates a new AshWindowTreeHost. The caller owns the returned value.
   static AshWindowTreeHost* Create(
       const AshWindowTreeHostInitParams& init_params);
+  static void SetFactory(const Factory& factory);
 
   void set_input_method_handler(InputMethodEventHandler* input_method_handler) {
     input_method_handler_ = input_method_handler;
@@ -58,7 +59,7 @@ class ASH_EXPORT AshWindowTreeHost {
   virtual void UnConfineCursor() = 0;
 
   virtual void SetRootWindowTransformer(
-      scoped_ptr<RootWindowTransformer> transformer) = 0;
+      std::unique_ptr<RootWindowTransformer> transformer) = 0;
 
   virtual gfx::Insets GetHostInsets() const = 0;
 

@@ -4,8 +4,11 @@
 
 #include "components/data_usage/core/data_use_aggregator.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
+#include "build/build_config.h"
 #include "components/data_usage/core/data_use.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/network_change_notifier.h"
@@ -17,10 +20,11 @@
 
 namespace data_usage {
 
-DataUseAggregator::DataUseAggregator(scoped_ptr<DataUseAnnotator> annotator,
-                                     scoped_ptr<DataUseAmortizer> amortizer)
-    : annotator_(annotator.Pass()),
-      amortizer_(amortizer.Pass()),
+DataUseAggregator::DataUseAggregator(
+    std::unique_ptr<DataUseAnnotator> annotator,
+    std::unique_ptr<DataUseAmortizer> amortizer)
+    : annotator_(std::move(annotator)),
+      amortizer_(std::move(amortizer)),
       connection_type_(net::NetworkChangeNotifier::GetConnectionType()),
       weak_ptr_factory_(this) {
 #if defined(OS_ANDROID)
@@ -51,13 +55,13 @@ void DataUseAggregator::ReportDataUse(net::URLRequest* request,
   net::LoadTimingInfo load_timing_info;
   request->GetLoadTimingInfo(&load_timing_info);
 
-  scoped_ptr<DataUse> data_use(
+  std::unique_ptr<DataUse> data_use(
       new DataUse(request->url(), load_timing_info.request_start,
                   request->first_party_for_cookies(), -1 /* tab_id */,
                   connection_type_, mcc_mnc_, tx_bytes, rx_bytes));
 
   if (!annotator_) {
-    PassDataUseToAmortizer(data_use.Pass());
+    PassDataUseToAmortizer(std::move(data_use));
     return;
   }
 
@@ -68,7 +72,7 @@ void DataUseAggregator::ReportDataUse(net::URLRequest* request,
     annotation_callback_ =
         base::Bind(&DataUseAggregator::PassDataUseToAmortizer, GetWeakPtr());
   }
-  annotator_->Annotate(request, data_use.Pass(), annotation_callback_);
+  annotator_->Annotate(request, std::move(data_use), annotation_callback_);
 }
 
 void DataUseAggregator::ReportOffTheRecordDataUse(int64_t tx_bytes,
@@ -100,29 +104,32 @@ void DataUseAggregator::SetMccMncForTests(const std::string& mcc_mnc) {
   mcc_mnc_ = mcc_mnc;
 }
 
-void DataUseAggregator::PassDataUseToAmortizer(scoped_ptr<DataUse> data_use) {
+void DataUseAggregator::PassDataUseToAmortizer(
+    std::unique_ptr<DataUse> data_use) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(data_use);
 
   if (!amortizer_) {
-    OnAmortizationComplete(data_use.Pass());
+    OnAmortizationComplete(std::move(data_use));
     return;
   }
 
   // As an optimization, re-use a lazily initialized callback object for every
   // call into |amortizer_|, so that a new callback object doesn't have to be
-  // allocated and held onto every time.
+  // allocated and held onto every time. This also allows the |amortizer_| to
+  // combine together similar DataUse objects in its buffer if applicable.
   if (amortization_callback_.is_null()) {
     amortization_callback_ =
         base::Bind(&DataUseAggregator::OnAmortizationComplete, GetWeakPtr());
   }
-  amortizer_->AmortizeDataUse(data_use.Pass(), amortization_callback_);
+  amortizer_->AmortizeDataUse(std::move(data_use), amortization_callback_);
 }
 
 void DataUseAggregator::OnAmortizationComplete(
-    scoped_ptr<DataUse> amortized_data_use) {
+    std::unique_ptr<DataUse> amortized_data_use) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  FOR_EACH_OBSERVER(Observer, observer_list_, OnDataUse(*amortized_data_use));
+  for (Observer& observer : observer_list_)
+    observer.OnDataUse(*amortized_data_use);
 }
 
 }  // namespace data_usage

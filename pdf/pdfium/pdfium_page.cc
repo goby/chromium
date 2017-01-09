@@ -5,36 +5,74 @@
 #include "pdf/pdfium/pdfium_page.h"
 
 #include <math.h>
+#include <stddef.h>
+
+#include <algorithm>
+#include <memory>
+#include <utility>
 
 #include "base/logging.h"
+#include "base/numerics/safe_math.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/values.h"
 #include "pdf/pdfium/pdfium_api_string_buffer_adapter.h"
 #include "pdf/pdfium/pdfium_engine.h"
+#include "printing/units.h"
 
 // Used when doing hit detection.
 #define kTolerance 20.0
 
+using printing::ConvertUnitDouble;
+using printing::kPointsPerInch;
+using printing::kPixelsPerInch;
+
 namespace {
 
-// Dictionary Value key names for returning the accessible page content as JSON.
-const char kPageWidth[] = "width";
-const char kPageHeight[] = "height";
-const char kPageTextBox[] = "textBox";
-const char kTextBoxLeft[] = "left";
-const char kTextBoxTop[]  = "top";
-const char kTextBoxWidth[] = "width";
-const char kTextBoxHeight[]  = "height";
-const char kTextBoxFontSize[] = "fontSize";
-const char kTextBoxNodes[] = "textNodes";
-const char kTextNodeType[] = "type";
-const char kTextNodeText[] = "text";
-const char kTextNodeURL[] = "url";
-const char kTextNodeTypeText[] = "text";
-const char kTextNodeTypeURL[] = "url";
-const char kDocLinkURLPrefix[] = "#page";
+pp::FloatRect FloatPageRectToPixelRect(FPDF_PAGE page,
+                                       const pp::FloatRect& input) {
+  int output_width = FPDF_GetPageWidth(page);
+  int output_height = FPDF_GetPageHeight(page);
+
+  int min_x;
+  int min_y;
+  int max_x;
+  int max_y;
+  FPDF_PageToDevice(page, 0, 0, output_width, output_height, 0, input.x(),
+                    input.y(), &min_x, &min_y);
+  FPDF_PageToDevice(page, 0, 0, output_width, output_height, 0, input.right(),
+                    input.bottom(), &max_x, &max_y);
+
+  if (max_x < min_x)
+    std::swap(min_x, max_x);
+  if (max_y < min_y)
+    std::swap(min_y, max_y);
+
+  pp::FloatRect output_rect(
+      ConvertUnitDouble(min_x, kPointsPerInch, kPixelsPerInch),
+      ConvertUnitDouble(min_y, kPointsPerInch, kPixelsPerInch),
+      ConvertUnitDouble(max_x - min_x, kPointsPerInch, kPixelsPerInch),
+      ConvertUnitDouble(max_y - min_y, kPointsPerInch, kPixelsPerInch));
+  return output_rect;
+}
+
+pp::FloatRect GetFloatCharRectInPixels(FPDF_PAGE page,
+                                       FPDF_TEXTPAGE text_page,
+                                       int index) {
+  double left, right, bottom, top;
+  FPDFText_GetCharBox(text_page, index, &left, &right, &bottom, &top);
+  if (right < left)
+    std::swap(left, right);
+  if (bottom < top)
+    std::swap(top, bottom);
+  pp::FloatRect page_coords(left, top, right - left, bottom - top);
+  return FloatPageRectToPixelRect(page, page_coords);
+}
+
+bool OverlapsOnYAxis(const pp::FloatRect &a, const pp::FloatRect& b) {
+  return !(a.IsEmpty() || b.IsEmpty() ||
+           a.bottom() < b.y() || b.bottom() < a.y());
+}
 
 }  // namespace
 
@@ -45,14 +83,15 @@ PDFiumPage::PDFiumPage(PDFiumEngine* engine,
                        const pp::Rect& r,
                        bool available)
     : engine_(engine),
-      page_(NULL),
-      text_page_(NULL),
+      page_(nullptr),
+      text_page_(nullptr),
       index_(i),
       loading_count_(0),
       rect_(r),
       calculated_links_(false),
-      available_(available) {
-}
+      available_(available) {}
+
+PDFiumPage::PDFiumPage(const PDFiumPage& that) = default;
 
 PDFiumPage::~PDFiumPage() {
   DCHECK_EQ(0, loading_count_);
@@ -65,7 +104,7 @@ void PDFiumPage::Unload() {
 
   if (text_page_) {
     FPDFText_ClosePage(text_page_);
-    text_page_ = NULL;
+    text_page_ = nullptr;
   }
 
   if (page_) {
@@ -73,14 +112,15 @@ void PDFiumPage::Unload() {
       FORM_OnBeforeClosePage(page_, engine_->form());
     }
     FPDF_ClosePage(page_);
-    page_ = NULL;
+    page_ = nullptr;
   }
 }
 
 FPDF_PAGE PDFiumPage::GetPage() {
   ScopedUnsupportedFeature scoped_unsupported_feature(engine_);
+  ScopedSubstFont scoped_subst_font(engine_);
   if (!available_)
-    return NULL;
+    return nullptr;
   if (!page_) {
     ScopedLoadCounter scoped_load(this);
     page_ = FPDF_LoadPage(engine_->doc(), index_);
@@ -93,8 +133,9 @@ FPDF_PAGE PDFiumPage::GetPage() {
 
 FPDF_PAGE PDFiumPage::GetPrintPage() {
   ScopedUnsupportedFeature scoped_unsupported_feature(engine_);
+  ScopedSubstFont scoped_subst_font(engine_);
   if (!available_)
-    return NULL;
+    return nullptr;
   if (!page_) {
     ScopedLoadCounter scoped_load(this);
     page_ = FPDF_LoadPage(engine_->doc(), index_);
@@ -109,13 +150,13 @@ void PDFiumPage::ClosePrintPage() {
 
   if (page_) {
     FPDF_ClosePage(page_);
-    page_ = NULL;
+    page_ = nullptr;
   }
 }
 
 FPDF_TEXTPAGE PDFiumPage::GetTextPage() {
   if (!available_)
-    return NULL;
+    return nullptr;
   if (!text_page_) {
     ScopedLoadCounter scoped_load(this);
     text_page_ = FPDFText_LoadPage(GetPage());
@@ -123,137 +164,73 @@ FPDF_TEXTPAGE PDFiumPage::GetTextPage() {
   return text_page_;
 }
 
-base::Value* PDFiumPage::GetAccessibleContentAsValue(int rotation) {
-  base::DictionaryValue* node = new base::DictionaryValue();
-
-  if (!available_)
-    return node;
-
-  double width = FPDF_GetPageWidth(GetPage());
-  double height = FPDF_GetPageHeight(GetPage());
-
-  base::ListValue* text = new base::ListValue();
-  int box_count = FPDFText_CountRects(GetTextPage(), 0, GetCharCount());
-  for (int i = 0; i < box_count; i++) {
-    double left, top, right, bottom;
-    FPDFText_GetRect(GetTextPage(), i, &left, &top, &right, &bottom);
-    text->Append(
-        GetTextBoxAsValue(height, left, top, right, bottom, rotation));
+void PDFiumPage::GetTextRunInfo(int start_char_index,
+                                uint32_t* out_len,
+                                double* out_font_size,
+                                pp::FloatRect* out_bounds) {
+  FPDF_PAGE page = GetPage();
+  FPDF_TEXTPAGE text_page = GetTextPage();
+  int chars_count = FPDFText_CountChars(text_page);
+  int char_index = start_char_index;
+  while (
+      char_index < chars_count &&
+      base::IsUnicodeWhitespace(FPDFText_GetUnicode(text_page, char_index))) {
+    char_index++;
   }
+  int text_run_font_size = FPDFText_GetFontSize(text_page, char_index);
+  pp::FloatRect text_run_bounds =
+      GetFloatCharRectInPixels(page, text_page, char_index);
+  char_index++;
+  while (char_index < chars_count) {
+    unsigned int character = FPDFText_GetUnicode(text_page, char_index);
 
-  node->SetDouble(kPageWidth, width);
-  node->SetDouble(kPageHeight, height);
-  node->Set(kPageTextBox, text);  // Takes ownership of |text|
+    if (!base::IsUnicodeWhitespace(character)) {
+      // TODO(dmazzoni): this assumes horizontal text.
+      // https://crbug.com/580311
+      pp::FloatRect char_rect = GetFloatCharRectInPixels(
+          page, text_page, char_index);
+      if (!char_rect.IsEmpty() && !OverlapsOnYAxis(text_run_bounds, char_rect))
+        break;
 
-  return node;
-}
+      int font_size = FPDFText_GetFontSize(text_page, char_index);
+      if (font_size != text_run_font_size)
+        break;
 
-base::Value* PDFiumPage::GetTextBoxAsValue(double page_height,
-                                           double left, double top,
-                                           double right, double bottom,
-                                           int rotation) {
-  base::string16 text_utf16;
-  int char_count =
-    FPDFText_GetBoundedText(GetTextPage(), left, top, right, bottom, NULL, 0);
-  if (char_count > 0) {
-    unsigned short* data = reinterpret_cast<unsigned short*>(
-        base::WriteInto(&text_utf16, char_count + 1));
-    FPDFText_GetBoundedText(GetTextPage(),
-                            left, top, right, bottom,
-                            data, char_count);
-  }
-  std::string text_utf8 = base::UTF16ToUTF8(text_utf16);
+      // Heuristic: split a text run after a space longer than 3 average
+      // characters.
+      double avg_char_width =
+          text_run_bounds.width() / (char_index - start_char_index);
+      if (char_rect.x() - text_run_bounds.right() > avg_char_width * 3)
+        break;
 
-  FPDF_LINK link = FPDFLink_GetLinkAtPoint(GetPage(), left, top);
-  Area area;
-  std::vector<LinkTarget> targets;
-  if (link) {
-    targets.push_back(LinkTarget());
-    area = GetLinkTarget(link, &targets[0]);
-  } else {
-    pp::Rect rect(
-        PageToScreen(pp::Point(), 1.0, left, top, right, bottom, rotation));
-    GetLinks(rect, &targets);
-    area = targets.size() == 0 ? TEXT_AREA : WEBLINK_AREA;
-  }
-
-  int char_index = FPDFText_GetCharIndexAtPos(GetTextPage(), left, top,
-                                              kTolerance, kTolerance);
-  double font_size = FPDFText_GetFontSize(GetTextPage(), char_index);
-
-  base::DictionaryValue* node = new base::DictionaryValue();
-  node->SetDouble(kTextBoxLeft, left);
-  node->SetDouble(kTextBoxTop, page_height - top);
-  node->SetDouble(kTextBoxWidth, right - left);
-  node->SetDouble(kTextBoxHeight, top - bottom);
-  node->SetDouble(kTextBoxFontSize, font_size);
-
-  base::ListValue* text_nodes = new base::ListValue();
-
-  if (area == DOCLINK_AREA) {
-    std::string url = kDocLinkURLPrefix + base::IntToString(targets[0].page);
-    text_nodes->Append(CreateURLNode(text_utf8, url));
-  } else if (area == WEBLINK_AREA && link) {
-    text_nodes->Append(CreateURLNode(text_utf8, targets[0].url));
-  } else if (area == WEBLINK_AREA && !link) {
-    size_t start = 0;
-    for (size_t i = 0; i < targets.size(); ++i) {
-      // If there is an extra NULL character at end, find() will not return any
-      // matches. There should not be any though.
-      if (!targets[i].url.empty())
-        DCHECK(targets[i].url[targets[i].url.size() - 1] != '\0');
-
-      // PDFium may change the case of generated links.
-      std::string lowerCaseURL = base::ToLowerASCII(targets[i].url);
-      std::string lowerCaseText = base::ToLowerASCII(text_utf8);
-      size_t pos = lowerCaseText.find(lowerCaseURL, start);
-      size_t length = targets[i].url.size();
-      if (pos == std::string::npos) {
-        // Check if the link is a "mailto:" URL
-        if (lowerCaseURL.compare(0, 7, "mailto:") == 0) {
-          pos = lowerCaseText.find(lowerCaseURL.substr(7), start);
-          length -= 7;
-        }
-
-        if (pos == std::string::npos) {
-          // No match has been found.  This should never happen.
-          continue;
-        }
-      }
-
-      std::string before_text = text_utf8.substr(start, pos - start);
-      if (before_text.size() > 0)
-        text_nodes->Append(CreateTextNode(before_text));
-      std::string link_text = text_utf8.substr(pos, length);
-      text_nodes->Append(CreateURLNode(link_text, targets[i].url));
-
-      start = pos + length;
+      text_run_bounds = text_run_bounds.Union(char_rect);
     }
-    std::string before_text = text_utf8.substr(start);
-    if (before_text.size() > 0)
-      text_nodes->Append(CreateTextNode(before_text));
-  } else {
-    text_nodes->Append(CreateTextNode(text_utf8));
+
+    char_index++;
   }
 
-  node->Set(kTextBoxNodes, text_nodes);  // Takes ownership of |text_nodes|.
-  return node;
+  // Some PDFs have missing or obviously bogus font sizes; substitute the
+  // height of the bounding box in those cases.
+  if (text_run_font_size <= 1 ||
+      text_run_font_size < text_run_bounds.height() / 2 ||
+      text_run_font_size > text_run_bounds.height() * 2) {
+    text_run_font_size = text_run_bounds.height();
+  }
+
+  *out_len = char_index - start_char_index;
+  *out_font_size = text_run_font_size;
+  *out_bounds = text_run_bounds;
 }
 
-base::Value* PDFiumPage::CreateTextNode(const std::string& text) {
-  base::DictionaryValue* node = new base::DictionaryValue();
-  node->SetString(kTextNodeType, kTextNodeTypeText);
-  node->SetString(kTextNodeText, text);
-  return node;
+uint32_t PDFiumPage::GetCharUnicode(int char_index) {
+  FPDF_TEXTPAGE text_page = GetTextPage();
+  return FPDFText_GetUnicode(text_page, char_index);
 }
 
-base::Value* PDFiumPage::CreateURLNode(const std::string& text,
-                                       const std::string& url) {
-  base::DictionaryValue* node = new base::DictionaryValue();
-  node->SetString(kTextNodeType, kTextNodeTypeURL);
-  node->SetString(kTextNodeText, text);
-  node->SetString(kTextNodeURL, url);
-  return node;
+pp::FloatRect PDFiumPage::GetCharBounds(int char_index) {
+  FPDF_PAGE page = GetPage();
+  FPDF_TEXTPAGE text_page = GetTextPage();
+  return GetFloatCharRectInPixels(page, text_page, char_index);
 }
 
 PDFiumPage::Area PDFiumPage::GetCharIndex(const pp::Point& point,
@@ -275,7 +252,7 @@ PDFiumPage::Area PDFiumPage::GetCharIndex(const pp::Point& point,
 
   FPDF_LINK link = FPDFLink_GetLinkAtPoint(GetPage(), new_x, new_y);
   int control =
-      FPDPage_HasFormFieldAtPoint(engine_->form(), GetPage(), new_x, new_y);
+      FPDFPage_HasFormFieldAtPoint(engine_->form(), GetPage(), new_x, new_y);
 
   // If there is a control and link at the same point, figure out their z-order
   // to determine which is on top.
@@ -327,9 +304,9 @@ int PDFiumPage::GetCharCount() {
 }
 
 PDFiumPage::Area PDFiumPage::GetLinkTarget(
-    FPDF_LINK link, PDFiumPage::LinkTarget* target) {
+    FPDF_LINK link, PDFiumPage::LinkTarget* target) const {
   FPDF_DEST dest = FPDFLink_GetDest(engine_->doc(), link);
-  if (dest != NULL)
+  if (dest)
     return GetDestinationTarget(dest, target);
 
   FPDF_ACTION action = FPDFLink_GetAction(link);
@@ -346,7 +323,7 @@ PDFiumPage::Area PDFiumPage::GetLinkTarget(
       case PDFACTION_URI: {
           if (target) {
             size_t buffer_size =
-                FPDFAction_GetURIPath(engine_->doc(), action, NULL, 0);
+                FPDFAction_GetURIPath(engine_->doc(), action, nullptr, 0);
             if (buffer_size > 0) {
               PDFiumAPIStringBufferAdapter<std::string> api_string_adapter(
                   &target->url, buffer_size, true);
@@ -367,11 +344,9 @@ PDFiumPage::Area PDFiumPage::GetLinkTarget(
 }
 
 PDFiumPage::Area PDFiumPage::GetDestinationTarget(
-    FPDF_DEST destination, PDFiumPage::LinkTarget* target) {
-  int page_index = FPDFDest_GetPageIndex(engine_->doc(), destination);
-  if (target) {
-    target->page = page_index;
-  }
+    FPDF_DEST destination, PDFiumPage::LinkTarget* target) const {
+  if (target)
+    target->page = FPDFDest_GetPageIndex(engine_->doc(), destination);
   return DOCLINK_AREA;
 }
 
@@ -389,8 +364,8 @@ int PDFiumPage::GetLink(int char_index, PDFiumPage::LinkTarget* target) {
   pp::Point origin(
       PageToScreen(pp::Point(), 1.0, left, top, right, bottom, 0).point());
   for (size_t i = 0; i < links_.size(); ++i) {
-    for (size_t j = 0; j < links_[i].rects.size(); ++j) {
-      if (links_[i].rects[j].Contains(origin)) {
+    for (const auto& rect : links_[i].rects) {
+      if (rect.Contains(origin)) {
         if (target)
           target->url = links_[i].url;
         return i;
@@ -402,16 +377,15 @@ int PDFiumPage::GetLink(int char_index, PDFiumPage::LinkTarget* target) {
 
 std::vector<int> PDFiumPage::GetLinks(pp::Rect text_area,
                                       std::vector<LinkTarget>* targets) {
+  std::vector<int> links;
   if (!available_)
-    return std::vector<int>();
+    return links;
 
   CalculateLinks();
 
-  std::vector<int> links;
-
   for (size_t i = 0; i < links_.size(); ++i) {
-    for (size_t j = 0; j < links_[i].rects.size(); ++j) {
-      if (links_[i].rects[j].Intersects(text_area)) {
+    for (const auto& rect : links_[i].rects) {
+      if (rect.Intersects(text_area)) {
         if (targets) {
           LinkTarget target;
           target.url = links_[i].url;
@@ -433,7 +407,7 @@ void PDFiumPage::CalculateLinks() {
   int count = FPDFLink_CountWebLinks(links);
   for (int i = 0; i < count; ++i) {
     base::string16 url;
-    int url_length = FPDFLink_GetURL(links, i, NULL, 0);
+    int url_length = FPDFLink_GetURL(links, i, nullptr, 0);
     if (url_length > 0) {
       PDFiumAPIStringBufferAdapter<base::string16> api_string_adapter(
           &url, url_length, true);
@@ -486,25 +460,33 @@ pp::Rect PDFiumPage::PageToScreen(const pp::Point& offset,
                                   double top,
                                   double right,
                                   double bottom,
-                                  int rotation) {
+                                  int rotation) const {
   if (!available_)
     return pp::Rect();
 
-  int new_left, new_top, new_right, new_bottom;
-  FPDF_PageToDevice(
-      page_,
-      static_cast<int>((rect_.x() - offset.x()) * zoom),
-      static_cast<int>((rect_.y() - offset.y()) * zoom),
-      static_cast<int>(ceil(rect_.width() * zoom)),
-      static_cast<int>(ceil(rect_.height() * zoom)),
-      rotation, left, top, &new_left, &new_top);
-  FPDF_PageToDevice(
-      page_,
-      static_cast<int>((rect_.x() - offset.x()) * zoom),
-      static_cast<int>((rect_.y() - offset.y()) * zoom),
-      static_cast<int>(ceil(rect_.width() * zoom)),
-      static_cast<int>(ceil(rect_.height() * zoom)),
-      rotation, right, bottom, &new_right, &new_bottom);
+  double start_x = (rect_.x() - offset.x()) * zoom;
+  double start_y = (rect_.y() - offset.y()) * zoom;
+  double size_x = rect_.width() * zoom;
+  double size_y = rect_.height() * zoom;
+  if (!base::IsValueInRangeForNumericType<int>(start_x) ||
+      !base::IsValueInRangeForNumericType<int>(start_y) ||
+      !base::IsValueInRangeForNumericType<int>(size_x) ||
+      !base::IsValueInRangeForNumericType<int>(size_y)) {
+    return pp::Rect();
+  }
+
+  int new_left;
+  int new_top;
+  int new_right;
+  int new_bottom;
+  FPDF_PageToDevice(page_, static_cast<int>(start_x), static_cast<int>(start_y),
+                    static_cast<int>(ceil(size_x)),
+                    static_cast<int>(ceil(size_y)), rotation, left, top,
+                    &new_left, &new_top);
+  FPDF_PageToDevice(page_, static_cast<int>(start_x), static_cast<int>(start_y),
+                    static_cast<int>(ceil(size_x)),
+                    static_cast<int>(ceil(size_y)), rotation, right, bottom,
+                    &new_right, &new_bottom);
 
   // If the PDF is rotated, the horizontal/vertical coordinates could be
   // flipped.  See
@@ -514,8 +496,17 @@ pp::Rect PDFiumPage::PageToScreen(const pp::Point& offset,
   if (new_bottom < new_top)
     std::swap(new_bottom, new_top);
 
-  return pp::Rect(
-      new_left, new_top, new_right - new_left + 1, new_bottom - new_top + 1);
+  base::CheckedNumeric<int32_t> new_size_x = new_right;
+  new_size_x -= new_left;
+  new_size_x += 1;
+  base::CheckedNumeric<int32_t> new_size_y = new_bottom;
+  new_size_y -= new_top;
+  new_size_y += 1;
+  if (!new_size_x.IsValid() || !new_size_y.IsValid())
+    return pp::Rect();
+
+  return pp::Rect(new_left, new_top, new_size_x.ValueOrDie(),
+                  new_size_y.ValueOrDie());
 }
 
 PDFiumPage::ScopedLoadCounter::ScopedLoadCounter(PDFiumPage* page)
@@ -527,10 +518,10 @@ PDFiumPage::ScopedLoadCounter::~ScopedLoadCounter() {
   page_->loading_count_--;
 }
 
-PDFiumPage::Link::Link() {
-}
+PDFiumPage::Link::Link() = default;
 
-PDFiumPage::Link::~Link() {
-}
+PDFiumPage::Link::Link(const Link& that) = default;
+
+PDFiumPage::Link::~Link() = default;
 
 }  // namespace chrome_pdf

@@ -5,17 +5,18 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_APP_LIST_VIEW_DELEGATE_H_
 #define CHROME_BROWSER_UI_APP_LIST_APP_LIST_VIEW_DELEGATE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
-#include "base/observer_list.h"
 #include "base/scoped_observer.h"
-#include "chrome/browser/profiles/profile_info_cache_observer.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/search/hotword_client.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/browser/ui/app_list/start_page_observer.h"
@@ -48,10 +49,6 @@ namespace content {
 struct SpeechRecognitionSessionPreamble;
 }
 
-namespace gfx {
-class ImageSkia;
-}
-
 #if defined(USE_ASH)
 class AppSyncUIStateWatcher;
 #endif
@@ -59,7 +56,7 @@ class AppSyncUIStateWatcher;
 class AppListViewDelegate : public app_list::AppListViewDelegate,
                             public app_list::StartPageObserver,
                             public HotwordClient,
-                            public ProfileInfoCacheObserver,
+                            public ProfileAttributesStorage::Observer,
                             public SigninManagerBase::Observer,
                             public SigninManagerFactory::Observer,
                             public content::NotificationObserver,
@@ -83,9 +80,6 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
   void SetProfileByPath(const base::FilePath& profile_path) override;
   app_list::AppListModel* GetModel() override;
   app_list::SpeechUIModel* GetSpeechUI() override;
-  void GetShortcutPathForApp(
-      const std::string& app_id,
-      const base::Callback<void(const base::FilePath&)>& callback) override;
   void StartSearch() override;
   void StopSearch() override;
   void OpenSearchResult(app_list::SearchResult* result,
@@ -99,8 +93,6 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
   void ViewInitialized() override;
   void Dismiss() override;
   void ViewClosing() override;
-  gfx::ImageSkia GetWindowIcon() override;
-  void OpenSettings() override;
   void OpenHelp() override;
   void OpenFeedback() override;
   void StartSpeechRecognition() override;
@@ -115,9 +107,6 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
 #endif
   bool IsSpeechRecognitionEnabled() override;
   const Users& GetUsers() const override;
-  bool ShouldCenterWindow() const override;
-  void AddObserver(app_list::AppListViewDelegateObserver* observer) override;
-  void RemoveObserver(app_list::AppListViewDelegateObserver* observer) override;
 
   // Overridden from TemplateURLServiceObserver:
   void OnTemplateURLServiceChanged() override;
@@ -134,7 +123,7 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
 
   // Overridden from app_list::StartPageObserver:
   void OnSpeechResult(const base::string16& result, bool is_final) override;
-  void OnSpeechSoundLevelChanged(int16 level) override;
+  void OnSpeechSoundLevelChanged(int16_t level) override;
   void OnSpeechRecognitionStateChanged(
       app_list::SpeechRecognitionState new_state) override;
 
@@ -156,7 +145,7 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
   void GoogleSignedOut(const std::string& account_id,
                        const std::string& username) override;
 
-  // Overridden from ProfileInfoCacheObserver:
+  // Overridden from ProfileAttributesStorage::Observer:
   void OnProfileAdded(const base::FilePath& profile_path) override;
   void OnProfileWasRemoved(const base::FilePath& profile_path,
                            const base::string16& profile_name) override;
@@ -179,11 +168,11 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
 
   // Note: order ensures |search_resource_manager_| is destroyed before
   // |speech_ui_|.
-  scoped_ptr<app_list::SpeechUIModel> speech_ui_;
-  scoped_ptr<app_list::SearchResourceManager> search_resource_manager_;
-  scoped_ptr<app_list::SearchController> search_controller_;
+  std::unique_ptr<app_list::SpeechUIModel> speech_ui_;
+  std::unique_ptr<app_list::SearchResourceManager> search_resource_manager_;
+  std::unique_ptr<app_list::SearchController> search_controller_;
 
-  scoped_ptr<app_list::LauncherPageEventDispatcher>
+  std::unique_ptr<app_list::LauncherPageEventDispatcher>
       launcher_page_event_dispatcher_;
 
   base::TimeDelta auto_launch_timeout_;
@@ -193,10 +182,8 @@ class AppListViewDelegate : public app_list::AppListViewDelegate,
   Users users_;
 
 #if defined(USE_ASH)
-  scoped_ptr<AppSyncUIStateWatcher> app_sync_ui_state_watcher_;
+  std::unique_ptr<AppSyncUIStateWatcher> app_sync_ui_state_watcher_;
 #endif
-
-  base::ObserverList<app_list::AppListViewDelegateObserver> observers_;
 
   ScopedObserver<TemplateURLService, AppListViewDelegate>
       template_url_service_observer_;

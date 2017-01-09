@@ -8,48 +8,49 @@
 #include <string>
 
 #include "base/macros.h"
-#include "chrome/browser/ui/app_list/app_list_syncable_service.h"
+#include "base/memory/scoped_vector.h"
+#include "chrome/browser/ui/app_list/app_context_menu_delegate.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_icon.h"
+#include "chrome/browser/ui/app_list/chrome_app_list_item.h"
 #include "ui/app_list/app_list_item.h"
 
-namespace content {
-class BrowserContext;
-}  // content
+class ArcAppContextMenu;
+class Profile;
 
 // ArcAppItem represents an ARC app in app list.
-class ArcAppItem : public app_list::AppListItem,
-                   public ArcAppIcon::Observer {
+class ArcAppItem : public ChromeAppListItem,
+                   public ArcAppIcon::Observer,
+                   app_list::AppContextMenuDelegate {
  public:
   static const char kItemType[];
 
-  ArcAppItem(content::BrowserContext* context,
+  ArcAppItem(Profile* profile,
              const app_list::AppListSyncableService::SyncItem* sync_item,
              const std::string& id,
-             const std::string& name,
-             bool ready);
+             const std::string& name);
   ~ArcAppItem() override;
 
   void SetName(const std::string& name);
 
+  // AppListItem overrides:
   void Activate(int event_flags) override;
+  ui::MenuModel* GetContextMenuModel() override;
   const char* GetItemType() const override;
+
+  // app_list::AppContextMenuDelegate overrides:
+  void ExecuteLaunchCommand(int event_flags) override;
 
   ArcAppIcon* arc_app_icon() { return arc_app_icon_.get(); }
 
-  bool ready() const { return ready_; }
-
-  void SetReady(bool ready);
-
   // ArcAppIcon::Observer
-  void OnIconUpdated() override;
+  void OnIconUpdated(ArcAppIcon* icon) override;
 
  private:
   // Updates the app item's icon, if necessary making it gray.
   void UpdateIcon();
 
-  content::BrowserContext* context_;
-  bool ready_;
-  scoped_ptr<ArcAppIcon> arc_app_icon_;
+  std::unique_ptr<ArcAppIcon> arc_app_icon_;
+  std::unique_ptr<ArcAppContextMenu> context_menu_;
 
   DISALLOW_COPY_AND_ASSIGN(ArcAppItem);
 };

@@ -30,38 +30,36 @@
 namespace blink {
 
 class SVGTextPositioningElement : public SVGTextContentElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static SVGTextPositioningElement* elementFromLayoutObject(LayoutObject&);
+  DEFINE_WRAPPERTYPEINFO();
 
-    SVGAnimatedLengthList* x() { return m_x.get(); }
-    SVGAnimatedLengthList* y() { return m_y.get(); }
-    SVGAnimatedLengthList* dx() { return m_dx.get(); }
-    SVGAnimatedLengthList* dy() { return m_dy.get(); }
-    SVGAnimatedNumberList* rotate() { return m_rotate.get(); }
+ public:
+  SVGAnimatedLengthList* x() { return m_x.get(); }
+  SVGAnimatedLengthList* y() { return m_y.get(); }
+  SVGAnimatedLengthList* dx() { return m_dx.get(); }
+  SVGAnimatedLengthList* dy() { return m_dy.get(); }
+  SVGAnimatedNumberList* rotate() { return m_rotate.get(); }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-protected:
-    SVGTextPositioningElement(const QualifiedName&, Document&);
+ protected:
+  SVGTextPositioningElement(const QualifiedName&, Document&);
 
-    void svgAttributeChanged(const QualifiedName&) final;
-    bool isTextPositioning() const final { return true; }
+  void svgAttributeChanged(const QualifiedName&) final;
+  bool isTextPositioning() const final { return true; }
 
-    RefPtrWillBeMember<SVGAnimatedLengthList> m_x;
-    RefPtrWillBeMember<SVGAnimatedLengthList> m_y;
-    RefPtrWillBeMember<SVGAnimatedLengthList> m_dx;
-    RefPtrWillBeMember<SVGAnimatedLengthList> m_dy;
-    RefPtrWillBeMember<SVGAnimatedNumberList> m_rotate;
+  Member<SVGAnimatedLengthList> m_x;
+  Member<SVGAnimatedLengthList> m_y;
+  Member<SVGAnimatedLengthList> m_dx;
+  Member<SVGAnimatedLengthList> m_dy;
+  Member<SVGAnimatedNumberList> m_rotate;
 };
 
-inline bool isSVGTextPositioningElement(const SVGElement& element)
-{
-    return element.isTextPositioning();
+inline bool isSVGTextPositioningElement(const SVGElement& element) {
+  return element.isTextPositioning();
 }
 
 DEFINE_SVGELEMENT_TYPE_CASTS_WITH_FUNCTION(SVGTextPositioningElement);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGTextPositioningElement_h
+#endif  // SVGTextPositioningElement_h

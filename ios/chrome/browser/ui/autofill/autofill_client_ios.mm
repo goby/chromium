@@ -4,19 +4,27 @@
 
 #import "ios/chrome/browser/ui/autofill/autofill_client_ios.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/prefs/pref_service.h"
-#include "components/autofill/core/browser/autofill_cc_infobar_delegate.h"
+#include "base/memory/ptr_util.h"
+#include "components/autofill/core/browser/autofill_credit_card_filling_infobar_delegate_mobile.h"
+#include "components/autofill/core/browser/autofill_save_card_infobar_delegate_mobile.h"
+#include "components/autofill/core/browser/autofill_save_card_infobar_mobile.h"
 #include "components/autofill/core/browser/ui/card_unmask_prompt_view.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service.h"
 #include "components/autofill/core/common/autofill_pref_names.h"
+#include "components/infobars/core/infobar.h"
 #include "components/infobars/core/infobar_manager.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/password_manager/core/browser/password_generation_manager.h"
+#include "components/prefs/pref_service.h"
 #include "google_apis/gaia/identity_provider.h"
+#include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/autofill/personal_data_manager_factory.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
+#include "ios/chrome/browser/infobars/infobar_utils.h"
 #include "ios/chrome/browser/web_data_service_factory.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 
 namespace autofill {
@@ -26,12 +34,12 @@ AutofillClientIOS::AutofillClientIOS(
     infobars::InfoBarManager* infobar_manager,
     id<AutofillClientIOSBridge> bridge,
     password_manager::PasswordGenerationManager* password_generation_manager,
-    scoped_ptr<IdentityProvider> identity_provider)
+    std::unique_ptr<IdentityProvider> identity_provider)
     : browser_state_(browser_state),
       infobar_manager_(infobar_manager),
       bridge_(bridge),
       password_generation_manager_(password_generation_manager),
-      identity_provider_(identity_provider.Pass()),
+      identity_provider_(std::move(identity_provider)),
       unmask_controller_(browser_state->GetPrefs(),
                          browser_state->IsOffTheRecord()) {}
 
@@ -40,7 +48,7 @@ AutofillClientIOS::~AutofillClientIOS() {
 }
 
 PersonalDataManager* AutofillClientIOS::GetPersonalDataManager() {
-  return PersonalDataManagerFactory::GetForBrowserState(
+  return autofill::PersonalDataManagerFactory::GetForBrowserState(
       browser_state_->GetOriginalChromeBrowserState());
 }
 
@@ -48,15 +56,17 @@ PrefService* AutofillClientIOS::GetPrefs() {
   return browser_state_->GetPrefs();
 }
 
+// TODO(crbug.com/535784): Implement this when adding credit card upload.
+syncer::SyncService* AutofillClientIOS::GetSyncService() {
+  return nullptr;
+}
+
 IdentityProvider* AutofillClientIOS::GetIdentityProvider() {
   return identity_provider_.get();
 }
 
-// TODO(dconnelly): [Merge] Does this need a real implementation?
-// http://crbug.com/468326
-rappor::RapporService* AutofillClientIOS::GetRapporService() {
-  NOTIMPLEMENTED();
-  return nullptr;
+rappor::RapporServiceImpl* AutofillClientIOS::GetRapporServiceImpl() {
+  return GetApplicationContext()->GetRapporServiceImpl();
 }
 
 void AutofillClientIOS::ShowAutofillSettings() {
@@ -65,10 +75,11 @@ void AutofillClientIOS::ShowAutofillSettings() {
 
 void AutofillClientIOS::ShowUnmaskPrompt(
     const CreditCard& card,
+    UnmaskCardReason reason,
     base::WeakPtr<CardUnmaskDelegate> delegate) {
   ios::ChromeBrowserProvider* provider = ios::GetChromeBrowserProvider();
   unmask_controller_.ShowPrompt(
-      provider->CreateCardUnmaskPromptView(&unmask_controller_), card,
+      provider->CreateCardUnmaskPromptView(&unmask_controller_), card, reason,
       delegate);
 }
 
@@ -77,19 +88,39 @@ void AutofillClientIOS::OnUnmaskVerificationResult(PaymentsRpcResult result) {
 }
 
 void AutofillClientIOS::ConfirmSaveCreditCardLocally(
+    const CreditCard& card,
     const base::Closure& callback) {
   // This method is invoked synchronously from
   // AutofillManager::OnFormSubmitted(); at the time of detecting that a form
   // was submitted, the WebContents is guaranteed to be live. Since the
   // InfoBarService is a WebContentsUserData, it must also be alive at this
   // time.
-  AutofillCCInfoBarDelegate::Create(infobar_manager_, this, callback);
+  infobar_manager_->AddInfoBar(CreateSaveCardInfoBarMobile(
+      base::MakeUnique<AutofillSaveCardInfoBarDelegateMobile>(
+          false, card, std::unique_ptr<base::DictionaryValue>(nullptr),
+          callback)));
 }
 
 void AutofillClientIOS::ConfirmSaveCreditCardToCloud(
-    const base::Closure& callback,
-    scoped_ptr<base::DictionaryValue> legal_message) {
-  NOTIMPLEMENTED();
+    const CreditCard& card,
+    std::unique_ptr<base::DictionaryValue> legal_message,
+    const base::Closure& callback) {
+  infobar_manager_->AddInfoBar(CreateSaveCardInfoBarMobile(
+      base::MakeUnique<AutofillSaveCardInfoBarDelegateMobile>(
+          true, card, std::move(legal_message), callback)));
+}
+
+void AutofillClientIOS::ConfirmCreditCardFillAssist(
+    const CreditCard& card,
+    const base::Closure& callback) {
+  auto infobar_delegate =
+      base::MakeUnique<AutofillCreditCardFillingInfoBarDelegateMobile>(
+          card, callback);
+  auto* raw_delegate = infobar_delegate.get();
+  if (infobar_manager_->AddInfoBar(
+          ::CreateConfirmInfoBar(std::move(infobar_delegate)))) {
+    raw_delegate->set_was_shown();
+  }
 }
 
 void AutofillClientIOS::LoadRiskData(
@@ -102,13 +133,6 @@ bool AutofillClientIOS::HasCreditCardScanFeature() {
 }
 
 void AutofillClientIOS::ScanCreditCard(const CreditCardScanCallback& callback) {
-  NOTREACHED();
-}
-
-void AutofillClientIOS::ShowRequestAutocompleteDialog(
-    const FormData& form,
-    content::RenderFrameHost* render_frame_host,
-    const ResultCallback& callback) {
   NOTREACHED();
 }
 
@@ -129,10 +153,6 @@ bool AutofillClientIOS::IsAutocompleteEnabled() {
   return GetPrefs()->GetBoolean(prefs::kAutofillEnabled);
 }
 
-void AutofillClientIOS::HideRequestAutocompleteDialog() {
-  NOTREACHED();
-}
-
 void AutofillClientIOS::UpdateAutofillPopupDataListValues(
     const std::vector<base::string16>& values,
     const std::vector<base::string16>& labels) {
@@ -143,7 +163,7 @@ void AutofillClientIOS::PropagateAutofillPredictions(
     content::RenderFrameHost* rfh,
     const std::vector<FormStructure*>& forms) {
   if (password_generation_manager_) {
-    password_generation_manager_->DetectAccountCreationForms(forms);
+    password_generation_manager_->DetectFormsEligibleForGeneration(forms);
   }
 }
 
@@ -166,6 +186,18 @@ bool AutofillClientIOS::IsContextSecure(const GURL& form_origin) {
 void AutofillClientIOS::OnFirstUserGestureObserved() {
   // TODO(gcasto): [Merge 306796] http://crbug.com/439425 Verify if this method
   // needs a real implementation or not.
+  NOTIMPLEMENTED();
+}
+
+bool AutofillClientIOS::ShouldShowSigninPromo() {
+  return false;
+}
+
+void AutofillClientIOS::StartSigninFlow() {
+  NOTIMPLEMENTED();
+}
+
+void AutofillClientIOS::ShowHttpNotSecureExplanation() {
   NOTIMPLEMENTED();
 }
 

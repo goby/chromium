@@ -33,33 +33,40 @@
 
 #include "core/workers/SharedWorkerRepositoryClient.h"
 #include "wtf/Noncopyable.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/PassRefPtr.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
 class WebSharedWorkerRepositoryClient;
 
-class SharedWorkerRepositoryClientImpl final : public SharedWorkerRepositoryClient {
-    WTF_MAKE_NONCOPYABLE(SharedWorkerRepositoryClientImpl);
-    USING_FAST_MALLOC(SharedWorkerRepositoryClientImpl);
-public:
-    static PassOwnPtr<SharedWorkerRepositoryClientImpl> create(WebSharedWorkerRepositoryClient* client)
-    {
-        return adoptPtr(new SharedWorkerRepositoryClientImpl(client));
-    }
+class SharedWorkerRepositoryClientImpl final
+    : public SharedWorkerRepositoryClient {
+  WTF_MAKE_NONCOPYABLE(SharedWorkerRepositoryClientImpl);
+  USING_FAST_MALLOC(SharedWorkerRepositoryClientImpl);
 
-    ~SharedWorkerRepositoryClientImpl() override { }
+ public:
+  static std::unique_ptr<SharedWorkerRepositoryClientImpl> create(
+      WebSharedWorkerRepositoryClient* client) {
+    return WTF::wrapUnique(new SharedWorkerRepositoryClientImpl(client));
+  }
 
-    void connect(SharedWorker*, PassOwnPtr<WebMessagePortChannel>, const KURL&, const String& name, ExceptionState&) override;
-    void documentDetached(Document*) override;
+  ~SharedWorkerRepositoryClientImpl() override {}
 
-private:
-    explicit SharedWorkerRepositoryClientImpl(WebSharedWorkerRepositoryClient*);
+  void connect(SharedWorker*,
+               WebMessagePortChannelUniquePtr,
+               const KURL&,
+               const String& name,
+               ExceptionState&) override;
+  void documentDetached(Document*) override;
 
-    WebSharedWorkerRepositoryClient* m_client;
+ private:
+  explicit SharedWorkerRepositoryClientImpl(WebSharedWorkerRepositoryClient*);
+
+  WebSharedWorkerRepositoryClient* m_client;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SharedWorkerRepositoryClientImpl_h
+#endif  // SharedWorkerRepositoryClientImpl_h

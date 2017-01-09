@@ -5,13 +5,11 @@
 #ifndef BLIMP_NET_COMMON_H_
 #define BLIMP_NET_COMMON_H_
 
-#include <string>
+#include <stddef.h>
 
 #include "blimp/net/blimp_net_export.h"
 
 namespace blimp {
-
-class BlimpMessage;
 
 // TODO(kmarshall): Apply SCIENCE to determine a better constant here.
 // See crbug.com/542464

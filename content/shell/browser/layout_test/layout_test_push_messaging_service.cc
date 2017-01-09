@@ -8,6 +8,7 @@
 #include "base/logging.h"
 #include "base/macros.h"
 #include "content/public/browser/permission_type.h"
+#include "content/public/common/push_subscription_options.h"
 #include "content/shell/browser/layout_test/layout_test_browser_context.h"
 #include "content/shell/browser/layout_test/layout_test_content_browser_client.h"
 #include "content/shell/browser/layout_test/layout_test_permission_manager.h"
@@ -38,13 +39,13 @@ static_assert(sizeof(kAuthentication) == 12,
               "The fake authentication key must be at least 12 bytes in size.");
 
 blink::WebPushPermissionStatus ToWebPushPermissionStatus(
-    PermissionStatus status) {
+    blink::mojom::PermissionStatus status) {
   switch (status) {
-    case PERMISSION_STATUS_GRANTED:
+    case blink::mojom::PermissionStatus::GRANTED:
       return blink::WebPushPermissionStatusGranted;
-    case PERMISSION_STATUS_DENIED:
+    case blink::mojom::PermissionStatus::DENIED:
       return blink::WebPushPermissionStatusDenied;
-    case PERMISSION_STATUS_ASK:
+    case blink::mojom::PermissionStatus::ASK:
       return blink::WebPushPermissionStatusPrompt;
   }
 
@@ -60,35 +61,35 @@ LayoutTestPushMessagingService::LayoutTestPushMessagingService() {
 LayoutTestPushMessagingService::~LayoutTestPushMessagingService() {
 }
 
-GURL LayoutTestPushMessagingService::GetPushEndpoint() {
-  return GURL("https://example.com/LayoutTestEndpoint");
+GURL LayoutTestPushMessagingService::GetEndpoint(bool standard_protocol) const {
+  return GURL(standard_protocol ? "https://example.com/StandardizedEndpoint/"
+                                : "https://example.com/LayoutTestEndpoint/");
 }
 
 void LayoutTestPushMessagingService::SubscribeFromDocument(
     const GURL& requesting_origin,
-    int64 service_worker_registration_id,
-    const std::string& sender_id,
+    int64_t service_worker_registration_id,
     int renderer_id,
     int render_frame_id,
-    bool user_visible,
+    const PushSubscriptionOptions& options,
     const PushMessagingService::RegisterCallback& callback) {
   SubscribeFromWorker(requesting_origin, service_worker_registration_id,
-                      sender_id, user_visible, callback);
+                      options, callback);
 }
 
 void LayoutTestPushMessagingService::SubscribeFromWorker(
     const GURL& requesting_origin,
-    int64 service_worker_registration_id,
-    const std::string& sender_id,
-    bool user_visible,
+    int64_t service_worker_registration_id,
+    const PushSubscriptionOptions& options,
     const PushMessagingService::RegisterCallback& callback) {
-  if (GetPermissionStatus(requesting_origin, requesting_origin, user_visible) ==
+  if (GetPermissionStatus(requesting_origin, options.user_visible_only) ==
       blink::WebPushPermissionStatusGranted) {
     std::vector<uint8_t> p256dh(
         kTestP256Key, kTestP256Key + arraysize(kTestP256Key));
     std::vector<uint8_t> auth(
         kAuthentication, kAuthentication + arraysize(kAuthentication));
 
+    is_subscribed_ = true;
     callback.Run("layoutTestRegistrationId", p256dh, auth,
                  PUSH_REGISTRATION_STATUS_SUCCESS_FROM_PUSH_SERVICE);
   } else {
@@ -98,10 +99,11 @@ void LayoutTestPushMessagingService::SubscribeFromWorker(
   }
 }
 
-void LayoutTestPushMessagingService::GetPublicEncryptionKey(
+void LayoutTestPushMessagingService::GetEncryptionInfo(
     const GURL& origin,
     int64_t service_worker_registration_id,
-    const PublicKeyCallback& callback) {
+    const std::string& sender_id,
+    const EncryptionInfoCallback& callback) {
   std::vector<uint8_t> p256dh(
         kTestP256Key, kTestP256Key + arraysize(kTestP256Key));
   std::vector<uint8_t> auth(
@@ -111,16 +113,12 @@ void LayoutTestPushMessagingService::GetPublicEncryptionKey(
 }
 
 blink::WebPushPermissionStatus
-LayoutTestPushMessagingService::GetPermissionStatus(
-    const GURL& requesting_origin,
-    const GURL& embedding_origin,
-    bool user_visible) {
+LayoutTestPushMessagingService::GetPermissionStatus(const GURL& origin,
+                                                    bool user_visible) {
   return ToWebPushPermissionStatus(LayoutTestContentBrowserClient::Get()
-      ->GetLayoutTestBrowserContext()
-      ->GetLayoutTestPermissionManager()
-      ->GetPermissionStatus(PermissionType::PUSH_MESSAGING,
-                            requesting_origin,
-                            embedding_origin));
+      ->browser_context()
+      ->GetPermissionManager()
+      ->GetPermissionStatus(PermissionType::PUSH_MESSAGING, origin, origin));
 }
 
 bool LayoutTestPushMessagingService::SupportNonVisibleMessages() {
@@ -129,10 +127,17 @@ bool LayoutTestPushMessagingService::SupportNonVisibleMessages() {
 
 void LayoutTestPushMessagingService::Unsubscribe(
     const GURL& requesting_origin,
-    int64 service_worker_registration_id,
+    int64_t service_worker_registration_id,
     const std::string& sender_id,
     const UnregisterCallback& callback) {
-  callback.Run(PUSH_UNREGISTRATION_STATUS_SUCCESS_UNREGISTERED);
+  ClearPushSubscriptionId(
+      LayoutTestContentBrowserClient::Get()->browser_context(),
+      requesting_origin, service_worker_registration_id,
+      base::Bind(callback,
+                 is_subscribed_
+                     ? PUSH_UNREGISTRATION_STATUS_SUCCESS_UNREGISTERED
+                     : PUSH_UNREGISTRATION_STATUS_SUCCESS_WAS_NOT_REGISTERED));
+  is_subscribed_ = false;
 }
 
 }  // namespace content

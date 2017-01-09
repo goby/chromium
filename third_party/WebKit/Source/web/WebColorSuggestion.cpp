@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebColorSuggestion.h"
 
 #include "platform/ColorSuggestion.h"
@@ -38,16 +37,14 @@
 namespace blink {
 
 WebColorSuggestion::WebColorSuggestion(const ColorSuggestion& suggestion)
-    : color(static_cast<WebColor>(suggestion.color.rgb()))
-    , label(suggestion.label)
-{
+    : color(static_cast<WebColor>(suggestion.color.rgb())),
+      label(suggestion.label) {}
+
+WebColorSuggestion& WebColorSuggestion::operator=(
+    const ColorSuggestion& suggestion) {
+  color = static_cast<WebColor>(suggestion.color.rgb());
+  label = suggestion.label;
+  return *this;
 }
 
-WebColorSuggestion& WebColorSuggestion::operator=(const ColorSuggestion& suggestion)
-{
-    color = static_cast<WebColor>(suggestion.color.rgb());
-    label = suggestion.label;
-    return *this;
-}
-
-} // namespace blink
+}  // namespace blink

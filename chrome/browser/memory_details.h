@@ -9,11 +9,13 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/process/process_handle.h"
 #include "base/process/process_metrics.h"
 #include "base/strings/string16.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/site_details.h"
 #include "content/public/common/process_type.h"
 
@@ -39,6 +41,7 @@ struct ProcessMemoryInformation {
       RendererProcessType rtype);
 
   ProcessMemoryInformation();
+  ProcessMemoryInformation(const ProcessMemoryInformation& other);
   ~ProcessMemoryInformation();
 
   // Default ordering is by private memory consumption.
@@ -56,10 +59,6 @@ struct ProcessMemoryInformation {
   base::string16 product_name;
   // The number of processes which this memory represents.
   int num_processes;
-  // A process is a diagnostics process if it is rendering about:memory.
-  // Mark this specially so that it can avoid counting it in its own
-  // results.
-  bool is_diagnostics;
   // If this is a child process of Chrome, what type (i.e. plugin) it is.
   int process_type;
   // If this is a renderer process, what type it is.
@@ -113,20 +112,13 @@ struct ProcessData {
 //    }
 class MemoryDetails : public base::RefCountedThreadSafe<MemoryDetails> {
  public:
-  enum CollectionMode {
-    // Collect metrics from Chrome and other running browsers.
-    FROM_ALL_BROWSERS,
-    // Collect metrics from Chrome processes only.
-    FROM_CHROME_ONLY
-  };
-
   // Constructor.
   MemoryDetails();
 
-  // Initiate updating the current memory details (based on |mode|).  These are
-  // fetched asynchronously because data must be collected from multiple
-  // threads. OnDetailsAvailable will be called when this process is complete.
-  void StartFetch(CollectionMode mode);
+  // Initiate updating the current memory details.  These are fetched
+  // asynchronously because data must be collected from multiple threads.
+  // OnDetailsAvailable will be called when this process is complete.
+  void StartFetch();
 
   virtual void OnDetailsAvailable() = 0;
 
@@ -156,7 +148,7 @@ class MemoryDetails : public base::RefCountedThreadSafe<MemoryDetails> {
   // on that thread.  The data will be used by about:memory.  When finished,
   // invokes back to the file thread to run the rest of the about:memory
   // functionality.
-  void CollectChildInfoOnIOThread(CollectionMode mode);
+  void CollectChildInfoOnIOThread();
 
   // Collect current process information from the OS and store it
   // for processing.  If data has already been collected, clears old
@@ -165,7 +157,6 @@ class MemoryDetails : public base::RefCountedThreadSafe<MemoryDetails> {
   // and is fairly expensive to run, hence it's run on the blocking pool.
   // The parameter holds information about processes from the IO thread.
   void CollectProcessData(
-      CollectionMode mode,
       const std::vector<ProcessMemoryInformation>& child_info);
 
   // Collect child process information on the UI thread.  Information about

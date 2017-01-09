@@ -5,11 +5,13 @@
 #ifndef MEDIA_BASE_BIND_TO_CURRENT_LOOP_H_
 #define MEDIA_BASE_BIND_TO_CURRENT_LOOP_H_
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/scoped_vector.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 // This is a helper utility for base::Bind()ing callbacks to the current
 // MessageLoop. The typical use is when |a| (of class |A|) wants to hand a
@@ -26,15 +28,17 @@
 
 namespace media {
 
-// Mimic base::internal::CallbackForward, replacing p.Pass() with
+// Mimic base::internal::CallbackForward, replacing std::move(p) with
 // base::Passed(&p) to account for the extra layer of indirection.
 namespace internal {
 template <typename T>
 T& TrampolineForward(T& t) { return t; }
 
 template <typename T, typename R>
-base::internal::PassedWrapper<scoped_ptr<T, R> > TrampolineForward(
-    scoped_ptr<T, R>& p) { return base::Passed(&p); }
+base::internal::PassedWrapper<std::unique_ptr<T, R>> TrampolineForward(
+    std::unique_ptr<T, R>& p) {
+  return base::Passed(&p);
+}
 
 template <typename T>
 base::internal::PassedWrapper<ScopedVector<T> > TrampolineForward(
@@ -44,6 +48,15 @@ base::internal::PassedWrapper<ScopedVector<T> > TrampolineForward(
 // type parameter.  Then define specializations where the type is a function
 // returning void and taking zero or more arguments.
 template <typename Sig> struct TrampolineHelper;
+
+template <>
+struct TrampolineHelper<void()> {
+  static void Run(
+      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+      const base::Closure& cb) {
+    task_runner->PostTask(FROM_HERE, cb);
+  }
+};
 
 template <typename... Args>
 struct TrampolineHelper<void(Args...)> {

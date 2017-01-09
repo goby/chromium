@@ -5,12 +5,14 @@
 #ifndef COMPONENTS_NACL_RENDERER_NEXE_LOAD_MANAGER_H_
 #define COMPONENTS_NACL_RENDERER_NEXE_LOAD_MANAGER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/shared_memory.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
@@ -61,9 +63,10 @@ class NexeLoadManager {
   // The intent is for this class to only expose functions for reporting a
   // load state transition (e.g., ReportLoadError, ReportProgress,
   // ReportLoadAbort, etc.)
-  void set_trusted_plugin_channel(scoped_ptr<TrustedPluginChannel> channel);
+  void set_trusted_plugin_channel(
+      std::unique_ptr<TrustedPluginChannel> channel);
   void set_manifest_service_channel(
-      scoped_ptr<ManifestServiceChannel> channel);
+      std::unique_ptr<ManifestServiceChannel> channel);
 
   PP_NaClReadyState nacl_ready_state();
   void set_nacl_ready_state(PP_NaClReadyState ready_state);
@@ -85,6 +88,8 @@ class NexeLoadManager {
 
   bool RequestNaClManifest(const std::string& url);
   void ProcessNaClManifest(const std::string& program_url);
+
+  void CloseTrustedPluginChannel();
 
   // URL resolution support.
   // plugin_base_url is the URL used for resolving relative URLs used in
@@ -184,8 +189,8 @@ class NexeLoadManager {
 
   base::SharedMemoryHandle crash_info_shmem_handle_;
 
-  scoped_ptr<TrustedPluginChannel> trusted_plugin_channel_;
-  scoped_ptr<ManifestServiceChannel> manifest_service_channel_;
+  std::unique_ptr<TrustedPluginChannel> trusted_plugin_channel_;
+  std::unique_ptr<ManifestServiceChannel> manifest_service_channel_;
   base::WeakPtrFactory<NexeLoadManager> weak_factory_;
 };
 

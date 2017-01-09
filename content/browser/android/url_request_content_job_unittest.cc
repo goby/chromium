@@ -4,17 +4,19 @@
 
 #include "content/browser/android/url_request_content_job.h"
 
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/test_file_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
-
 
 namespace content {
 
@@ -26,7 +28,8 @@ class CallbacksJobFactory : public net::URLRequestJobFactory {
  public:
   class JobObserver {
    public:
-    virtual void OnJobCreated(URLRequestContentJob* job) = 0;
+    virtual ~JobObserver() {}
+    virtual void OnJobCreated() = 0;
   };
 
   CallbacksJobFactory(const base::FilePath& path, JobObserver* observer)
@@ -44,8 +47,8 @@ class CallbacksJobFactory : public net::URLRequestJobFactory {
             request,
             network_delegate,
             path_,
-            const_cast<base::MessageLoop*>(&message_loop_)->task_runner());
-    observer_->OnJobCreated(job);
+            base::ThreadTaskRunnerHandle::Get());
+    observer_->OnJobCreated();
     return job;
   }
 
@@ -75,23 +78,21 @@ class CallbacksJobFactory : public net::URLRequestJobFactory {
   }
 
  private:
-  base::MessageLoop message_loop_;
   base::FilePath path_;
   JobObserver* observer_;
 };
 
 class JobObserverImpl : public CallbacksJobFactory::JobObserver {
  public:
-  void OnJobCreated(URLRequestContentJob* job) override {
-    jobs_.push_back(job);
-  }
+  JobObserverImpl() : num_jobs_created_(0) {}
+  ~JobObserverImpl() override {}
 
-  typedef std::vector<scoped_refptr<URLRequestContentJob> > JobList;
+  void OnJobCreated() override { ++num_jobs_created_; }
 
-  const JobList& jobs() { return jobs_; }
+  int num_jobs_created() const { return num_jobs_created_; }
 
- protected:
-  JobList jobs_;
+ private:
+  int num_jobs_created_;
 };
 
 // A simple holder for start/end used in http range requests.
@@ -119,6 +120,7 @@ class URLRequestContentJobTest : public testing::Test {
   // retrieved.
   void RunRequest(const Range* range);
 
+  base::MessageLoop message_loop_;
   JobObserverImpl observer_;
   net::TestURLRequestContext context_;
   net::TestDelegate delegate_;
@@ -141,13 +143,13 @@ void URLRequestContentJobTest::RunRequest(const Range* range) {
   base::FilePath path = base::InsertImageIntoMediaStore(image_file);
   EXPECT_TRUE(path.IsContentUri());
   EXPECT_TRUE(base::PathExists(path));
-  int64 file_size;
+  int64_t file_size;
   EXPECT_TRUE(base::GetFileSize(path, &file_size));
   EXPECT_LT(0, file_size);
   CallbacksJobFactory factory(path, &observer_);
   context_.set_job_factory(&factory);
 
-  scoped_ptr<net::URLRequest> request(context_.CreateRequest(
+  std::unique_ptr<net::URLRequest> request(context_.CreateRequest(
       GURL(path.value()), net::DEFAULT_PRIORITY, &delegate_));
   int expected_length = file_size;
   if (range) {
@@ -158,11 +160,12 @@ void URLRequestContentJobTest::RunRequest(const Range* range) {
         base::StringPrintf("bytes=%d-%d", range->start, range->end);
     request->SetExtraRequestHeaderByName(
         net::HttpRequestHeaders::kRange, range_value, true /*overwrite*/);
-    if (range->start <= file_size)
-      expected_length =
-          std::min(range->end, (int) (file_size - 1)) - range->start + 1;
-    else
+    if (range->start <= file_size) {
+      expected_length = std::min(range->end, static_cast<int>(file_size - 1)) -
+                        range->start + 1;
+    } else {
       expected_length = 0;
+    }
   }
   request->Start();
 
@@ -170,8 +173,8 @@ void URLRequestContentJobTest::RunRequest(const Range* range) {
   loop.Run();
 
   EXPECT_FALSE(delegate_.request_failed());
-  ASSERT_EQ(observer_.jobs().size(), 1u);
-  EXPECT_EQ(delegate_.bytes_received(), expected_length);
+  ASSERT_EQ(1, observer_.num_jobs_created());
+  EXPECT_EQ(expected_length, delegate_.bytes_received());
 }
 
 TEST_F(URLRequestContentJobTest, ContentURIWithoutRange) {

@@ -5,22 +5,24 @@
 #ifndef CHROME_BROWSER_POLICY_CLOUD_CLOUD_POLICY_INVALIDATOR_H_
 #define CHROME_BROWSER_POLICY_CLOUD_CLOUD_POLICY_INVALIDATOR_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/invalidation/public/invalidation.h"
 #include "components/invalidation/public/invalidation_handler.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "google/cacheinvalidation/include/types.h"
-#include "policy/proto/device_management_backend.pb.h"
 
 namespace base {
 class Clock;
@@ -71,8 +73,8 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
       enterprise_management::DeviceRegisterRequest::Type type,
       CloudPolicyCore* core,
       const scoped_refptr<base::SequencedTaskRunner>& task_runner,
-      scoped_ptr<base::Clock> clock,
-      int64 highest_handled_invalidation_version);
+      std::unique_ptr<base::Clock> clock,
+      int64_t highest_handled_invalidation_version);
   ~CloudPolicyInvalidator() override;
 
   // Initializes the invalidator. No invalidations will be generated before this
@@ -91,7 +93,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   }
 
   // The highest invalidation version that was handled already.
-  int64 highest_handled_invalidation_version() const {
+  int64_t highest_handled_invalidation_version() const {
     return highest_handled_invalidation_version_;
   }
 
@@ -150,7 +152,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
 
   // Determine if an invalidation has expired.
   // |version| is the version of the invalidation, or zero for unknown.
-  bool IsInvalidationExpired(int64 version);
+  bool IsInvalidationExpired(int64_t version);
 
   // Get the kMetricPolicyRefresh histogram metric which should be incremented
   // when a policy is stored.
@@ -182,7 +184,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   const scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // The clock.
-  scoped_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Clock> clock_;
 
   // The invalidation service.
   invalidation::InvalidationService* invalidation_service_;
@@ -211,8 +213,8 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
 
   // The version of the latest invalidation received. This is compared to
   // the invalidation version of policy stored to determine when the
-  // invalidated policy is up-to-date.
-  int64 invalidation_version_;
+  // invalidated policy is up to date.
+  int64_t invalidation_version_;
 
   // The number of invalidations with unknown version received. Since such
   // invalidations do not provide a version number, this count is used to set
@@ -220,10 +222,10 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
   int unknown_version_invalidation_count_;
 
   // The highest invalidation version that was handled already.
-  int64 highest_handled_invalidation_version_;
+  int64_t highest_handled_invalidation_version_;
 
   // The most up to date invalidation.
-  scoped_ptr<syncer::Invalidation> invalidation_;
+  std::unique_ptr<syncer::Invalidation> invalidation_;
 
   // The maximum random delay, in ms, between receiving an invalidation and
   // fetching the new policy.
@@ -231,7 +233,7 @@ class CloudPolicyInvalidator : public syncer::InvalidationHandler,
 
   // The hash value of the current policy. This is used to determine if a new
   // policy is different from the current one.
-  uint32 policy_hash_value_;
+  uint32_t policy_hash_value_;
 
   // A thread checker to make sure that callbacks are invoked on the correct
   // thread.

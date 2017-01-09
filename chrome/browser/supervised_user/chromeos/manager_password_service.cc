@@ -6,7 +6,7 @@
 
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_authentication.h"
 #include "chrome/browser/chromeos/login/supervised/supervised_user_constants.h"
@@ -46,11 +46,13 @@ void ManagerPasswordService::Init(
            user_manager::UserManager::Get()->GetUsers()) {
     if (user->GetType() != user_manager::USER_TYPE_SUPERVISED)
       continue;
-    if (user_id != supervised_user_manager->GetManagerUserId(user->email()))
+    if (user_id !=
+        supervised_user_manager->GetManagerUserId(
+            user->GetAccountId().GetUserEmail()))
       continue;
-    OnSharedSettingsChange(
-        supervised_user_manager->GetUserSyncId(user->email()),
-        supervised_users::kChromeOSPasswordData);
+    OnSharedSettingsChange(supervised_user_manager->GetUserSyncId(
+                               user->GetAccountId().GetUserEmail()),
+                           supervised_users::kChromeOSPasswordData);
   }
 }
 
@@ -82,23 +84,21 @@ void ManagerPasswordService::OnSharedSettingsChange(
   SupervisedUserAuthentication* auth =
       supervised_user_manager->GetAuthentication();
 
-  if (!auth->NeedPasswordChange(user->email(), dict) &&
-      !auth->HasIncompleteKey(user->email())) {
+  if (!auth->NeedPasswordChange(user->GetAccountId().GetUserEmail(), dict) &&
+      !auth->HasIncompleteKey(user->GetAccountId().GetUserEmail())) {
     return;
   }
-  scoped_ptr<base::DictionaryValue> wrapper(dict->DeepCopy());
+  std::unique_ptr<base::DictionaryValue> wrapper(dict->DeepCopy());
   user_service_->GetSupervisedUsersAsync(
       base::Bind(&ManagerPasswordService::GetSupervisedUsersCallback,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 su_id,
-                 user->email(),
-                 Passed(&wrapper)));
+                 weak_ptr_factory_.GetWeakPtr(), su_id,
+                 user->GetAccountId().GetUserEmail(), Passed(&wrapper)));
 }
 
 void ManagerPasswordService::GetSupervisedUsersCallback(
     const std::string& sync_su_id,
     const std::string& user_id,
-    scoped_ptr<base::DictionaryValue> password_data,
+    std::unique_ptr<base::DictionaryValue> password_data,
     const base::DictionaryValue* supervised_users) {
   const base::DictionaryValue* supervised_user = NULL;
   if (!supervised_users->GetDictionary(sync_su_id, &supervised_user))
@@ -191,7 +191,7 @@ void ManagerPasswordService::OnAuthenticationFailure(
 void ManagerPasswordService::OnAddKeySuccess(
     const UserContext& master_key_context,
     const std::string& user_id,
-    scoped_ptr<base::DictionaryValue> password_data) {
+    std::unique_ptr<base::DictionaryValue> password_data) {
   VLOG(0) << "Password changed for " << user_id;
   UMA_HISTOGRAM_ENUMERATION(
       "ManagedUsers.ChromeOS.PasswordChange",

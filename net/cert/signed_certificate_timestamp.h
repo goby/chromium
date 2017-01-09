@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
 #include "net/base/hash_value.h"
@@ -92,7 +93,7 @@ struct NET_EXPORT SignedCertificateTimestamp
 
   // Version enum in RFC 6962, Section 3.2.
   enum Version {
-    SCT_VERSION_1 = 0,
+    V1 = 0,
   };
 
   // Source of the SCT - supplementary, not defined in CT RFC.

@@ -8,24 +8,34 @@
 #include <string>
 
 #include "content/common/content_export.h"
+#include "url/gurl.h"
 
 namespace content {
 
 enum PresentationConnectionState {
+  PRESENTATION_CONNECTION_STATE_CONNECTING,
   PRESENTATION_CONNECTION_STATE_CONNECTED,
   PRESENTATION_CONNECTION_STATE_CLOSED,
   PRESENTATION_CONNECTION_STATE_TERMINATED
+};
+
+// TODO(imcheng): Use WENT_AWAY for 1-UA mode when it is implemented
+// (crbug.com/513859).
+enum PresentationConnectionCloseReason {
+  PRESENTATION_CONNECTION_CLOSE_REASON_CONNECTION_ERROR,
+  PRESENTATION_CONNECTION_CLOSE_REASON_CLOSED,
+  PRESENTATION_CONNECTION_CLOSE_REASON_WENT_AWAY
 };
 
 // TODO(imcheng): Rename to PresentationConnectionInfo.
 // Represents a presentation session that has been established via either
 // browser actions or Presentation API.
 struct CONTENT_EXPORT PresentationSessionInfo {
-  PresentationSessionInfo(const std::string& presentation_url,
+  PresentationSessionInfo(const GURL& presentation_url,
                           const std::string& presentation_id);
   ~PresentationSessionInfo();
 
-  const std::string presentation_url;
+  const GURL presentation_url;
   const std::string presentation_id;
 };
 

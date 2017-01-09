@@ -4,11 +4,16 @@
 
 #include "google_apis/gcm/base/socket_stream.h"
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/strings/string_piece.h"
+#include "net/base/ip_address.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/socket_test_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -62,12 +67,12 @@ class GCMSocketStreamTest : public testing::Test {
   // SocketStreams and their data providers.
   ReadList mock_reads_;
   WriteList mock_writes_;
-  scoped_ptr<net::StaticSocketDataProvider> data_provider_;
-  scoped_ptr<SocketInputStream> socket_input_stream_;
-  scoped_ptr<SocketOutputStream> socket_output_stream_;
+  std::unique_ptr<net::StaticSocketDataProvider> data_provider_;
+  std::unique_ptr<SocketInputStream> socket_input_stream_;
+  std::unique_ptr<SocketOutputStream> socket_output_stream_;
 
   // net:: components.
-  scoped_ptr<net::StreamSocket> socket_;
+  std::unique_ptr<net::StreamSocket> socket_;
   net::MockClientSocketFactory socket_factory_;
   net::AddressList address_list_;
 
@@ -75,9 +80,8 @@ class GCMSocketStreamTest : public testing::Test {
 };
 
 GCMSocketStreamTest::GCMSocketStreamTest() {
-  net::IPAddressNumber ip_number;
-  net::ParseIPLiteralToNumber("127.0.0.1", &ip_number);
-  address_list_ = net::AddressList::CreateFromIPAddress(ip_number, 5228);
+  address_list_ = net::AddressList::CreateFromIPAddress(
+      net::IPAddress::IPv4Localhost(), 5228);
 }
 
 GCMSocketStreamTest::~GCMSocketStreamTest() {}
@@ -113,8 +117,8 @@ base::StringPiece GCMSocketStreamTest::DoInputStreamRead(int bytes) {
       break;
     total_bytes_read += size;
     if (initial_buffer) {  // Verify the buffer doesn't skip data.
-      EXPECT_EQ(static_cast<const uint8*>(initial_buffer) + total_bytes_read,
-                static_cast<const uint8*>(buffer) + size);
+      EXPECT_EQ(static_cast<const uint8_t*>(initial_buffer) + total_bytes_read,
+                static_cast<const uint8_t*>(buffer) + size);
     } else {
       initial_buffer = buffer;
     }
@@ -173,7 +177,7 @@ void GCMSocketStreamTest::WaitForData(int msg_size) {
 
 void GCMSocketStreamTest::OpenConnection() {
   socket_ = socket_factory_.CreateTransportClientSocket(
-      address_list_, NULL, net::NetLog::Source());
+      address_list_, NULL, NULL, net::NetLogSource());
   socket_->Connect(
       base::Bind(&GCMSocketStreamTest::ConnectCallback,
                  base::Unretained(this)));

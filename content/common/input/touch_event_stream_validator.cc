@@ -6,8 +6,8 @@
 
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
-#include "content/common/input/web_input_event_traits.h"
 #include "content/common/input/web_touch_event_traits.h"
+#include "ui/events/blink/web_input_event_traits.h"
 
 using base::StringPrintf;
 using blink::WebInputEvent;
@@ -48,6 +48,10 @@ bool TouchEventStreamValidator::Validate(const WebTouchEvent& event,
   DCHECK(error_msg);
   error_msg->clear();
 
+  // TouchScrollStarted is not part of a regular touch event stream.
+  if (event.type == WebInputEvent::TouchScrollStarted)
+    return true;
+
   WebTouchEvent previous_event = previous_event_;
   previous_event_ = event;
 
@@ -58,7 +62,7 @@ bool TouchEventStreamValidator::Validate(const WebTouchEvent& event,
 
   if (!WebInputEvent::isTouchEventType(event.type)) {
     error_msg->append(StringPrintf("Touch event has invalid type: %s\n",
-                                   WebInputEventTraits::GetName(event.type)));
+                                   WebInputEvent::GetName(event.type)));
   }
 
   // Allow "hard" restarting of touch stream validation. This is necessary
@@ -156,7 +160,7 @@ bool TouchEventStreamValidator::Validate(const WebTouchEvent& event,
   if (!found_valid_state_for_type) {
     error_msg->append(
         StringPrintf("No valid touch point corresponding to event type: %s\n",
-                     WebInputEventTraits::GetName(event.type)));
+                     WebInputEvent::GetName(event.type)));
   }
 
   return error_msg->empty();

@@ -34,8 +34,11 @@ gfx::NativeWindow AppListControllerDelegateImpl::GetAppListWindow() {
   return service_->GetAppListWindow();
 }
 
-gfx::ImageSkia AppListControllerDelegateImpl::GetWindowIcon() {
-  return gfx::ImageSkia();
+bool AppListControllerDelegateImpl::IsAppOpen(
+    const std::string& extension_id) const {
+  // Not expected to call in non-ash environment.
+  NOTREACHED();
+  return false;
 }
 
 bool AppListControllerDelegateImpl::IsAppPinned(
@@ -84,7 +87,7 @@ void AppListControllerDelegateImpl::CreateNewWindow(Profile* profile,
                                                    bool incognito) {
   Profile* window_profile = incognito ?
       profile->GetOffTheRecordProfile() : profile;
-  chrome::NewEmptyWindow(window_profile, chrome::HOST_DESKTOP_TYPE_NATIVE);
+  chrome::NewEmptyWindow(window_profile);
 }
 
 void AppListControllerDelegateImpl::OpenURL(Profile* profile,
@@ -111,8 +114,9 @@ void AppListControllerDelegateImpl::LaunchApp(
     int event_flags) {
   AppListServiceImpl::RecordAppListAppLaunch();
 
-  AppLaunchParams params(profile, extension, NEW_FOREGROUND_TAB,
-                         extensions::SOURCE_APP_LAUNCHER);
+  AppLaunchParams params = CreateAppLaunchParamsUserContainer(
+      profile, extension, WindowOpenDisposition::NEW_FOREGROUND_TAB,
+      extensions::SOURCE_APP_LAUNCHER);
 
   if (source != LAUNCH_FROM_UNKNOWN &&
       extension->id() == extensions::kWebStoreAppId) {
@@ -124,7 +128,6 @@ void AppListControllerDelegateImpl::LaunchApp(
         AppListSourceToString(source));
   }
 
-  FillLaunchParams(&params);
   OpenApplication(params);
 }
 
@@ -137,8 +140,6 @@ void AppListControllerDelegateImpl::ShowForProfileByPath(
 bool AppListControllerDelegateImpl::ShouldShowUserIcon() {
   return g_browser_process->profile_manager()->GetNumberOfProfiles() > 1;
 }
-
-void AppListControllerDelegateImpl::FillLaunchParams(AppLaunchParams* params) {}
 
 void AppListControllerDelegateImpl::OnCloseCreateShortcutsPrompt(
     bool created) {

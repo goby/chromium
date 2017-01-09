@@ -7,8 +7,8 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/views/layout/layout_manager.h"
 
@@ -99,7 +99,6 @@ class VIEWS_EXPORT BoxLayout : public LayoutManager {
 
   // Overridden from views::LayoutManager:
   void Installed(View* host) override;
-  void Uninstalled(View* host) override;
   void ViewRemoved(View* host, View* view) override;
   void Layout(View* host) override;
   gfx::Size GetPreferredSize(const View* host) const override;

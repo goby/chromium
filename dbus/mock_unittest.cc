@@ -2,12 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "dbus/message.h"
 #include "dbus/mock_bus.h"
 #include "dbus/mock_exported_object.h"
@@ -82,7 +84,7 @@ class MockTest : public testing::Test {
  protected:
   std::string response_string_;
   base::MessageLoop message_loop_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   scoped_refptr<MockBus> mock_bus_;
   scoped_refptr<MockObjectProxy> mock_proxy_;
 
@@ -96,7 +98,7 @@ class MockTest : public testing::Test {
       MessageReader reader(method_call);
       std::string text_message;
       if (reader.PopString(&text_message)) {
-        scoped_ptr<Response> response = Response::CreateEmpty();
+        std::unique_ptr<Response> response = Response::CreateEmpty();
         MessageWriter writer(response.get());
         writer.AppendString(text_message);
         return response.release();
@@ -120,11 +122,10 @@ class MockTest : public testing::Test {
       int timeout_ms,
       ObjectProxy::ResponseCallback response_callback) {
     Response* response = CreateMockProxyResponse(method_call, timeout_ms);
-    message_loop_.PostTask(FROM_HERE,
-                           base::Bind(&MockTest::RunResponseCallback,
-                                      base::Unretained(this),
-                                      response_callback,
-                                      response));
+    message_loop_.task_runner()->PostTask(
+        FROM_HERE,
+        base::Bind(&MockTest::RunResponseCallback, base::Unretained(this),
+                   response_callback, response));
   }
 
   // Runs the given response callback with the given response.
@@ -151,9 +152,8 @@ TEST_F(MockTest, CallMethodAndBlock) {
   writer.AppendString(kHello);
 
   // Call the method.
-  scoped_ptr<Response> response(
-      proxy->CallMethodAndBlock(&method_call,
-                                ObjectProxy::TIMEOUT_USE_DEFAULT));
+  std::unique_ptr<Response> response(proxy->CallMethodAndBlock(
+      &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT));
 
   // Check the response.
   ASSERT_TRUE(response.get());
@@ -175,9 +175,8 @@ TEST_F(MockTest, CallMethodAndBlockWithErrorDetails) {
 
   ScopedDBusError error;
   // Call the method.
-  scoped_ptr<Response> response(
-      proxy->CallMethodAndBlockWithErrorDetails(
-          &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT, &error));
+  std::unique_ptr<Response> response(proxy->CallMethodAndBlockWithErrorDetails(
+      &method_call, ObjectProxy::TIMEOUT_USE_DEFAULT, &error));
 
   // Check the response.
   ASSERT_FALSE(response.get());

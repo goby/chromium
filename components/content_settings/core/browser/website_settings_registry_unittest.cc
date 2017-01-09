@@ -2,14 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/content_settings/core/browser/website_settings_registry.h"
+
 #include "base/logging.h"
-#include "base/prefs/pref_registry.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/content_settings/core/browser/website_settings_info.h"
-#include "components/content_settings/core/browser/website_settings_registry.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_registry.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace content_settings {
@@ -23,30 +25,34 @@ class WebsiteSettingsRegistryTest : public testing::Test {
 };
 
 TEST_F(WebsiteSettingsRegistryTest, Get) {
-  // CONTENT_SETTINGS_TYPE_APP_BANNER should be registered.
+  // CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE should be registered.
   const WebsiteSettingsInfo* info =
-      registry()->Get(CONTENT_SETTINGS_TYPE_APP_BANNER);
+      registry()->Get(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE);
   ASSERT_TRUE(info);
-  EXPECT_EQ(CONTENT_SETTINGS_TYPE_APP_BANNER, info->type());
-  EXPECT_EQ("app-banner", info->name());
+  EXPECT_EQ(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE, info->type());
+  EXPECT_EQ("auto-select-certificate", info->name());
 }
 
 TEST_F(WebsiteSettingsRegistryTest, GetByName) {
   // Random string shouldn't be registered.
   EXPECT_FALSE(registry()->GetByName("abc"));
 
-  // "app-banner" should be registered.
-  const WebsiteSettingsInfo* info = registry()->GetByName("app-banner");
+  // "auto-select-certificate" should be registered.
+  const WebsiteSettingsInfo* info =
+      registry()->GetByName("auto-select-certificate");
   ASSERT_TRUE(info);
-  EXPECT_EQ(CONTENT_SETTINGS_TYPE_APP_BANNER, info->type());
-  EXPECT_EQ("app-banner", info->name());
-  EXPECT_EQ(registry()->Get(CONTENT_SETTINGS_TYPE_APP_BANNER), info);
+  EXPECT_EQ(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE, info->type());
+  EXPECT_EQ("auto-select-certificate", info->name());
+  EXPECT_EQ(registry()->Get(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE),
+            info);
 
   // Register a new setting.
   registry()->Register(static_cast<ContentSettingsType>(10), "test", nullptr,
                        WebsiteSettingsInfo::UNSYNCABLE,
                        WebsiteSettingsInfo::LOSSY,
-                       WebsiteSettingsInfo::TOP_LEVEL_DOMAIN_ONLY_SCOPE);
+                       WebsiteSettingsInfo::TOP_LEVEL_ORIGIN_ONLY_SCOPE,
+                       WebsiteSettingsRegistry::ALL_PLATFORMS,
+                       WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   info = registry()->GetByName("test");
   ASSERT_TRUE(info);
   EXPECT_EQ(10, info->type());
@@ -54,24 +60,40 @@ TEST_F(WebsiteSettingsRegistryTest, GetByName) {
   EXPECT_EQ(registry()->Get(static_cast<ContentSettingsType>(10)), info);
 }
 
+TEST_F(WebsiteSettingsRegistryTest, GetPlatformDependent) {
+#if defined(OS_IOS)
+  // App banner shouldn't be registered on iOS.
+  EXPECT_FALSE(registry()->Get(CONTENT_SETTINGS_TYPE_APP_BANNER));
+#else
+  // App banner should be registered on other platforms.
+  EXPECT_TRUE(registry()->Get(CONTENT_SETTINGS_TYPE_APP_BANNER));
+#endif
+
+  // Auto select certificate is registered on all platforms.
+  EXPECT_TRUE(registry()->Get(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE));
+}
+
 TEST_F(WebsiteSettingsRegistryTest, Properties) {
-  // "app-banner" should be registered.
+  // "auto-select-certificate" should be registered.
   const WebsiteSettingsInfo* info =
-      registry()->Get(CONTENT_SETTINGS_TYPE_APP_BANNER);
+      registry()->Get(CONTENT_SETTINGS_TYPE_AUTO_SELECT_CERTIFICATE);
   ASSERT_TRUE(info);
-  EXPECT_EQ("profile.content_settings.exceptions.app_banner",
+  EXPECT_EQ("profile.content_settings.exceptions.auto_select_certificate",
             info->pref_name());
-  EXPECT_EQ("profile.default_content_setting_values.app_banner",
+  EXPECT_EQ("profile.default_content_setting_values.auto_select_certificate",
             info->default_value_pref_name());
   ASSERT_FALSE(info->initial_default_value());
-  EXPECT_EQ(PrefRegistry::LOSSY_PREF, info->GetPrefRegistrationFlags());
+  EXPECT_EQ(PrefRegistry::NO_REGISTRATION_FLAGS,
+            info->GetPrefRegistrationFlags());
 
   // Register a new setting.
   registry()->Register(static_cast<ContentSettingsType>(10), "test",
-                       make_scoped_ptr(new base::FundamentalValue(999)),
+                       base::MakeUnique<base::FundamentalValue>(999),
                        WebsiteSettingsInfo::SYNCABLE,
                        WebsiteSettingsInfo::LOSSY,
-                       WebsiteSettingsInfo::TOP_LEVEL_DOMAIN_ONLY_SCOPE);
+                       WebsiteSettingsInfo::TOP_LEVEL_ORIGIN_ONLY_SCOPE,
+                       WebsiteSettingsRegistry::ALL_PLATFORMS,
+                       WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
   info = registry()->Get(static_cast<ContentSettingsType>(10));
   ASSERT_TRUE(info);
   EXPECT_EQ("profile.content_settings.exceptions.test", info->pref_name());
@@ -80,19 +102,27 @@ TEST_F(WebsiteSettingsRegistryTest, Properties) {
   int setting;
   ASSERT_TRUE(info->initial_default_value()->GetAsInteger(&setting));
   EXPECT_EQ(999, setting);
+#if defined(OS_ANDROID) || defined(OS_IOS)
+  EXPECT_EQ(PrefRegistry::LOSSY_PREF, info->GetPrefRegistrationFlags());
+#else
   EXPECT_EQ(PrefRegistry::LOSSY_PREF |
                 user_prefs::PrefRegistrySyncable::SYNCABLE_PREF,
             info->GetPrefRegistrationFlags());
-  EXPECT_EQ(WebsiteSettingsInfo::TOP_LEVEL_DOMAIN_ONLY_SCOPE,
+#endif
+  EXPECT_EQ(WebsiteSettingsInfo::TOP_LEVEL_ORIGIN_ONLY_SCOPE,
             info->scoping_type());
+  EXPECT_EQ(WebsiteSettingsInfo::INHERIT_IN_INCOGNITO,
+            info->incognito_behavior());
 }
 
 TEST_F(WebsiteSettingsRegistryTest, Iteration) {
   registry()->Register(static_cast<ContentSettingsType>(10), "test",
-                       make_scoped_ptr(new base::FundamentalValue(999)),
+                       base::MakeUnique<base::FundamentalValue>(999),
                        WebsiteSettingsInfo::SYNCABLE,
                        WebsiteSettingsInfo::LOSSY,
-                       WebsiteSettingsInfo::TOP_LEVEL_DOMAIN_ONLY_SCOPE);
+                       WebsiteSettingsInfo::TOP_LEVEL_ORIGIN_ONLY_SCOPE,
+                       WebsiteSettingsRegistry::ALL_PLATFORMS,
+                       WebsiteSettingsInfo::INHERIT_IN_INCOGNITO);
 
   bool found = false;
   for (const WebsiteSettingsInfo* info : *registry()) {

@@ -6,23 +6,27 @@
 #define CHROME_BROWSER_PREFS_PREF_METRICS_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/keyed_service/content/browser_context_keyed_service_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/syncable_prefs/synced_pref_change_registrar.h"
-
-class PrefRegistrySimple;
+#include "components/sync_preferences/synced_pref_change_registrar.h"
 
 // PrefMetricsService is responsible for recording prefs-related UMA stats.
 class PrefMetricsService : public KeyedService {
  public:
   explicit PrefMetricsService(Profile* profile);
   ~PrefMetricsService() override;
+
+  // Records metrics about the state of the homepage on launch.
+  static void RecordHomePageLaunchMetrics(bool show_home_button,
+                                          bool homepage_is_ntp,
+                                          const GURL& homepage_url);
 
   class Factory : public BrowserContextKeyedServiceFactory {
    public:
@@ -83,7 +87,7 @@ class PrefMetricsService : public KeyedService {
   PrefService* prefs_;
   PrefService* local_state_;
 
-  scoped_ptr<syncable_prefs::SyncedPrefChangeRegistrar>
+  std::unique_ptr<sync_preferences::SyncedPrefChangeRegistrar>
       synced_pref_change_registrar_;
 
   base::WeakPtrFactory<PrefMetricsService> weak_factory_;

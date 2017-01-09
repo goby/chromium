@@ -4,26 +4,34 @@
 
 package org.chromium.content.browser.webcontents;
 
+import android.annotation.SuppressLint;
 import android.graphics.Bitmap;
-import android.graphics.Color;
 import android.graphics.Rect;
 import android.os.Bundle;
 import android.os.Parcel;
 import android.os.ParcelUuid;
 import android.os.Parcelable;
 
+import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.content.browser.AppWebMessagePort;
+import org.chromium.content.browser.AppWebMessagePortService;
+import org.chromium.content.browser.MediaSessionImpl;
 import org.chromium.content_public.browser.AccessibilitySnapshotCallback;
 import org.chromium.content_public.browser.AccessibilitySnapshotNode;
 import org.chromium.content_public.browser.ContentBitmapCallback;
+import org.chromium.content_public.browser.ImageDownloadCallback;
 import org.chromium.content_public.browser.JavaScriptCallback;
+import org.chromium.content_public.browser.MessagePortService;
 import org.chromium.content_public.browser.NavigationController;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
 import org.chromium.ui.accessibility.AXTextStyle;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 /**
@@ -55,6 +63,8 @@ import java.util.UUID;
      * A {@link android.os.Parcelable.Creator} instance that is used to build
      * {@link WebContentsImpl} objects from a {@link Parcel}.
      */
+    // TODO(crbug.com/635567): Fix this properly.
+    @SuppressLint("ParcelClassLoader")
     public static final Parcelable.Creator<WebContents> CREATOR =
             new Parcelable.Creator<WebContents>() {
                 @Override
@@ -83,6 +93,10 @@ import java.util.UUID;
 
     // Lazily created proxy observer for handling all Java-based WebContentsObservers.
     private WebContentsObserverProxy mObserverProxy;
+
+    // The media session for this WebContents. It is constructed by the native MediaSession and has
+    // the same life time as native MediaSession.
+    private MediaSessionImpl mMediaSession;
 
     private WebContentsImpl(
             long nativeWebContentsAndroid, NavigationController navigationController) {
@@ -130,6 +144,9 @@ import java.util.UUID;
 
     @Override
     public void destroy() {
+        if (!ThreadUtils.runningOnUiThread()) {
+            throw new IllegalStateException("Attempting to destroy WebContents on non-UI thread");
+        }
         if (mNativeWebContentsAndroid != 0) nativeDestroyWebContents(mNativeWebContentsAndroid);
     }
 
@@ -203,12 +220,6 @@ import java.util.UUID;
     }
 
     @Override
-    public void insertCSS(String css) {
-        if (isDestroyed()) return;
-        nativeInsertCSS(mNativeWebContentsAndroid, css);
-    }
-
-    @Override
     public void onHide() {
         nativeOnHide(mNativeWebContentsAndroid);
     }
@@ -219,8 +230,13 @@ import java.util.UUID;
     }
 
     @Override
-    public void releaseMediaPlayers() {
-        nativeReleaseMediaPlayers(mNativeWebContentsAndroid);
+    public void suspendAllMediaPlayers() {
+        nativeSuspendAllMediaPlayers(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public void setAudioMuted(boolean mute) {
+        nativeSetAudioMuted(mNativeWebContentsAndroid, mute);
     }
 
     @Override
@@ -255,18 +271,12 @@ import java.util.UUID;
     }
 
     @Override
-    public void updateTopControlsState(boolean enableHiding, boolean enableShowing,
-            boolean animate) {
-        nativeUpdateTopControlsState(mNativeWebContentsAndroid, enableHiding,
-                enableShowing, animate);
+    public void updateBrowserControlsState(
+            boolean enableHiding, boolean enableShowing, boolean animate) {
+        nativeUpdateBrowserControlsState(
+                mNativeWebContentsAndroid, enableHiding, enableShowing, animate);
     }
 
-    @Override
-    public void showImeIfNeeded() {
-        nativeShowImeIfNeeded(mNativeWebContentsAndroid);
-    }
-
-    @Override
     public void scrollFocusedEditableNodeIntoView() {
         // The native side keeps track of whether the zoom and scroll actually occurred. It is
         // more efficient to do it this way and sometimes fire an unnecessary message rather
@@ -287,6 +297,7 @@ import java.util.UUID;
 
     @Override
     public String getUrl() {
+        if (isDestroyed()) return null;
         return nativeGetURL(mNativeWebContentsAndroid);
     }
 
@@ -307,13 +318,14 @@ import java.util.UUID;
 
     @Override
     public void evaluateJavaScript(String script, JavaScriptCallback callback) {
-        if (isDestroyed()) return;
+        if (isDestroyed() || script == null) return;
         nativeEvaluateJavaScript(mNativeWebContentsAndroid, script, callback);
     }
 
     @Override
     @VisibleForTesting
     public void evaluateJavaScriptForTests(String script, JavaScriptCallback callback) {
+        if (script == null) return;
         nativeEvaluateJavaScriptForTests(mNativeWebContentsAndroid, script, callback);
     }
 
@@ -323,8 +335,18 @@ import java.util.UUID;
     }
 
     @Override
-    public void sendMessageToFrame(String frameName, String message, String targetOrigin) {
-        nativeSendMessageToFrame(mNativeWebContentsAndroid, frameName, message, targetOrigin);
+    public void postMessageToFrame(
+            String frameName, String message, String targetOrigin, int[] sentPortIds) {
+        nativePostMessageToFrame(
+                mNativeWebContentsAndroid, frameName, message, targetOrigin, sentPortIds);
+    }
+
+    @Override
+    public AppWebMessagePort[] createMessageChannel(MessagePortService service)
+            throws IllegalStateException {
+        AppWebMessagePort[] ports = ((AppWebMessagePortService) service).createMessageChannel();
+        nativeCreateMessageChannel(mNativeWebContentsAndroid, ports);
+        return ports;
     }
 
     @Override
@@ -339,38 +361,13 @@ import java.util.UUID;
     }
 
     @Override
-    public int getThemeColor(int defaultColor) {
-        int color = nativeGetThemeColor(mNativeWebContentsAndroid);
-        if (color == Color.TRANSPARENT) return defaultColor;
-
-        return (color | 0xFF000000);
+    public int getThemeColor() {
+        return nativeGetThemeColor(mNativeWebContentsAndroid);
     }
 
     @Override
-    public void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback,
-            float offsetY, float scrollX) {
-        nativeRequestAccessibilitySnapshot(mNativeWebContentsAndroid, callback,
-                offsetY, scrollX);
-    }
-
-    @Override
-    public void resumeMediaSession() {
-        nativeResumeMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void suspendMediaSession() {
-        nativeSuspendMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public void stopMediaSession() {
-        nativeStopMediaSession(mNativeWebContentsAndroid);
-    }
-
-    @Override
-    public String getEncoding() {
-        return nativeGetEncoding(mNativeWebContentsAndroid);
+    public void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback) {
+        nativeRequestAccessibilitySnapshot(mNativeWebContentsAndroid, callback);
     }
 
     // root node can be null if parsing fails.
@@ -387,12 +384,11 @@ import java.util.UUID;
     }
 
     @CalledByNative
-    private static AccessibilitySnapshotNode createAccessibilitySnapshotNode(int x,
-            int y, int scrollX, int scrollY, int width, int height, String text,
+    private static AccessibilitySnapshotNode createAccessibilitySnapshotNode(int parentRelativeLeft,
+            int parentRelativeTop, int width, int height, boolean isRootNode, String text,
             int color, int bgcolor, float size, int textStyle, String className) {
+        AccessibilitySnapshotNode node = new AccessibilitySnapshotNode(text, className);
 
-        AccessibilitySnapshotNode node = new AccessibilitySnapshotNode(x, y, scrollX,
-                scrollY, width, height, text, className);
         // if size is smaller than 0, then style information does not exist.
         if (size >= 0.0) {
             boolean bold = (textStyle & AXTextStyle.text_style_bold) > 0;
@@ -401,6 +397,7 @@ import java.util.UUID;
             boolean lineThrough = (textStyle & AXTextStyle.text_style_line_through) > 0;
             node.setStyle(color, bgcolor, size, bold, italic, underline, lineThrough);
         }
+        node.setLocationInfo(parentRelativeLeft, parentRelativeTop, width, height, isRootNode);
         return node;
     }
 
@@ -427,13 +424,61 @@ import java.util.UUID;
     public void getContentBitmapAsync(Bitmap.Config config, float scale, Rect srcRect,
             ContentBitmapCallback callback) {
         nativeGetContentBitmap(mNativeWebContentsAndroid, callback, config, scale,
-                srcRect.top, srcRect.left, srcRect.width(), srcRect.height());
+                srcRect.left, srcRect.top, srcRect.width(), srcRect.height());
     }
 
     @CalledByNative
     private void onGetContentBitmapFinished(ContentBitmapCallback callback, Bitmap bitmap,
             int response) {
         callback.onFinishGetBitmap(bitmap, response);
+    }
+
+    @Override
+    public void reloadLoFiImages() {
+        nativeReloadLoFiImages(mNativeWebContentsAndroid);
+    }
+
+    @Override
+    public int downloadImage(String url, boolean isFavicon, int maxBitmapSize,
+            boolean bypassCache, ImageDownloadCallback callback) {
+        return nativeDownloadImage(mNativeWebContentsAndroid,
+                url, isFavicon, maxBitmapSize, bypassCache, callback);
+    }
+
+    @CalledByNative
+    private void onDownloadImageFinished(ImageDownloadCallback callback, int id, int httpStatusCode,
+            String imageUrl, List<Bitmap> bitmaps, List<Rect> sizes) {
+        callback.onFinishDownloadImage(id, httpStatusCode, imageUrl, bitmaps, sizes);
+    }
+
+    @Override
+    public void dismissTextHandles() {
+        nativeDismissTextHandles(mNativeWebContentsAndroid);
+    }
+
+    @CalledByNative
+    private final void setMediaSession(MediaSessionImpl mediaSession) {
+        mMediaSession = mediaSession;
+    }
+
+    @CalledByNative
+    private static List<Bitmap> createBitmapList() {
+        return new ArrayList<Bitmap>();
+    }
+
+    @CalledByNative
+    private static void addToBitmapList(List<Bitmap> bitmaps, Bitmap bitmap) {
+        bitmaps.add(bitmap);
+    }
+
+    @CalledByNative
+    private static List<Rect> createSizeList() {
+        return new ArrayList<Rect>();
+    }
+
+    @CalledByNative
+    private static void createSizeAndAddToList(List<Rect> sizes, int width, int height) {
+        sizes.add(new Rect(0, 0, width, height));
     }
 
     // This is static to avoid exposing a public destroy method on the native side of this class.
@@ -452,10 +497,10 @@ import java.util.UUID;
     private native void nativeReplace(long nativeWebContentsAndroid, String word);
     private native void nativeSelectAll(long nativeWebContentsAndroid);
     private native void nativeUnselect(long nativeWebContentsAndroid);
-    private native void nativeInsertCSS(long nativeWebContentsAndroid, String css);
     private native void nativeOnHide(long nativeWebContentsAndroid);
     private native void nativeOnShow(long nativeWebContentsAndroid);
-    private native void nativeReleaseMediaPlayers(long nativeWebContentsAndroid);
+    private native void nativeSuspendAllMediaPlayers(long nativeWebContentsAndroid);
+    private native void nativeSetAudioMuted(long nativeWebContentsAndroid, boolean mute);
     private native int nativeGetBackgroundColor(long nativeWebContentsAndroid);
     private native void nativeShowInterstitialPage(long nativeWebContentsAndroid,
             String url, long nativeInterstitialPageDelegateAndroid);
@@ -463,9 +508,8 @@ import java.util.UUID;
     private native boolean nativeFocusLocationBarByDefault(long nativeWebContentsAndroid);
     private native boolean nativeIsRenderWidgetHostViewReady(long nativeWebContentsAndroid);
     private native void nativeExitFullscreen(long nativeWebContentsAndroid);
-    private native void nativeUpdateTopControlsState(long nativeWebContentsAndroid,
+    private native void nativeUpdateBrowserControlsState(long nativeWebContentsAndroid,
             boolean enableHiding, boolean enableShowing, boolean animate);
-    private native void nativeShowImeIfNeeded(long nativeWebContentsAndroid);
     private native void nativeScrollFocusedEditableNodeIntoView(long nativeWebContentsAndroid);
     private native void nativeSelectWordAroundCaret(long nativeWebContentsAndroid);
     private native void nativeAdjustSelectionByCharacterOffset(
@@ -480,18 +524,21 @@ import java.util.UUID;
             String script, JavaScriptCallback callback);
     private native void nativeAddMessageToDevToolsConsole(
             long nativeWebContentsAndroid, int level, String message);
-    private native void nativeSendMessageToFrame(long nativeWebContentsAndroid,
-            String frameName, String message, String targetOrigin);
+    private native void nativePostMessageToFrame(long nativeWebContentsAndroid, String frameName,
+            String message, String targetOrigin, int[] sentPortIds);
+    private native void nativeCreateMessageChannel(
+            long nativeWebContentsAndroid, AppWebMessagePort[] ports);
     private native boolean nativeHasAccessedInitialDocument(
             long nativeWebContentsAndroid);
     private native int nativeGetThemeColor(long nativeWebContentsAndroid);
-    private native void nativeRequestAccessibilitySnapshot(long nativeWebContentsAndroid,
-            AccessibilitySnapshotCallback callback, float offsetY, float scrollX);
-    private native void nativeResumeMediaSession(long nativeWebContentsAndroid);
-    private native void nativeSuspendMediaSession(long nativeWebContentsAndroid);
-    private native void nativeStopMediaSession(long nativeWebContentsAndroid);
-    private native String nativeGetEncoding(long nativeWebContentsAndroid);
+    private native void nativeRequestAccessibilitySnapshot(
+            long nativeWebContentsAndroid, AccessibilitySnapshotCallback callback);
     private native void nativeGetContentBitmap(long nativeWebContentsAndroid,
             ContentBitmapCallback callback, Bitmap.Config config, float scale,
             float x, float y, float width, float height);
+    private native void nativeReloadLoFiImages(long nativeWebContentsAndroid);
+    private native int nativeDownloadImage(long nativeWebContentsAndroid,
+            String url, boolean isFavicon, int maxBitmapSize,
+            boolean bypassCache, ImageDownloadCallback callback);
+    private native void nativeDismissTextHandles(long nativeWebContentsAndroid);
 }

@@ -7,13 +7,18 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "components/update_client/crx_downloader.h"
 #include "net/url_request/url_fetcher_delegate.h"
+
+namespace base {
+class SequencedTaskRunner;
+}
 
 namespace net {
 class URLFetcher;
@@ -27,9 +32,10 @@ class UrlFetcherDownloader : public CrxDownloader,
                              public net::URLFetcherDelegate {
  protected:
   friend class CrxDownloader;
-  UrlFetcherDownloader(scoped_ptr<CrxDownloader> successor,
-                       net::URLRequestContextGetter* context_getter,
-                       scoped_refptr<base::SequencedTaskRunner> task_runner);
+  UrlFetcherDownloader(
+      std::unique_ptr<CrxDownloader> successor,
+      net::URLRequestContextGetter* context_getter,
+      const scoped_refptr<base::SequencedTaskRunner>& task_runner);
   ~UrlFetcherDownloader() override;
 
  private:
@@ -40,12 +46,12 @@ class UrlFetcherDownloader : public CrxDownloader,
   void OnURLFetchComplete(const net::URLFetcher* source) override;
   void OnURLFetchDownloadProgress(const net::URLFetcher* source,
                                   int64_t current,
-                                  int64_t total) override;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+                                  int64_t total,
+                                  int64_t current_network_bytes) override;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   net::URLRequestContextGetter* context_getter_;
-  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
-  base::Time download_start_time_;
+  base::TimeTicks download_start_time_;
 
   int64_t downloaded_bytes_;
   int64_t total_bytes_;

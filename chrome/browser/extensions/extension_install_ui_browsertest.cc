@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
@@ -18,7 +20,6 @@
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/webui/ntp/new_tab_ui.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/crx_file/id_util.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
@@ -69,23 +70,9 @@ class ExtensionInstallUIBrowserTest : public ExtensionBrowserTest {
   }
 };
 
-#if defined(OS_LINUX)
-// Fails consistently on bot chromium.chromiumos \ Linux.
-// See: http://crbug.com/120647.
-#define MAYBE_TestThemeInstallUndoResetsToDefault DISABLED_TestThemeInstallUndoResetsToDefault
-#else
-#define MAYBE_TestThemeInstallUndoResetsToDefault TestThemeInstallUndoResetsToDefault
-#endif
-
+// Fails on Linux and Windows (http://crbug.com/580907).
 IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
-                       MAYBE_TestThemeInstallUndoResetsToDefault) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
+                       DISABLED_TestThemeInstallUndoResetsToDefault) {
   // Install theme once and undo to verify we go back to default theme.
   base::FilePath theme_crx = PackExtension(test_data_dir_.AppendASCII("theme"));
   ASSERT_TRUE(InstallExtensionWithUIAutoConfirm(theme_crx, 1, browser()));
@@ -110,13 +97,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
 
 IN_PROC_BROWSER_TEST_F(ExtensionInstallUIBrowserTest,
                        TestThemeInstallUndoResetsToPreviousTheme) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   // Install first theme.
   InstallThemeAndVerify("theme", "camo theme");
   const Extension* theme = GetTheme();

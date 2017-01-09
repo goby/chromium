@@ -14,6 +14,9 @@ import android.os.Debug;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import org.chromium.base.ContextUtils;
+import org.chromium.base.PathUtils;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -38,6 +41,7 @@ import java.util.concurrent.TimeUnit;
  * Runs networking benchmarks and saves results to a file.
  */
 public class CronetPerfTestActivity extends Activity {
+    private static final String PRIVATE_DATA_DIRECTORY_SUFFIX = "cronet_perf_test";
     // Benchmark configuration passed down from host via Intent data.
     // Call getConfig*(key) to extract individual configuration values.
     private Uri mConfig;
@@ -160,29 +164,51 @@ public class CronetPerfTestActivity extends Activity {
                 default:
                     throw new IllegalArgumentException("Unknown size: " + size);
             }
+            final String scheme;
+            final String host;
             final int port;
             switch (protocol) {
                 case HTTP:
+                    scheme = "http";
+                    host = getConfigString("HOST_IP");
                     port = getConfigInt("HTTP_PORT");
                     break;
                 case QUIC:
+                    scheme = "https";
+                    host = getConfigString("HOST");
                     port = getConfigInt("QUIC_PORT");
                     break;
                 default:
                     throw new IllegalArgumentException("Unknown protocol: " + protocol);
             }
             try {
-                mUrl = new URL("http", getConfigString("HOST"), port, resource);
+                mUrl = new URL(scheme, host, port, resource);
             } catch (MalformedURLException e) {
-                throw new IllegalArgumentException("Bad URL: " + getConfigString("HOST") + ":"
-                        + port + "/" + resource);
+                throw new IllegalArgumentException(
+                        "Bad URL: " + host + ":" + port + "/" + resource);
             }
-            final CronetEngine.Builder cronetEngineBuilder =
-                    new CronetEngine.Builder(CronetPerfTestActivity.this);
+            final ExperimentalCronetEngine.Builder cronetEngineBuilder =
+                    new ExperimentalCronetEngine.Builder(CronetPerfTestActivity.this);
+            System.loadLibrary("cronet_tests");
             if (mProtocol == Protocol.QUIC) {
-                cronetEngineBuilder.enableQUIC(true);
-                cronetEngineBuilder.addQuicHint(getConfigString("HOST"), getConfigInt("QUIC_PORT"),
-                        getConfigInt("QUIC_PORT"));
+                cronetEngineBuilder.enableQuic(true);
+                cronetEngineBuilder.addQuicHint(host, port, port);
+                CronetTestUtil.setMockCertVerifierForTesting(cronetEngineBuilder,
+                        MockCertVerifier.createMockCertVerifier(
+                                new String[] {getConfigString("QUIC_CERT_FILE")}, true));
+            }
+
+            try {
+                JSONObject quicParams = new JSONObject().put("host_whitelist", host);
+                JSONObject hostResolverParams =
+                        CronetTestUtil.generateHostResolverRules(getConfigString("HOST_IP"));
+                JSONObject experimentalOptions =
+                        new JSONObject()
+                                .put("QUIC", quicParams)
+                                .put("HostResolverRules", hostResolverParams);
+                cronetEngineBuilder.setExperimentalOptions(experimentalOptions.toString());
+            } catch (JSONException e) {
+                throw new IllegalStateException("JSON failed: " + e);
             }
             mCronetEngine = cronetEngineBuilder.build();
             mName = buildBenchmarkName(mode, direction, protocol, concurrency, mIterations);
@@ -238,7 +264,7 @@ public class CronetPerfTestActivity extends Activity {
 
         /**
          * Transfer {@code mLength} bytes through HttpURLConnection in {@code mDirection} direction.
-         * @param connection The HttpURLConnection to use for transfer.
+         * @param urlConnection The HttpURLConnection to use for transfer.
          * @param buffer A buffer of length |mBufferSize| to use for transfer.
          * @return {@code true} if transfer completed successfully.
          */
@@ -306,8 +332,7 @@ public class CronetPerfTestActivity extends Activity {
         // GET or POST to one particular URL using Cronet's asynchronous API
         private class CronetAsyncFetchTask implements Callable<Boolean> {
             // A message-queue for asynchronous tasks to post back to.
-            private final LinkedBlockingQueue<Runnable> mWorkQueue =
-                    new LinkedBlockingQueue<Runnable>();
+            private final LinkedBlockingQueue<Runnable> mWorkQueue = new LinkedBlockingQueue<>();
             private final WorkQueueExecutor mWorkQueueExecutor = new WorkQueueExecutor();
 
             private int mRemainingRequests;
@@ -326,6 +351,7 @@ public class CronetPerfTestActivity extends Activity {
                     if (mUseNetworkThread) {
                         // Post empty task so message loop exit condition is retested.
                         postToWorkQueue(new Runnable() {
+                            @Override
                             public void run() {}
                         });
                     }
@@ -333,13 +359,14 @@ public class CronetPerfTestActivity extends Activity {
                 }
                 mRemainingRequests--;
                 final Runnable completionCallback = new Runnable() {
+                    @Override
                     public void run() {
                         initiateRequest(buffer);
                     }
                 };
-                final UrlRequest.Builder builder = new UrlRequest.Builder(mUrl.toString(),
-                        new Callback(buffer, completionCallback), mWorkQueueExecutor,
-                        mCronetEngine);
+                final UrlRequest.Builder builder =
+                        mCronetEngine.newUrlRequestBuilder(mUrl.toString(),
+                                new Callback(buffer, completionCallback), mWorkQueueExecutor);
                 if (mDirection == Direction.UP) {
                     builder.setUploadDataProvider(new Uploader(buffer), mWorkQueueExecutor);
                     builder.addHeader("Content-Type", "application/octet-stream");
@@ -356,10 +383,12 @@ public class CronetPerfTestActivity extends Activity {
                     mRemainingBytes = mLength;
                 }
 
+                @Override
                 public long getLength() {
                     return mLength;
                 }
 
+                @Override
                 public void read(UploadDataSink uploadDataSink, ByteBuffer byteBuffer) {
                     mBuffer.clear();
                     // Don't post more than |mLength|.
@@ -375,6 +404,7 @@ public class CronetPerfTestActivity extends Activity {
                     uploadDataSink.onReadSucceeded(false);
                 }
 
+                @Override
                 public void rewind(UploadDataSink uploadDataSink) {
                     uploadDataSink.onRewindError(new Exception("no rewinding"));
                 }
@@ -383,6 +413,7 @@ public class CronetPerfTestActivity extends Activity {
             private class Callback extends UrlRequest.Callback {
                 private final ByteBuffer mBuffer;
                 private final Runnable mCompletionCallback;
+                private int mBytesReceived;
 
                 Callback(ByteBuffer buffer, Runnable completionCallback) {
                     mBuffer = buffer;
@@ -392,7 +423,7 @@ public class CronetPerfTestActivity extends Activity {
                 @Override
                 public void onResponseStarted(UrlRequest request, UrlResponseInfo info) {
                     mBuffer.clear();
-                    request.readNew(mBuffer);
+                    request.read(mBuffer);
                 }
 
                 @Override
@@ -404,18 +435,23 @@ public class CronetPerfTestActivity extends Activity {
                 @Override
                 public void onReadCompleted(
                         UrlRequest request, UrlResponseInfo info, ByteBuffer byteBuffer) {
+                    mBytesReceived += byteBuffer.position();
                     mBuffer.clear();
-                    request.readNew(mBuffer);
+                    request.read(mBuffer);
                 }
 
                 @Override
                 public void onSucceeded(UrlRequest request, UrlResponseInfo info) {
+                    if (info.getHttpStatusCode() != 200 || mBytesReceived != mLength) {
+                        System.out.println("Failed: response code: " + info.getHttpStatusCode()
+                                + " bytes: " + mBytesReceived);
+                        mFailed = true;
+                    }
                     mCompletionCallback.run();
                 }
 
                 @Override
-                public void onFailed(
-                        UrlRequest request, UrlResponseInfo info, UrlRequestException e) {
+                public void onFailed(UrlRequest request, UrlResponseInfo info, CronetException e) {
                     System.out.println("Async request failed with " + e);
                     mFailed = true;
                 }
@@ -464,7 +500,7 @@ public class CronetPerfTestActivity extends Activity {
          */
         public void run() {
             final ExecutorService executor = Executors.newFixedThreadPool(mConcurrency);
-            final List<Callable<Boolean>> tasks = new ArrayList<Callable<Boolean>>(mIterations);
+            final List<Callable<Boolean>> tasks = new ArrayList<>(mIterations);
             startLogging();
             // Prepare list of tasks to run.
             switch (mMode) {
@@ -487,7 +523,7 @@ public class CronetPerfTestActivity extends Activity {
             }
             // Execute tasks.
             boolean success = true;
-            List<Future<Boolean>> futures = new ArrayList<Future<Boolean>>();
+            List<Future<Boolean>> futures = new ArrayList<>();
             try {
                 startTimer();
                 // If possible execute directly to lessen impact of thread-pool overhead.
@@ -582,6 +618,9 @@ public class CronetPerfTestActivity extends Activity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Initializing application context here due to lack of custom CronetPerfTestApplication.
+        ContextUtils.initApplicationContext(getApplicationContext());
+        PathUtils.setPrivateDataDirectorySuffix(PRIVATE_DATA_DIRECTORY_SUFFIX);
         mConfig = getIntent().getData();
         // Execute benchmarks on another thread to avoid networking on main thread.
         new BenchmarkTask().execute();

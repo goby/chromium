@@ -27,45 +27,47 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/css/DOMWindowCSS.h"
 
-#include "bindings/core/v8/ExceptionState.h"
 #include "core/css/CSSMarkup.h"
 #include "core/css/CSSPropertyMetadata.h"
 #include "core/css/StylePropertySet.h"
 #include "core/css/parser/CSSParser.h"
-#include "core/dom/ExceptionCode.h"
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-bool DOMWindowCSS::supports(const String& property, const String& value)
-{
-    CSSPropertyID unresolvedProperty = unresolvedCSSPropertyID(property);
-    if (unresolvedProperty == CSSPropertyInvalid)
-        return false;
-    ASSERT(CSSPropertyMetadata::isEnabledProperty(unresolvedProperty));
+bool DOMWindowCSS::supports(const String& property, const String& value) {
+  CSSPropertyID unresolvedProperty = unresolvedCSSPropertyID(property);
+  if (unresolvedProperty == CSSPropertyInvalid)
+    return false;
+  if (unresolvedProperty == CSSPropertyVariable) {
+    MutableStylePropertySet* dummyStyle =
+        MutableStylePropertySet::create(HTMLStandardMode);
+    bool isAnimationTainted = false;
+    return CSSParser::parseValueForCustomProperty(
+               dummyStyle, "--valid", value, false, nullptr, isAnimationTainted)
+        .didParse;
+  }
 
-    // This will return false when !important is present
-    RefPtrWillBeRawPtr<MutableStylePropertySet> dummyStyle = MutableStylePropertySet::create(HTMLStandardMode);
-    return CSSParser::parseValue(dummyStyle.get(), unresolvedProperty, value, false, 0);
+  ASSERT(CSSPropertyMetadata::isEnabledProperty(unresolvedProperty));
+
+  // This will return false when !important is present
+  MutableStylePropertySet* dummyStyle =
+      MutableStylePropertySet::create(HTMLStandardMode);
+  return CSSParser::parseValue(dummyStyle, unresolvedProperty, value, false, 0)
+      .didParse;
 }
 
-bool DOMWindowCSS::supports(const String& conditionText)
-{
-    return CSSParser::parseSupportsCondition(conditionText);
+bool DOMWindowCSS::supports(const String& conditionText) {
+  return CSSParser::parseSupportsCondition(conditionText);
 }
 
-String DOMWindowCSS::escape(const String& ident, ExceptionState& exceptionState)
-{
-    StringBuilder builder;
-    if (!serializeIdentifier(ident, builder)) {
-        exceptionState.throwDOMException(InvalidCharacterError, "The string contains an invalid character.");
-        return String();
-    }
-    return builder.toString();
+String DOMWindowCSS::escape(const String& ident) {
+  StringBuilder builder;
+  serializeIdentifier(ident, builder);
+  return builder.toString();
 }
 
-}
+}  // namespace blink

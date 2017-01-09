@@ -5,7 +5,6 @@
 #include "net/dns/record_rdata.h"
 
 #include "base/big_endian.h"
-#include "net/base/ip_address_number.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/dns_response.h"
 
@@ -22,12 +21,13 @@ SrvRecordRdata::SrvRecordRdata() : priority_(0), weight_(0), port_(0) {
 SrvRecordRdata::~SrvRecordRdata() {}
 
 // static
-scoped_ptr<SrvRecordRdata> SrvRecordRdata::Create(
+std::unique_ptr<SrvRecordRdata> SrvRecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  if (data.size() < kSrvRecordMinimumSize) return scoped_ptr<SrvRecordRdata>();
+  if (data.size() < kSrvRecordMinimumSize)
+    return std::unique_ptr<SrvRecordRdata>();
 
-  scoped_ptr<SrvRecordRdata> rdata(new SrvRecordRdata);
+  std::unique_ptr<SrvRecordRdata> rdata(new SrvRecordRdata);
 
   base::BigEndianReader reader(data.data(), data.size());
   // 2 bytes for priority, 2 bytes for weight, 2 bytes for port.
@@ -37,12 +37,12 @@ scoped_ptr<SrvRecordRdata> SrvRecordRdata::Create(
 
   if (!parser.ReadName(data.substr(kSrvRecordMinimumSize).begin(),
                        &rdata->target_))
-    return scoped_ptr<SrvRecordRdata>();
+    return std::unique_ptr<SrvRecordRdata>();
 
-  return rdata.Pass();
+  return rdata;
 }
 
-uint16 SrvRecordRdata::Type() const {
+uint16_t SrvRecordRdata::Type() const {
   return SrvRecordRdata::kType;
 }
 
@@ -62,23 +62,19 @@ ARecordRdata::~ARecordRdata() {
 }
 
 // static
-scoped_ptr<ARecordRdata> ARecordRdata::Create(
+std::unique_ptr<ARecordRdata> ARecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  if (data.size() != kIPv4AddressSize)
-    return scoped_ptr<ARecordRdata>();
+  if (data.size() != IPAddress::kIPv4AddressSize)
+    return std::unique_ptr<ARecordRdata>();
 
-  scoped_ptr<ARecordRdata> rdata(new ARecordRdata);
-
-  rdata->address_.resize(kIPv4AddressSize);
-  for (unsigned i = 0; i < kIPv4AddressSize; ++i) {
-    rdata->address_[i] = data[i];
-  }
-
-  return rdata.Pass();
+  std::unique_ptr<ARecordRdata> rdata(new ARecordRdata);
+  rdata->address_ =
+      IPAddress(reinterpret_cast<const uint8_t*>(data.data()), data.length());
+  return rdata;
 }
 
-uint16 ARecordRdata::Type() const {
+uint16_t ARecordRdata::Type() const {
   return ARecordRdata::kType;
 }
 
@@ -95,23 +91,19 @@ AAAARecordRdata::~AAAARecordRdata() {
 }
 
 // static
-scoped_ptr<AAAARecordRdata> AAAARecordRdata::Create(
+std::unique_ptr<AAAARecordRdata> AAAARecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  if (data.size() != kIPv6AddressSize)
-    return scoped_ptr<AAAARecordRdata>();
+  if (data.size() != IPAddress::kIPv6AddressSize)
+    return std::unique_ptr<AAAARecordRdata>();
 
-  scoped_ptr<AAAARecordRdata> rdata(new AAAARecordRdata);
-
-  rdata->address_.resize(kIPv6AddressSize);
-  for (unsigned i = 0; i < kIPv6AddressSize; ++i) {
-    rdata->address_[i] = data[i];
-  }
-
-  return rdata.Pass();
+  std::unique_ptr<AAAARecordRdata> rdata(new AAAARecordRdata);
+  rdata->address_ =
+      IPAddress(reinterpret_cast<const uint8_t*>(data.data()), data.length());
+  return rdata;
 }
 
-uint16 AAAARecordRdata::Type() const {
+uint16_t AAAARecordRdata::Type() const {
   return AAAARecordRdata::kType;
 }
 
@@ -128,18 +120,18 @@ CnameRecordRdata::~CnameRecordRdata() {
 }
 
 // static
-scoped_ptr<CnameRecordRdata> CnameRecordRdata::Create(
+std::unique_ptr<CnameRecordRdata> CnameRecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  scoped_ptr<CnameRecordRdata> rdata(new CnameRecordRdata);
+  std::unique_ptr<CnameRecordRdata> rdata(new CnameRecordRdata);
 
   if (!parser.ReadName(data.begin(), &rdata->cname_))
-    return scoped_ptr<CnameRecordRdata>();
+    return std::unique_ptr<CnameRecordRdata>();
 
-  return rdata.Pass();
+  return rdata;
 }
 
-uint16 CnameRecordRdata::Type() const {
+uint16_t CnameRecordRdata::Type() const {
   return CnameRecordRdata::kType;
 }
 
@@ -157,18 +149,18 @@ PtrRecordRdata::~PtrRecordRdata() {
 }
 
 // static
-scoped_ptr<PtrRecordRdata> PtrRecordRdata::Create(
+std::unique_ptr<PtrRecordRdata> PtrRecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  scoped_ptr<PtrRecordRdata> rdata(new PtrRecordRdata);
+  std::unique_ptr<PtrRecordRdata> rdata(new PtrRecordRdata);
 
   if (!parser.ReadName(data.begin(), &rdata->ptrdomain_))
-    return scoped_ptr<PtrRecordRdata>();
+    return std::unique_ptr<PtrRecordRdata>();
 
-  return rdata.Pass();
+  return rdata;
 }
 
-uint16 PtrRecordRdata::Type() const {
+uint16_t PtrRecordRdata::Type() const {
   return PtrRecordRdata::kType;
 }
 
@@ -185,16 +177,16 @@ TxtRecordRdata::~TxtRecordRdata() {
 }
 
 // static
-scoped_ptr<TxtRecordRdata> TxtRecordRdata::Create(
+std::unique_ptr<TxtRecordRdata> TxtRecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  scoped_ptr<TxtRecordRdata> rdata(new TxtRecordRdata);
+  std::unique_ptr<TxtRecordRdata> rdata(new TxtRecordRdata);
 
   for (size_t i = 0; i < data.size(); ) {
-    uint8 length = data[i];
+    uint8_t length = data[i];
 
     if (i + length >= data.size())
-      return scoped_ptr<TxtRecordRdata>();
+      return std::unique_ptr<TxtRecordRdata>();
 
     rdata->texts_.push_back(data.substr(i + 1, length).as_string());
 
@@ -202,10 +194,10 @@ scoped_ptr<TxtRecordRdata> TxtRecordRdata::Create(
     i += length + 1;
   }
 
-  return rdata.Pass();
+  return rdata;
 }
 
-uint16 TxtRecordRdata::Type() const {
+uint16_t TxtRecordRdata::Type() const {
   return TxtRecordRdata::kType;
 }
 
@@ -222,10 +214,10 @@ NsecRecordRdata::~NsecRecordRdata() {
 }
 
 // static
-scoped_ptr<NsecRecordRdata> NsecRecordRdata::Create(
+std::unique_ptr<NsecRecordRdata> NsecRecordRdata::Create(
     const base::StringPiece& data,
     const DnsRecordParser& parser) {
-  scoped_ptr<NsecRecordRdata> rdata(new NsecRecordRdata);
+  std::unique_ptr<NsecRecordRdata> rdata(new NsecRecordRdata);
 
   // Read the "next domain". This part for the NSEC record format is
   // ignored for mDNS, since it has no semantic meaning.
@@ -234,11 +226,11 @@ scoped_ptr<NsecRecordRdata> NsecRecordRdata::Create(
   // If we did not succeed in getting the next domain or the data length
   // is too short for reading the bitmap header, return.
   if (next_domain_length == 0 || data.length() < next_domain_length + 2)
-    return scoped_ptr<NsecRecordRdata>();
+    return std::unique_ptr<NsecRecordRdata>();
 
   struct BitmapHeader {
-    uint8 block_number;  // The block number should be zero.
-    uint8 length;  // Bitmap length in bytes. Between 1 and 32.
+    uint8_t block_number;  // The block number should be zero.
+    uint8_t length;        // Bitmap length in bytes. Between 1 and 32.
   };
 
   const BitmapHeader* header = reinterpret_cast<const BitmapHeader*>(
@@ -247,23 +239,23 @@ scoped_ptr<NsecRecordRdata> NsecRecordRdata::Create(
   // The block number must be zero in mDns-specific NSEC records. The bitmap
   // length must be between 1 and 32.
   if (header->block_number != 0 || header->length == 0 || header->length > 32)
-    return scoped_ptr<NsecRecordRdata>();
+    return std::unique_ptr<NsecRecordRdata>();
 
   base::StringPiece bitmap_data = data.substr(next_domain_length + 2);
 
   // Since we may only have one block, the data length must be exactly equal to
   // the domain length plus bitmap size.
   if (bitmap_data.length() != header->length)
-    return scoped_ptr<NsecRecordRdata>();
+    return std::unique_ptr<NsecRecordRdata>();
 
   rdata->bitmap_.insert(rdata->bitmap_.begin(),
                         bitmap_data.begin(),
                         bitmap_data.end());
 
-  return rdata.Pass();
+  return rdata;
 }
 
-uint16 NsecRecordRdata::Type() const {
+uint16_t NsecRecordRdata::Type() const {
   return NsecRecordRdata::kType;
 }
 

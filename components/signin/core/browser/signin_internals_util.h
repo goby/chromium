@@ -5,10 +5,12 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_INTERNALS_UTIL_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_SIGNIN_INTERNALS_UTIL_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 
 namespace signin_internals_util {

@@ -8,16 +8,16 @@
 
 #include "base/command_line.h"
 #include "base/i18n/number_formatting.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/trace_event/trace_event.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/command_updater.h"
-#include "chrome/browser/extensions/extension_commands_global_registry.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_properties.h"
+#include "chrome/browser/ui/bookmarks/bookmark_bubble_sign_in_delegate.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -26,12 +26,14 @@
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
 #include "chrome/browser/ui/global_error/global_error_service_factory.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/view_ids.h"
+#include "chrome/browser/ui/views/autofill/save_card_bubble_views.h"
 #include "chrome/browser/ui/views/autofill/save_card_icon_view.h"
+#include "chrome/browser/ui/views/bookmarks/bookmark_bubble_view.h"
 #include "chrome/browser/ui/views/extensions/extension_popup.h"
 #include "chrome/browser/ui/views/frame/browser_view.h"
-#include "chrome/browser/ui/views/layout_constants.h"
 #include "chrome/browser/ui/views/location_bar/page_action_image_view.h"
 #include "chrome/browser/ui/views/location_bar/page_action_with_badge_view.h"
 #include "chrome/browser/ui/views/location_bar/star_view.h"
@@ -42,21 +44,24 @@
 #include "chrome/browser/ui/views/toolbar/home_button.h"
 #include "chrome/browser/ui/views/toolbar/reload_button.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_button.h"
+#include "chrome/browser/ui/views/translate/translate_bubble_view.h"
 #include "chrome/browser/ui/views/translate/translate_icon_view.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/omnibox/browser/omnibox_view.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_accessibility_state.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
-#include "grit/theme_resources.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/theme_provider.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/compositor/layer.h"
@@ -67,7 +72,6 @@
 #include "ui/keyboard/keyboard_controller.h"
 #include "ui/native_theme/native_theme_aura.h"
 #include "ui/views/focus/view_storage.h"
-#include "ui/views/view_targeter.h"
 #include "ui/views/widget/tooltip_manager.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/non_client_view.h"
@@ -84,7 +88,7 @@
 #endif
 
 #if defined(USE_ASH)
-#include "ash/shell.h"
+#include "ash/shell.h"  // nogncheck
 #endif
 
 using base::UserMetricsAction;
@@ -102,13 +106,9 @@ bool HasAshShell() {
 }
 #endif  // OS_CHROMEOS
 
-// Returns the y-position that will center an element of height
-// |child_height| inside an element of height |parent_height|. For
-// material design excess padding is placed below, for non-material
-// it is placed above.
-int CenteredChildY(int parent_height, int child_height) {
-  int roundoff_amount = ui::MaterialDesignController::IsModeMaterial() ? 0 : 1;
-  return (parent_height - child_height + roundoff_amount) / 2;
+int GetToolbarHorizontalPadding() {
+  using Md = ui::MaterialDesignController;
+  return Md::GetMode() == Md::MATERIAL_HYBRID ? 8 : 4;
 }
 
 }  // namespace
@@ -120,29 +120,25 @@ const char ToolbarView::kViewClassName[] = "ToolbarView";
 // ToolbarView, public:
 
 ToolbarView::ToolbarView(Browser* browser)
-    : back_(NULL),
-      forward_(NULL),
-      reload_(NULL),
-      home_(NULL),
-      location_bar_(NULL),
-      browser_actions_(NULL),
-      app_menu_button_(NULL),
+    : back_(nullptr),
+      forward_(nullptr),
+      reload_(nullptr),
+      home_(nullptr),
+      location_bar_(nullptr),
+      browser_actions_(nullptr),
+      app_menu_button_(nullptr),
       browser_(browser),
-      badge_controller_(browser->profile(), this) {
+      app_menu_icon_controller_(browser->profile(), this),
+      display_mode_(browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP)
+                        ? DISPLAYMODE_NORMAL
+                        : DISPLAYMODE_LOCATION) {
   set_id(VIEW_ID_TOOLBAR);
-
-  SetEventTargeter(
-      scoped_ptr<views::ViewTargeter>(new views::ViewTargeter(this)));
 
   chrome::AddCommandObserver(browser_, IDC_BACK, this);
   chrome::AddCommandObserver(browser_, IDC_FORWARD, this);
   chrome::AddCommandObserver(browser_, IDC_RELOAD, this);
   chrome::AddCommandObserver(browser_, IDC_HOME, this);
   chrome::AddCommandObserver(browser_, IDC_LOAD_NEW_TAB_PAGE, this);
-
-  display_mode_ = DISPLAYMODE_LOCATION;
-  if (browser->SupportsWindowFeature(Browser::FEATURE_TABSTRIP))
-    display_mode_ = DISPLAYMODE_NORMAL;
 
   if (OutdatedUpgradeBubbleView::IsAvailable()) {
     registrar_.Add(this, chrome::NOTIFICATION_OUTDATED_INSTALL,
@@ -163,10 +159,21 @@ ToolbarView::~ToolbarView() {
 }
 
 void ToolbarView::Init() {
-  GetWidget()->AddObserver(this);
+  location_bar_ =
+      new LocationBarView(browser_, browser_->profile(),
+                          browser_->command_controller()->command_updater(),
+                          this, !is_display_mode_normal());
 
-  back_ = new BackButton(this, new BackForwardMenuModel(
-      browser_, BackForwardMenuModel::BACKWARD_MENU));
+  if (!is_display_mode_normal()) {
+    AddChildView(location_bar_);
+    location_bar_->Init();
+    return;
+  }
+
+  back_ = new BackButton(
+      browser_->profile(), this,
+      new BackForwardMenuModel(browser_, BackForwardMenuModel::BACKWARD_MENU));
+  back_->set_hide_ink_drop_when_showing_context_menu(false);
   back_->set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON);
   back_->set_tag(IDC_BACK);
@@ -175,8 +182,10 @@ void ToolbarView::Init() {
   back_->set_id(VIEW_ID_BACK_BUTTON);
   back_->Init();
 
-  forward_ = new ToolbarButton(this, new BackForwardMenuModel(
-      browser_, BackForwardMenuModel::FORWARD_MENU));
+  forward_ = new ToolbarButton(
+      browser_->profile(), this,
+      new BackForwardMenuModel(browser_, BackForwardMenuModel::FORWARD_MENU));
+  forward_->set_hide_ink_drop_when_showing_context_menu(false);
   forward_->set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON);
   forward_->set_tag(IDC_FORWARD);
@@ -185,12 +194,8 @@ void ToolbarView::Init() {
   forward_->set_id(VIEW_ID_FORWARD_BUTTON);
   forward_->Init();
 
-  location_bar_ = new LocationBarView(
-      browser_, browser_->profile(),
-      browser_->command_controller()->command_updater(), this,
-      display_mode_ == DISPLAYMODE_LOCATION);
-
-  reload_ = new ReloadButton(browser_->command_controller()->command_updater());
+  reload_ = new ReloadButton(browser_->profile(),
+                             browser_->command_controller()->command_updater());
   reload_->set_triggerable_event_flags(
       ui::EF_LEFT_MOUSE_BUTTON | ui::EF_MIDDLE_MOUSE_BUTTON);
   reload_->set_tag(IDC_RELOAD);
@@ -230,7 +235,7 @@ void ToolbarView::Init() {
 
   LoadImages();
 
-  // Start global error services now so we badge the menu correctly.
+  // Start global error services now so we set the icon on the menu correctly.
 #if !defined(OS_CHROMEOS)
   if (!HasAshShell()) {
     SigninGlobalErrorFactory::GetForProfile(browser_->profile());
@@ -244,11 +249,10 @@ void ToolbarView::Init() {
 #endif
 #endif  // OS_CHROMEOS
 
-  // Add any necessary badges to the menu item based on the system state.
-  // Do this after |app_menu_button_| has been added as a bubble may be shown
-  // that needs the widget (widget found by way of app_menu_button_->
-  // GetWidget()).
-  badge_controller_.UpdateDelegate();
+  // Set the button icon based on the system state. Do this after
+  // |app_menu_button_| has been added as a bubble may be shown that needs
+  // the widget (widget found by way of app_menu_button_->GetWidget()).
+  app_menu_icon_controller_.UpdateDelegate();
 
   location_bar_->Init();
 
@@ -257,8 +261,6 @@ void ToolbarView::Init() {
                          base::Bind(&ToolbarView::OnShowHomeButtonChanged,
                                     base::Unretained(this)));
 
-  browser_actions_->Init();
-
   // Accessibility specific tooltip text.
   if (content::BrowserAccessibilityState::GetInstance()->
           IsAccessibleBrowser()) {
@@ -266,19 +268,6 @@ void ToolbarView::Init() {
         l10n_util::GetStringUTF16(IDS_ACCNAME_TOOLTIP_BACK));
     forward_->SetTooltipText(
         l10n_util::GetStringUTF16(IDS_ACCNAME_TOOLTIP_FORWARD));
-  }
-}
-
-void ToolbarView::OnWidgetActivationChanged(views::Widget* widget,
-                                            bool active) {
-  extensions::ExtensionCommandsGlobalRegistry* registry =
-      extensions::ExtensionCommandsGlobalRegistry::Get(browser_->profile());
-  if (active) {
-    registry->set_registry_for_active_window(
-        browser_actions_->extension_keybinding_registry());
-  } else if (registry->registry_for_active_window() ==
-             browser_actions_->extension_keybinding_registry()) {
-    registry->set_registry_for_active_window(nullptr);
   }
 }
 
@@ -297,37 +286,78 @@ void ToolbarView::ResetTabState(WebContents* tab) {
 }
 
 void ToolbarView::SetPaneFocusAndFocusAppMenu() {
-  SetPaneFocus(app_menu_button_);
+  if (app_menu_button_)
+    SetPaneFocus(app_menu_button_);
 }
 
 bool ToolbarView::IsAppMenuFocused() {
-  return app_menu_button_->HasFocus();
+  return app_menu_button_ && app_menu_button_->HasFocus();
 }
 
-views::View* ToolbarView::GetBookmarkBubbleAnchor() {
-  views::View* star_view = location_bar()->star_view();
-  return (star_view && star_view->visible()) ? star_view : app_menu_button_;
+void ToolbarView::ShowBookmarkBubble(
+    const GURL& url,
+    bool already_bookmarked,
+    bookmarks::BookmarkBubbleObserver* observer) {
+  views::View* anchor_view = location_bar();
+  StarView* star_view = location_bar()->star_view();
+  if (!ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+    if (star_view && star_view->visible())
+      anchor_view = star_view;
+    else
+      anchor_view = app_menu_button_;
+  }
+
+  std::unique_ptr<BubbleSyncPromoDelegate> delegate;
+  delegate.reset(new BookmarkBubbleSignInDelegate(browser_));
+  views::Widget* bubble_widget = BookmarkBubbleView::ShowBubble(
+      anchor_view, gfx::Rect(), nullptr, observer, std::move(delegate),
+      browser_->profile(), url, already_bookmarked);
+  if (bubble_widget && star_view)
+    bubble_widget->AddObserver(star_view);
 }
 
-views::View* ToolbarView::GetSaveCreditCardBubbleAnchor() {
-  views::View* save_credit_card_icon_view =
-      location_bar()->save_credit_card_icon_view();
-  return (save_credit_card_icon_view && save_credit_card_icon_view->visible())
-             ? save_credit_card_icon_view
-             : app_menu_button_;
+autofill::SaveCardBubbleView* ToolbarView::ShowSaveCreditCardBubble(
+    content::WebContents* web_contents,
+    autofill::SaveCardBubbleController* controller,
+    bool is_user_gesture) {
+  views::View* anchor_view = location_bar();
+  BubbleIconView* card_view = location_bar()->save_credit_card_icon_view();
+  if (!ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+    if (card_view && card_view->visible())
+      anchor_view = card_view;
+    else
+      anchor_view = app_menu_button_;
+  }
+
+  autofill::SaveCardBubbleViews* bubble = new autofill::SaveCardBubbleViews(
+      anchor_view, web_contents, controller);
+  if (card_view)
+    bubble->GetWidget()->AddObserver(card_view);
+  bubble->Show(is_user_gesture ? autofill::SaveCardBubbleViews::USER_GESTURE
+                               : autofill::SaveCardBubbleViews::AUTOMATIC);
+  return bubble;
 }
 
-views::View* ToolbarView::GetTranslateBubbleAnchor() {
-  views::View* translate_icon_view = location_bar()->translate_icon_view();
-  return (translate_icon_view && translate_icon_view->visible())
-             ? translate_icon_view
-             : app_menu_button_;
-}
+void ToolbarView::ShowTranslateBubble(
+    content::WebContents* web_contents,
+    translate::TranslateStep step,
+    translate::TranslateErrors::Type error_type,
+    bool is_user_gesture) {
+  views::View* anchor_view = location_bar();
+  BubbleIconView* translate_icon_view = location_bar()->translate_icon_view();
+  if (!ui::MaterialDesignController::IsSecondaryUiMaterial()) {
+    if (translate_icon_view && translate_icon_view->visible())
+      anchor_view = translate_icon_view;
+    else
+      anchor_view = app_menu_button_;
+  }
 
-void ToolbarView::ExecuteExtensionCommand(
-    const extensions::Extension* extension,
-    const extensions::Command& command) {
-  browser_actions_->ExecuteExtensionCommand(extension, command);
+  views::Widget* bubble_widget = TranslateBubbleView::ShowBubble(
+      anchor_view, web_contents, step,
+      error_type, is_user_gesture ? TranslateBubbleView::USER_GESTURE
+                                  : TranslateBubbleView::AUTOMATIC);
+  if (bubble_widget && translate_icon_view)
+    bubble_widget->AddObserver(translate_icon_view);
 }
 
 int ToolbarView::GetMaxBrowserActionsWidth() const {
@@ -349,9 +379,9 @@ bool ToolbarView::SetPaneFocus(views::View* initial_focus) {
   return true;
 }
 
-void ToolbarView::GetAccessibleState(ui::AXViewState* state) {
-  state->role = ui::AX_ROLE_TOOLBAR;
-  state->name = l10n_util::GetStringUTF16(IDS_ACCNAME_TOOLBAR);
+void ToolbarView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  node_data->role = ui::AX_ROLE_TOOLBAR;
+  node_data->SetName(l10n_util::GetStringUTF8(IDS_ACCNAME_TOOLBAR));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -364,8 +394,9 @@ bool ToolbarView::GetAcceleratorInfo(int id, ui::Accelerator* accel) {
 ////////////////////////////////////////////////////////////////////////////////
 // ToolbarView, views::MenuButtonListener implementation:
 
-void ToolbarView::OnMenuButtonClicked(views::View* source,
-                                      const gfx::Point& point) {
+void ToolbarView::OnMenuButtonClicked(views::MenuButton* source,
+                                      const gfx::Point& point,
+                                      const ui::Event* event) {
   TRACE_EVENT0("views", "ToolbarView::OnMenuButtonClicked");
   DCHECK_EQ(VIEW_ID_APP_MENU, source->id());
   app_menu_button_->ShowMenu(false);  // Not for drop.
@@ -393,14 +424,10 @@ ToolbarView::GetContentSettingBubbleModelDelegate() {
 
 void ToolbarView::ShowWebsiteSettings(
     content::WebContents* web_contents,
-    const GURL& url,
-    const SecurityStateModel::SecurityInfo& security_info) {
-  chrome::ShowWebsiteSettings(browser_, web_contents, url, security_info);
-}
-
-views::Widget* ToolbarView::CreateViewsBubble(
-    views::BubbleDelegateView* bubble_delegate) {
-  return views::BubbleDelegateView::CreateBubble(bubble_delegate);
+    const GURL& virtual_url,
+    const security_state::SecurityInfo& security_info) {
+  chrome::ShowWebsiteSettings(browser_, web_contents, virtual_url,
+                              security_info);
 }
 
 PageActionImageView* ToolbarView::CreatePageActionImageView(
@@ -467,7 +494,7 @@ void ToolbarView::Observe(int type,
 // ToolbarView, ui::AcceleratorProvider implementation:
 
 bool ToolbarView::GetAcceleratorForCommandId(int command_id,
-    ui::Accelerator* accelerator) {
+    ui::Accelerator* accelerator) const {
   return GetWidget()->GetAccelerator(command_id, accelerator);
 }
 
@@ -475,69 +502,29 @@ bool ToolbarView::GetAcceleratorForCommandId(int command_id,
 // ToolbarView, views::View overrides:
 
 gfx::Size ToolbarView::GetPreferredSize() const {
-  gfx::Size size(location_bar_->GetPreferredSize());
-  if (is_display_mode_normal()) {
-    const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
-    const int browser_actions_width =
-        browser_actions_->GetPreferredSize().width();
-    const int content_width =
-        GetLayoutInsets(TOOLBAR).width() +
-        back_->GetPreferredSize().width() + element_padding +
-        forward_->GetPreferredSize().width() + element_padding +
-        reload_->GetPreferredSize().width() +
-        (show_home_button_.GetValue()
-             ? element_padding + home_->GetPreferredSize().width()
-             : 0) +
-        GetLayoutConstant(TOOLBAR_STANDARD_SPACING) +
-        GetLayoutConstant(TOOLBAR_LOCATION_BAR_RIGHT_PADDING) +
-        browser_actions_width +
-        (browser_actions_width > 0 ? element_padding : 0) +
-        app_menu_button_->GetPreferredSize().width();
-    size.Enlarge(content_width, 0);
-  }
-  return SizeForContentSize(size);
+  return GetSizeInternal(&View::GetPreferredSize);
 }
 
 gfx::Size ToolbarView::GetMinimumSize() const {
-  gfx::Size size(location_bar_->GetMinimumSize());
-  if (is_display_mode_normal()) {
-    const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
-    const int browser_actions_width =
-        browser_actions_->GetMinimumSize().width();
-    const int content_width =
-        GetLayoutInsets(TOOLBAR).width() +
-        back_->GetMinimumSize().width() + element_padding +
-        forward_->GetMinimumSize().width() + element_padding +
-        reload_->GetMinimumSize().width() +
-        (show_home_button_.GetValue()
-             ? element_padding + home_->GetMinimumSize().width()
-             : 0) +
-        GetLayoutConstant(TOOLBAR_STANDARD_SPACING) +
-        GetLayoutConstant(TOOLBAR_LOCATION_BAR_RIGHT_PADDING) +
-        browser_actions_width +
-        (browser_actions_width > 0 ? element_padding : 0) +
-        app_menu_button_->GetMinimumSize().width();
-    size.Enlarge(content_width, 0);
-  }
-  return SizeForContentSize(size);
+  return GetSizeInternal(&View::GetMinimumSize);
 }
 
 void ToolbarView::Layout() {
   // If we have not been initialized yet just do nothing.
-  if (back_ == NULL)
+  if (!location_bar_)
     return;
 
   if (!is_display_mode_normal()) {
-    location_bar_->SetBounds(0, PopupTopSpacing(), width(),
+    location_bar_->SetBounds(0, 0, width(),
                              location_bar_->GetPreferredSize().height());
     return;
   }
 
   // We assume all child elements except the location bar are the same height.
   // Set child_y such that buttons appear vertically centered.
-  int child_height =
+  const int child_height =
       std::min(back_->GetPreferredSize().height(), height());
-  int child_y = CenteredChildY(height(), child_height);
+  const int child_y = (height() - child_height) / 2;
 
   // If the window is maximized, we extend the back button to the left so that
   // clicking on the left-most pixel will activate the back button.
@@ -546,14 +533,16 @@ void ToolbarView::Layout() {
   //                will be slightly the wrong size.  We should force a
   //                Layout() in this case.
   //                http://crbug.com/5540
-  bool maximized = browser_->window() && browser_->window()->IsMaximized();
-  int back_width = back_->GetPreferredSize().width();
-  const gfx::Insets insets(GetLayoutInsets(TOOLBAR));
+  const bool maximized =
+      browser_->window() && browser_->window()->IsMaximized();
+  const int back_width = back_->GetPreferredSize().width();
+  // The padding at either end of the toolbar.
+  const int end_padding = GetToolbarHorizontalPadding();
   if (maximized) {
-    back_->SetBounds(0, child_y, back_width + insets.left(), child_height);
-    back_->SetLeadingMargin(insets.left());
+    back_->SetBounds(0, child_y, back_width + end_padding, child_height);
+    back_->SetLeadingMargin(end_padding);
   } else {
-    back_->SetBounds(insets.left(), child_y, back_width, child_height);
+    back_->SetBounds(end_padding, child_y, back_width, child_height);
     back_->SetLeadingMargin(0);
   }
   const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
@@ -580,36 +569,38 @@ void ToolbarView::Layout() {
   next_element_x =
       home_->bounds().right() + GetLayoutConstant(TOOLBAR_STANDARD_SPACING);
 
-  int browser_actions_desired_width =
-      browser_actions_->GetPreferredSize().width();
   int app_menu_width = app_menu_button_->GetPreferredSize().width();
-  const int location_bar_right_padding =
+  const int right_padding =
       GetLayoutConstant(TOOLBAR_LOCATION_BAR_RIGHT_PADDING);
 
+  // Note that the browser actions container has its own internal left and right
+  // padding to visually separate it from the location bar and app menu button.
+  // However if the container is empty we must account for the |right_padding|
+  // value used to visually separate the location bar and app menu button.
   int available_width = std::max(
-      0, width() - insets.right() - app_menu_width -
-             (browser_actions_desired_width > 0 ? element_padding : 0) -
-             location_bar_right_padding - next_element_x);
+      0,
+      width() - end_padding - app_menu_width -
+      (browser_actions_->GetPreferredSize().IsEmpty() ? right_padding : 0) -
+      next_element_x);
   // Don't allow the omnibox to shrink to the point of non-existence, so
   // subtract its minimum width from the available width to reserve it.
-  int minimum_location_bar_width = location_bar_->GetMinimumSize().width();
-  int browser_actions_width = browser_actions_->GetWidthForMaxWidth(
-      available_width - minimum_location_bar_width);
+  const int browser_actions_width = browser_actions_->GetWidthForMaxWidth(
+      available_width - location_bar_->GetMinimumSize().width());
   available_width -= browser_actions_width;
-  int location_bar_width = available_width;
+  const int location_bar_width = available_width;
 
-  int location_height = location_bar_->GetPreferredSize().height();
-  int location_y = CenteredChildY(height(), location_height);
+  const int location_height = location_bar_->GetPreferredSize().height();
+  const int location_y = (height() - location_height) / 2;
 
   location_bar_->SetBounds(next_element_x, location_y,
                            location_bar_width, location_height);
-  next_element_x = location_bar_->bounds().right() + location_bar_right_padding;
 
+  next_element_x = location_bar_->bounds().right();
   browser_actions_->SetBounds(
       next_element_x, child_y, browser_actions_width, child_height);
   next_element_x = browser_actions_->bounds().right();
-  if (browser_actions_width > 0)
-    next_element_x += element_padding;
+  if (!browser_actions_width)
+    next_element_x += right_padding;
 
   // The browser actions need to do a layout explicitly, because when an
   // extension is loaded/unloaded/changed, BrowserActionContainer removes and
@@ -623,14 +614,15 @@ void ToolbarView::Layout() {
   // Extend the app menu to the screen's right edge in maximized mode just like
   // we extend the back button to the left edge.
   if (maximized)
-    app_menu_width += insets.right();
+    app_menu_width += end_padding;
   app_menu_button_->SetBounds(next_element_x, child_y, app_menu_width,
                               child_height);
-  app_menu_button_->SetTrailingMargin(maximized ? insets.right() : 0);
+  app_menu_button_->SetTrailingMargin(maximized ? end_padding : 0);
 }
 
 void ToolbarView::OnThemeChanged() {
-  LoadImages();
+  if (is_display_mode_normal())
+    LoadImages();
 }
 
 const char* ToolbarView::GetClassName() const {
@@ -671,87 +663,78 @@ void ToolbarView::RemovePaneFocus() {
 ////////////////////////////////////////////////////////////////////////////////
 // ToolbarView, private:
 
-// views::ViewTargeterDelegate:
-bool ToolbarView::DoesIntersectRect(const views::View* target,
-                                    const gfx::Rect& rect) const {
-  CHECK_EQ(target, this);
+// AppMenuIconController::Delegate:
+void ToolbarView::UpdateSeverity(AppMenuIconController::IconType type,
+                                 AppMenuIconController::Severity severity,
+                                 bool animate) {
+  // There's no app menu in tabless windows.
+  if (!app_menu_button_)
+    return;
 
-  // Fall through to the tab strip above us if none of |rect| intersects
-  // with this view (intersection with the top shadow edge does not
-  // count as intersection with this view).
-  if (rect.bottom() < content_shadow_height())
-    return false;
-  // Otherwise let our superclass take care of it.
-  return ViewTargeterDelegate::DoesIntersectRect(this, rect);
-}
-
-void ToolbarView::UpdateBadgeSeverity(AppMenuBadgeController::BadgeType type,
-                                      AppMenuIconPainter::Severity severity,
-                                      bool animate) {
   // Showing the bubble requires |app_menu_button_| to be in a widget. See
   // comment in ConflictingModuleView for details.
   DCHECK(app_menu_button_->GetWidget());
 
   base::string16 accname_app = l10n_util::GetStringUTF16(IDS_ACCNAME_APP);
-  if (type == AppMenuBadgeController::BADGE_TYPE_UPGRADE_NOTIFICATION) {
+  if (type == AppMenuIconController::IconType::UPGRADE_NOTIFICATION) {
     accname_app = l10n_util::GetStringFUTF16(
         IDS_ACCNAME_APP_UPGRADE_RECOMMENDED, accname_app);
   }
   app_menu_button_->SetAccessibleName(accname_app);
-  app_menu_button_->SetSeverity(severity, animate);
+  app_menu_button_->SetSeverity(type, severity, animate);
 
-  // Keep track of whether we were showing the badge before, so we don't send
-  // multiple UMA events for example when multiple Chrome windows are open.
-  static bool incompatibility_badge_showing = false;
+  // Keep track of whether we were showing the incompatibility icon before,
+  // so we don't send multiple UMA events for example when multiple Chrome
+  // windows are open.
+  static bool incompatibility_warning_showing = false;
   // Save the old value before resetting it.
-  bool was_showing = incompatibility_badge_showing;
-  incompatibility_badge_showing = false;
+  bool was_showing = incompatibility_warning_showing;
+  incompatibility_warning_showing = false;
 
-  if (type == AppMenuBadgeController::BADGE_TYPE_INCOMPATIBILITY_WARNING) {
+  if (type == AppMenuIconController::IconType::INCOMPATIBILITY_WARNING) {
     if (!was_showing) {
       content::RecordAction(UserMetricsAction("ConflictBadge"));
 #if defined(OS_WIN)
       ConflictingModuleView::MaybeShow(browser_, app_menu_button_);
 #endif
     }
-    incompatibility_badge_showing = true;
+    incompatibility_warning_showing = true;
     return;
   }
 }
 
-int ToolbarView::PopupTopSpacing() const {
-  const int kAdditionalPopupTopSpacingNonGlass = 2;
-  return views::NonClientFrameView::kClientEdgeThickness +
-      (GetWidget()->ShouldWindowContentsBeTransparent() ?
-          0 : kAdditionalPopupTopSpacingNonGlass);
+gfx::Size ToolbarView::GetSizeInternal(
+    gfx::Size (View::*get_size)() const) const {
+  gfx::Size size((location_bar_->*get_size)());
+  if (is_display_mode_normal()) {
+    const int element_padding = GetLayoutConstant(TOOLBAR_ELEMENT_PADDING);
+    const int browser_actions_width =
+        (browser_actions_->*get_size)().width();
+    const int right_padding =
+        GetLayoutConstant(TOOLBAR_LOCATION_BAR_RIGHT_PADDING);
+    const int content_width =
+        2 * GetToolbarHorizontalPadding() + (back_->*get_size)().width() +
+        element_padding + (forward_->*get_size)().width() + element_padding +
+        (reload_->*get_size)().width() +
+        (show_home_button_.GetValue()
+             ? element_padding + (home_->*get_size)().width()
+             : 0) +
+        GetLayoutConstant(TOOLBAR_STANDARD_SPACING) +
+        (browser_actions_width > 0 ? browser_actions_width : right_padding) +
+        (app_menu_button_->*get_size)().width();
+    size.Enlarge(content_width, 0);
+  }
+  return SizeForContentSize(size);
 }
 
 gfx::Size ToolbarView::SizeForContentSize(gfx::Size size) const {
   if (is_display_mode_normal()) {
-    // For Material Design the size of the toolbar is computed using the size
-    // of the location bar and constant padding values. For non-material the
-    // size is based on the provided assets.
-    if (ui::MaterialDesignController::IsModeMaterial()) {
-      int content_height = std::max(back_->GetPreferredSize().height(),
-                                    location_bar_->GetPreferredSize().height());
-      int padding = GetLayoutInsets(TOOLBAR).height();
-      size.SetToMax(gfx::Size(0, content_height + padding));
-    } else {
-      gfx::ImageSkia* normal_background =
-          GetThemeProvider()->GetImageSkiaNamed(IDR_CONTENT_TOP_CENTER);
-      size.SetToMax(
-          gfx::Size(0, normal_background->height() - content_shadow_height()));
-    }
-  } else if (size.height() == 0) {
-    // Location mode with a 0 height location bar. If on ash, expand by one
-    // pixel to show a border in the title bar, otherwise leave the size as zero
-    // height.
-    const int kAshBorderSpacing = 1;
-    if (browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH)
-      size.Enlarge(0, kAshBorderSpacing);
-  } else {
-    size.Enlarge(
-        0, PopupTopSpacing() + views::NonClientFrameView::kClientEdgeThickness);
+    // The size of the toolbar is computed using the size of the location bar
+    // and constant padding values.
+    int content_height = std::max(back_->GetPreferredSize().height(),
+                                  location_bar_->GetPreferredSize().height());
+    const int kExtraVerticalSpace = 9;
+    size.SetToMax(gfx::Size(0, content_height + kExtraVerticalSpace));
   }
   return size;
 }
@@ -759,52 +742,40 @@ gfx::Size ToolbarView::SizeForContentSize(gfx::Size size) const {
 void ToolbarView::LoadImages() {
   const ui::ThemeProvider* tp = GetThemeProvider();
 
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    const int kButtonSize = 16;
-    const SkColor normal_color =
-        tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
-    const SkColor disabled_color =
-        tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON_INACTIVE);
+  const SkColor normal_color =
+      tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+  const SkColor disabled_color =
+      tp->GetColor(ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON_INACTIVE);
 
-    back_->SetImage(views::Button::STATE_NORMAL,
-                    gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK,
-                                          kButtonSize, normal_color));
-    back_->SetImage(views::Button::STATE_DISABLED,
-                    gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK,
-                                          kButtonSize, disabled_color));
-    forward_->SetImage(
-        views::Button::STATE_NORMAL,
-        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD, kButtonSize,
-                              normal_color));
-    forward_->SetImage(
-        views::Button::STATE_DISABLED,
-        gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD, kButtonSize,
-                              disabled_color));
-    home_->SetImage(views::Button::STATE_NORMAL,
-                    gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_HOME,
-                                          kButtonSize, normal_color));
-    app_menu_button_->UpdateIcon();
-  } else {
-    back_->SetImage(views::Button::STATE_NORMAL,
-                    *(tp->GetImageSkiaNamed(IDR_BACK)));
-    back_->SetImage(views::Button::STATE_DISABLED,
-                    *(tp->GetImageSkiaNamed(IDR_BACK_D)));
-    forward_->SetImage(views::Button::STATE_NORMAL,
-                       *(tp->GetImageSkiaNamed(IDR_FORWARD)));
-    forward_->SetImage(views::Button::STATE_DISABLED,
-                       *(tp->GetImageSkiaNamed(IDR_FORWARD_D)));
-    home_->SetImage(views::Button::STATE_NORMAL,
-                    *(tp->GetImageSkiaNamed(IDR_HOME)));
-  }
+  back_->SetImage(
+      views::Button::STATE_NORMAL,
+      gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK, normal_color));
+  back_->SetImage(
+      views::Button::STATE_DISABLED,
+      gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_BACK, disabled_color));
+  forward_->SetImage(
+      views::Button::STATE_NORMAL,
+      gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD, normal_color));
+  forward_->SetImage(views::Button::STATE_DISABLED,
+                     gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_FORWARD,
+                                           disabled_color));
+  home_->SetImage(
+      views::Button::STATE_NORMAL,
+      gfx::CreateVectorIcon(gfx::VectorIconId::NAVIGATE_HOME, normal_color));
+  app_menu_button_->UpdateIcon();
+
+  back_->set_ink_drop_base_color(normal_color);
+  forward_->set_ink_drop_base_color(normal_color);
+  home_->set_ink_drop_base_color(normal_color);
+  app_menu_button_->set_ink_drop_base_color(normal_color);
 
   reload_->LoadImages();
 }
 
 void ToolbarView::ShowCriticalNotification() {
 #if defined(OS_WIN)
-  CriticalNotificationBubbleView* bubble_delegate =
-      new CriticalNotificationBubbleView(app_menu_button_);
-  views::BubbleDelegateView::CreateBubble(bubble_delegate)->Show();
+  views::BubbleDialogDelegateView::CreateBubble(
+      new CriticalNotificationBubbleView(app_menu_button_))->Show();
 #endif
 }
 
@@ -818,10 +789,4 @@ void ToolbarView::ShowOutdatedInstallNotification(bool auto_update_enabled) {
 void ToolbarView::OnShowHomeButtonChanged() {
   Layout();
   SchedulePaint();
-}
-
-int ToolbarView::content_shadow_height() const {
-  return GetLayoutConstant(
-      (browser_->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_ASH) ?
-          TOOLBAR_CONTENT_SHADOW_HEIGHT_ASH : TOOLBAR_CONTENT_SHADOW_HEIGHT);
 }

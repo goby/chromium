@@ -9,7 +9,9 @@ from measurements import thread_times
 import page_sets
 from telemetry import benchmark
 
+
 class _ThreadTimes(perf_benchmark.PerfBenchmark):
+
   @classmethod
   def AddBenchmarkCommandLineArgs(cls, parser):
     parser.add_option('--report-silk-details', action='store_true',
@@ -23,6 +25,9 @@ class _ThreadTimes(perf_benchmark.PerfBenchmark):
   def ValueCanBeAddedPredicate(cls, value, _):
     # Default to only reporting per-frame metrics.
     return 'per_second' not in value.name
+
+  def SetExtraBrowserOptions(self, options):
+    silk_flags.CustomizeBrowserOptionsForThreadTimes(options)
 
   def CreatePageTest(self, options):
     return thread_times.ThreadTimes(options.report_silk_details)
@@ -56,7 +61,7 @@ class ThreadTimesFastPathMobileSites(_ThreadTimes):
   key mobile sites labeled with fast-path tag.
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
   page_set = page_sets.KeyMobileSitesSmoothPageSet
-  options = {'story_label_filter' : 'fastpath'}
+  options = {'story_label_filter': 'fastpath'}
 
   @classmethod
   def Name(cls):
@@ -74,25 +79,28 @@ class ThreadTimesSimpleMobileSites(_ThreadTimes):
     return 'thread_times.simple_mobile_sites'
 
 
-@benchmark.Disabled('win') # crbug.com/443781
 class ThreadTimesCompositorCases(_ThreadTimes):
   """Measures timeline metrics while performing smoothness action on
   tough compositor cases, using software rasterization.
 
   http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
   page_set = page_sets.ToughCompositorCasesPageSet
+
   def SetExtraBrowserOptions(self, options):
+    super(ThreadTimesCompositorCases, self).SetExtraBrowserOptions(options)
     silk_flags.CustomizeBrowserOptionsForSoftwareRasterization(options)
 
   @classmethod
   def Name(cls):
     return 'thread_times.tough_compositor_cases'
 
+
 @benchmark.Enabled('android')
 class ThreadTimesPolymer(_ThreadTimes):
   """Measures timeline metrics while performing smoothness action on
   Polymer cases."""
   page_set = page_sets.PolymerPageSet
+
   @classmethod
   def Name(cls):
     return 'thread_times.polymer'

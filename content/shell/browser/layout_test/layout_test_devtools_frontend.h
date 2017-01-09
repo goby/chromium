@@ -5,13 +5,12 @@
 #ifndef CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_DEVTOOLS_FRONTEND_H_
 #define CONTENT_SHELL_BROWSER_LAYOUT_TEST_LAYOUT_TEST_DEVTOOLS_FRONTEND_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/shell/browser/shell_devtools_frontend.h"
 
 namespace content {
 
-class RenderViewHost;
 class Shell;
 class WebContents;
 
@@ -21,11 +20,13 @@ class LayoutTestDevToolsFrontend : public ShellDevToolsFrontend {
                                           const std::string& settings,
                                           const std::string& frontend_url);
 
-  static GURL GetDevToolsPathAsURL(const std::string& settings,
-                                   const std::string& frontend_url);
+  static GURL GetDevToolsPathAsURL(const std::string& frontend_url);
+
+  static GURL MapJSTestURL(const GURL& test_url);
 
   void ReuseFrontend(const std::string& settings,
                      const std::string frontend_url);
+  void EvaluateInFrontend(int call_id, const std::string& expression);
 
  private:
   LayoutTestDevToolsFrontend(Shell* frontend_shell,
@@ -35,8 +36,15 @@ class LayoutTestDevToolsFrontend : public ShellDevToolsFrontend {
   // content::DevToolsAgentHostClient implementation.
   void AgentHostClosed(DevToolsAgentHost* agent_host, bool replaced) override;
 
+  // ShellDevToolsFrontend overrides.
+  void HandleMessageFromDevToolsFrontend(const std::string& message) override;
+
   // WebContentsObserver implementation.
   void RenderProcessGone(base::TerminationStatus status) override;
+  void RenderFrameCreated(RenderFrameHost* render_frame_host) override;
+
+  bool ready_for_test_;
+  std::vector<std::pair<int, std::string>> pending_evaluations_;
 
   DISALLOW_COPY_AND_ASSIGN(LayoutTestDevToolsFrontend);
 };

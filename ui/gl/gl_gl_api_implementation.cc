@@ -17,7 +17,7 @@
 #include "ui/gl/gl_switches.h"
 #include "ui/gl/gl_version_info.h"
 
-namespace gfx {
+namespace gl {
 
 // The GL Api being used. This could be g_real_gl or gl_trace_gl
 static GLApi* g_gl = NULL;
@@ -28,15 +28,22 @@ static RealGLApi* g_real_gl = NULL;
 static NoContextGLApi* g_no_context_gl = NULL;
 // A GL Api that calls TRACE and then calls another GL api.
 static TraceGLApi* g_trace_gl = NULL;
+// The GL Api being used for stub contexts. If null, g_gl is used instead.
+static GLApi* g_stub_gl = NULL;
 // GL version used when initializing dynamic bindings.
 static GLVersionInfo* g_version_info = NULL;
 
 namespace {
 
 static inline GLenum GetInternalFormat(GLenum internal_format) {
-  if (gfx::GetGLImplementation() != gfx::kGLImplementationEGLGLES2) {
+  if (!g_version_info->is_es) {
     if (internal_format == GL_BGRA_EXT || internal_format == GL_BGRA8_EXT)
       return GL_RGBA8;
+  }
+  if (g_version_info->is_es3 && g_version_info->is_mesa) {
+    // Mesa bug workaround: Mipmapping does not work when using GL_BGRA_EXT
+    if (internal_format == GL_BGRA_EXT)
+      return GL_RGBA;
   }
   return internal_format;
 }
@@ -45,11 +52,11 @@ static inline GLenum GetInternalFormat(GLenum internal_format) {
 static inline GLenum GetTexInternalFormat(GLenum internal_format,
                                           GLenum format,
                                           GLenum type) {
+  DCHECK(g_version_info);
   GLenum gl_internal_format = GetInternalFormat(internal_format);
 
   // g_version_info must be initialized when this function is bound.
-  DCHECK(gfx::g_version_info);
-  if (gfx::g_version_info->is_es3) {
+  if (g_version_info->is_es3) {
     if (internal_format == GL_RED_EXT) {
       // GL_EXT_texture_rg case in ES2.
       switch (type) {
@@ -87,8 +94,8 @@ static inline GLenum GetTexInternalFormat(GLenum internal_format,
     }
   }
 
-  if (type == GL_FLOAT && gfx::g_version_info->is_angle &&
-      gfx::g_version_info->is_es && gfx::g_version_info->major_version == 2) {
+  if (type == GL_FLOAT && g_version_info->is_angle && g_version_info->is_es &&
+      g_version_info->major_version == 2) {
     // It's possible that the texture is using a sized internal format, and
     // ANGLE exposing GLES2 API doesn't support those.
     // TODO(oetuaho@nvidia.com): Remove these conversions once ANGLE has the
@@ -106,7 +113,21 @@ static inline GLenum GetTexInternalFormat(GLenum internal_format,
     }
   }
 
-  if (gfx::g_version_info->is_es)
+  if (g_version_info->IsAtLeastGL(2, 1) ||
+      g_version_info->IsAtLeastGLES(3, 0)) {
+    switch (internal_format) {
+      case GL_SRGB_EXT:
+        gl_internal_format = GL_SRGB8;
+        break;
+      case GL_SRGB_ALPHA_EXT:
+        gl_internal_format = GL_SRGB8_ALPHA8;
+        break;
+      default:
+        break;
+    }
+  }
+
+  if (g_version_info->is_es)
     return gl_internal_format;
 
   if (type == GL_FLOAT) {
@@ -126,6 +147,14 @@ static inline GLenum GetTexInternalFormat(GLenum internal_format,
         break;
       case GL_ALPHA:
         gl_internal_format = GL_ALPHA32F_ARB;
+        break;
+      // RED and RG are reached here because on Desktop GL core profile,
+      // LUMINANCE/ALPHA formats are emulated through RED and RG in Chrome.
+      case GL_RED:
+        gl_internal_format = GL_R32F;
+        break;
+      case GL_RG:
+        gl_internal_format = GL_RG32F;
         break;
       default:
         // We can't assert here because if the client context is ES3,
@@ -149,20 +178,50 @@ static inline GLenum GetTexInternalFormat(GLenum internal_format,
       case GL_ALPHA:
         gl_internal_format = GL_ALPHA16F_ARB;
         break;
+      // RED and RG are reached here because on Desktop GL core profile,
+      // LUMINANCE/ALPHA formats are emulated through RED and RG in Chrome.
+      case GL_RED:
+        gl_internal_format = GL_R16F;
+        break;
+      case GL_RG:
+        gl_internal_format = GL_RG16F;
+        break;
       default:
         NOTREACHED();
         break;
     }
   }
+
   return gl_internal_format;
 }
 
+static inline GLenum GetTexFormat(GLenum format) {
+  GLenum gl_format = format;
+
+  DCHECK(g_version_info);
+  if (g_version_info->IsAtLeastGL(2, 1) ||
+      g_version_info->IsAtLeastGLES(3, 0)) {
+    switch (format) {
+      case GL_SRGB_EXT:
+        gl_format = GL_RGB;
+        break;
+      case GL_SRGB_ALPHA_EXT:
+        gl_format = GL_RGBA;
+        break;
+      default:
+        break;
+    }
+  }
+
+  return gl_format;
+}
+
 static inline GLenum GetTexType(GLenum type) {
-   if (gfx::GetGLImplementation() != gfx::kGLImplementationEGLGLES2) {
-     if (type == GL_HALF_FLOAT_OES)
-       return GL_HALF_FLOAT_ARB;
-   }
-   return type;
+  if (!g_version_info->is_es) {
+    if (type == GL_HALF_FLOAT_OES)
+      return GL_HALF_FLOAT_ARB;
+  }
+  return type;
 }
 
 static void GL_BINDING_CALL CustomTexImage2D(
@@ -171,18 +230,21 @@ static void GL_BINDING_CALL CustomTexImage2D(
     const void* pixels) {
   GLenum gl_internal_format = GetTexInternalFormat(
       internalformat, format, type);
+  GLenum gl_format = GetTexFormat(format);
   GLenum gl_type = GetTexType(type);
   g_driver_gl.orig_fn.glTexImage2DFn(
-      target, level, gl_internal_format, width, height, border, format, gl_type,
-      pixels);
+      target, level, gl_internal_format, width, height, border, gl_format,
+      gl_type, pixels);
 }
 
 static void GL_BINDING_CALL CustomTexSubImage2D(
       GLenum target, GLint level, GLint xoffset, GLint yoffset, GLsizei width,
       GLsizei height, GLenum format, GLenum type, const void* pixels) {
+  GLenum gl_format = GetTexFormat(format);
   GLenum gl_type = GetTexType(type);
   g_driver_gl.orig_fn.glTexSubImage2DFn(
-      target, level, xoffset, yoffset, width, height, format, gl_type, pixels);
+      target, level, xoffset, yoffset, width, height, gl_format, gl_type,
+      pixels);
 }
 
 static void GL_BINDING_CALL CustomTexStorage2DEXT(
@@ -209,6 +271,17 @@ static void GL_BINDING_CALL CustomRenderbufferStorageMultisampleEXT(
     GLsizei height) {
   GLenum gl_internal_format = GetInternalFormat(internalformat);
   g_driver_gl.orig_fn.glRenderbufferStorageMultisampleEXTFn(
+      target, samples, gl_internal_format, width, height);
+}
+
+static void GL_BINDING_CALL
+CustomRenderbufferStorageMultisample(GLenum target,
+                                     GLsizei samples,
+                                     GLenum internalformat,
+                                     GLsizei width,
+                                     GLsizei height) {
+  GLenum gl_internal_format = GetInternalFormat(internalformat);
+  g_driver_gl.orig_fn.glRenderbufferStorageMultisampleFn(
       target, samples, gl_internal_format, width, height);
 }
 
@@ -244,6 +317,13 @@ void DriverGL::InitializeCustomDynamicBindings(GLContext* context) {
   fn.glRenderbufferStorageMultisampleEXTFn =
       reinterpret_cast<glRenderbufferStorageMultisampleEXTProc>(
       CustomRenderbufferStorageMultisampleEXT);
+
+  DCHECK(orig_fn.glRenderbufferStorageMultisampleFn == NULL);
+  orig_fn.glRenderbufferStorageMultisampleFn =
+      fn.glRenderbufferStorageMultisampleFn;
+  fn.glRenderbufferStorageMultisampleFn =
+      reinterpret_cast<glRenderbufferStorageMultisampleProc>(
+          CustomRenderbufferStorageMultisample);
 }
 
 static void GL_BINDING_CALL NullDrawClearFn(GLbitfield mask) {
@@ -325,8 +405,16 @@ void SetGLToRealGLApi() {
   SetGLApi(g_gl);
 }
 
+void SetGLToStubGLApi() {
+  SetGLApi(g_stub_gl ? g_stub_gl : g_gl);
+}
+
 void SetGLApiToNoContext() {
   SetGLApi(g_no_context_gl);
+}
+
+void SetStubGLApi(GLApi* api) {
+  g_stub_gl = api;
 }
 
 const GLVersionInfo* GetGLVersionInfo() {
@@ -361,7 +449,7 @@ bool SetNullDrawGLBindingsEnabledGL(bool enabled) {
   return g_driver_gl.SetNullDrawBindingsEnabled(enabled);
 }
 
-void ClearGLBindingsGL() {
+void ClearBindingsGL() {
   if (g_real_gl) {
     delete g_real_gl;
     g_real_gl = NULL;
@@ -375,6 +463,7 @@ void ClearGLBindingsGL() {
     g_no_context_gl = NULL;
   }
   g_gl = NULL;
+  g_stub_gl = NULL;
   g_driver_gl.ClearBindings();
   if (g_current_gl_context_tls) {
     delete g_current_gl_context_tls;
@@ -466,18 +555,10 @@ const GLubyte* RealGLApi::glGetStringiFn(GLenum name, GLuint index) {
   return GLApiBase::glGetStringiFn(name, index);
 }
 
-void RealGLApi::glFlushFn() {
-  GLApiBase::glFlushFn();
-}
-
-void RealGLApi::glFinishFn() {
-  GLApiBase::glFinishFn();
-}
-
 void RealGLApi::InitializeFilteredExtensions() {
   if (disabled_exts_.size()) {
     filtered_exts_.clear();
-    if (gfx::WillUseGLGetStringForExtensions()) {
+    if (WillUseGLGetStringForExtensions()) {
       filtered_exts_str_ =
           FilterGLExtensionList(reinterpret_cast<const char*>(
                                     GLApiBase::glGetStringFn(GL_EXTENSIONS)),
@@ -491,7 +572,7 @@ void RealGLApi::InitializeFilteredExtensions() {
         const char* gl_extension = reinterpret_cast<const char*>(
             GLApiBase::glGetStringiFn(GL_EXTENSIONS, i));
         DCHECK(gl_extension != NULL);
-        if (!ContainsValue(disabled_exts_, gl_extension))
+        if (!base::ContainsValue(disabled_exts_, gl_extension))
           filtered_exts_.push_back(gl_extension);
       }
       filtered_exts_str_ = base::JoinString(filtered_exts_, " ");
@@ -511,108 +592,4 @@ NoContextGLApi::NoContextGLApi() {
 NoContextGLApi::~NoContextGLApi() {
 }
 
-VirtualGLApi::VirtualGLApi()
-    : real_context_(NULL),
-      current_context_(NULL) {
-}
-
-VirtualGLApi::~VirtualGLApi() {
-}
-
-void VirtualGLApi::Initialize(DriverGL* driver, GLContext* real_context) {
-  InitializeBase(driver);
-  real_context_ = real_context;
-
-  DCHECK(real_context->IsCurrent(NULL));
-  extensions_ = real_context->GetExtensions();
-}
-
-bool VirtualGLApi::MakeCurrent(GLContext* virtual_context, GLSurface* surface) {
-  bool switched_contexts = g_current_gl_context_tls->Get() != this;
-  GLSurface* current_surface = GLSurface::GetCurrent();
-  if (switched_contexts || surface != current_surface) {
-    // MakeCurrent 'lite' path that avoids potentially expensive MakeCurrent()
-    // calls if the GLSurface uses the same underlying surface or renders to
-    // an FBO.
-    if (switched_contexts || !current_surface ||
-        !virtual_context->IsCurrent(surface)) {
-      if (!real_context_->MakeCurrent(surface)) {
-        return false;
-      }
-    }
-  }
-
-  bool state_dirtied_externally = real_context_->GetStateWasDirtiedExternally();
-  real_context_->SetStateWasDirtiedExternally(false);
-
-  DCHECK_EQ(real_context_, GLContext::GetRealCurrent());
-  DCHECK(real_context_->IsCurrent(NULL));
-  DCHECK(virtual_context->IsCurrent(surface));
-
-  if (state_dirtied_externally || switched_contexts ||
-      virtual_context != current_context_) {
-#if DCHECK_IS_ON()
-    GLenum error = glGetErrorFn();
-    // Accepting a context loss error here enables using debug mode to work on
-    // context loss handling in virtual context mode.
-    // There should be no other errors from the previous context leaking into
-    // the new context.
-    DCHECK(error == GL_NO_ERROR || error == GL_CONTEXT_LOST_KHR) <<
-        "GL error was: " << error;
-#endif
-
-    // Set all state that is different from the real state
-    GLApi* temp = GetCurrentGLApi();
-    SetGLToRealGLApi();
-    if (virtual_context->GetGLStateRestorer()->IsInitialized()) {
-      GLStateRestorer* virtual_state = virtual_context->GetGLStateRestorer();
-      GLStateRestorer* current_state = current_context_ ?
-                                       current_context_->GetGLStateRestorer() :
-                                       nullptr;
-      if (switched_contexts || virtual_context != current_context_) {
-        if (current_state)
-          current_state->PauseQueries();
-        virtual_state->ResumeQueries();
-      }
-
-      virtual_state->RestoreState(
-          (current_state && !state_dirtied_externally && !switched_contexts)
-              ? current_state
-              : NULL);
-    }
-    SetGLApi(temp);
-    current_context_ = virtual_context;
-  }
-  SetGLApi(this);
-
-  virtual_context->SetCurrent(surface);
-  if (!surface->OnMakeCurrent(virtual_context)) {
-    LOG(ERROR) << "Could not make GLSurface current.";
-    return false;
-  }
-  return true;
-}
-
-void VirtualGLApi::OnReleaseVirtuallyCurrent(GLContext* virtual_context) {
-  if (current_context_ == virtual_context)
-    current_context_ = NULL;
-}
-
-const GLubyte* VirtualGLApi::glGetStringFn(GLenum name) {
-  switch (name) {
-    case GL_EXTENSIONS:
-      return reinterpret_cast<const GLubyte*>(extensions_.c_str());
-    default:
-      return driver_->fn.glGetStringFn(name);
-  }
-}
-
-void VirtualGLApi::glFlushFn() {
-  GLApiBase::glFlushFn();
-}
-
-void VirtualGLApi::glFinishFn() {
-  GLApiBase::glFinishFn();
-}
-
-}  // namespace gfx
+}  // namespace gl

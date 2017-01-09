@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <iterator>
 #include <set>
@@ -10,12 +13,13 @@
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "content/public/test/mock_special_storage_policy.h"
 #include "sql/connection.h"
 #include "sql/meta_table.h"
 #include "sql/statement.h"
-#include "sql/test/scoped_error_ignorer.h"
+#include "sql/test/scoped_error_expecter.h"
 #include "sql/test/test_helpers.h"
 #include "storage/browser/quota/quota_database.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -87,7 +91,7 @@ class QuotaDatabaseTest : public testing::Test {
     const int kQuota1 = 13579;
     const int kQuota2 = kQuota1 + 1024;
 
-    int64 quota = -1;
+    int64_t quota = -1;
     EXPECT_FALSE(db.GetHostQuota(kHost, kStorageTypeTemporary, &quota));
     EXPECT_FALSE(db.GetHostQuota(kHost, kStorageTypePersistent, &quota));
 
@@ -116,9 +120,9 @@ class QuotaDatabaseTest : public testing::Test {
     const char* kTempQuotaKey = QuotaDatabase::kTemporaryQuotaOverrideKey;
     const char* kAvailSpaceKey = QuotaDatabase::kDesiredAvailableSpaceKey;
 
-    int64 value = 0;
-    const int64 kValue1 = 456;
-    const int64 kValue2 = 123000;
+    int64_t value = 0;
+    const int64_t kValue1 = 456;
+    const int64_t kValue2 = 123000;
     EXPECT_FALSE(db.GetQuotaConfigValue(kTempQuotaKey, &value));
     EXPECT_FALSE(db.GetQuotaConfigValue(kAvailSpaceKey, &value));
 
@@ -363,28 +367,26 @@ class QuotaDatabaseTest : public testing::Test {
 
     EXPECT_TRUE(db.RegisterInitialOriginInfo(origins, kStorageTypeTemporary));
 
-    int used_count = -1;
-    EXPECT_TRUE(db.FindOriginUsedCount(GURL("http://a/"),
-                                       kStorageTypeTemporary,
-                                       &used_count));
-    EXPECT_EQ(0, used_count);
+    QuotaDatabase::OriginInfoTableEntry info;
+    info.used_count = -1;
+    EXPECT_TRUE(db.GetOriginInfo(
+        GURL("http://a/"), kStorageTypeTemporary, &info));
+    EXPECT_EQ(0, info.used_count);
 
     EXPECT_TRUE(db.SetOriginLastAccessTime(
         GURL("http://a/"), kStorageTypeTemporary,
         base::Time::FromDoubleT(1.0)));
-    used_count = -1;
-    EXPECT_TRUE(db.FindOriginUsedCount(GURL("http://a/"),
-                                       kStorageTypeTemporary,
-                                       &used_count));
-    EXPECT_EQ(1, used_count);
+    info.used_count = -1;
+    EXPECT_TRUE(db.GetOriginInfo(
+        GURL("http://a/"), kStorageTypeTemporary, &info));
+    EXPECT_EQ(1, info.used_count);
 
     EXPECT_TRUE(db.RegisterInitialOriginInfo(origins, kStorageTypeTemporary));
 
-    used_count = -1;
-    EXPECT_TRUE(db.FindOriginUsedCount(GURL("http://a/"),
-                                       kStorageTypeTemporary,
-                                       &used_count));
-    EXPECT_EQ(1, used_count);
+    info.used_count = -1;
+    EXPECT_TRUE(db.GetOriginInfo(
+        GURL("http://a/"), kStorageTypeTemporary, &info));
+    EXPECT_EQ(1, info.used_count);
   }
 
   template <typename EntryType>
@@ -533,8 +535,8 @@ class QuotaDatabaseTest : public testing::Test {
       const base::FilePath& kDbFile,
       const QuotaTableEntry* entries,
       size_t entries_size) {
-    scoped_ptr<sql::Connection> db(new sql::Connection);
-    scoped_ptr<sql::MetaTable> meta_table(new sql::MetaTable);
+    std::unique_ptr<sql::Connection> db(new sql::Connection);
+    std::unique_ptr<sql::MetaTable> meta_table(new sql::MetaTable);
 
     // V2 schema definitions.
     static const int kCurrentVersion = 2;
@@ -585,7 +587,7 @@ class QuotaDatabaseTest : public testing::Test {
 TEST_F(QuotaDatabaseTest, LazyOpen) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   LazyOpen(kDbFile);
   LazyOpen(base::FilePath());
 }
@@ -593,14 +595,14 @@ TEST_F(QuotaDatabaseTest, LazyOpen) {
 TEST_F(QuotaDatabaseTest, UpgradeSchema) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   UpgradeSchemaV2toV5(kDbFile);
 }
 
 TEST_F(QuotaDatabaseTest, HostQuota) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   HostQuota(kDbFile);
   HostQuota(base::FilePath());
 }
@@ -608,7 +610,7 @@ TEST_F(QuotaDatabaseTest, HostQuota) {
 TEST_F(QuotaDatabaseTest, GlobalQuota) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   GlobalQuota(kDbFile);
   GlobalQuota(base::FilePath());
 }
@@ -616,7 +618,7 @@ TEST_F(QuotaDatabaseTest, GlobalQuota) {
 TEST_F(QuotaDatabaseTest, OriginLastAccessTimeLRU) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   OriginLastAccessTimeLRU(kDbFile);
   OriginLastAccessTimeLRU(base::FilePath());
 }
@@ -624,7 +626,7 @@ TEST_F(QuotaDatabaseTest, OriginLastAccessTimeLRU) {
 TEST_F(QuotaDatabaseTest, OriginLastModifiedSince) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   OriginLastModifiedSince(kDbFile);
   OriginLastModifiedSince(base::FilePath());
 }
@@ -632,7 +634,7 @@ TEST_F(QuotaDatabaseTest, OriginLastModifiedSince) {
 TEST_F(QuotaDatabaseTest, OriginLastEvicted) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   OriginLastEvicted(kDbFile);
   OriginLastEvicted(base::FilePath());
 }
@@ -641,7 +643,7 @@ TEST_F(QuotaDatabaseTest, BootstrapFlag) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
 
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   QuotaDatabase db(kDbFile);
 
   EXPECT_FALSE(db.IsOriginDatabaseBootstrapped());
@@ -654,7 +656,7 @@ TEST_F(QuotaDatabaseTest, BootstrapFlag) {
 TEST_F(QuotaDatabaseTest, RegisterInitialOriginInfo) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   RegisterInitialOriginInfo(kDbFile);
   RegisterInitialOriginInfo(base::FilePath());
 }
@@ -662,7 +664,7 @@ TEST_F(QuotaDatabaseTest, RegisterInitialOriginInfo) {
 TEST_F(QuotaDatabaseTest, DumpQuotaTable) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   DumpQuotaTable(kDbFile);
   DumpQuotaTable(base::FilePath());
 }
@@ -670,7 +672,7 @@ TEST_F(QuotaDatabaseTest, DumpQuotaTable) {
 TEST_F(QuotaDatabaseTest, DumpOriginInfoTable) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   DumpOriginInfoTable(kDbFile);
   DumpOriginInfoTable(base::FilePath());
 }
@@ -682,13 +684,15 @@ TEST_F(QuotaDatabaseTest, GetOriginInfo) {
 TEST_F(QuotaDatabaseTest, OpenCorruptedDatabase) {
   base::ScopedTempDir data_dir;
   ASSERT_TRUE(data_dir.CreateUniqueTempDir());
-  const base::FilePath kDbFile = data_dir.path().AppendASCII(kDBFileName);
+  const base::FilePath kDbFile = data_dir.GetPath().AppendASCII(kDBFileName);
   LazyOpen(kDbFile);
   ASSERT_TRUE(sql::test::CorruptSizeInHeader(kDbFile));
-  sql::ScopedErrorIgnorer ignore_errors;
-  ignore_errors.IgnoreError(SQLITE_CORRUPT);
-  Reopen(kDbFile);
-  EXPECT_TRUE(ignore_errors.CheckIgnoredErrors());
+  {
+    sql::test::ScopedErrorExpecter expecter;
+    expecter.ExpectError(SQLITE_CORRUPT);
+    Reopen(kDbFile);
+    EXPECT_TRUE(expecter.SawExpectedErrors());
+  }
 }
 
 }  // namespace content

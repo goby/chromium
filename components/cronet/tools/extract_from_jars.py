@@ -4,7 +4,6 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import fnmatch
 import optparse
 import os
 import sys
@@ -23,7 +22,7 @@ def ExtractJars(options):
   jar_cwd = options.classes_dir
   build_utils.DeleteDirectory(jar_cwd)
   build_utils.MakeDirectory(jar_cwd)
-  for jar in build_utils.ParseGypList(options.jars):
+  for jar in build_utils.ParseGnList(options.jars):
     jar_path = os.path.abspath(jar)
     jar_cmd = ['jar', 'xf', jar_path]
     build_utils.CheckOutput(jar_cmd, cwd=jar_cwd)
@@ -31,6 +30,7 @@ def ExtractJars(options):
 
 def main():
   parser = optparse.OptionParser()
+  build_utils.AddDepfileOption(parser)
   parser.add_option('--classes-dir', help='Directory to extract .class files.')
   parser.add_option('--jars', help='Paths to jars to extract.')
   parser.add_option('--stamp', help='Path to touch on success.')
@@ -38,6 +38,10 @@ def main():
   options, _ = parser.parse_args()
 
   ExtractJars(options)
+
+  if options.depfile:
+    assert options.stamp
+    build_utils.WriteDepfile(options.depfile, options.stamp)
 
   if options.stamp:
     build_utils.Touch(options.stamp)

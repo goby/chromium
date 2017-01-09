@@ -4,6 +4,8 @@
 
 #include "extensions/shell/browser/shell_display_info_provider.h"
 
+#include "base/logging.h"
+
 namespace extensions {
 
 ShellDisplayInfoProvider::ShellDisplayInfoProvider() {
@@ -21,17 +23,13 @@ bool ShellDisplayInfoProvider::SetInfo(
 }
 
 void ShellDisplayInfoProvider::UpdateDisplayUnitInfoForPlatform(
-    const gfx::Display& display,
+    const display::Display& display,
     extensions::api::system_display::DisplayUnitInfo* unit) {
   static bool logged_once = false;
   if (!logged_once) {
     NOTIMPLEMENTED();
     logged_once = true;
   }
-}
-
-gfx::Screen* ShellDisplayInfoProvider::GetActiveScreen() {
-  return NULL;
 }
 
 // static

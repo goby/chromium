@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_USERS_AVATAR_USER_IMAGE_SYNC_OBSERVER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_USERS_AVATAR_USER_IMAGE_SYNC_OBSERVER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
-#include "components/syncable_prefs/pref_service_syncable_observer.h"
+#include "components/sync_preferences/pref_service_syncable_observer.h"
 #include "content/public/browser/notification_observer.h"
 
 class PrefChangeRegistrar;
@@ -19,7 +19,7 @@ namespace content {
 class NotificationRegistrar;
 }
 
-namespace syncable_prefs {
+namespace sync_preferences {
 class PrefServiceSyncable;
 }
 
@@ -36,7 +36,7 @@ namespace chromeos {
 // This class is responsible for keeping local user image synced with
 // image saved in syncable preference.
 class UserImageSyncObserver
-    : public syncable_prefs::PrefServiceSyncableObserver,
+    : public sync_preferences::PrefServiceSyncableObserver,
       public content::NotificationObserver {
  public:
   class Observer {
@@ -64,7 +64,7 @@ class UserImageSyncObserver
   void RemoveObserver(Observer* observer);
 
  private:
-  // syncable_prefs::PrefServiceSyncableObserver implementation.
+  // sync_preferences::PrefServiceSyncableObserver implementation.
   void OnIsSyncingChanged() override;
 
   // content::NotificationObserver implementation.
@@ -95,9 +95,9 @@ class UserImageSyncObserver
   bool CanUpdateLocalImageNow();
 
   const user_manager::User* user_;
-  scoped_ptr<PrefChangeRegistrar> pref_change_registrar_;
-  scoped_ptr<content::NotificationRegistrar> notification_registrar_;
-  syncable_prefs::PrefServiceSyncable* prefs_;
+  std::unique_ptr<PrefChangeRegistrar> pref_change_registrar_;
+  std::unique_ptr<content::NotificationRegistrar> notification_registrar_;
+  sync_preferences::PrefServiceSyncable* prefs_;
   bool is_synced_;
   // Indicates if local user image changed during initialization.
   bool local_image_changed_;

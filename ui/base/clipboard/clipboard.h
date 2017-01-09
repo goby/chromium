@@ -5,37 +5,29 @@
 #ifndef UI_BASE_CLIPBOARD_CLIPBOARD_H_
 #define UI_BASE_CLIPBOARD_CLIPBOARD_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/process/process.h"
 #include "base/strings/string16.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "ui/base/clipboard/clipboard_types.h"
 #include "ui/base/ui_base_export.h"
 
 #if defined(OS_WIN)
 #include <objidl.h>
 #endif
-
-namespace base {
-class FilePath;
-
-namespace win {
-class MessageWindow;
-}  // namespace win
-}  // namespace base
-
-namespace gfx {
-class Size;
-}
 
 class SkBitmap;
 
@@ -46,8 +38,6 @@ class NSString;
 #endif
 
 namespace ui {
-template <typename T>
-class ClipboardTest;
 class TestClipboard;
 class ScopedClipboardWriter;
 
@@ -57,9 +47,13 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   static const char kMimeTypeText[];
   static const char kMimeTypeURIList[];
   static const char kMimeTypeDownloadURL[];
+  static const char kMimeTypeMozillaURL[];
   static const char kMimeTypeHTML[];
   static const char kMimeTypeRTF[];
   static const char kMimeTypePNG[];
+  static const char kMimeTypeWebCustomData[];
+  static const char kMimeTypeWebkitSmartPaste[];
+  static const char kMimeTypePepperCustomData[];
 
   // Platform neutral holder for native data representation of a clipboard type.
   struct UI_BASE_EXPORT FormatType {
@@ -114,7 +108,7 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     // Copyable and assignable, since this is essentially an opaque value type.
   };
 
-  static bool IsSupportedClipboardType(int32 type) {
+  static bool IsSupportedClipboardType(int32_t type) {
     switch (type) {
       case CLIPBOARD_TYPE_COPY_PASTE:
         return true;
@@ -126,13 +120,20 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
     return false;
   }
 
-  static ClipboardType FromInt(int32 type) {
+  static ClipboardType FromInt(int32_t type) {
     return static_cast<ClipboardType>(type);
   }
 
   // Sets the list of threads that are allowed to access the clipboard.
   static void SetAllowedThreads(
       const std::vector<base::PlatformThreadId>& allowed_threads);
+
+  // Sets the clipboard for the current thread. Previously, there was only
+  // one clipboard implementation on a platform; now that mus exists, during
+  // mus app startup, we need to specifically initialize mus instead of the
+  // current platform clipboard. We take ownership of |platform_clipboard|.
+  static void SetClipboardForCurrentThread(
+      std::unique_ptr<Clipboard> platform_clipboard);
 
   // Returns the clipboard object for the current thread.
   //
@@ -176,8 +177,8 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   virtual void ReadHTML(ClipboardType type,
                         base::string16* markup,
                         std::string* src_url,
-                        uint32* fragment_start,
-                        uint32* fragment_end) const = 0;
+                        uint32_t* fragment_start,
+                        uint32_t* fragment_end) const = 0;
 
   // Reads RTF from the clipboard, if available. Stores the result as a byte
   // vector.
@@ -242,13 +243,20 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   // several system-specific FormatTypes. For example, on Linux the CBF_TEXT
   // ObjectType maps to "text/plain", "STRING", and several other formats. On
   // windows it maps to CF_UNICODETEXT.
+  //
+  // The order below is the order in which data will be written to the
+  // clipboard, so more specific types must be listed before less specific
+  // types. For example, placing an image on the clipboard might cause the
+  // clipboard to contain a bitmap, HTML markup representing the image, a URL to
+  // the image, and the image's alt text. Having the types follow this order
+  // maximizes the amount of data that can be extracted by various programs.
   enum ObjectType {
-    CBF_TEXT,
+    CBF_SMBITMAP,  // Bitmap from shared memory.
     CBF_HTML,
     CBF_RTF,
     CBF_BOOKMARK,
+    CBF_TEXT,
     CBF_WEBKIT,
-    CBF_SMBITMAP,  // Bitmap from shared memory.
     CBF_DATA,      // Arbitrary block of bytes.
   };
 
@@ -259,16 +267,16 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   //
   // Key           Arguments    Type
   // -------------------------------------
-  // CBF_TEXT      text         char array
+  // CBF_SMBITMAP  bitmap       A pointer to a SkBitmap. The caller must ensure
+  //                            the SkBitmap remains live for the duration of
+  //                            the WriteObjects call.
   // CBF_HTML      html         char array
   //               url*         char array
   // CBF_RTF       data         byte array
   // CBF_BOOKMARK  html         char array
   //               url          char array
+  // CBF_TEXT      text         char array
   // CBF_WEBKIT    none         empty vector
-  // CBF_SMBITMAP  bitmap       A pointer to a SkBitmap. The caller must ensure
-  //                            the SkBitmap remains live for the duration of
-  //                            the WriteObjects call.
   // CBF_DATA      format       char array
   //               data         byte array
   typedef std::vector<char> ObjectMapParam;
@@ -305,8 +313,13 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
 
  private:
   // For access to WriteObjects().
+  friend class ForwardingTestingClipboard;
   friend class ScopedClipboardWriter;
   friend class TestClipboard;
+  // For SetClipboardForCurrentThread's argument.
+  friend struct std::default_delete<Clipboard>;
+
+  static base::PlatformThreadId GetAndValidateThreadID();
 
   // A list of allowed threads. By default, this is empty and no thread checking
   // is done (in the unit test case), but a user (like content) can set which
@@ -315,7 +328,8 @@ class UI_BASE_EXPORT Clipboard : NON_EXPORTED_BASE(public base::ThreadChecker) {
   static base::LazyInstance<AllowedThreadsVector> allowed_threads_;
 
   // Mapping from threads to clipboard objects.
-  typedef std::map<base::PlatformThreadId, Clipboard*> ClipboardMap;
+  typedef std::map<base::PlatformThreadId, std::unique_ptr<Clipboard>>
+      ClipboardMap;
   static base::LazyInstance<ClipboardMap> clipboard_map_;
 
   // Mutex that controls access to |g_clipboard_map|.

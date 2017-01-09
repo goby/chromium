@@ -7,13 +7,39 @@
 
 #include <string>
 
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+#include "components/os_crypt/key_storage_linux.h"
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
 
 // The OSCrypt class gives access to simple encryption and decryption of
 // strings. Note that on Mac, access to the system Keychain is required and
-// these calls can block the current thread to collect user input.
+// these calls can block the current thread to collect user input. The same is
+// true for Linux, if a password management tool is available.
 class OSCrypt {
  public:
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  // If |store_type| is a known password store, we will attempt to use it.
+  // In any other case, we default to auto-detecting the store.
+  // This should not be changed after OSCrypt has been used.
+  static void SetStore(const std::string& store_type);
+
+  // Some password stores may prompt the user for permission and show the
+  // application name.
+  static void SetProductName(const std::string& product_name);
+
+  // The gnome-keyring implementation requires calls from the main thread.
+  // TODO(crbug/466975): Libsecret and KWallet don't need this. We can remove
+  // this when we stop supporting keyring.
+  static void SetMainThreadRunner(
+      scoped_refptr<base::SingleThreadTaskRunner> main_thread_runner);
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
+
   // Encrypt a string16. The output (second argument) is really an array of
   // bytes, but we're passing it back as a std::string.
   static bool EncryptString16(const base::string16& plaintext,
@@ -44,5 +70,16 @@ class OSCrypt {
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(OSCrypt);
 };
+
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(UNIT_TEST)
+// For unit testing purposes, inject methods to be used.
+// |get_key_storage_mock| provides the desired |KeyStorage| implementation.
+// If the provider returns |nullptr|, a hardcoded password will be used.
+// |get_password_v11_mock| provides a password to derive the encryption key from
+// If one parameter is |nullptr|, the function will be not be replaced.
+// If all parameters are |nullptr|, the real implementation is restored.
+void UseMockKeyStorageForTesting(KeyStorageLinux* (*get_key_storage_mock)(),
+                                 std::string* (*get_password_v11_mock)());
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS) && defined(UNIT_TEST)
 
 #endif  // COMPONENTS_OS_CRYPT_OS_CRYPT_H_

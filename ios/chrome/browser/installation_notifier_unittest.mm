@@ -4,6 +4,7 @@
 
 #import "ios/chrome/browser/installation_notifier.h"
 
+#include <stdint.h>
 #import <UIKit/UIKit.h>
 
 #include "base/ios/block_types.h"
@@ -145,12 +146,14 @@ class InstallationNotifierTest : public PlatformTest {
 
   base::MessageLoopForUI message_loop_;
   web::TestWebThread ui_thread_;
-  InstallationNotifier* installationNotifier_;  // Weak pointer to singleton.
-  MockDispatcher* dispatcher_;  // Weak. installationNotifier_ owns it.
+  __unsafe_unretained InstallationNotifier*
+      installationNotifier_;  // Weak pointer to singleton.
+  __unsafe_unretained MockDispatcher*
+      dispatcher_;  // Weak. installationNotifier_ owns it.
   base::scoped_nsobject<MockNotificationReceiver> notificationReceiver1_;
   base::scoped_nsobject<MockNotificationReceiver> notificationReceiver2_;
   base::scoped_nsobject<MockUIApplication> sharedApplication_;
-  scoped_ptr<base::HistogramTester> histogramTester_;
+  std::unique_ptr<base::HistogramTester> histogramTester_;
 };
 
 TEST_F(InstallationNotifierTest, RegisterWithAppAlreadyInstalled) {

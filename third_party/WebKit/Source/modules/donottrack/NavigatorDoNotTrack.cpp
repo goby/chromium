@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/donottrack/NavigatorDoNotTrack.h"
 
 #include "core/frame/LocalFrame.h"
@@ -38,45 +37,35 @@
 namespace blink {
 
 NavigatorDoNotTrack::NavigatorDoNotTrack(LocalFrame* frame)
-    : DOMWindowProperty(frame)
-{
+    : DOMWindowProperty(frame) {}
+
+DEFINE_TRACE(NavigatorDoNotTrack) {
+  Supplement<Navigator>::trace(visitor);
+  DOMWindowProperty::trace(visitor);
 }
 
-NavigatorDoNotTrack::~NavigatorDoNotTrack()
-{
+const char* NavigatorDoNotTrack::supplementName() {
+  return "NavigatorDoNotTrack";
 }
 
-DEFINE_TRACE(NavigatorDoNotTrack)
-{
-    HeapSupplement<Navigator>::trace(visitor);
-    DOMWindowProperty::trace(visitor);
+NavigatorDoNotTrack& NavigatorDoNotTrack::from(Navigator& navigator) {
+  NavigatorDoNotTrack* supplement = static_cast<NavigatorDoNotTrack*>(
+      Supplement<Navigator>::from(navigator, supplementName()));
+  if (!supplement) {
+    supplement = new NavigatorDoNotTrack(navigator.frame());
+    provideTo(navigator, supplementName(), supplement);
+  }
+  return *supplement;
 }
 
-const char* NavigatorDoNotTrack::supplementName()
-{
-    return "NavigatorDoNotTrack";
+String NavigatorDoNotTrack::doNotTrack(Navigator& navigator) {
+  return NavigatorDoNotTrack::from(navigator).doNotTrack();
 }
 
-NavigatorDoNotTrack& NavigatorDoNotTrack::from(Navigator& navigator)
-{
-    NavigatorDoNotTrack* supplement = static_cast<NavigatorDoNotTrack*>(HeapSupplement<Navigator>::from(navigator, supplementName()));
-    if (!supplement) {
-        supplement = new NavigatorDoNotTrack(navigator.frame());
-        provideTo(navigator, supplementName(), supplement);
-    }
-    return *supplement;
+String NavigatorDoNotTrack::doNotTrack() {
+  if (!frame() || !frame()->loader().client())
+    return String();
+  return frame()->loader().client()->doNotTrackValue();
 }
 
-String NavigatorDoNotTrack::doNotTrack(Navigator& navigator)
-{
-    return NavigatorDoNotTrack::from(navigator).doNotTrack();
-}
-
-String NavigatorDoNotTrack::doNotTrack()
-{
-    if (!frame() || !frame()->loader().client())
-        return String();
-    return frame()->loader().client()->doNotTrackValue();
-}
-
-} // namespace blink
+}  // namespace blink

@@ -7,19 +7,45 @@ cr.define('downloads', function() {
     is: 'downloads-manager',
 
     properties: {
+      /** @private */
       hasDownloads_: {
         observer: 'hasDownloadsChanged_',
         type: Boolean,
       },
 
+      /** @private */
+      hasShadow_: {
+        type: Boolean,
+        value: false,
+        reflectToAttribute: true,
+      },
+
+      /** @private */
+      inSearchMode_: {
+        type: Boolean,
+        value: false,
+      },
+
+      /** @private {!Array<!downloads.Data>} */
       items_: {
         type: Array,
         value: function() { return []; },
+      },
+
+      /** @private */
+      spinnerActive_: {
+        type: Boolean,
+        notify: true,
       },
     },
 
     hostAttributes: {
       loading: true,
+    },
+
+    listeners: {
+      'downloads-list.scroll': 'onListScroll_',
+      'toolbar.search-changed': 'onSearchChanged_',
     },
 
     observers: [
@@ -36,14 +62,8 @@ cr.define('downloads', function() {
       if (loadTimeData.getBoolean('allowDeletingHistory'))
         this.$.toolbar.downloadsShowing = this.hasDownloads_;
 
-      if (this.hasDownloads_) {
+      if (this.hasDownloads_)
         this.$['downloads-list'].fire('iron-resize');
-      } else {
-        var isSearching = downloads.ActionService.getInstance().isSearching();
-        var messageToShow = isSearching ? 'noSearchResults' : 'noDownloads';
-        this.$['no-downloads'].querySelector('span').textContent =
-            loadTimeData.getString(messageToShow);
-      }
     },
 
     /**
@@ -55,11 +75,21 @@ cr.define('downloads', function() {
       this.splice.apply(this, ['items_', index, 0].concat(list));
       this.updateHideDates_(index, index + list.length);
       this.removeAttribute('loading');
+      this.spinnerActive_ = false;
     },
 
     /** @private */
     itemsChanged_: function() {
       this.hasDownloads_ = this.items_.length > 0;
+    },
+
+    /**
+     * @return {string} The text to show when no download items are showing.
+     * @private
+     */
+    noDownloadsText_: function() {
+      return loadTimeData.getString(
+          this.inSearchMode_ ? 'noSearchResults' : 'noDownloads');
     },
 
     /**
@@ -75,6 +105,9 @@ cr.define('downloads', function() {
         case 'clear-all-command':
           e.canExecute = this.$.toolbar.canClearAll();
           break;
+        case 'find-command':
+          e.canExecute = true;
+          break;
       }
     },
 
@@ -87,6 +120,18 @@ cr.define('downloads', function() {
         downloads.ActionService.getInstance().clearAll();
       else if (e.command.id == 'undo-command')
         downloads.ActionService.getInstance().undo();
+      else if (e.command.id == 'find-command')
+        this.$.toolbar.onFindCommand();
+    },
+
+    /** @private */
+    onListScroll_: function() {
+      var list = this.$['downloads-list'];
+      if (list.scrollHeight - list.scrollTop - list.offsetHeight <= 100) {
+        // Approaching the end of the scrollback. Attempt to load more items.
+        downloads.ActionService.getInstance().loadMore();
+      }
+      this.hasShadow_ = list.scrollTop > 0;
     },
 
     /** @private */
@@ -95,8 +140,12 @@ cr.define('downloads', function() {
       document.addEventListener('canExecute', this.onCanExecute_.bind(this));
       document.addEventListener('command', this.onCommand_.bind(this));
 
-      // Shows all downloads.
-      downloads.ActionService.getInstance().search('');
+      downloads.ActionService.getInstance().loadMore();
+    },
+
+    /** @private */
+    onSearchChanged_: function() {
+      this.inSearchMode_ = downloads.ActionService.getInstance().isSearching();
     },
 
     /**
@@ -106,6 +155,7 @@ cr.define('downloads', function() {
     removeItem_: function(index) {
       this.splice('items_', index, 1);
       this.updateHideDates_(index, index);
+      this.onListScroll_();
     },
 
     /**
@@ -119,7 +169,8 @@ cr.define('downloads', function() {
         if (!current)
           continue;
         var prev = this.items_[i - 1];
-        current.hideDate = !!prev && prev.date_string == current.date_string;
+        var hideDate = !!prev && prev.date_string == current.date_string;
+        this.set('items_.' + i + '.hideDate', hideDate);
       }
     },
 
@@ -131,7 +182,8 @@ cr.define('downloads', function() {
     updateItem_: function(index, data) {
       this.set('items_.' + index, data);
       this.updateHideDates_(index, index);
-      this.$['downloads-list'].updateSizeForItem(index);
+      var list = /** @type {!IronListElement} */(this.$['downloads-list']);
+      list.updateSizeForItem(index);
     },
   });
 

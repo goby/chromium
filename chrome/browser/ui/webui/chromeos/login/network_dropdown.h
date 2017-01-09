@@ -5,11 +5,13 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_DROPDOWN_H_
 #define CHROME_BROWSER_UI_WEBUI_CHROMEOS_LOGIN_NETWORK_DROPDOWN_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
+#include "ash/common/system/chromeos/network/network_icon_animation_observer.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/chromeos/status/network_menu.h"
 #include "chromeos/network/network_state_handler_observer.h"
-#include "ui/chromeos/network/network_icon_animation_observer.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace content {
@@ -24,7 +26,7 @@ class NetworkState;
 // Class which implements network dropdown menu using WebUI.
 class NetworkDropdown : public NetworkMenu::Delegate,
                         public NetworkStateHandlerObserver,
-                        public ui::network_icon::AnimationObserver {
+                        public ash::network_icon::AnimationObserver {
  public:
   class Actor {
    public:
@@ -65,7 +67,7 @@ class NetworkDropdown : public NetworkMenu::Delegate,
   void RequestNetworkScan();
 
   // The Network menu.
-  scoped_ptr<NetworkMenuWebUI> network_menu_;
+  std::unique_ptr<NetworkMenuWebUI> network_menu_;
 
   Actor* actor_;
 

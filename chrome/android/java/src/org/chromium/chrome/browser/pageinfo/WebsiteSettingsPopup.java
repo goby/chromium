@@ -10,6 +10,9 @@ import android.animation.AnimatorSet;
 import android.animation.ObjectAnimator;
 import android.app.Activity;
 import android.app.Dialog;
+import android.content.ActivityNotFoundException;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
@@ -18,13 +21,14 @@ import android.graphics.Color;
 import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.Process;
 import android.provider.Settings;
+import android.support.annotation.IntDef;
 import android.support.v7.widget.AppCompatTextView;
 import android.text.Layout;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
+import android.text.TextUtils;
 import android.text.style.ForegroundColorSpan;
 import android.text.style.StyleSpan;
 import android.util.AttributeSet;
@@ -32,6 +36,7 @@ import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnClickListener;
+import android.view.View.OnLongClickListener;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.widget.Button;
@@ -42,18 +47,25 @@ import android.widget.TextView;
 
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.ContentSettingsType;
+import org.chromium.chrome.browser.instantapps.InstantAppsHandler;
+import org.chromium.chrome.browser.offlinepages.OfflinePageItem;
+import org.chromium.chrome.browser.offlinepages.OfflinePageUtils;
 import org.chromium.chrome.browser.omnibox.OmniboxUrlEmphasizer;
 import org.chromium.chrome.browser.preferences.PrefServiceBridge;
 import org.chromium.chrome.browser.preferences.Preferences;
 import org.chromium.chrome.browser.preferences.PreferencesLauncher;
 import org.chromium.chrome.browser.preferences.website.ContentSetting;
+import org.chromium.chrome.browser.preferences.website.ContentSettingsResources;
 import org.chromium.chrome.browser.preferences.website.SingleWebsitePreferences;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.ssl.ConnectionSecurityLevel;
 import org.chromium.chrome.browser.ssl.SecurityStateModel;
+import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.util.UrlUtilities;
+import org.chromium.components.location.LocationUtils;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.browser.WebContentsObserver;
@@ -61,10 +73,15 @@ import org.chromium.ui.base.DeviceFormFactor;
 import org.chromium.ui.base.WindowAndroid;
 import org.chromium.ui.base.WindowAndroid.PermissionCallback;
 import org.chromium.ui.interpolators.BakedBezierInterpolator;
+import org.chromium.ui.widget.Toast;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.text.DateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
 
 /**
@@ -73,6 +90,13 @@ import java.util.List;
  *               WebsiteSettings* and website_settings_*. Do this on the C++ side as well.
  */
 public class WebsiteSettingsPopup implements OnClickListener {
+    @Retention(RetentionPolicy.SOURCE)
+    @IntDef({OPENED_FROM_MENU, OPENED_FROM_TOOLBAR})
+    private @interface OpenedFromSource {}
+
+    public static final int OPENED_FROM_MENU = 1;
+    public static final int OPENED_FROM_TOOLBAR = 2;
+
     /**
      * An entry in the settings dropdown for a given permission. There are two options for each
      * permission: Allow and Block.
@@ -221,18 +245,22 @@ public class WebsiteSettingsPopup implements OnClickListener {
     private final Profile mProfile;
     private final WebContents mWebContents;
     private final WindowAndroid mWindowAndroid;
+    private final Tab mTab;
 
     // A pointer to the C++ object for this UI.
-    private final long mNativeWebsiteSettingsPopup;
+    private long mNativeWebsiteSettingsPopup;
 
     // The outer container, filled with the layout from website_settings.xml.
     private final LinearLayout mContainer;
 
     // UI elements in the dialog.
     private final ElidedUrlTextView mUrlTitle;
-    private final TextView mUrlConnectionMessage;
+    private final TextView mConnectionSummary;
+    private final TextView mConnectionMessage;
     private final LinearLayout mPermissionsList;
+    private final Button mInstantAppButton;
     private final Button mSiteSettingsButton;
+    private final Button mOpenOnlineButton;
 
     // The dialog the container is placed in.
     private final Dialog mDialog;
@@ -257,28 +285,37 @@ public class WebsiteSettingsPopup implements OnClickListener {
     // The security level of the page (a valid ConnectionSecurityLevel).
     private int mSecurityLevel;
 
-    // Whether the security level of the page was downgraded due to SHA-1.
-    private boolean mDeprecatedSHA1Present;
-
-    // Whether the security level of the page was downgraded due to passive mixed content.
-    private boolean mPassiveMixedContentPresent;
-
     // Permissions available to be displayed in mPermissionsList.
     private List<PageInfoPermissionEntry> mDisplayedPermissions;
+
+    // Creation date of an offline copy, if web contents contains an offline page.
+    private String mOfflinePageCreationDate;
+
+    // The name of the content publisher, if any.
+    private String mContentPublisher;
+
+    // The intent associated with the instant app for this URL (or null if one does not exist).
+    private Intent mInstantAppIntent;
 
     /**
      * Creates the WebsiteSettingsPopup, but does not display it. Also initializes the corresponding
      * C++ object and saves a pointer to it.
-     *
-     * @param context Context which is used for launching a dialog.
-     * @param webContents The WebContents for which to show Website information. This information is
-     *                    retrieved for the visible entry.
+     * @param activity                 Activity which is used for showing a popup.
+     * @param tab                      Tab for which the pop up is shown.
+     * @param offlinePageCreationDate  Date when the offline page was created.
+     * @param publisher                The name of the content publisher, if any.
      */
-    private WebsiteSettingsPopup(Activity activity, Profile profile, WebContents webContents) {
+    private WebsiteSettingsPopup(Activity activity, Tab tab, String offlinePageCreationDate,
+            String publisher) {
         mContext = activity;
-        mProfile = profile;
-        mWebContents = webContents;
+        mProfile = tab.getProfile();
+        mWebContents = tab.getWebContents();
+        mTab = tab;
+        if (offlinePageCreationDate != null) {
+            mOfflinePageCreationDate = offlinePageCreationDate;
+        }
         mWindowAndroid = ContentViewCore.fromWebContents(mWebContents).getWindowAndroid();
+        mContentPublisher = publisher;
 
         // Find the container and all it's important subviews.
         mContainer = (LinearLayout) LayoutInflater.from(mContext).inflate(
@@ -299,20 +336,81 @@ public class WebsiteSettingsPopup implements OnClickListener {
         mUrlTitle = (ElidedUrlTextView) mContainer.findViewById(R.id.website_settings_url);
         mUrlTitle.setProfile(mProfile);
         mUrlTitle.setOnClickListener(this);
+        // Long press the url text to copy it to the clipboard.
+        mUrlTitle.setOnLongClickListener(new OnLongClickListener() {
+            @Override
+            public boolean onLongClick(View v) {
+                ClipboardManager clipboard = (ClipboardManager) mContext
+                        .getSystemService(Context.CLIPBOARD_SERVICE);
+                ClipData clip = ClipData.newPlainText("url", mFullUrl);
+                clipboard.setPrimaryClip(clip);
+                Toast.makeText(mContext, R.string.url_copied, Toast.LENGTH_SHORT).show();
+                return true;
+            }
+        });
 
-        mUrlConnectionMessage = (TextView) mContainer
+        mConnectionSummary = (TextView) mContainer
+                .findViewById(R.id.website_settings_connection_summary);
+        mConnectionMessage = (TextView) mContainer
                 .findViewById(R.id.website_settings_connection_message);
         mPermissionsList = (LinearLayout) mContainer
                 .findViewById(R.id.website_settings_permissions_list);
+
+        mInstantAppButton =
+                (Button) mContainer.findViewById(R.id.website_settings_instant_app_button);
+        mInstantAppButton.setOnClickListener(this);
 
         mSiteSettingsButton =
                 (Button) mContainer.findViewById(R.id.website_settings_site_settings_button);
         mSiteSettingsButton.setOnClickListener(this);
 
+        mOpenOnlineButton =
+                (Button) mContainer.findViewById(R.id.website_settings_open_online_button);
+        mOpenOnlineButton.setOnClickListener(this);
+
         mDisplayedPermissions = new ArrayList<PageInfoPermissionEntry>();
 
         // Hide the permissions list for sites with no permissions.
         setVisibilityOfPermissionsList(false);
+
+        // Work out the URL and connection message and status visibility.
+        mFullUrl = mWebContents.getVisibleUrl();
+        if (isShowingOfflinePage()) {
+            mFullUrl = OfflinePageUtils.stripSchemeFromOnlineUrl(mFullUrl);
+        }
+
+        try {
+            mParsedUrl = new URI(mFullUrl);
+            mIsInternalPage = UrlUtilities.isInternalScheme(mParsedUrl);
+        } catch (URISyntaxException e) {
+            mParsedUrl = null;
+            mIsInternalPage = false;
+        }
+        mSecurityLevel = SecurityStateModel.getSecurityLevelForWebContents(mWebContents);
+
+        SpannableStringBuilder urlBuilder = new SpannableStringBuilder(mFullUrl);
+        OmniboxUrlEmphasizer.emphasizeUrl(urlBuilder, mContext.getResources(), mProfile,
+                mSecurityLevel, mIsInternalPage, true, true);
+        mUrlTitle.setText(urlBuilder);
+
+        if (mParsedUrl == null || mParsedUrl.getScheme() == null
+                || !(mParsedUrl.getScheme().equals("http")
+                           || mParsedUrl.getScheme().equals("https"))) {
+            mSiteSettingsButton.setVisibility(View.GONE);
+        }
+
+        if (isShowingOfflinePage()) {
+            boolean isConnected = OfflinePageUtils.isConnected();
+            RecordHistogram.recordBooleanHistogram(
+                    "OfflinePages.WebsiteSettings.OpenOnlineButtonVisible", isConnected);
+            if (!isConnected) mOpenOnlineButton.setVisibility(View.GONE);
+        } else {
+            mOpenOnlineButton.setVisibility(View.GONE);
+        }
+
+        mInstantAppIntent = mIsInternalPage ? null
+                : InstantAppsHandler.getInstance().getInstantAppIntentForUrl(mFullUrl);
+        if (mInstantAppIntent == null) mInstantAppButton.setVisibility(View.GONE);
 
         // Create the dialog.
         mDialog = new Dialog(mContext) {
@@ -356,12 +454,19 @@ public class WebsiteSettingsPopup implements OnClickListener {
         }
 
         // This needs to come after other member initialization.
-        mNativeWebsiteSettingsPopup = nativeInit(this, webContents);
+        mNativeWebsiteSettingsPopup = nativeInit(this, mWebContents);
         final WebContentsObserver webContentsObserver = new WebContentsObserver(mWebContents) {
             @Override
             public void navigationEntryCommitted() {
                 // If a navigation is committed (e.g. from in-page redirect), the data we're showing
                 // is stale so dismiss the dialog.
+                mDialog.dismiss();
+            }
+
+            @Override
+            public void wasHidden() {
+                // The web contents were hidden (potentially by loading another URL via an intent),
+                // so dismiss the dialog).
                 mDialog.dismiss();
             }
 
@@ -380,37 +485,11 @@ public class WebsiteSettingsPopup implements OnClickListener {
                 assert mNativeWebsiteSettingsPopup != 0;
                 webContentsObserver.destroy();
                 nativeDestroy(mNativeWebsiteSettingsPopup);
+                mNativeWebsiteSettingsPopup = 0;
             }
         });
 
-        // Work out the URL and connection message.
-        mFullUrl = mWebContents.getVisibleUrl();
-        try {
-            mParsedUrl = new URI(mFullUrl);
-            mIsInternalPage = UrlUtilities.isInternalScheme(mParsedUrl);
-        } catch (URISyntaxException e) {
-            mParsedUrl = null;
-            mIsInternalPage = false;
-        }
-        mSecurityLevel = SecurityStateModel.getSecurityLevelForWebContents(mWebContents);
-        mDeprecatedSHA1Present = SecurityStateModel.isDeprecatedSHA1Present(mWebContents);
-        mPassiveMixedContentPresent = SecurityStateModel.isPassiveMixedContentPresent(mWebContents);
-
-        SpannableStringBuilder urlBuilder = new SpannableStringBuilder(mFullUrl);
-        OmniboxUrlEmphasizer.emphasizeUrl(urlBuilder, mContext.getResources(), mProfile,
-                mSecurityLevel, mIsInternalPage, true, true);
-        mUrlTitle.setText(urlBuilder);
-
-        // Set the URL connection message now, and the URL after layout (so it
-        // can calculate its ideal height).
-        mUrlConnectionMessage.setText(getUrlConnectionMessage());
-        if (isConnectionDetailsLinkVisible()) mUrlConnectionMessage.setOnClickListener(this);
-
-        if (mParsedUrl == null || mParsedUrl.getScheme() == null
-                || !(mParsedUrl.getScheme().equals("http")
-                           || mParsedUrl.getScheme().equals("https"))) {
-            mSiteSettingsButton.setVisibility(View.GONE);
-        }
+        showDialog();
     }
 
     /**
@@ -432,50 +511,9 @@ public class WebsiteSettingsPopup implements OnClickListener {
      * @return The resource ID of the icon to use for that permission.
      */
     private int getImageResourceForPermission(int permission) {
-        switch (permission) {
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_IMAGES:
-                return R.drawable.permission_images;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_JAVASCRIPT:
-                return R.drawable.permission_javascript;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_GEOLOCATION:
-                return R.drawable.permission_location;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_CAMERA:
-                return R.drawable.permission_camera;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_MEDIASTREAM_MIC:
-                return R.drawable.permission_mic;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_NOTIFICATIONS:
-                return R.drawable.permission_push_notification;
-            case ContentSettingsType.CONTENT_SETTINGS_TYPE_POPUPS:
-                return R.drawable.permission_popups;
-            default:
-                assert false : "Icon requested for invalid permission: " + permission;
-                return -1;
-        }
-    }
-
-    /**
-     * Gets the message to display in the connection message box for the given security level. Does
-     * not apply to SECURITY_ERROR pages, since these have their own coloured/formatted message.
-     *
-     * @param securityLevel A valid ConnectionSecurityLevel, which is the security
-     *                      level of the page.
-     * @param isInternalPage Whether or not this page is an internal chrome page (e.g. the
-     *                       chrome://settings page).
-     * @return The ID of the message to display in the connection message box.
-     */
-    private int getConnectionMessageId(int securityLevel, boolean isInternalPage) {
-        if (isInternalPage) return R.string.page_info_connection_internal_page;
-
-        switch (securityLevel) {
-            case ConnectionSecurityLevel.NONE:
-                return R.string.page_info_connection_http;
-            case ConnectionSecurityLevel.SECURE:
-            case ConnectionSecurityLevel.EV_SECURE:
-                return R.string.page_info_connection_https;
-            default:
-                assert false : "Invalid security level specified: " + securityLevel;
-                return R.string.page_info_connection_http;
-        }
+        int icon = ContentSettingsResources.getIcon(permission);
+        assert icon != 0 : "Icon requested for invalid permission: " + permission;
+        return icon;
     }
 
     /**
@@ -483,70 +521,14 @@ public class WebsiteSettingsPopup implements OnClickListener {
      * HTTPS connections.
      */
     private boolean isConnectionDetailsLinkVisible() {
-        return !mIsInternalPage && mSecurityLevel != ConnectionSecurityLevel.NONE;
-    }
-
-    /**
-     * Gets the styled connection message to display below the URL.
-     */
-    private Spannable getUrlConnectionMessage() {
-        // Display the appropriate connection message.
-        SpannableStringBuilder messageBuilder = new SpannableStringBuilder();
-        if (mDeprecatedSHA1Present) {
-            messageBuilder.append(
-                    mContext.getResources().getString(R.string.page_info_connection_sha1));
-        } else if (mPassiveMixedContentPresent) {
-            messageBuilder.append(
-                    mContext.getResources().getString(R.string.page_info_connection_mixed));
-        } else if (mSecurityLevel != ConnectionSecurityLevel.SECURITY_ERROR
-                && mSecurityLevel != ConnectionSecurityLevel.SECURITY_WARNING
-                && mSecurityLevel != ConnectionSecurityLevel.SECURITY_POLICY_WARNING) {
-            messageBuilder.append(mContext.getResources().getString(
-                    getConnectionMessageId(mSecurityLevel, mIsInternalPage)));
-        } else {
-            String originToDisplay;
-            try {
-                URI parsedUrl = new URI(mFullUrl);
-                originToDisplay = UrlUtilities.formatUrlForSecurityDisplay(parsedUrl, false);
-            } catch (URISyntaxException e) {
-                // The URL is invalid - just display the full URL.
-                originToDisplay = mFullUrl;
-            }
-
-            messageBuilder.append(mContext.getResources().getString(
-                    R.string.page_info_connection_broken, originToDisplay));
-        }
-
-        if (isConnectionDetailsLinkVisible()) {
-            messageBuilder.append(" ");
-            SpannableString detailsText = new SpannableString(
-                    mContext.getResources().getString(R.string.page_info_details_link));
-            final ForegroundColorSpan blueSpan = new ForegroundColorSpan(
-                    ApiCompatibilityUtils.getColor(mContext.getResources(),
-                            R.color.website_settings_popup_text_link));
-            detailsText.setSpan(
-                    blueSpan, 0, detailsText.length(), Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
-            messageBuilder.append(detailsText);
-        }
-
-        return messageBuilder;
+        return mContentPublisher == null && !isShowingOfflinePage() && mParsedUrl != null
+                && mParsedUrl.getScheme() != null && mParsedUrl.getScheme().equals("https");
     }
 
     private boolean hasAndroidPermission(int contentSettingType) {
         String androidPermission = PrefServiceBridge.getAndroidPermissionForContentSetting(
                 contentSettingType);
-        return androidPermission == null
-                || (mContext.checkPermission(androidPermission, Process.myPid(), Process.myUid())
-                           == PackageManager.PERMISSION_GRANTED);
-    }
-
-    private boolean isAndroidLocationDisabled() {
-        try {
-            return Settings.Secure.getInt(mContext.getContentResolver(),
-                    Settings.Secure.LOCATION_MODE) == Settings.Secure.LOCATION_MODE_OFF;
-        } catch (Settings.SettingNotFoundException e) {
-            return false;
-        }
+        return androidPermission == null || mWindowAndroid.hasPermission(androidPermission);
     }
 
     /**
@@ -588,11 +570,12 @@ public class WebsiteSettingsPopup implements OnClickListener {
 
             // If warningTextResource is non-zero, then the view must be tagged with either
             // permission_intent_override or permission_type.
+            LocationUtils locationUtils = LocationUtils.getInstance();
             if (permission.type == ContentSettingsType.CONTENT_SETTINGS_TYPE_GEOLOCATION
-                    && isAndroidLocationDisabled()) {
+                    && !locationUtils.isSystemLocationSettingEnabled()) {
                 warningTextResource = R.string.page_info_android_location_blocked;
                 permissionRow.setTag(R.id.permission_intent_override,
-                        new Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS));
+                        locationUtils.getSystemLocationSettingsIntent());
             } else if (!hasAndroidPermission(permission.type)) {
                 warningTextResource = R.string.page_info_android_permission_blocked;
                 permissionRow.setTag(R.id.permission_type,
@@ -625,12 +608,10 @@ public class WebsiteSettingsPopup implements OnClickListener {
         String status_text = "";
         switch (permission.setting) {
             case ALLOW:
-                status_text =
-                        mContext.getResources().getString(R.string.page_info_permission_allowed);
+                status_text = mContext.getString(R.string.page_info_permission_allowed);
                 break;
             case BLOCK:
-                status_text =
-                        mContext.getResources().getString(R.string.page_info_permission_blocked);
+                status_text = mContext.getString(R.string.page_info_permission_blocked);
                 break;
             default:
                 assert false : "Invalid setting " + permission.setting + " for permission "
@@ -642,9 +623,46 @@ public class WebsiteSettingsPopup implements OnClickListener {
     }
 
     /**
-     * Displays the WebsiteSettingsPopup.
+     * Sets the connection security summary and detailed description strings. These strings may be
+     * overridden based on the state of the Android UI.
      */
     @CalledByNative
+    private void setSecurityDescription(String summary, String details) {
+        // Display the appropriate connection message.
+        SpannableStringBuilder messageBuilder = new SpannableStringBuilder();
+        if (mContentPublisher != null) {
+            messageBuilder.append(
+                    mContext.getString(R.string.page_info_domain_hidden, mContentPublisher));
+        } else if (isShowingOfflinePage()) {
+            messageBuilder.append(String.format(
+                    mContext.getString(R.string.page_info_connection_offline),
+                    mOfflinePageCreationDate));
+        } else {
+            if (!TextUtils.equals(summary, details)) {
+                mConnectionSummary.setVisibility(View.VISIBLE);
+                mConnectionSummary.setText(summary);
+            }
+            messageBuilder.append(details);
+        }
+
+        if (isConnectionDetailsLinkVisible()) {
+            messageBuilder.append(" ");
+            SpannableString detailsText = new SpannableString(
+                    mContext.getString(R.string.page_info_details_link));
+            final ForegroundColorSpan blueSpan = new ForegroundColorSpan(
+                    ApiCompatibilityUtils.getColor(mContext.getResources(),
+                            R.color.website_settings_popup_text_link));
+            detailsText.setSpan(
+                    blueSpan, 0, detailsText.length(), Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
+            messageBuilder.append(detailsText);
+        }
+        mConnectionMessage.setText(messageBuilder);
+        if (isConnectionDetailsLinkVisible()) mConnectionMessage.setOnClickListener(this);
+    }
+
+    /**
+     * Displays the WebsiteSettingsPopup.
+     */
     private void showDialog() {
         if (!DeviceFormFactor.isTablet(mContext)) {
             // On smaller screens, make the dialog fill the width of the screen.
@@ -701,8 +719,11 @@ public class WebsiteSettingsPopup implements OnClickListener {
             runAfterDismiss(new Runnable() {
                 @Override
                 public void run() {
+                    recordAction(WebsiteSettingsAction.WEBSITE_SETTINGS_SITE_SETTINGS_OPENED);
                     Bundle fragmentArguments =
                             SingleWebsitePreferences.createFragmentArgsForSite(mFullUrl);
+                    fragmentArguments.putParcelable(SingleWebsitePreferences.EXTRA_WEB_CONTENTS,
+                            mWebContents);
                     Intent preferencesIntent = PreferencesLauncher.createIntentForSettingsPage(
                             mContext, SingleWebsitePreferences.class.getName());
                     preferencesIntent.putExtra(
@@ -710,14 +731,23 @@ public class WebsiteSettingsPopup implements OnClickListener {
                     mContext.startActivity(preferencesIntent);
                 }
             });
+        } else if (view == mInstantAppButton) {
+            try {
+                mContext.startActivity(mInstantAppIntent);
+                RecordUserAction.record("Android.InstantApps.LaunchedFromWebsiteSettingsPopup");
+            } catch (ActivityNotFoundException e) {
+                mInstantAppButton.setEnabled(false);
+            }
         } else if (view == mUrlTitle) {
             // Expand/collapse the displayed URL title.
             mUrlTitle.toggleTruncation();
-        } else if (view == mUrlConnectionMessage) {
+        } else if (view == mConnectionMessage) {
             runAfterDismiss(new Runnable() {
                 @Override
                 public void run() {
                     if (!mWebContents.isDestroyed()) {
+                        recordAction(
+                                WebsiteSettingsAction.WEBSITE_SETTINGS_SECURITY_DETAILS_OPENED);
                         ConnectionInfoPopup.show(mContext, mWebContents);
                     }
                 }
@@ -758,6 +788,19 @@ public class WebsiteSettingsPopup implements OnClickListener {
                     mContext.startActivity(settingsIntent);
                 }
             });
+        } else if (view == mOpenOnlineButton) {
+            runAfterDismiss(new Runnable() {
+                @Override
+                public void run() {
+                    // Attempt to reload to an online version of the viewed offline web page. This
+                    // attempt might fail if the user is offline, in which case an offline copy will
+                    // be reloaded.
+                    RecordHistogram.recordBooleanHistogram(
+                            "OfflinePages.WebsiteSettings.ConnectedWhenOpenOnlineButtonClicked",
+                            OfflinePageUtils.isConnected());
+                    OfflinePageUtils.reload(mTab);
+                }
+            });
         }
     }
 
@@ -767,7 +810,11 @@ public class WebsiteSettingsPopup implements OnClickListener {
     private List<View> collectAnimatableViews() {
         List<View> animatableViews = new ArrayList<View>();
         animatableViews.add(mUrlTitle);
-        animatableViews.add(mUrlConnectionMessage);
+        if (mConnectionSummary.getVisibility() == View.VISIBLE) {
+            animatableViews.add(mConnectionSummary);
+        }
+        animatableViews.add(mConnectionMessage);
+        animatableViews.add(mInstantAppButton);
         for (int i = 0; i < mPermissionsList.getChildCount(); i++) {
             animatableViews.add(mPermissionsList.getChildAt(i));
         }
@@ -852,23 +899,56 @@ public class WebsiteSettingsPopup implements OnClickListener {
         return animation;
     }
 
+    private void recordAction(int action) {
+        if (mNativeWebsiteSettingsPopup != 0) {
+            nativeRecordWebsiteSettingsAction(mNativeWebsiteSettingsPopup, action);
+        }
+    }
+
     /**
-     * Shows a WebsiteSettings dialog for the provided WebContents. The popup adds itself to the
-     * view hierarchy which owns the reference while it's visible.
+     * Whether website dialog is displayed for an offline page.
+     */
+    private boolean isShowingOfflinePage() {
+        return mOfflinePageCreationDate != null;
+    }
+
+    /**
+     * Shows a WebsiteSettings dialog for the provided Tab. The popup adds itself to the view
+     * hierarchy which owns the reference while it's visible.
      *
      * @param activity Activity which is used for launching a dialog.
-     * @param webContents The WebContents for which to show Website information. This information is
-     *                    retrieved for the visible entry.
+     * @param tab The tab hosting the web contents for which to show Website information. This
+     *            information is retrieved for the visible entry.
+     * @param contentPublisher The name of the publisher of the content.
+     * @param source Determines the source that triggered the popup.
      */
-    @SuppressWarnings("unused")
-    public static void show(Activity activity, Profile profile, WebContents webContents) {
-        new WebsiteSettingsPopup(activity, profile, webContents);
+    public static void show(final Activity activity, final Tab tab, final String contentPublisher,
+            @OpenedFromSource int source) {
+        if (source == OPENED_FROM_MENU) {
+            RecordUserAction.record("MobileWebsiteSettingsOpenedFromMenu");
+        } else if (source == OPENED_FROM_TOOLBAR) {
+            RecordUserAction.record("MobileWebsiteSettingsOpenedFromToolbar");
+        } else {
+            assert false : "Invalid source passed";
+        }
+
+        String offlinePageCreationDate = null;
+
+        OfflinePageItem offlinePage = tab.getOfflinePage();
+        if (offlinePage != null) {
+            // Get formatted creation date of the offline page.
+            Date creationDate = new Date(offlinePage.getCreationTimeMs());
+            DateFormat df = DateFormat.getDateInstance(DateFormat.MEDIUM);
+            offlinePageCreationDate = df.format(creationDate);
+        }
+
+        new WebsiteSettingsPopup(activity, tab, offlinePageCreationDate, contentPublisher);
     }
 
     private static native long nativeInit(WebsiteSettingsPopup popup, WebContents webContents);
 
     private native void nativeDestroy(long nativeWebsiteSettingsPopupAndroid);
 
-    private native void nativeOnPermissionSettingChanged(long nativeWebsiteSettingsPopupAndroid,
-            int type, int setting);
+    private native void nativeRecordWebsiteSettingsAction(
+            long nativeWebsiteSettingsPopupAndroid, int action);
 }

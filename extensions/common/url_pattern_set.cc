@@ -8,12 +8,13 @@
 #include <ostream>
 
 #include "base/logging.h"
-#include "base/memory/linked_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/values.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/url_pattern.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 #include "url/url_constants.h"
 
 namespace extensions {
@@ -152,11 +153,13 @@ void URLPatternSet::ClearPatterns() {
 }
 
 bool URLPatternSet::AddOrigin(int valid_schemes, const GURL& origin) {
-  DCHECK_EQ(origin.GetOrigin(), origin);
+  if (origin.is_empty())
+    return false;
+  const url::Origin real_origin(origin);
+  DCHECK(real_origin.IsSameOriginWith(url::Origin(origin.GetOrigin())));
   URLPattern origin_pattern(valid_schemes);
   // Origin adding could fail if |origin| does not match |valid_schemes|.
-  if (origin_pattern.Parse(origin.GetOrigin().spec()) !=
-      URLPattern::PARSE_SUCCESS) {
+  if (origin_pattern.Parse(origin.spec()) != URLPattern::PARSE_SUCCESS) {
     return false;
   }
   origin_pattern.SetPath("/*");
@@ -226,12 +229,13 @@ bool URLPatternSet::OverlapsWith(const URLPatternSet& other) const {
   return false;
 }
 
-scoped_ptr<base::ListValue> URLPatternSet::ToValue() const {
-  scoped_ptr<base::ListValue> value(new base::ListValue);
+std::unique_ptr<base::ListValue> URLPatternSet::ToValue() const {
+  std::unique_ptr<base::ListValue> value(new base::ListValue);
   for (URLPatternSet::const_iterator i = patterns_.begin();
        i != patterns_.end(); ++i)
-    value->AppendIfNotPresent(new base::StringValue(i->GetAsString()));
-  return value.Pass();
+    value->AppendIfNotPresent(
+        base::MakeUnique<base::StringValue>(i->GetAsString()));
+  return value;
 }
 
 bool URLPatternSet::Populate(const std::vector<std::string>& patterns,
@@ -259,14 +263,15 @@ bool URLPatternSet::Populate(const std::vector<std::string>& patterns,
   return true;
 }
 
-scoped_ptr<std::vector<std::string> > URLPatternSet::ToStringVector() const {
-  scoped_ptr<std::vector<std::string> > value(new std::vector<std::string>);
+std::unique_ptr<std::vector<std::string>> URLPatternSet::ToStringVector()
+    const {
+  std::unique_ptr<std::vector<std::string>> value(new std::vector<std::string>);
   for (URLPatternSet::const_iterator i = patterns_.begin();
        i != patterns_.end();
        ++i) {
     value->push_back(i->GetAsString());
   }
-  return value.Pass();
+  return value;
 }
 
 bool URLPatternSet::Populate(const base::ListValue& value,

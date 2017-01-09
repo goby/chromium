@@ -26,6 +26,12 @@ const char kAccountsPrefDeviceLocalAccountsKeyKioskAppId[] =
     "kiosk_app_id";
 const char kAccountsPrefDeviceLocalAccountsKeyKioskAppUpdateURL[] =
     "kiosk_app_update_url";
+const char kAccountsPrefDeviceLocalAccountsKeyArcKioskPackage[] =
+    "arc_kiosk_package";
+const char kAccountsPrefDeviceLocalAccountsKeyArcKioskClass[] =
+    "arc_kiosk_class";
+const char kAccountsPrefDeviceLocalAccountsKeyArcKioskAction[] =
+    "arc_kiosk_action";
 const char kAccountsPrefDeviceLocalAccountAutoLoginId[] =
     "cros.accounts.deviceLocalAccountAutoLoginId";
 const char kAccountsPrefDeviceLocalAccountAutoLoginDelay[] =
@@ -49,6 +55,9 @@ const char kSignedDataRoamingEnabled[] = "cros.signed.data_roaming_enabled";
 
 // True if auto-update was disabled by the system administrator.
 const char kUpdateDisabled[] = "cros.system.updateDisabled";
+
+// True if a target version prefix is set by the system administrator.
+const char kTargetVersionPrefix[] = "cros.system.targetVersionPrefix";
 
 // A list of strings which specifies allowed connection types for
 // update.
@@ -109,6 +118,17 @@ const char kReportDeviceHardwareStatus[] =
 // versions, etc) in device status reports to the device management server.
 const char kReportDeviceSessionStatus[] =
     "cros.device_status.report_session_status";
+
+// Determines whether the device reports os update status (update status,
+// new platform version and new required platform version of the auto
+// launched kiosk app).
+const char kReportOsUpdateStatus[] =
+    "cros.device_status.report_os_update_status";
+
+// Determines whether the device reports the current running kiosk app (
+// its app ID, version and required platform version).
+const char kReportRunningKioskApp[] =
+    "cros.device_status.report_running_kiosk_app";
 
 // How frequently device status reports are uploaded, in milliseconds.
 const char kReportUploadFrequency[] =
@@ -182,5 +202,29 @@ const char kExtensionCacheSize[] = "cros.device.extension_cache_size";
 // 2 = 180 degrees rotation
 // 3 = 270 degrees clockwise rotation
 const char kDisplayRotationDefault[] = "cros.display_rotation_default";
+
+// An integer pref that sets the behavior of the login authentication flow.
+// 0 = authentication using the default GAIA flow.
+// 1 = authentication using an interstitial screen that offers the user to go
+// ahead via the SAML IdP of the device's enrollment domain, or go back to the
+// normal GAIA login flow.
+const char kLoginAuthenticationBehavior[] =
+    "cros.device.login_authentication_behavior";
+
+// A boolean pref that indicates whether bluetooth should be allowed on the
+// device.
+const char kAllowBluetooth[] = "cros.device.allow_bluetooth";
+
+// A boolean pref to enable any pings or requests to the Quirks Server.
+const char kDeviceQuirksDownloadEnabled[] =
+    "cros.device.quirks_download_enabled";
+
+// A list pref storing the security origins allowed to access the webcam
+// during SAML logins.
+const char kLoginVideoCaptureAllowedUrls[] =
+    "cros.device.login_video_capture_allowed_urls";
+
+// A list pref storing the apps to install on the login page.
+const char kLoginApps[] = "cros.device.login_apps";
 
 }  // namespace chromeos

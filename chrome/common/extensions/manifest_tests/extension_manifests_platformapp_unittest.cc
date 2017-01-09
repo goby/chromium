@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/json/json_file_value_serializer.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/common/extensions/manifest_tests/chrome_manifest_test.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/features/simple_feature.h"
@@ -45,21 +48,22 @@ TEST_F(PlatformAppsManifestTest, PlatformApps) {
   RunTestcases(error_testcases, arraysize(error_testcases), EXPECT_TYPE_ERROR);
 
   Testcase warning_testcases[] = {
-    Testcase(
-        "init_invalid_platform_app_1.json",
-        "'app.launch' is only allowed for hosted apps and legacy packaged "
-            "apps, but this is a packaged app."),
-    Testcase(
-        "init_invalid_platform_app_4.json",
-        "'background' is only allowed for extensions, hosted apps, and legacy "
-            "packaged apps, but this is a packaged app."),
-    Testcase(
-        "init_invalid_platform_app_5.json",
-        "'background' is only allowed for extensions, hosted apps, and legacy "
-            "packaged apps, but this is a packaged app."),
-    Testcase("incognito_invalid_platform_app.json",
-        "'incognito' is only allowed for extensions and legacy packaged apps, "
-            "but this is a packaged app."),
+      Testcase(
+          "init_invalid_platform_app_1.json",
+          "'app.launch' is only allowed for legacy packaged apps and hosted "
+          "apps, but this is a packaged app."),
+      Testcase("init_invalid_platform_app_4.json",
+               "'background' is only allowed for extensions, legacy packaged "
+               "apps, and"
+               " hosted apps, but this is a packaged app."),
+      Testcase("init_invalid_platform_app_5.json",
+               "'background' is only allowed for extensions, legacy packaged "
+               "apps, and"
+               " hosted apps, but this is a packaged app."),
+      Testcase("incognito_invalid_platform_app.json",
+               "'incognito' is only allowed for extensions and legacy packaged "
+               "apps, "
+               "but this is a packaged app."),
   };
   RunTestcases(
       warning_testcases, arraysize(warning_testcases), EXPECT_TYPE_WARNING);
@@ -114,22 +118,22 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   // testing. The requirements are that (1) it be a valid platform app, and (2)
   // it contain no permissions dictionary.
   std::string error;
-  scoped_ptr<base::DictionaryValue> manifest(
+  std::unique_ptr<base::DictionaryValue> manifest(
       LoadManifest("init_valid_platform_app.json", &error));
 
-  std::vector<scoped_ptr<ManifestData>> manifests;
+  std::vector<std::unique_ptr<ManifestData>> manifests;
   // Create each manifest.
   for (const char* api_name : kPlatformAppExperimentalApis) {
     // DictionaryValue will take ownership of this ListValue.
     base::ListValue *permissions = new base::ListValue();
-    permissions->Append(new base::StringValue("experimental"));
-    permissions->Append(new base::StringValue(api_name));
+    permissions->AppendString("experimental");
+    permissions->AppendString(api_name);
     manifest->Set("permissions", permissions);
     manifests.push_back(
-        make_scoped_ptr(new ManifestData(manifest->CreateDeepCopy(), "")));
+        base::MakeUnique<ManifestData>(manifest->CreateDeepCopy(), ""));
   }
   // First try to load without any flags. This should warn for every API.
-  for (const scoped_ptr<ManifestData>& manifest : manifests) {
+  for (const std::unique_ptr<ManifestData>& manifest : manifests) {
     LoadAndExpectWarning(
         *manifest,
         "'experimental' requires the 'experimental-extension-apis' "
@@ -139,7 +143,7 @@ TEST_F(PlatformAppsManifestTest, CertainApisRequirePlatformApps) {
   // Now try again with the experimental flag set.
   base::CommandLine::ForCurrentProcess()->AppendSwitch(
       switches::kEnableExperimentalExtensionApis);
-  for (const scoped_ptr<ManifestData>& manifest : manifests)
+  for (const std::unique_ptr<ManifestData>& manifest : manifests)
     LoadAndExpectSuccess(*manifest);
 }
 

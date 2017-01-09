@@ -4,8 +4,12 @@
 
 #include "chrome/test/chromedriver/chrome/heap_snapshot_taker.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/json/json_reader.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/test/chromedriver/chrome/devtools_client.h"
 #include "chrome/test/chromedriver/chrome/status.h"
@@ -17,18 +21,18 @@ HeapSnapshotTaker::HeapSnapshotTaker(DevToolsClient* client)
 
 HeapSnapshotTaker::~HeapSnapshotTaker() {}
 
-Status HeapSnapshotTaker::TakeSnapshot(scoped_ptr<base::Value>* snapshot) {
+Status HeapSnapshotTaker::TakeSnapshot(std::unique_ptr<base::Value>* snapshot) {
   Status status1 = TakeSnapshotInternal();
   base::DictionaryValue params;
   Status status2 = client_->SendCommand("Debugger.disable", params);
 
   Status status3(kOk);
   if (status1.IsOk() && status2.IsOk()) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(snapshot_);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(snapshot_);
     if (!value) {
       status3 = Status(kUnknownError, "heap snapshot not in JSON format");
     } else {
-      *snapshot = value.Pass();
+      *snapshot = std::move(value);
     }
   }
   snapshot_.clear();

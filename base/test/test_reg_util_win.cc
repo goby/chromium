@@ -4,8 +4,11 @@
 
 #include "base/test/test_reg_util_win.h"
 
+#include <stdint.h>
+
 #include "base/guid.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -38,7 +41,7 @@ void DeleteStaleTestKeys(const base::Time& now,
         base::SPLIT_WANT_NONEMPTY);
     if (tokens.empty())
       continue;
-    int64 key_name_as_number = 0;
+    int64_t key_name_as_number = 0;
 
     if (!base::StringToInt64(tokens[0], &key_name_as_number)) {
       test_root_key.DeleteKey(key_name.c_str());
@@ -96,8 +99,16 @@ RegistryOverrideManager::RegistryOverrideManager(
 RegistryOverrideManager::~RegistryOverrideManager() {}
 
 void RegistryOverrideManager::OverrideRegistry(HKEY override) {
+  OverrideRegistry(override, nullptr);
+}
+
+void RegistryOverrideManager::OverrideRegistry(HKEY override,
+                                               base::string16* override_path) {
   base::string16 key_path = GenerateTempKeyPath(test_key_root_, timestamp_);
-  overrides_.push_back(new ScopedRegistryKeyOverride(override, key_path));
+  overrides_.push_back(
+      base::MakeUnique<ScopedRegistryKeyOverride>(override, key_path));
+  if (override_path)
+    override_path->assign(key_path);
 }
 
 base::string16 GenerateTempKeyPath() {

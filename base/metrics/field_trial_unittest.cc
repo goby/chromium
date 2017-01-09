@@ -4,12 +4,22 @@
 
 #include "base/metrics/field_trial.h"
 
+#include <stddef.h>
+
+#include "base/base_switches.h"
 #include "base/build_time.h"
+#include "base/feature_list.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/metrics/field_trial_param_associator.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/gtest_util.h"
+#include "base/test/mock_entropy_provider.h"
+#include "base/test/scoped_feature_list.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -313,8 +323,19 @@ TEST_F(FieldTrialTest, ActiveGroups) {
   }
 }
 
+TEST_F(FieldTrialTest, GetActiveFieldTrialGroupsFromString) {
+  FieldTrial::ActiveGroups active_groups;
+  FieldTrialList::GetActiveFieldTrialGroupsFromString("*A/X/B/Y/*C/Z",
+                                                      &active_groups);
+  ASSERT_EQ(2U, active_groups.size());
+  EXPECT_EQ("A", active_groups[0].trial_name);
+  EXPECT_EQ("X", active_groups[0].group_name);
+  EXPECT_EQ("C", active_groups[1].trial_name);
+  EXPECT_EQ("Z", active_groups[1].group_name);
+}
+
 TEST_F(FieldTrialTest, AllGroups) {
-  FieldTrial::FieldTrialState field_trial_state;
+  FieldTrial::State field_trial_state;
   std::string one_winner("One Winner");
   scoped_refptr<FieldTrial> trial =
       CreateFieldTrial(one_winner, 10, "Default", NULL);
@@ -446,30 +467,34 @@ TEST_F(FieldTrialTest, SaveAll) {
   std::string save_string;
 
   scoped_refptr<FieldTrial> trial =
-      CreateFieldTrial("Some name", 10, "Default some name", NULL);
+      CreateFieldTrial("Some name", 10, "Default some name", nullptr);
   EXPECT_EQ("", trial->group_name_internal());
   FieldTrialList::AllStatesToString(&save_string);
   EXPECT_EQ("Some name/Default some name/", save_string);
+  // Getting all states should have finalized the trial.
+  EXPECT_EQ("Default some name", trial->group_name_internal());
   save_string.clear();
 
   // Create a winning group.
+  trial = CreateFieldTrial("trial2", 10, "Default some name", nullptr);
   trial->AppendGroup("Winner", 10);
   // Finalize the group selection by accessing the selected group.
   trial->group();
   FieldTrialList::AllStatesToString(&save_string);
-  EXPECT_EQ("*Some name/Winner/", save_string);
+  EXPECT_EQ("Some name/Default some name/*trial2/Winner/", save_string);
   save_string.clear();
 
   // Create a second trial and winning group.
   scoped_refptr<FieldTrial> trial2 =
-      CreateFieldTrial("xxx", 10, "Default xxx", NULL);
+      CreateFieldTrial("xxx", 10, "Default xxx", nullptr);
   trial2->AppendGroup("yyyy", 10);
   // Finalize the group selection by accessing the selected group.
   trial2->group();
 
   FieldTrialList::AllStatesToString(&save_string);
   // We assume names are alphabetized... though this is not critical.
-  EXPECT_EQ("*Some name/Winner/*xxx/yyyy/", save_string);
+  EXPECT_EQ("Some name/Default some name/*trial2/Winner/*xxx/yyyy/",
+            save_string);
   save_string.clear();
 
   // Create a third trial with only the default group.
@@ -477,7 +502,8 @@ TEST_F(FieldTrialTest, SaveAll) {
       CreateFieldTrial("zzz", 10, "default", NULL);
 
   FieldTrialList::AllStatesToString(&save_string);
-  EXPECT_EQ("*Some name/Winner/*xxx/yyyy/zzz/default/", save_string);
+  EXPECT_EQ("Some name/Default some name/*trial2/Winner/*xxx/yyyy/zzz/default/",
+            save_string);
 }
 
 TEST_F(FieldTrialTest, Restore) {
@@ -485,7 +511,6 @@ TEST_F(FieldTrialTest, Restore) {
   ASSERT_FALSE(FieldTrialList::TrialExists("xxx"));
 
   FieldTrialList::CreateTrialsFromString("Some_name/Winner/xxx/yyyy/",
-                                         FieldTrialList::DONT_ACTIVATE_TRIALS,
                                          std::set<std::string>());
 
   FieldTrial* trial = FieldTrialList::Find("Some_name");
@@ -500,9 +525,8 @@ TEST_F(FieldTrialTest, Restore) {
 }
 
 TEST_F(FieldTrialTest, RestoreNotEndingWithSlash) {
-  EXPECT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "tname/gname", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  EXPECT_TRUE(FieldTrialList::CreateTrialsFromString("tname/gname",
+                                                     std::set<std::string>()));
 
   FieldTrial* trial = FieldTrialList::Find("tname");
   ASSERT_NE(static_cast<FieldTrial*>(NULL), trial);
@@ -511,21 +535,16 @@ TEST_F(FieldTrialTest, RestoreNotEndingWithSlash) {
 }
 
 TEST_F(FieldTrialTest, BogusRestore) {
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "MissingSlash", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "MissingGroupName/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "noname, only group/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "/emptyname", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "*/emptyname", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("MissingSlash",
+                                                      std::set<std::string>()));
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("MissingGroupName/",
+                                                      std::set<std::string>()));
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("noname, only group/",
+                                                      std::set<std::string>()));
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("/emptyname",
+                                                      std::set<std::string>()));
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("*/emptyname",
+                                                      std::set<std::string>()));
 }
 
 TEST_F(FieldTrialTest, DuplicateRestore) {
@@ -539,38 +558,19 @@ TEST_F(FieldTrialTest, DuplicateRestore) {
   EXPECT_EQ("Some name/Winner/", save_string);
 
   // It is OK if we redundantly specify a winner.
-  EXPECT_TRUE(FieldTrialList::CreateTrialsFromString(
-      save_string, FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  EXPECT_TRUE(FieldTrialList::CreateTrialsFromString(save_string,
+                                                     std::set<std::string>()));
 
   // But it is an error to try to change to a different winner.
-  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString(
-      "Some name/Loser/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
-}
-
-TEST_F(FieldTrialTest, CreateTrialsFromStringActive) {
-  ASSERT_FALSE(FieldTrialList::TrialExists("Abc"));
-  ASSERT_FALSE(FieldTrialList::TrialExists("Xyz"));
-  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "Abc/def/Xyz/zyx/", FieldTrialList::ACTIVATE_TRIALS,
-      std::set<std::string>()));
-
-  FieldTrial::ActiveGroups active_groups;
-  FieldTrialList::GetActiveFieldTrialGroups(&active_groups);
-  ASSERT_EQ(2U, active_groups.size());
-  EXPECT_EQ("Abc", active_groups[0].trial_name);
-  EXPECT_EQ("def", active_groups[0].group_name);
-  EXPECT_EQ("Xyz", active_groups[1].trial_name);
-  EXPECT_EQ("zyx", active_groups[1].group_name);
+  EXPECT_FALSE(FieldTrialList::CreateTrialsFromString("Some name/Loser/",
+                                                      std::set<std::string>()));
 }
 
 TEST_F(FieldTrialTest, CreateTrialsFromStringNotActive) {
   ASSERT_FALSE(FieldTrialList::TrialExists("Abc"));
   ASSERT_FALSE(FieldTrialList::TrialExists("Xyz"));
-  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "Abc/def/Xyz/zyx/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString("Abc/def/Xyz/zyx/",
+                                                     std::set<std::string>()));
 
   FieldTrial::ActiveGroups active_groups;
   FieldTrialList::GetActiveFieldTrialGroups(&active_groups);
@@ -593,8 +593,7 @@ TEST_F(FieldTrialTest, CreateTrialsFromStringForceActivation) {
   ASSERT_FALSE(FieldTrialList::TrialExists("def"));
   ASSERT_FALSE(FieldTrialList::TrialExists("Xyz"));
   ASSERT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "*Abc/cba/def/fed/*Xyz/zyx/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+      "*Abc/cba/def/fed/*Xyz/zyx/", std::set<std::string>()));
 
   FieldTrial::ActiveGroups active_groups;
   FieldTrialList::GetActiveFieldTrialGroups(&active_groups);
@@ -605,25 +604,12 @@ TEST_F(FieldTrialTest, CreateTrialsFromStringForceActivation) {
   EXPECT_EQ("zyx", active_groups[1].group_name);
 }
 
-TEST_F(FieldTrialTest, CreateTrialsFromStringActiveObserver) {
-  ASSERT_FALSE(FieldTrialList::TrialExists("Abc"));
-
-  TestFieldTrialObserver observer;
-  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "Abc/def/", FieldTrialList::ACTIVATE_TRIALS, std::set<std::string>()));
-
-  RunLoop().RunUntilIdle();
-  EXPECT_EQ("Abc", observer.trial_name());
-  EXPECT_EQ("def", observer.group_name());
-}
-
 TEST_F(FieldTrialTest, CreateTrialsFromStringNotActiveObserver) {
   ASSERT_FALSE(FieldTrialList::TrialExists("Abc"));
 
   TestFieldTrialObserver observer;
-  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString(
-      "Abc/def/", FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  ASSERT_TRUE(FieldTrialList::CreateTrialsFromString("Abc/def/",
+                                                     std::set<std::string>()));
   RunLoop().RunUntilIdle();
   // Observer shouldn't be notified.
   EXPECT_TRUE(observer.trial_name().empty());
@@ -654,7 +640,6 @@ TEST_F(FieldTrialTest, CreateTrialsFromStringWithIgnoredFieldTrials) {
       "Unaccepted2/Unaccepted2_name/"
       "Bar/Bar_name/"
       "Unaccepted3/Unaccepted3_name/",
-      FieldTrialList::DONT_ACTIVATE_TRIALS,
       ignored_trial_names);
 
   EXPECT_FALSE(FieldTrialList::TrialExists("Unaccepted1"));
@@ -1129,9 +1114,8 @@ TEST(FieldTrialTestWithoutList, StatesStringFormat) {
 
   // Starting with a new blank FieldTrialList.
   FieldTrialList field_trial_list(NULL);
-  ASSERT_TRUE(field_trial_list.CreateTrialsFromString(
-      save_string, FieldTrialList::DONT_ACTIVATE_TRIALS,
-      std::set<std::string>()));
+  ASSERT_TRUE(field_trial_list.CreateTrialsFromString(save_string,
+                                                      std::set<std::string>()));
 
   FieldTrial::ActiveGroups active_groups;
   field_trial_list.GetActiveFieldTrialGroups(&active_groups);
@@ -1143,15 +1127,246 @@ TEST(FieldTrialTestWithoutList, StatesStringFormat) {
   EXPECT_TRUE(field_trial_list.TrialExists("zzz"));
 }
 
-#if GTEST_HAS_DEATH_TEST
 TEST(FieldTrialDeathTest, OneTimeRandomizedTrialWithoutFieldTrialList) {
   // Trying to instantiate a one-time randomized field trial before the
   // FieldTrialList is created should crash.
-  EXPECT_DEATH(FieldTrialList::FactoryGetFieldTrial(
-      "OneTimeRandomizedTrialWithoutFieldTrialList", 100, kDefaultGroupName,
-      base::FieldTrialList::kNoExpirationYear, 1, 1,
-      base::FieldTrial::ONE_TIME_RANDOMIZED, NULL), "");
+  EXPECT_DEATH_IF_SUPPORTED(
+      FieldTrialList::FactoryGetFieldTrial(
+          "OneTimeRandomizedTrialWithoutFieldTrialList", 100, kDefaultGroupName,
+          base::FieldTrialList::kNoExpirationYear, 1, 1,
+          base::FieldTrial::ONE_TIME_RANDOMIZED, NULL),
+      "");
+}
+
+#if defined(OS_WIN)
+TEST(FieldTrialListTest, TestCopyFieldTrialStateToFlags) {
+  base::FieldTrialList field_trial_list(
+      base::MakeUnique<base::MockEntropyProvider>());
+  base::FieldTrialList::CreateFieldTrial("Trial1", "Group1");
+  base::FilePath test_file_path = base::FilePath(FILE_PATH_LITERAL("Program"));
+  base::CommandLine cmd_line = base::CommandLine(test_file_path);
+  const char field_trial_handle[] = "test-field-trial-handle";
+  const char enable_features_switch[] = "test-enable-features";
+  const char disable_features_switch[] = "test-disable-features";
+
+  base::FieldTrialList::CopyFieldTrialStateToFlags(
+      field_trial_handle, enable_features_switch, disable_features_switch,
+      &cmd_line);
+  EXPECT_TRUE(cmd_line.HasSwitch(field_trial_handle) ||
+              cmd_line.HasSwitch(switches::kForceFieldTrials));
 }
 #endif
+
+TEST(FieldTrialListTest, InstantiateAllocator) {
+  test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.Init();
+
+  FieldTrialList field_trial_list(nullptr);
+  FieldTrialList::CreateFieldTrial("Trial1", "Group1");
+
+  FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+  void* memory = field_trial_list.field_trial_allocator_->shared_memory();
+  size_t used = field_trial_list.field_trial_allocator_->used();
+
+  // Ensure that the function is idempotent.
+  FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+  void* new_memory = field_trial_list.field_trial_allocator_->shared_memory();
+  size_t new_used = field_trial_list.field_trial_allocator_->used();
+  EXPECT_EQ(memory, new_memory);
+  EXPECT_EQ(used, new_used);
+}
+
+TEST(FieldTrialListTest, AddTrialsToAllocator) {
+  std::string save_string;
+  base::SharedMemoryHandle handle;
+
+  // Scoping the first FieldTrialList, as we need another one to test that it
+  // matches.
+  {
+    test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
+
+    FieldTrialList field_trial_list(nullptr);
+    FieldTrialList::CreateFieldTrial("Trial1", "Group1");
+    FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+    FieldTrialList::AllStatesToString(&save_string);
+    handle = base::SharedMemory::DuplicateHandle(
+        field_trial_list.field_trial_allocator_->shared_memory()->handle());
+  }
+
+  FieldTrialList field_trial_list2(nullptr);
+  std::unique_ptr<base::SharedMemory> shm(new SharedMemory(handle, true));
+  // 4 KiB is enough to hold the trials only created for this test.
+  shm.get()->Map(4 << 10);
+  FieldTrialList::CreateTrialsFromSharedMemory(std::move(shm));
+  std::string check_string;
+  FieldTrialList::AllStatesToString(&check_string);
+  EXPECT_EQ(save_string, check_string);
+}
+
+TEST(FieldTrialListTest, DoNotAddSimulatedFieldTrialsToAllocator) {
+  constexpr char kTrialName[] = "trial";
+  base::SharedMemoryHandle handle;
+  {
+    test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
+
+    // Create a simulated trial and a real trial and call group() on them, which
+    // should only add the real trial to the field trial allocator.
+    FieldTrialList field_trial_list(nullptr);
+    FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+
+    // This shouldn't add to the allocator.
+    scoped_refptr<FieldTrial> simulated_trial =
+        FieldTrial::CreateSimulatedFieldTrial(kTrialName, 100, "Simulated",
+                                              0.95);
+    simulated_trial->group();
+
+    // This should add to the allocator.
+    FieldTrial* real_trial =
+        FieldTrialList::CreateFieldTrial(kTrialName, "Real");
+    real_trial->group();
+
+    handle = base::SharedMemory::DuplicateHandle(
+        field_trial_list.field_trial_allocator_->shared_memory()->handle());
+  }
+
+  // Check that there's only one entry in the allocator.
+  FieldTrialList field_trial_list2(nullptr);
+  std::unique_ptr<base::SharedMemory> shm(new SharedMemory(handle, true));
+  // 4 KiB is enough to hold the trials only created for this test.
+  shm.get()->Map(4 << 10);
+  FieldTrialList::CreateTrialsFromSharedMemory(std::move(shm));
+  std::string check_string;
+  FieldTrialList::AllStatesToString(&check_string);
+  ASSERT_EQ(check_string.find("Simulated"), std::string::npos);
+}
+
+TEST(FieldTrialListTest, AssociateFieldTrialParams) {
+  test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.Init();
+
+  std::string trial_name("Trial1");
+  std::string group_name("Group1");
+
+  // Create a field trial with some params.
+  FieldTrialList field_trial_list(nullptr);
+  FieldTrialList::CreateFieldTrial(trial_name, group_name);
+  std::map<std::string, std::string> params;
+  params["key1"] = "value1";
+  params["key2"] = "value2";
+  FieldTrialParamAssociator::GetInstance()->AssociateFieldTrialParams(
+      trial_name, group_name, params);
+  FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+
+  // Clear all cached params from the associator.
+  FieldTrialParamAssociator::GetInstance()->ClearAllCachedParamsForTesting();
+  // Check that the params have been cleared from the cache.
+  std::map<std::string, std::string> cached_params;
+  FieldTrialParamAssociator::GetInstance()->GetFieldTrialParamsWithoutFallback(
+      trial_name, group_name, &cached_params);
+  EXPECT_EQ(0U, cached_params.size());
+
+  // Check that we fetch the param from shared memory properly.
+  std::map<std::string, std::string> new_params;
+  FieldTrialParamAssociator::GetInstance()->GetFieldTrialParams(trial_name,
+                                                                &new_params);
+  EXPECT_EQ("value1", new_params["key1"]);
+  EXPECT_EQ("value2", new_params["key2"]);
+  EXPECT_EQ(2U, new_params.size());
+}
+
+TEST(FieldTrialListTest, ClearParamsFromSharedMemory) {
+  std::string trial_name("Trial1");
+  std::string group_name("Group1");
+
+  base::SharedMemoryHandle handle;
+  {
+    test::ScopedFeatureList scoped_feature_list;
+    scoped_feature_list.Init();
+
+    // Create a field trial with some params.
+    FieldTrialList field_trial_list(nullptr);
+    FieldTrial* trial =
+        FieldTrialList::CreateFieldTrial(trial_name, group_name);
+    std::map<std::string, std::string> params;
+    params["key1"] = "value1";
+    params["key2"] = "value2";
+    FieldTrialParamAssociator::GetInstance()->AssociateFieldTrialParams(
+        trial_name, group_name, params);
+    FieldTrialList::InstantiateFieldTrialAllocatorIfNeeded();
+
+    // Clear all params from the associator AND shared memory. The allocated
+    // segments should be different.
+    FieldTrial::FieldTrialRef old_ref = trial->ref_;
+    FieldTrialParamAssociator::GetInstance()->ClearAllParamsForTesting();
+    FieldTrial::FieldTrialRef new_ref = trial->ref_;
+    EXPECT_NE(old_ref, new_ref);
+
+    // Check that there are no params associated with the field trial anymore.
+    std::map<std::string, std::string> new_params;
+    FieldTrialParamAssociator::GetInstance()->GetFieldTrialParams(trial_name,
+                                                                  &new_params);
+    EXPECT_EQ(0U, new_params.size());
+
+    // Now duplicate the handle so we can easily check that the trial is still
+    // in shared memory via AllStatesToString.
+    handle = base::SharedMemory::DuplicateHandle(
+        field_trial_list.field_trial_allocator_->shared_memory()->handle());
+  }
+
+  // Check that we have the trial.
+  FieldTrialList field_trial_list2(nullptr);
+  std::unique_ptr<base::SharedMemory> shm(new SharedMemory(handle, true));
+  // 4 KiB is enough to hold the trials only created for this test.
+  shm.get()->Map(4 << 10);
+  FieldTrialList::CreateTrialsFromSharedMemory(std::move(shm));
+  std::string check_string;
+  FieldTrialList::AllStatesToString(&check_string);
+  EXPECT_EQ("*Trial1/Group1/", check_string);
+}
+
+TEST(FieldTrialListTest, DumpAndFetchFromSharedMemory) {
+  std::string trial_name("Trial1");
+  std::string group_name("Group1");
+
+  // Create a field trial with some params.
+  FieldTrialList field_trial_list(nullptr);
+  FieldTrialList::CreateFieldTrial(trial_name, group_name);
+  std::map<std::string, std::string> params;
+  params["key1"] = "value1";
+  params["key2"] = "value2";
+  FieldTrialParamAssociator::GetInstance()->AssociateFieldTrialParams(
+      trial_name, group_name, params);
+
+  std::unique_ptr<base::SharedMemory> shm(new SharedMemory());
+  // 4 KiB is enough to hold the trials only created for this test.
+  shm.get()->CreateAndMapAnonymous(4 << 10);
+  // We _could_ use PersistentMemoryAllocator, this just has less params.
+  SharedPersistentMemoryAllocator allocator(std::move(shm), 1, "", false);
+
+  // Dump and subsequently retrieve the field trial to |allocator|.
+  FieldTrialList::DumpAllFieldTrialsToPersistentAllocator(&allocator);
+  std::vector<const FieldTrial::FieldTrialEntry*> entries =
+      FieldTrialList::GetAllFieldTrialsFromPersistentAllocator(allocator);
+
+  // Check that we have the entry we put in.
+  EXPECT_EQ(1u, entries.size());
+  const FieldTrial::FieldTrialEntry* entry = entries[0];
+
+  // Check that the trial and group names match.
+  StringPiece shm_trial_name;
+  StringPiece shm_group_name;
+  entry->GetTrialAndGroupName(&shm_trial_name, &shm_group_name);
+  EXPECT_EQ(trial_name, shm_trial_name);
+  EXPECT_EQ(group_name, shm_group_name);
+
+  // Check that the params match.
+  std::map<std::string, std::string> shm_params;
+  entry->GetParams(&shm_params);
+  EXPECT_EQ(2u, shm_params.size());
+  EXPECT_EQ("value1", shm_params["key1"]);
+  EXPECT_EQ("value2", shm_params["key2"]);
+}
 
 }  // namespace base

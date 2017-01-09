@@ -2,16 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/exo/wayland/server.h"
+
+#include <stdlib.h>
+
 #include <wayland-client-core.h>
+
+#include <memory>
 
 #include "base/atomic_sequence_num.h"
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/files/scoped_temp_dir.h"
 #include "base/process/process_handle.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/thread.h"
 #include "components/exo/display.h"
-#include "components/exo/wayland/server.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace exo {
@@ -25,18 +30,36 @@ std::string GetUniqueSocketName() {
                             g_next_socket_id.GetNext());
 }
 
-TEST(ServerTest, AddSocket) {
-  scoped_ptr<Display> display(new Display);
-  scoped_ptr<Server> server(new Server(display.get()));
+class ServerTest : public testing::Test {
+ public:
+  ServerTest() {}
+  ~ServerTest() override {}
+
+  void SetUp() override {
+    ASSERT_TRUE(xdg_temp_dir_.CreateUniqueTempDir());
+    setenv("XDG_RUNTIME_DIR", xdg_temp_dir_.GetPath().MaybeAsASCII().c_str(),
+           1 /* overwrite */);
+    testing::Test::SetUp();
+  }
+
+ private:
+  base::ScopedTempDir xdg_temp_dir_;
+
+  DISALLOW_COPY_AND_ASSIGN(ServerTest);
+};
+
+TEST_F(ServerTest, AddSocket) {
+  std::unique_ptr<Display> display(new Display);
+  std::unique_ptr<Server> server(new Server(display.get()));
 
   // Check that calling AddSocket() with a unique socket name succeeds.
   bool rv = server->AddSocket(GetUniqueSocketName());
   EXPECT_TRUE(rv);
 }
 
-TEST(ServerTest, GetFileDescriptor) {
-  scoped_ptr<Display> display(new Display);
-  scoped_ptr<Server> server(new Server(display.get()));
+TEST_F(ServerTest, GetFileDescriptor) {
+  std::unique_ptr<Display> display(new Display);
+  std::unique_ptr<Server> server(new Server(display.get()));
 
   bool rv = server->AddSocket(GetUniqueSocketName());
   EXPECT_TRUE(rv);
@@ -55,9 +78,9 @@ void ConnectToServer(const std::string socket_name,
   wl_display_disconnect(display);
 }
 
-TEST(ServerTest, Dispatch) {
-  scoped_ptr<Display> display(new Display);
-  scoped_ptr<Server> server(new Server(display.get()));
+TEST_F(ServerTest, Dispatch) {
+  std::unique_ptr<Display> display(new Display);
+  std::unique_ptr<Server> server(new Server(display.get()));
 
   std::string socket_name = GetUniqueSocketName();
   bool rv = server->AddSocket(socket_name);
@@ -68,7 +91,8 @@ TEST(ServerTest, Dispatch) {
 
   // Post a task that connects server on the created thread.
   bool connected_to_server = false;
-  base::WaitableEvent event(false, false);
+  base::WaitableEvent event(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+                            base::WaitableEvent::InitialState::NOT_SIGNALED);
   client.task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&ConnectToServer, socket_name, &connected_to_server, &event));
@@ -81,9 +105,9 @@ TEST(ServerTest, Dispatch) {
   EXPECT_TRUE(connected_to_server);
 }
 
-TEST(ServerTest, Flush) {
-  scoped_ptr<Display> display(new Display);
-  scoped_ptr<Server> server(new Server(display.get()));
+TEST_F(ServerTest, Flush) {
+  std::unique_ptr<Display> display(new Display);
+  std::unique_ptr<Server> server(new Server(display.get()));
 
   bool rv = server->AddSocket(GetUniqueSocketName());
   EXPECT_TRUE(rv);

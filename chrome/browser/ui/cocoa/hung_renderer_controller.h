@@ -19,8 +19,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
-#import "base/memory/scoped_ptr.h"
 
 @class MultiKeyEquivalentButton;
 class HungRendererWebContentsObserverBridge;
@@ -42,7 +43,7 @@ class WebContents;
   content::WebContents* hungContents_;
 
   // Observes |hungContents_| in case it closes while the panel is up.
-  scoped_ptr<HungRendererWebContentsObserverBridge> hungContentsObserver_;
+  std::unique_ptr<HungRendererWebContentsObserverBridge> hungContentsObserver_;
 
   // Backing data for |tableView_|.  Titles of each WebContents that
   // shares a renderer process with |hungContents_|.

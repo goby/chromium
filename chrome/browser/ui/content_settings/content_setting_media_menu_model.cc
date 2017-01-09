@@ -4,8 +4,10 @@
 
 #include "chrome/browser/ui/content_settings/content_setting_media_menu_model.h"
 
+#include <stddef.h>
+
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/media/media_capture_devices_dispatcher.h"
+#include "chrome/browser/media/webrtc/media_capture_devices_dispatcher.h"
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 
 ContentSettingMediaMenuModel::ContentSettingMediaMenuModel(
@@ -18,8 +20,7 @@ ContentSettingMediaMenuModel::ContentSettingMediaMenuModel(
       callback_(callback) {
   DCHECK(type_ == content::MEDIA_DEVICE_AUDIO_CAPTURE ||
          type_ == content::MEDIA_DEVICE_VIDEO_CAPTURE);
-  DCHECK_EQ(CONTENT_SETTINGS_TYPE_MEDIASTREAM,
-            media_bubble_model_->content_type());
+  DCHECK(media_bubble_model_->AsMediaStreamBubbleModel());
   MediaCaptureDevicesDispatcher* dispatcher =
       MediaCaptureDevicesDispatcher::GetInstance();
   const content::MediaStreamDevices& devices =
@@ -42,12 +43,6 @@ bool ContentSettingMediaMenuModel::IsCommandIdChecked(int command_id) const {
 
 bool ContentSettingMediaMenuModel::IsCommandIdEnabled(int command_id) const {
   return true;
-}
-
-bool ContentSettingMediaMenuModel::GetAcceleratorForCommandId(
-    int command_id,
-    ui::Accelerator* accelerator) {
-  return false;
 }
 
 void ContentSettingMediaMenuModel::ExecuteCommand(int command_id,

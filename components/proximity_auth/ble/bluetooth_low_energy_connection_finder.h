@@ -5,18 +5,18 @@
 #ifndef COMPONENTS_PROXIMITY_AUTH_BLE_BLUETOOTH_LOW_ENERGY_CONNECTION_FINDER_H
 #define COMPONENTS_PROXIMITY_AUTH_BLE_BLUETOOTH_LOW_ENERGY_CONNECTION_FINDER_H
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/connection.h"
 #include "components/proximity_auth/connection_finder.h"
 #include "components/proximity_auth/connection_observer.h"
-#include "components/proximity_auth/remote_device.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
 #include "device/bluetooth/bluetooth_discovery_session.h"
@@ -53,7 +53,7 @@ class BluetoothLowEnergyConnectionFinder
   // TODO(sacomoto): Remove |device_whitelist| when ProximityAuthBleSystem is
   // not needed anymore.
   BluetoothLowEnergyConnectionFinder(
-      const RemoteDevice remote_device,
+      const cryptauth::RemoteDevice remote_device,
       const std::string& remote_service_uuid,
       const FinderStrategy finder_strategy,
       const BluetoothLowEnergyDeviceWhitelist* device_whitelist,
@@ -81,7 +81,7 @@ class BluetoothLowEnergyConnectionFinder
  protected:
   // Creates a proximity_auth::Connection with the device given by
   // |device_address|. Exposed for testing.
-  virtual scoped_ptr<Connection> CreateConnection(
+  virtual std::unique_ptr<Connection> CreateConnection(
       const std::string& device_address);
 
  private:
@@ -94,7 +94,7 @@ class BluetoothLowEnergyConnectionFinder
 
   // Callback called when a new discovery session is started.
   void OnDiscoverySessionStarted(
-      scoped_ptr<device::BluetoothDiscoverySession> discovery_session);
+      std::unique_ptr<device::BluetoothDiscoverySession> discovery_session);
 
   // Callback called when there is an error starting a new discovery session.
   void OnStartDiscoverySessionError();
@@ -125,7 +125,7 @@ class BluetoothLowEnergyConnectionFinder
   // The remote BLE device being searched. It maybe empty, in this case the
   // remote device should advertise |remote_service_uuid_| and
   // |advertised_name_|.
-  RemoteDevice remote_device_;
+  cryptauth::RemoteDevice remote_device_;
 
   // The uuid of the service it looks for to establish a GattConnection.
   device::BluetoothUUID remote_service_uuid_;
@@ -147,10 +147,10 @@ class BluetoothLowEnergyConnectionFinder
   scoped_refptr<device::BluetoothAdapter> adapter_;
 
   // The discovery session associated to this object.
-  scoped_ptr<device::BluetoothDiscoverySession> discovery_session_;
+  std::unique_ptr<device::BluetoothDiscoverySession> discovery_session_;
 
   // The connection with |remote_device|.
-  scoped_ptr<Connection> connection_;
+  std::unique_ptr<Connection> connection_;
 
   // Callback called when the connection is established.
   // device::BluetoothDevice::GattConnectionCallback connection_callback_;

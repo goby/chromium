@@ -6,11 +6,14 @@
 #define UI_MESSAGE_CENTER_VIEWS_POPUP_ALIGNMENT_DELEGATE_H_
 
 #include "ui/message_center/message_center_export.h"
+#include "ui/views/widget/widget.h"
 
 namespace gfx {
-class Display;
-class Point;
 class Rect;
+}
+
+namespace display {
+class Display;
 }
 
 namespace message_center {
@@ -32,8 +35,8 @@ class MESSAGE_CENTER_EXPORT PopupAlignmentDelegate {
   // point if there are no other toasts.
   virtual int GetBaseLine() const = 0;
 
-  // Returns the height of the bottom of the current work area.
-  virtual int GetWorkAreaBottom() const  = 0;
+  // Returns the rect of the current work area.
+  virtual gfx::Rect GetWorkArea() const = 0;
 
   // Returns true if the toast should be aligned top down.
   virtual bool IsTopDown() const = 0;
@@ -45,7 +48,13 @@ class MESSAGE_CENTER_EXPORT PopupAlignmentDelegate {
   // Called when a new toast appears or toasts are rearranged in the |display|.
   // The subclass may override this method to check the current desktop status
   // so that the toasts are arranged at the correct place.
-  virtual void RecomputeAlignment(const gfx::Display& display) = 0;
+  virtual void RecomputeAlignment(const display::Display& display) = 0;
+
+  // Sets the parent container for popups. If it does not set a parent a
+  // default parent will be used (e.g. the native desktop on Windows).
+  virtual void ConfigureWidgetInitParamsForContainer(
+      views::Widget* widget,
+      views::Widget::InitParams* init_params) = 0;
 
  protected:
   virtual ~PopupAlignmentDelegate();

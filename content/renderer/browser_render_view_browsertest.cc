@@ -6,7 +6,8 @@
 // Note that these tests rely on single-process mode, and hence may be
 // disabled in some configurations (check gyp files).
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/command_line.h"
@@ -15,6 +16,7 @@
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/renderer/render_view.h"
@@ -82,11 +84,11 @@ void InterceptNetworkTransactions(net::URLRequestContextGetter* getter,
   net::HttpCache* cache(
       getter->GetURLRequestContext()->http_transaction_factory()->GetCache());
   DCHECK(cache);
-  scoped_ptr<net::FailingHttpTransactionFactory> factory(
+  std::unique_ptr<net::FailingHttpTransactionFactory> factory(
       new net::FailingHttpTransactionFactory(cache->GetSession(), error));
   // Throw away old version; since this is a browser test, there is no
   // need to restore the old state.
-  cache->SetHttpNetworkTransactionFactoryForTesting(factory.Pass());
+  cache->SetHttpNetworkTransactionFactoryForTesting(std::move(factory));
 }
 
 void CallOnUIThreadValidatingReturn(const base::Closure& callback,
@@ -98,7 +100,7 @@ void CallOnUIThreadValidatingReturn(const base::Closure& callback,
 
 // Must be called on IO thread.  The callback will be called on
 // completion of cache clearing on the UI thread.
-void BackendClearCache(scoped_ptr<disk_cache::Backend*> backend,
+void BackendClearCache(std::unique_ptr<disk_cache::Backend*> backend,
                        const base::Closure& callback,
                        int rv) {
   DCHECK(*backend);
@@ -115,12 +117,12 @@ void ClearCache(net::URLRequestContextGetter* getter,
   net::HttpCache* cache(
       getter->GetURLRequestContext()->http_transaction_factory()->GetCache());
   DCHECK(cache);
-  scoped_ptr<disk_cache::Backend*> backend(new disk_cache::Backend*);
+  std::unique_ptr<disk_cache::Backend*> backend(new disk_cache::Backend*);
   *backend = NULL;
   disk_cache::Backend** backend_ptr = backend.get();
 
-  net::CompletionCallback backend_callback(
-      base::Bind(&BackendClearCache, base::Passed(backend.Pass()), callback));
+  net::CompletionCallback backend_callback(base::Bind(
+      &BackendClearCache, base::Passed(std::move(backend)), callback));
 
   // backend_ptr is valid until all copies of backend_callback go out
   // of scope.
@@ -202,14 +204,13 @@ IN_PROC_BROWSER_TEST_F(RenderViewBrowserTest, ConfirmCacheInformationPlumbed) {
 
   // Reload same URL after forcing an error from the the network layer;
   // confirm that the error page is told the cached copy exists.
-  int renderer_id =
-      shell()->web_contents()->GetMainFrame()->GetProcess()->GetID();
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter =
-      ShellContentBrowserClient::Get()->browser_context()->
-          GetRequestContextForRenderProcess(renderer_id);
+      shell()->web_contents()->GetRenderProcessHost()->GetStoragePartition()->
+          GetURLRequestContext();
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&InterceptNetworkTransactions, url_request_context_getter,
+      base::Bind(&InterceptNetworkTransactions,
+                 base::RetainedRef(url_request_context_getter),
                  net::ERR_FAILED));
 
   // An error results in one completed navigation.
@@ -225,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(RenderViewBrowserTest, ConfirmCacheInformationPlumbed) {
   scoped_refptr<MessageLoopRunner> runner = new MessageLoopRunner;
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
-      base::Bind(&ClearCache, url_request_context_getter,
+      base::Bind(&ClearCache, base::RetainedRef(url_request_context_getter),
                  runner->QuitClosure()));
   runner->Run();
 

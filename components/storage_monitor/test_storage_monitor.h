@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_STORAGE_MONITOR_TEST_STORAGE_MONITOR_H_
 #define COMPONENTS_STORAGE_MONITOR_TEST_STORAGE_MONITOR_H_
 
+#include <memory>
 #include <string>
 
+#include "build/build_config.h"
 #include "components/storage_monitor/storage_monitor.h"
 
 namespace storage_monitor {
@@ -44,7 +46,7 @@ class TestStorageMonitor : public StorageMonitor {
       base::string16* storage_object_id) const override;
 #endif
 
-#if defined(OS_LINUX)
+#if defined(OS_CHROMEOS)
   device::MediaTransferProtocolManager* media_transfer_protocol_manager()
       override;
 #endif
@@ -71,8 +73,8 @@ class TestStorageMonitor : public StorageMonitor {
   // Paths considered for testing purposes to be on removable storage.
   std::vector<base::FilePath> removable_paths_;
 
-#if defined(OS_LINUX)
-  scoped_ptr<device::MediaTransferProtocolManager>
+#if defined(OS_CHROMEOS)
+  std::unique_ptr<device::MediaTransferProtocolManager>
       media_transfer_protocol_manager_;
 #endif
 };

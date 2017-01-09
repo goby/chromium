@@ -157,7 +157,7 @@
            */
           responsiveWidth: {
             type: String,
-            value: '600px'
+            value: '768px'
           },
 
           /**
@@ -171,6 +171,8 @@
           /**
            * The panel that is being selected. `drawer` for the drawer panel and
            * `main` for the main panel.
+           *
+           * @type {string|null}
            */
           selected: {
             reflectToAttribute: true,
@@ -189,9 +191,31 @@
           },
 
           /**
+           * The CSS selector for the element that should receive focus when the drawer is open.
+           * By default, when the drawer opens, it focuses the first tabbable element. That is,
+           * the first element that can receive focus.
+           *
+           * To disable this behavior, you can set `drawerFocusSelector` to `null` or an empty string.
+           *
+           */
+          drawerFocusSelector: {
+            type: String,
+            value:
+                'a[href]:not([tabindex="-1"]),'+
+                'area[href]:not([tabindex="-1"]),'+
+                'input:not([disabled]):not([tabindex="-1"]),'+
+                'select:not([disabled]):not([tabindex="-1"]),'+
+                'textarea:not([disabled]):not([tabindex="-1"]),'+
+                'button:not([disabled]):not([tabindex="-1"]),'+
+                'iframe:not([tabindex="-1"]),'+
+                '[tabindex]:not([tabindex="-1"]),'+
+                '[contentEditable=true]:not([tabindex="-1"])'
+          },
+
+          /**
            * Whether the transition is enabled.
            */
-          transition: {
+          _transition: {
             type: Boolean,
             value: false
           },
@@ -202,12 +226,21 @@
           tap: '_onTap',
           track: '_onTrack',
           down: '_downHandler',
-          up: '_upHandler'
+          up: '_upHandler',
+          transitionend: '_onTransitionEnd'
         },
 
         observers: [
-          '_forceNarrowChanged(forceNarrow, defaultSelected)'
+          '_forceNarrowChanged(forceNarrow, defaultSelected)',
+          '_toggleFocusListener(selected)'
         ],
+
+        ready: function() {
+          // Avoid transition at the beginning e.g. page loads and enable
+          // transitions only after the element is rendered and ready.
+          this._transition = true;
+          this._boundFocusListener = this._didFocus.bind(this);
+        },
 
         /**
          * Toggles the panel open and closed.
@@ -240,15 +273,18 @@
           this.selected = 'main';
         },
 
-        ready: function() {
-          // Avoid transition at the beginning e.g. page loads and enable
-          // transitions only after the element is rendered and ready.
-          this.transition = true;
-        },
-
-        _onMainTransitionEnd: function (e) {
-          if (e.currentTarget === this.$.main && (e.propertyName === 'left' || e.propertyName === 'right')) {
+        _onTransitionEnd: function (e) {
+          var target = Polymer.dom(e).localTarget;
+          if (target !== this) {
+            // ignore events coming from the light dom
+            return;
+          }
+          if (e.propertyName === 'left' || e.propertyName === 'right') {
             this.notifyResize();
+          }
+          if (e.propertyName === 'transform' && this.selected === 'drawer') {
+            var focusedChild = this._getAutoFocusedNode();
+            focusedChild && focusedChild.focus();
           }
         },
 
@@ -302,15 +338,12 @@
               this._trackEnd(event);
               break;
           }
-
         },
 
         _responsiveChange: function(narrow) {
           this._setNarrow(narrow);
 
-          if (this.narrow) {
-            this.selected = this.defaultSelected;
-          }
+          this.selected = this.narrow ? this.defaultSelected : null;
 
           this.setScrollDirection(this._swipeAllowed() ? 'y' : 'all');
           this.fire('paper-responsive-change', {narrow: this.narrow});
@@ -394,7 +427,7 @@
 
             if (this.dragging) {
               this.width = this.$.drawer.offsetWidth;
-              this.transition = false;
+              this._transition = false;
             }
           }
         },
@@ -430,7 +463,7 @@
             var xDirection = event.detail.dx > 0;
 
             this._setDragging(false);
-            this.transition = true;
+            this._transition = true;
             sharedPanel = null;
             this._moveDrawer(null);
 
@@ -446,14 +479,53 @@
           if (translateX === null) {
             return '';
           }
-
           return this.hasWillChange ? 'translateX(' + translateX + 'px)' :
               'translate3d(' + translateX + 'px, 0, 0)';
         },
 
         _moveDrawer: function(translateX) {
           this.transform(this._transformForTranslateX(translateX), this.$.drawer);
-        }
+        },
 
+        _getDrawerContent: function() {
+          return Polymer.dom(this.$.drawerContent).getDistributedNodes()[0];
+        },
+
+        _getAutoFocusedNode: function() {
+          var drawerContent = this._getDrawerContent();
+
+          return this.drawerFocusSelector ?
+              Polymer.dom(drawerContent).querySelector(this.drawerFocusSelector) || drawerContent : null;
+        },
+
+        _toggleFocusListener: function(selected) {
+          if (selected === 'drawer') {
+            this.addEventListener('focus', this._boundFocusListener, true);
+          } else {
+            this.removeEventListener('focus', this._boundFocusListener, true);
+          }
+        },
+
+        _didFocus: function(event) {
+          var autoFocusedNode = this._getAutoFocusedNode();
+          if (!autoFocusedNode) {
+            return;
+          }
+
+          var path = Polymer.dom(event).path;
+          var focusedChild = path[0];
+          var drawerContent = this._getDrawerContent();
+          var focusedChildCameFromDrawer = path.indexOf(drawerContent) !== -1;
+
+          if (!focusedChildCameFromDrawer) {
+            event.stopPropagation();
+            autoFocusedNode.focus();
+          }
+        },
+
+        _isDrawerClosed: function(narrow, selected) {
+          return !narrow || selected !== 'drawer';
+        }
       });
+
     }());

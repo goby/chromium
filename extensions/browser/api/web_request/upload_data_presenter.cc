@@ -4,7 +4,10 @@
 
 #include "extensions/browser/api/web_request/upload_data_presenter.h"
 
+#include <utility>
+
 #include "base/files/file_path.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
 #include "extensions/browser/api/web_request/form_data_parser.h"
@@ -27,10 +30,10 @@ namespace {
 // for |key|, creating it if necessary.
 base::ListValue* GetOrCreateList(base::DictionaryValue* dictionary,
                                  const std::string& key) {
-  base::ListValue* list = NULL;
+  base::ListValue* list = nullptr;
   if (!dictionary->GetList(key, &list)) {
     list = new base::ListValue();
-    dictionary->SetWithoutPathExpansion(key, list);
+    dictionary->SetWithoutPathExpansion(key, base::WrapUnique(list));
   }
   return list;
 }
@@ -42,11 +45,11 @@ namespace extensions {
 namespace subtle {
 
 void AppendKeyValuePair(const char* key,
-                        base::Value* value,
+                        std::unique_ptr<base::Value> value,
                         base::ListValue* list) {
-  base::DictionaryValue* dictionary = new base::DictionaryValue;
-  dictionary->SetWithoutPathExpansion(key, value);
-  list->Append(dictionary);
+  std::unique_ptr<base::DictionaryValue> dictionary(new base::DictionaryValue);
+  dictionary->SetWithoutPathExpansion(key, std::move(value));
+  list->Append(std::move(dictionary));
 }
 
 }  // namespace subtle
@@ -79,11 +82,11 @@ bool RawDataPresenter::Succeeded() {
   return success_;
 }
 
-scoped_ptr<base::Value> RawDataPresenter::Result() {
+std::unique_ptr<base::Value> RawDataPresenter::Result() {
   if (!success_)
     return nullptr;
 
-  return list_.Pass();
+  return std::move(list_);
 }
 
 void RawDataPresenter::FeedNextBytes(const char* bytes, size_t size) {
@@ -95,7 +98,7 @@ void RawDataPresenter::FeedNextBytes(const char* bytes, size_t size) {
 void RawDataPresenter::FeedNextFile(const std::string& filename) {
   // Insert the file path instead of the contents, which may be too large.
   subtle::AppendKeyValuePair(keys::kRequestBodyRawFileKey,
-                             new base::StringValue(filename),
+                             base::MakeUnique<base::StringValue>(filename),
                              list_.get());
 }
 
@@ -123,8 +126,8 @@ void ParsedDataPresenter::FeedNext(const net::UploadElementReader& reader) {
 
   FormDataParser::Result result;
   while (parser_->GetNextNameValue(&result)) {
-    GetOrCreateList(dictionary_.get(), result.name())->Append(
-        new base::StringValue(result.value()));
+    GetOrCreateList(dictionary_.get(), result.name())
+        ->AppendString(result.value());
   }
 }
 
@@ -134,17 +137,18 @@ bool ParsedDataPresenter::Succeeded() {
   return success_;
 }
 
-scoped_ptr<base::Value> ParsedDataPresenter::Result() {
+std::unique_ptr<base::Value> ParsedDataPresenter::Result() {
   if (!success_)
     return nullptr;
 
-  return dictionary_.Pass();
+  return std::move(dictionary_);
 }
 
 // static
-scoped_ptr<ParsedDataPresenter> ParsedDataPresenter::CreateForTests() {
+std::unique_ptr<ParsedDataPresenter> ParsedDataPresenter::CreateForTests() {
   const std::string form_type("application/x-www-form-urlencoded");
-  return scoped_ptr<ParsedDataPresenter>(new ParsedDataPresenter(form_type));
+  return std::unique_ptr<ParsedDataPresenter>(
+      new ParsedDataPresenter(form_type));
 }
 
 ParsedDataPresenter::ParsedDataPresenter(const std::string& form_type)

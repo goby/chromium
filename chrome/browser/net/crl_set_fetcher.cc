@@ -5,6 +5,7 @@
 #include "chrome/browser/net/crl_set_fetcher.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/files/file_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/rand_util.h"
@@ -16,6 +17,7 @@
 #include "chrome/common/chrome_paths.h"
 #include "components/component_updater/component_updater_service.h"
 #include "components/update_client/update_client.h"
+#include "components/update_client/utils.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/cert/crl_set.h"
 #include "net/cert/crl_set_storage.h"
@@ -63,11 +65,12 @@ void CRLSetFetcher::DeleteFromDisk(const base::FilePath& path) {
 }
 
 void CRLSetFetcher::DoInitialLoadFromDisk() {
+  TRACE_EVENT0("net", "CRLSetFetcher::DoInitialLoadFromDisk");
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
   LoadFromDisk(GetCRLSetFilePath(), &crl_set_);
 
-  uint32 sequence_of_loaded_crl = 0;
+  uint32_t sequence_of_loaded_crl = 0;
   if (crl_set_.get())
     sequence_of_loaded_crl = crl_set_->sequence();
 
@@ -85,13 +88,13 @@ void CRLSetFetcher::DoInitialLoadFromDisk() {
 
 void CRLSetFetcher::LoadFromDisk(base::FilePath path,
                                  scoped_refptr<net::CRLSet>* out_crl_set) {
-  TRACE_EVENT0("CRLSetFetcher", "LoadFromDisk");
+  TRACE_EVENT0("net", "CRLSetFetcher::LoadFromDisk");
 
   DCHECK_CURRENTLY_ON(BrowserThread::FILE);
 
   std::string crl_set_bytes;
   {
-    TRACE_EVENT0("CRLSetFetcher", "ReadFileToString");
+    TRACE_EVENT0("net", "CRLSetFetcher::ReadFileToString");
     if (!base::ReadFileToString(path, &crl_set_bytes))
       return;
   }
@@ -129,14 +132,13 @@ void CRLSetFetcher::SetCRLSetIfNewer(
 
 // kPublicKeySHA256 is the SHA256 hash of the SubjectPublicKeyInfo of the key
 // that's used to sign generated CRL sets.
-static const uint8 kPublicKeySHA256[32] = {
-  0x75, 0xda, 0xf8, 0xcb, 0x77, 0x68, 0x40, 0x33,
-  0x65, 0x4c, 0x97, 0xe5, 0xc5, 0x1b, 0xcd, 0x81,
-  0x7b, 0x1e, 0xeb, 0x11, 0x2c, 0xe1, 0xa4, 0x33,
-  0x8c, 0xf5, 0x72, 0x5e, 0xed, 0xb8, 0x43, 0x97,
+static const uint8_t kPublicKeySHA256[32] = {
+    0x75, 0xda, 0xf8, 0xcb, 0x77, 0x68, 0x40, 0x33, 0x65, 0x4c, 0x97,
+    0xe5, 0xc5, 0x1b, 0xcd, 0x81, 0x7b, 0x1e, 0xeb, 0x11, 0x2c, 0xe1,
+    0xa4, 0x33, 0x8c, 0xf5, 0x72, 0x5e, 0xed, 0xb8, 0x43, 0x97,
 };
 
-void CRLSetFetcher::RegisterComponent(uint32 sequence_of_loaded_crl) {
+void CRLSetFetcher::RegisterComponent(uint32_t sequence_of_loaded_crl) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   update_client::CrxComponent component;
@@ -144,11 +146,12 @@ void CRLSetFetcher::RegisterComponent(uint32 sequence_of_loaded_crl) {
                            kPublicKeySHA256 + sizeof(kPublicKeySHA256));
   component.installer = this;
   component.name = "CRLSet";
-  component.version = Version(base::UintToString(sequence_of_loaded_crl));
-  component.allow_background_download = false;
+  component.version = base::Version(base::UintToString(sequence_of_loaded_crl));
+  component.allows_background_download = false;
+  component.requires_network_encryption = false;
   if (!component.version.IsValid()) {
     NOTREACHED();
-    component.version = Version("0");
+    component.version = base::Version("0");
   }
 
   if (!cus_->RegisterComponent(component))
@@ -166,8 +169,16 @@ void CRLSetFetcher::OnUpdateError(int error) {
                << " from component installer";
 }
 
-bool CRLSetFetcher::Install(const base::DictionaryValue& manifest,
-                            const base::FilePath& unpack_path) {
+update_client::CrxInstaller::Result CRLSetFetcher::Install(
+    const base::DictionaryValue& manifest,
+    const base::FilePath& unpack_path) {
+  return update_client::InstallFunctionWrapper(
+      base::Bind(&CRLSetFetcher::DoInstall, base::Unretained(this),
+                 base::ConstRef(manifest), base::ConstRef(unpack_path)));
+}
+
+bool CRLSetFetcher::DoInstall(const base::DictionaryValue& manifest,
+                              const base::FilePath& unpack_path) {
   base::FilePath crl_set_file_path =
       unpack_path.Append(FILE_PATH_LITERAL("crl-set"));
   base::FilePath save_to = GetCRLSetFilePath();

@@ -4,14 +4,16 @@
 
 #include "net/http/http_network_transaction.h"
 
+#include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
+#include "base/base64url.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/compiler_specific.h"
 #include "base/format_macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
@@ -19,7 +21,6 @@
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -29,8 +30,8 @@
 #include "net/base/load_flags.h"
 #include "net/base/load_timing_info.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/base/upload_data_stream.h"
+#include "net/base/url_util.h"
 #include "net/http/http_auth.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
@@ -50,10 +51,11 @@
 #include "net/http/http_util.h"
 #include "net/http/transport_security_state.h"
 #include "net/http/url_security_manager.h"
+#include "net/log/net_log_event_type.h"
+#include "net/proxy/proxy_server.h"
 #include "net/socket/client_socket_factory.h"
+#include "net/socket/next_proto.h"
 #include "net/socket/socks_client_socket_pool.h"
-#include "net/socket/ssl_client_socket.h"
-#include "net/socket/ssl_client_socket_pool.h"
 #include "net/socket/transport_client_socket_pool.h"
 #include "net/spdy/spdy_http_stream.h"
 #include "net/spdy/spdy_session.h"
@@ -61,6 +63,7 @@
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_connection_status_flags.h"
 #include "net/ssl/ssl_private_key.h"
+#include "net/ssl/token_binding.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
 
@@ -68,67 +71,14 @@ namespace net {
 
 namespace {
 
-void ProcessAlternativeServices(HttpNetworkSession* session,
-                                const HttpResponseHeaders& headers,
-                                const HostPortPair& http_host_port_pair) {
-  if (session->params().use_alternative_services &&
-      headers.HasHeader(kAlternativeServiceHeader)) {
-    std::string alternative_service_str;
-    headers.GetNormalizedHeader(kAlternativeServiceHeader,
-                                &alternative_service_str);
-    session->http_stream_factory()->ProcessAlternativeService(
-        session->http_server_properties(), alternative_service_str,
-        http_host_port_pair, *session);
-    // If there is an "Alt-Svc" header, then ignore "Alternate-Protocol".
-    return;
-  }
-
-  if (!headers.HasHeader(kAlternateProtocolHeader))
-    return;
-
-  std::vector<std::string> alternate_protocol_values;
-  void* iter = NULL;
-  std::string alternate_protocol_str;
-  while (headers.EnumerateHeader(&iter, kAlternateProtocolHeader,
-                                 &alternate_protocol_str)) {
-    base::TrimWhitespaceASCII(alternate_protocol_str, base::TRIM_ALL,
-                              &alternate_protocol_str);
-    if (!alternate_protocol_str.empty()) {
-      alternate_protocol_values.push_back(alternate_protocol_str);
-    }
-  }
-
-  session->http_stream_factory()->ProcessAlternateProtocol(
-      session->http_server_properties(),
-      alternate_protocol_values,
-      http_host_port_pair,
-      *session);
-}
-
-scoped_ptr<base::Value> NetLogSSLVersionFallbackCallback(
-    const GURL* url,
-    int net_error,
-    SSLFailureState ssl_failure_state,
-    uint16 version_before,
-    uint16 version_after,
-    NetLogCaptureMode /* capture_mode */) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  dict->SetString("host_and_port", GetHostAndPort(*url));
-  dict->SetInteger("net_error", net_error);
-  dict->SetInteger("ssl_failure_state", ssl_failure_state);
-  dict->SetInteger("version_before", version_before);
-  dict->SetInteger("version_after", version_after);
-  return dict.Pass();
-}
-
-scoped_ptr<base::Value> NetLogSSLCipherFallbackCallback(
+std::unique_ptr<base::Value> NetLogSSLCipherFallbackCallback(
     const GURL* url,
     int net_error,
     NetLogCaptureMode /* capture_mode */) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("host_and_port", GetHostAndPort(*url));
   dict->SetInteger("net_error", net_error);
-  return dict.Pass();
+  return std::move(dict);
 }
 
 }  // namespace
@@ -144,20 +94,14 @@ HttpNetworkTransaction::HttpNetworkTransaction(RequestPriority priority,
       request_(NULL),
       priority_(priority),
       headers_valid_(false),
-      server_ssl_failure_state_(SSL_FAILURE_NONE),
-      fallback_error_code_(ERR_SSL_INAPPROPRIATE_FALLBACK),
-      fallback_failure_state_(SSL_FAILURE_NONE),
       request_headers_(),
       read_buf_len_(0),
       total_received_bytes_(0),
       total_sent_bytes_(0),
       next_state_(STATE_NONE),
       establishing_tunnel_(false),
-      websocket_handshake_stream_base_create_helper_(NULL) {
-  session->ssl_config_service()->GetSSLConfig(&server_ssl_config_);
-  session->GetAlpnProtos(&server_ssl_config_.alpn_protos);
-  session->GetNpnProtos(&server_ssl_config_.npn_protos);
-  proxy_ssl_config_ = server_ssl_config_;
+      websocket_handshake_stream_base_create_helper_(NULL),
+      net_error_details_() {
 }
 
 HttpNetworkTransaction::~HttpNetworkTransaction() {
@@ -176,16 +120,19 @@ HttpNetworkTransaction::~HttpNetworkTransaction() {
       stream->Drain(session_);
     }
   }
-
   if (request_ && request_->upload_data_stream)
     request_->upload_data_stream->Reset();  // Invalidate pending callbacks.
 }
 
 int HttpNetworkTransaction::Start(const HttpRequestInfo* request_info,
                                   const CompletionCallback& callback,
-                                  const BoundNetLog& net_log) {
+                                  const NetLogWithSource& net_log) {
   net_log_ = net_log;
   request_ = request_info;
+  url_ = request_->url;
+
+  // Now that we have an HttpRequestInfo object, update server_ssl_config_.
+  session_->GetSSLConfig(*request_, &server_ssl_config_, &proxy_ssl_config_);
 
   if (request_->load_flags & LOAD_DISABLE_CERT_REVOCATION_CHECKING) {
     server_ssl_config_.rev_checking_enabled = false;
@@ -195,11 +142,7 @@ int HttpNetworkTransaction::Start(const HttpRequestInfo* request_info,
   if (request_->load_flags & LOAD_PREFETCH)
     response_.unused_since_prefetch = true;
 
-  // Channel ID is disabled if privacy mode is enabled for this request.
-  if (request_->privacy_mode == PRIVACY_MODE_ENABLED)
-    server_ssl_config_.channel_id_enabled = false;
-
-  next_state_ = STATE_NOTIFY_BEFORE_CREATE_STREAM;
+  next_state_ = STATE_THROTTLE;
   int rv = DoLoop(OK);
   if (rv == ERR_IO_PENDING)
     callback_ = callback;
@@ -350,8 +293,6 @@ int HttpNetworkTransaction::Read(IOBuffer* buf, int buf_len,
   DCHECK(buf);
   DCHECK_LT(0, buf_len);
 
-  State next_state = STATE_NONE;
-
   scoped_refptr<HttpResponseHeaders> headers(GetResponseHeaders());
   if (headers_valid_ && headers.get() && stream_request_.get()) {
     // We're trying to read the body of the response but we're still trying
@@ -367,17 +308,27 @@ int HttpNetworkTransaction::Read(IOBuffer* buf, int buf_len,
     DCHECK_EQ(headers->response_code(), HTTP_PROXY_AUTHENTICATION_REQUIRED);
     LOG(WARNING) << "Blocked proxy response with status "
                  << headers->response_code() << " to CONNECT request for "
-                 << GetHostAndPort(request_->url) << ".";
+                 << GetHostAndPort(url_) << ".";
     return ERR_TUNNEL_CONNECTION_FAILED;
   }
 
   // Are we using SPDY or HTTP?
-  next_state = STATE_READ_BODY;
+  next_state_ = STATE_READ_BODY;
+
+  // We have reached the end of Start state machine, reset the requestinfo to
+  // null.
+  // RequestInfo is a member of the HttpTransaction's consumer and is useful
+  // only till final response headers are received. A reset will ensure that
+  // HttpRequestInfo is only used up until final response headers are received.
+  // Resetting is allowed so that the transaction can be disassociated from its
+  // creating consumer in cases where it is shared for writing to the cache.
+  // It is also safe to reset it to null at this point since upload_data_stream
+  // is also not used in the Read state machine.
+  request_ = nullptr;
 
   read_buf_ = buf;
   read_buf_len_ = buf_len;
 
-  next_state_ = next_state;
   int rv = DoLoop(OK);
   if (rv == ERR_IO_PENDING)
     callback_ = callback;
@@ -388,7 +339,7 @@ void HttpNetworkTransaction::StopCaching() {}
 
 bool HttpNetworkTransaction::GetFullRequestHeaders(
     HttpRequestHeaders* headers) const {
-  // TODO(ttuttle): Make sure we've populated request_headers_.
+  // TODO(juliatuttle): Make sure we've populated request_headers_.
   *headers = request_headers_;
   return true;
 }
@@ -417,6 +368,8 @@ LoadState HttpNetworkTransaction::GetLoadState() const {
   // TODO(wtc): Define a new LoadState value for the
   // STATE_INIT_CONNECTION_COMPLETE state, which delays the HTTP request.
   switch (next_state_) {
+    case STATE_THROTTLE_COMPLETE:
+      return LOAD_STATE_THROTTLED;
     case STATE_CREATE_STREAM:
       return LOAD_STATE_WAITING_FOR_DELEGATE;
     case STATE_CREATE_STREAM_COMPLETE:
@@ -432,13 +385,6 @@ LoadState HttpNetworkTransaction::GetLoadState() const {
     default:
       return LOAD_STATE_IDLE;
   }
-}
-
-UploadProgress HttpNetworkTransaction::GetUploadProgress() const {
-  if (!stream_.get())
-    return UploadProgress();
-
-  return stream_->GetUploadProgress();
 }
 
 void HttpNetworkTransaction::SetQuicServerInfo(
@@ -458,19 +404,36 @@ bool HttpNetworkTransaction::GetLoadTimingInfo(
 }
 
 bool HttpNetworkTransaction::GetRemoteEndpoint(IPEndPoint* endpoint) const {
-  if (!remote_endpoint_.address().size())
+  if (remote_endpoint_.address().empty())
     return false;
 
   *endpoint = remote_endpoint_;
   return true;
 }
 
+void HttpNetworkTransaction::PopulateNetErrorDetails(
+    NetErrorDetails* details) const {
+  *details = net_error_details_;
+  if (stream_)
+    stream_->PopulateNetErrorDetails(details);
+}
+
 void HttpNetworkTransaction::SetPriority(RequestPriority priority) {
   priority_ = priority;
+
+  // TODO: Note that if throttling is ever implemented below this
+  // level, either of the two below calls may result in request
+  // completion, callbacks, and the potential deletion of this object
+  // (like the call below to throttle_->SetPriority()).  In that case,
+  // this code will need to be modified.
   if (stream_request_)
     stream_request_->SetPriority(priority);
   if (stream_)
     stream_->SetPriority(priority);
+
+  if (throttle_)
+    throttle_->SetPriority(priority);
+  // The above call may have resulted in deleting |*this|.
 }
 
 void HttpNetworkTransaction::SetWebSocketHandshakeStreamCreateHelper(
@@ -483,9 +446,9 @@ void HttpNetworkTransaction::SetBeforeNetworkStartCallback(
   before_network_start_callback_ = callback;
 }
 
-void HttpNetworkTransaction::SetBeforeProxyHeadersSentCallback(
-    const BeforeProxyHeadersSentCallback& callback) {
-  before_proxy_headers_sent_callback_ = callback;
+void HttpNetworkTransaction::SetBeforeHeadersSentCallback(
+    const BeforeHeadersSentCallback& callback) {
+  before_headers_sent_callback_ = callback;
 }
 
 int HttpNetworkTransaction::ResumeNetworkStart() {
@@ -506,14 +469,25 @@ void HttpNetworkTransaction::OnStreamReady(const SSLConfig& used_ssl_config,
   stream_.reset(stream);
   server_ssl_config_ = used_ssl_config;
   proxy_info_ = used_proxy_info;
-  response_.was_npn_negotiated = stream_request_->was_npn_negotiated();
-  response_.npn_negotiated_protocol = SSLClientSocket::NextProtoToString(
-      stream_request_->protocol_negotiated());
+  response_.was_alpn_negotiated = stream_request_->was_alpn_negotiated();
+  response_.alpn_negotiated_protocol =
+      NextProtoToString(stream_request_->negotiated_protocol());
   response_.was_fetched_via_spdy = stream_request_->using_spdy();
   response_.was_fetched_via_proxy = !proxy_info_.is_direct();
   if (response_.was_fetched_via_proxy && !proxy_info_.is_empty())
-    response_.proxy_server = proxy_info_.proxy_server().host_port_pair();
+    response_.proxy_server = proxy_info_.proxy_server();
+  else if (!response_.was_fetched_via_proxy && proxy_info_.is_direct())
+    response_.proxy_server = ProxyServer::Direct();
+  else
+    response_.proxy_server = ProxyServer();
   OnIOComplete(OK);
+}
+
+void HttpNetworkTransaction::OnBidirectionalStreamImplReady(
+    const SSLConfig& used_ssl_config,
+    const ProxyInfo& used_proxy_info,
+    BidirectionalStreamImpl* stream) {
+  NOTREACHED();
 }
 
 void HttpNetworkTransaction::OnWebSocketHandshakeStreamReady(
@@ -524,14 +498,12 @@ void HttpNetworkTransaction::OnWebSocketHandshakeStreamReady(
 }
 
 void HttpNetworkTransaction::OnStreamFailed(int result,
-                                            const SSLConfig& used_ssl_config,
-                                            SSLFailureState ssl_failure_state) {
+                                            const SSLConfig& used_ssl_config) {
   DCHECK_EQ(STATE_CREATE_STREAM_COMPLETE, next_state_);
   DCHECK_NE(OK, result);
   DCHECK(stream_request_.get());
   DCHECK(!stream_.get());
   server_ssl_config_ = used_ssl_config;
-  server_ssl_failure_state_ = ssl_failure_state;
 
   OnIOComplete(result);
 }
@@ -610,13 +582,65 @@ void HttpNetworkTransaction::OnHttpsProxyTunnelResponse(
   OnIOComplete(ERR_HTTPS_PROXY_TUNNEL_RESPONSE);
 }
 
+void HttpNetworkTransaction::OnQuicBroken() {
+  net_error_details_.quic_broken = true;
+}
+
 void HttpNetworkTransaction::GetConnectionAttempts(
     ConnectionAttempts* out) const {
   *out = connection_attempts_;
 }
 
+void HttpNetworkTransaction::OnThrottleUnblocked(
+    NetworkThrottleManager::Throttle* throttle) {
+  // TODO(rdsmith): This DCHECK is dependent on the only transition
+  // being from blocked->unblocked.  That is true right now, but may not
+  // be so in the future.
+  DCHECK_EQ(STATE_THROTTLE_COMPLETE, next_state_);
+
+  net_log_.EndEvent(NetLogEventType::HTTP_TRANSACTION_THROTTLED);
+
+  DoLoop(OK);
+}
+
 bool HttpNetworkTransaction::IsSecureRequest() const {
   return request_->url.SchemeIsCryptographic();
+}
+
+bool HttpNetworkTransaction::IsTokenBindingEnabled() const {
+  if (!IsSecureRequest())
+    return false;
+  SSLInfo ssl_info;
+  stream_->GetSSLInfo(&ssl_info);
+  return ssl_info.token_binding_negotiated &&
+         ssl_info.token_binding_key_param == TB_PARAM_ECDSAP256 &&
+         session_->params().channel_id_service;
+}
+
+void HttpNetworkTransaction::RecordTokenBindingSupport() const {
+  // This enum is used for an UMA histogram - do not change or re-use values.
+  enum {
+    DISABLED = 0,
+    CLIENT_ONLY = 1,
+    CLIENT_AND_SERVER = 2,
+    CLIENT_NO_CHANNEL_ID_SERVICE = 3,
+    TOKEN_BINDING_SUPPORT_MAX
+  } supported;
+  if (!IsSecureRequest())
+    return;
+  SSLInfo ssl_info;
+  stream_->GetSSLInfo(&ssl_info);
+  if (!session_->params().enable_token_binding) {
+    supported = DISABLED;
+  } else if (!session_->params().channel_id_service) {
+    supported = CLIENT_NO_CHANNEL_ID_SERVICE;
+  } else if (ssl_info.token_binding_negotiated) {
+    supported = CLIENT_AND_SERVER;
+  } else {
+    supported = CLIENT_ONLY;
+  }
+  UMA_HISTOGRAM_ENUMERATION("Net.TokenBinding.Support", supported,
+                            TOKEN_BINDING_SUPPORT_MAX);
 }
 
 bool HttpNetworkTransaction::UsingHttpProxyWithoutTunnel() const {
@@ -649,6 +673,14 @@ int HttpNetworkTransaction::DoLoop(int result) {
     State state = next_state_;
     next_state_ = STATE_NONE;
     switch (state) {
+      case STATE_THROTTLE:
+        DCHECK_EQ(OK, rv);
+        rv = DoThrottle();
+        break;
+      case STATE_THROTTLE_COMPLETE:
+        DCHECK_EQ(OK, rv);
+        rv = DoThrottleComplete();
+        break;
       case STATE_NOTIFY_BEFORE_CREATE_STREAM:
         DCHECK_EQ(OK, rv);
         rv = DoNotifyBeforeCreateStream();
@@ -658,7 +690,11 @@ int HttpNetworkTransaction::DoLoop(int result) {
         rv = DoCreateStream();
         break;
       case STATE_CREATE_STREAM_COMPLETE:
+        // TODO(zhongyi): remove liveness checks when crbug.com/652868 is
+        // solved.
+        net_log_.CrashIfInvalid();
         rv = DoCreateStreamComplete(rv);
+        net_log_.CrashIfInvalid();
         break;
       case STATE_INIT_STREAM:
         DCHECK_EQ(OK, rv);
@@ -681,6 +717,20 @@ int HttpNetworkTransaction::DoLoop(int result) {
       case STATE_GENERATE_SERVER_AUTH_TOKEN_COMPLETE:
         rv = DoGenerateServerAuthTokenComplete(rv);
         break;
+      case STATE_GET_PROVIDED_TOKEN_BINDING_KEY:
+        DCHECK_EQ(OK, rv);
+        rv = DoGetProvidedTokenBindingKey();
+        break;
+      case STATE_GET_PROVIDED_TOKEN_BINDING_KEY_COMPLETE:
+        rv = DoGetProvidedTokenBindingKeyComplete(rv);
+        break;
+      case STATE_GET_REFERRED_TOKEN_BINDING_KEY:
+        DCHECK_EQ(OK, rv);
+        rv = DoGetReferredTokenBindingKey();
+        break;
+      case STATE_GET_REFERRED_TOKEN_BINDING_KEY_COMPLETE:
+        rv = DoGetReferredTokenBindingKeyComplete(rv);
+        break;
       case STATE_INIT_REQUEST_BODY:
         DCHECK_EQ(OK, rv);
         rv = DoInitRequestBody();
@@ -690,7 +740,7 @@ int HttpNetworkTransaction::DoLoop(int result) {
         break;
       case STATE_BUILD_REQUEST:
         DCHECK_EQ(OK, rv);
-        net_log_.BeginEvent(NetLog::TYPE_HTTP_TRANSACTION_SEND_REQUEST);
+        net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_SEND_REQUEST);
         rv = DoBuildRequest();
         break;
       case STATE_BUILD_REQUEST_COMPLETE:
@@ -703,38 +753,38 @@ int HttpNetworkTransaction::DoLoop(int result) {
       case STATE_SEND_REQUEST_COMPLETE:
         rv = DoSendRequestComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_SEND_REQUEST, rv);
+            NetLogEventType::HTTP_TRANSACTION_SEND_REQUEST, rv);
         break;
       case STATE_READ_HEADERS:
         DCHECK_EQ(OK, rv);
-        net_log_.BeginEvent(NetLog::TYPE_HTTP_TRANSACTION_READ_HEADERS);
+        net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_READ_HEADERS);
         rv = DoReadHeaders();
         break;
       case STATE_READ_HEADERS_COMPLETE:
         rv = DoReadHeadersComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_READ_HEADERS, rv);
+            NetLogEventType::HTTP_TRANSACTION_READ_HEADERS, rv);
         break;
       case STATE_READ_BODY:
         DCHECK_EQ(OK, rv);
-        net_log_.BeginEvent(NetLog::TYPE_HTTP_TRANSACTION_READ_BODY);
+        net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_READ_BODY);
         rv = DoReadBody();
         break;
       case STATE_READ_BODY_COMPLETE:
         rv = DoReadBodyComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_READ_BODY, rv);
+            NetLogEventType::HTTP_TRANSACTION_READ_BODY, rv);
         break;
       case STATE_DRAIN_BODY_FOR_AUTH_RESTART:
         DCHECK_EQ(OK, rv);
         net_log_.BeginEvent(
-            NetLog::TYPE_HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART);
+            NetLogEventType::HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART);
         rv = DoDrainBodyForAuthRestart();
         break;
       case STATE_DRAIN_BODY_FOR_AUTH_RESTART_COMPLETE:
         rv = DoDrainBodyForAuthRestartComplete(rv);
         net_log_.EndEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART, rv);
+            NetLogEventType::HTTP_TRANSACTION_DRAIN_BODY_FOR_AUTH_RESTART, rv);
         break;
       default:
         NOTREACHED() << "bad state";
@@ -744,6 +794,29 @@ int HttpNetworkTransaction::DoLoop(int result) {
   } while (rv != ERR_IO_PENDING && next_state_ != STATE_NONE);
 
   return rv;
+}
+
+int HttpNetworkTransaction::DoThrottle() {
+  DCHECK(!throttle_);
+  throttle_ = session_->throttler()->CreateThrottle(
+      this, priority_, (request_->load_flags & LOAD_IGNORE_LIMITS) != 0);
+  next_state_ = STATE_THROTTLE_COMPLETE;
+
+  if (throttle_->IsBlocked()) {
+    net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_THROTTLED);
+    return ERR_IO_PENDING;
+  }
+
+  return OK;
+}
+
+int HttpNetworkTransaction::DoThrottleComplete() {
+  DCHECK(throttle_);
+  DCHECK(!throttle_->IsBlocked());
+
+  next_state_ = STATE_NOTIFY_BEFORE_CREATE_STREAM;
+
+  return OK;
 }
 
 int HttpNetworkTransaction::DoNotifyBeforeCreateStream() {
@@ -845,7 +918,7 @@ int HttpNetworkTransaction::DoInitStreamComplete(int result) {
       total_received_bytes_ += stream_->GetTotalReceivedBytes();
       total_sent_bytes_ += stream_->GetTotalSentBytes();
     }
-    stream_.reset();
+    CacheNetErrorDetailsAndResetStream();
   }
 
   return result;
@@ -896,11 +969,58 @@ int HttpNetworkTransaction::DoGenerateServerAuthToken() {
 int HttpNetworkTransaction::DoGenerateServerAuthTokenComplete(int rv) {
   DCHECK_NE(ERR_IO_PENDING, rv);
   if (rv == OK)
+    next_state_ = STATE_GET_PROVIDED_TOKEN_BINDING_KEY;
+  return rv;
+}
+
+int HttpNetworkTransaction::DoGetProvidedTokenBindingKey() {
+  next_state_ = STATE_GET_PROVIDED_TOKEN_BINDING_KEY_COMPLETE;
+  if (!IsTokenBindingEnabled())
+    return OK;
+
+  net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_GET_TOKEN_BINDING_KEY);
+  ChannelIDService* channel_id_service = session_->params().channel_id_service;
+  return channel_id_service->GetOrCreateChannelID(
+      request_->url.host(), &provided_token_binding_key_, io_callback_,
+      &token_binding_request_);
+}
+
+int HttpNetworkTransaction::DoGetProvidedTokenBindingKeyComplete(int rv) {
+  DCHECK_NE(ERR_IO_PENDING, rv);
+  if (IsTokenBindingEnabled()) {
+    net_log_.EndEventWithNetErrorCode(
+        NetLogEventType::HTTP_TRANSACTION_GET_TOKEN_BINDING_KEY, rv);
+  }
+
+  if (rv == OK)
+    next_state_ = STATE_GET_REFERRED_TOKEN_BINDING_KEY;
+  return rv;
+}
+
+int HttpNetworkTransaction::DoGetReferredTokenBindingKey() {
+  next_state_ = STATE_GET_REFERRED_TOKEN_BINDING_KEY_COMPLETE;
+  if (!IsTokenBindingEnabled() || request_->token_binding_referrer.empty())
+    return OK;
+
+  net_log_.BeginEvent(NetLogEventType::HTTP_TRANSACTION_GET_TOKEN_BINDING_KEY);
+  ChannelIDService* channel_id_service = session_->params().channel_id_service;
+  return channel_id_service->GetOrCreateChannelID(
+      request_->token_binding_referrer, &referred_token_binding_key_,
+      io_callback_, &token_binding_request_);
+}
+
+int HttpNetworkTransaction::DoGetReferredTokenBindingKeyComplete(int rv) {
+  DCHECK_NE(ERR_IO_PENDING, rv);
+  if (IsTokenBindingEnabled() && !request_->token_binding_referrer.empty()) {
+    net_log_.EndEventWithNetErrorCode(
+        NetLogEventType::HTTP_TRANSACTION_GET_TOKEN_BINDING_KEY, rv);
+  }
+  if (rv == OK)
     next_state_ = STATE_INIT_REQUEST_BODY;
   return rv;
 }
 
-void HttpNetworkTransaction::BuildRequestHeaders(
+int HttpNetworkTransaction::BuildRequestHeaders(
     bool using_http_proxy_without_tunnel) {
   request_headers_.SetHeader(HttpRequestHeaders::kHost,
                              GetHostAndOptionalPort(request_->url));
@@ -933,6 +1053,16 @@ void HttpNetworkTransaction::BuildRequestHeaders(
     request_headers_.SetHeader(HttpRequestHeaders::kContentLength, "0");
   }
 
+  RecordTokenBindingSupport();
+  if (provided_token_binding_key_) {
+    std::string token_binding_header;
+    int rv = BuildTokenBindingHeader(&token_binding_header);
+    if (rv != OK)
+      return rv;
+    request_headers_.SetHeader(HttpRequestHeaders::kTokenBinding,
+                               token_binding_header);
+  }
+
   // Honor load flags that impact proxy caches.
   if (request_->load_flags & LOAD_BYPASS_CACHE) {
     request_headers_.SetHeader(HttpRequestHeaders::kPragma, "no-cache");
@@ -950,20 +1080,66 @@ void HttpNetworkTransaction::BuildRequestHeaders(
 
   request_headers_.MergeFrom(request_->extra_headers);
 
-  if (using_http_proxy_without_tunnel &&
-      !before_proxy_headers_sent_callback_.is_null())
-    before_proxy_headers_sent_callback_.Run(proxy_info_, &request_headers_);
+  if (!before_headers_sent_callback_.is_null())
+    before_headers_sent_callback_.Run(proxy_info_, &request_headers_);
 
   response_.did_use_http_auth =
       request_headers_.HasHeader(HttpRequestHeaders::kAuthorization) ||
       request_headers_.HasHeader(HttpRequestHeaders::kProxyAuthorization);
+  return OK;
+}
+
+int HttpNetworkTransaction::BuildTokenBindingHeader(std::string* out) {
+  base::TimeTicks start = base::TimeTicks::Now();
+  std::vector<uint8_t> signed_ekm;
+  int rv = stream_->GetTokenBindingSignature(provided_token_binding_key_.get(),
+                                             TokenBindingType::PROVIDED,
+                                             &signed_ekm);
+  if (rv != OK)
+    return rv;
+  std::string provided_token_binding;
+  rv = BuildTokenBinding(TokenBindingType::PROVIDED,
+                         provided_token_binding_key_.get(), signed_ekm,
+                         &provided_token_binding);
+  if (rv != OK)
+    return rv;
+
+  std::vector<base::StringPiece> token_bindings;
+  token_bindings.push_back(provided_token_binding);
+
+  std::string referred_token_binding;
+  if (referred_token_binding_key_) {
+    std::vector<uint8_t> referred_signed_ekm;
+    int rv = stream_->GetTokenBindingSignature(
+        referred_token_binding_key_.get(), TokenBindingType::REFERRED,
+        &referred_signed_ekm);
+    if (rv != OK)
+      return rv;
+    rv = BuildTokenBinding(TokenBindingType::REFERRED,
+                           referred_token_binding_key_.get(),
+                           referred_signed_ekm, &referred_token_binding);
+    if (rv != OK)
+      return rv;
+    token_bindings.push_back(referred_token_binding);
+  }
+  std::string header;
+  rv = BuildTokenBindingMessageFromTokenBindings(token_bindings, &header);
+  if (rv != OK)
+    return rv;
+  base::Base64UrlEncode(header, base::Base64UrlEncodePolicy::OMIT_PADDING, out);
+  base::TimeDelta header_creation_time = base::TimeTicks::Now() - start;
+  UMA_HISTOGRAM_CUSTOM_TIMES("Net.TokenBinding.HeaderCreationTime",
+                             header_creation_time,
+                             base::TimeDelta::FromMilliseconds(1),
+                             base::TimeDelta::FromMinutes(1), 50);
+  return OK;
 }
 
 int HttpNetworkTransaction::DoInitRequestBody() {
   next_state_ = STATE_INIT_REQUEST_BODY_COMPLETE;
   int rv = OK;
   if (request_->upload_data_stream)
-    rv = request_->upload_data_stream->Init(io_callback_);
+    rv = request_->upload_data_stream->Init(io_callback_, net_log_);
   return rv;
 }
 
@@ -981,7 +1157,7 @@ int HttpNetworkTransaction::DoBuildRequest() {
   // we have proxy info available.
   if (request_headers_.IsEmpty()) {
     bool using_http_proxy_without_tunnel = UsingHttpProxyWithoutTunnel();
-    BuildRequestHeaders(using_http_proxy_without_tunnel);
+    return BuildRequestHeaders(using_http_proxy_without_tunnel);
   }
 
   return OK;
@@ -1007,6 +1183,12 @@ int HttpNetworkTransaction::DoSendRequest() {
 
 int HttpNetworkTransaction::DoSendRequestComplete(int result) {
   send_end_time_ = base::TimeTicks::Now();
+
+  if (result == ERR_HTTP_1_1_REQUIRED ||
+      result == ERR_PROXY_HTTP_1_1_REQUIRED) {
+    return HandleHttp11Required(result);
+  }
+
   if (result < 0)
     return HandleIOError(result);
   next_state_ = STATE_READ_HEADERS;
@@ -1065,7 +1247,7 @@ int HttpNetworkTransaction::DoReadHeadersComplete(int result) {
   if (response_.headers.get() && response_.headers->response_code() == 408 &&
       stream_->IsConnectionReused()) {
     net_log_.AddEventWithNetErrorCode(
-        NetLog::TYPE_HTTP_TRANSACTION_RESTART_AFTER_ERROR,
+        NetLogEventType::HTTP_TRANSACTION_RESTART_AFTER_ERROR,
         response_.headers->response_code());
     // This will close the socket - it would be weird to try and reuse it, even
     // if the server doesn't actually close it.
@@ -1074,14 +1256,14 @@ int HttpNetworkTransaction::DoReadHeadersComplete(int result) {
   }
 
   // Like Net.HttpResponseCode, but only for MAIN_FRAME loads.
-  if (request_->load_flags & LOAD_MAIN_FRAME) {
+  if (request_->load_flags & LOAD_MAIN_FRAME_DEPRECATED) {
     const int response_code = response_.headers->response_code();
     UMA_HISTOGRAM_ENUMERATION(
         "Net.HttpResponseCode_Nxx_MainFrame", response_code/100, 10);
   }
 
   net_log_.AddEvent(
-      NetLog::TYPE_HTTP_TRANSACTION_READ_RESPONSE_HEADERS,
+      NetLogEventType::HTTP_TRANSACTION_READ_RESPONSE_HEADERS,
       base::Bind(&HttpResponseHeaders::NetLogCallback, response_.headers));
 
   if (response_.headers->GetHttpVersion() < HttpVersion(1, 0)) {
@@ -1105,15 +1287,17 @@ int HttpNetworkTransaction::DoReadHeadersComplete(int result) {
     return OK;
   }
 
-  ProcessAlternativeServices(session_, *response_.headers.get(),
-                             HostPortPair::FromURL(request_->url));
+  if (IsSecureRequest()) {
+    session_->http_stream_factory()->ProcessAlternativeServices(
+        session_, response_.headers.get(), url::SchemeHostPort(request_->url));
+  }
+
+  if (IsSecureRequest())
+    stream_->GetSSLInfo(&response_.ssl_info);
 
   int rv = HandleAuthChallenge();
   if (rv != OK)
     return rv;
-
-  if (IsSecureRequest())
-    stream_->GetSSLInfo(&response_.ssl_info);
 
   headers_valid_ = true;
   return OK;
@@ -1220,7 +1404,7 @@ int HttpNetworkTransaction::HandleCertificateRequest(int error) {
     total_received_bytes_ += stream_->GetTotalReceivedBytes();
     total_sent_bytes_ += stream_->GetTotalSentBytes();
     stream_->Close(true);
-    stream_.reset();
+    CacheNetErrorDetailsAndResetStream();
   }
 
   // The server is asking for a client certificate during the initial
@@ -1303,93 +1487,11 @@ int HttpNetworkTransaction::HandleSSLHandshakeError(int error) {
       (error == ERR_SSL_VERSION_OR_CIPHER_MISMATCH ||
        error == ERR_CONNECTION_CLOSED || error == ERR_CONNECTION_RESET)) {
     net_log_.AddEvent(
-        NetLog::TYPE_SSL_CIPHER_FALLBACK,
+        NetLogEventType::SSL_CIPHER_FALLBACK,
         base::Bind(&NetLogSSLCipherFallbackCallback, &request_->url, error));
     server_ssl_config_.deprecated_cipher_suites_enabled = true;
     ResetConnectionAndRequestForResend();
     return OK;
-  }
-
-  bool should_fallback = false;
-  uint16 version_max = server_ssl_config_.version_max;
-
-  switch (error) {
-    case ERR_CONNECTION_CLOSED:
-    case ERR_SSL_PROTOCOL_ERROR:
-    case ERR_SSL_VERSION_OR_CIPHER_MISMATCH:
-      if (version_max >= SSL_PROTOCOL_VERSION_TLS1 &&
-          version_max > server_ssl_config_.version_min) {
-        // This could be a TLS-intolerant server or a server that chose a
-        // cipher suite defined only for higher protocol versions (such as
-        // an SSL 3.0 server that chose a TLS-only cipher suite).  Fall
-        // back to the next lower version and retry.
-        // NOTE: if the SSLClientSocket class doesn't support TLS 1.1,
-        // specifying TLS 1.1 in version_max will result in a TLS 1.0
-        // handshake, so falling back from TLS 1.1 to TLS 1.0 will simply
-        // repeat the TLS 1.0 handshake. To avoid this problem, the default
-        // version_max should match the maximum protocol version supported
-        // by the SSLClientSocket class.
-        version_max--;
-
-        // Fallback to the lower SSL version.
-        // While SSL 3.0 fallback should be eliminated because of security
-        // reasons, there is a high risk of breaking the servers if this is
-        // done in general.
-        should_fallback = true;
-      }
-      break;
-    case ERR_CONNECTION_RESET:
-      if (version_max >= SSL_PROTOCOL_VERSION_TLS1_1 &&
-          version_max > server_ssl_config_.version_min) {
-        // Some network devices that inspect application-layer packets seem to
-        // inject TCP reset packets to break the connections when they see TLS
-        // 1.1 in ClientHello or ServerHello. See http://crbug.com/130293.
-        //
-        // Only allow ERR_CONNECTION_RESET to trigger a fallback from TLS 1.1 or
-        // 1.2. We don't lose much in this fallback because the explicit IV for
-        // CBC mode in TLS 1.1 is approximated by record splitting in TLS
-        // 1.0. The fallback will be more painful for TLS 1.2 when we have GCM
-        // support.
-        //
-        // ERR_CONNECTION_RESET is a common network error, so we don't want it
-        // to trigger a version fallback in general, especially the TLS 1.0 ->
-        // SSL 3.0 fallback, which would drop TLS extensions.
-        version_max--;
-        should_fallback = true;
-      }
-      break;
-    case ERR_SSL_BAD_RECORD_MAC_ALERT:
-      if (version_max >= SSL_PROTOCOL_VERSION_TLS1_1 &&
-          version_max > server_ssl_config_.version_min) {
-        // Some broken SSL devices negotiate TLS 1.0 when sent a TLS 1.1 or
-        // 1.2 ClientHello, but then return a bad_record_mac alert. See
-        // crbug.com/260358. In order to make the fallback as minimal as
-        // possible, this fallback is only triggered for >= TLS 1.1.
-        version_max--;
-        should_fallback = true;
-      }
-      break;
-    case ERR_SSL_INAPPROPRIATE_FALLBACK:
-      // The server told us that we should not have fallen back. A buggy server
-      // could trigger ERR_SSL_INAPPROPRIATE_FALLBACK with the initial
-      // connection. |fallback_error_code_| is initialised to
-      // ERR_SSL_INAPPROPRIATE_FALLBACK to catch this case.
-      error = fallback_error_code_;
-      break;
-  }
-
-  if (should_fallback) {
-    net_log_.AddEvent(
-        NetLog::TYPE_SSL_VERSION_FALLBACK,
-        base::Bind(&NetLogSSLVersionFallbackCallback, &request_->url, error,
-                   server_ssl_failure_state_, server_ssl_config_.version_max,
-                   version_max));
-    fallback_error_code_ = error;
-    fallback_failure_state_ = server_ssl_failure_state_;
-    server_ssl_config_.version_max = version_max;
-    server_ssl_config_.version_fallback = true;
-    ResetConnectionAndRequestForResend();
-    error = OK;
   }
 
   return error;
@@ -1426,7 +1528,7 @@ int HttpNetworkTransaction::HandleIOError(int error) {
     case ERR_EMPTY_RESPONSE:
       if (ShouldResendRequest()) {
         net_log_.AddEventWithNetErrorCode(
-            NetLog::TYPE_HTTP_TRANSACTION_RESTART_AFTER_ERROR, error);
+            NetLogEventType::HTTP_TRANSACTION_RESTART_AFTER_ERROR, error);
         ResetConnectionAndRequestForResend();
         error = OK;
       }
@@ -1435,7 +1537,7 @@ int HttpNetworkTransaction::HandleIOError(int error) {
     case ERR_SPDY_SERVER_REFUSED_STREAM:
     case ERR_QUIC_HANDSHAKE_FAILED:
       net_log_.AddEventWithNetErrorCode(
-          NetLog::TYPE_HTTP_TRANSACTION_RESTART_AFTER_ERROR, error);
+          NetLogEventType::HTTP_TRANSACTION_RESTART_AFTER_ERROR, error);
       ResetConnectionAndRequestForResend();
       error = OK;
       break;
@@ -1449,7 +1551,7 @@ void HttpNetworkTransaction::ResetStateForRestart() {
     total_received_bytes_ += stream_->GetTotalReceivedBytes();
     total_sent_bytes_ += stream_->GetTotalSentBytes();
   }
-  stream_.reset();
+  CacheNetErrorDetailsAndResetStream();
 }
 
 void HttpNetworkTransaction::ResetStateForAuthRestart() {
@@ -1464,74 +1566,24 @@ void HttpNetworkTransaction::ResetStateForAuthRestart() {
   response_ = HttpResponseInfo();
   establishing_tunnel_ = false;
   remote_endpoint_ = IPEndPoint();
+  net_error_details_.quic_broken = false;
+  net_error_details_.quic_connection_error = QUIC_NO_ERROR;
+  provided_token_binding_key_.reset();
+  referred_token_binding_key_.reset();
+}
+
+void HttpNetworkTransaction::CacheNetErrorDetailsAndResetStream() {
+  if (stream_)
+    stream_->PopulateNetErrorDetails(&net_error_details_);
+  stream_.reset();
 }
 
 void HttpNetworkTransaction::RecordSSLFallbackMetrics(int result) {
-  if (result != OK && result != ERR_SSL_INAPPROPRIATE_FALLBACK)
-    return;
-
-  const std::string& host = request_->url.host();
-  bool is_google = base::EndsWith(host, "google.com",
-                                  base::CompareCase::SENSITIVE) &&
-                   (host.size() == 10 || host[host.size() - 11] == '.');
-  if (is_google) {
-    // Some fraction of successful connections use the fallback, but only due to
-    // a spurious network failure. To estimate this fraction, compare handshakes
-    // to Google servers which succeed against those that fail with an
-    // inappropriate_fallback alert. Google servers are known to implement
-    // FALLBACK_SCSV, so a spurious network failure while connecting would
-    // trigger the fallback, successfully connect, but fail with this alert.
-    UMA_HISTOGRAM_BOOLEAN("Net.GoogleConnectionInappropriateFallback",
-                          result == ERR_SSL_INAPPROPRIATE_FALLBACK);
-  }
-
   if (result != OK)
     return;
 
-  // Note: these values are used in histograms, so new values must be appended.
-  enum FallbackVersion {
-    FALLBACK_NONE = 0,  // SSL version fallback did not occur.
-    // Obsolete: FALLBACK_SSL3 = 1,
-    FALLBACK_TLS1 = 2,    // Fell back to TLS 1.0.
-    FALLBACK_TLS1_1 = 3,  // Fell back to TLS 1.1.
-    FALLBACK_MAX,
-  };
-
-  FallbackVersion fallback = FALLBACK_NONE;
-  if (server_ssl_config_.version_fallback) {
-    switch (server_ssl_config_.version_max) {
-      case SSL_PROTOCOL_VERSION_TLS1:
-        fallback = FALLBACK_TLS1;
-        break;
-      case SSL_PROTOCOL_VERSION_TLS1_1:
-        fallback = FALLBACK_TLS1_1;
-        break;
-      default:
-        NOTREACHED();
-    }
-  }
-  UMA_HISTOGRAM_ENUMERATION("Net.ConnectionUsedSSLVersionFallback2", fallback,
-                            FALLBACK_MAX);
-
-  // Google servers are known to implement TLS 1.2 and FALLBACK_SCSV, so it
-  // should be impossible to successfully connect to them with the fallback.
-  // This helps estimate intolerant locally-configured SSL MITMs.
-  if (is_google) {
-    UMA_HISTOGRAM_ENUMERATION("Net.GoogleConnectionUsedSSLVersionFallback2",
-                              fallback, FALLBACK_MAX);
-  }
-
   UMA_HISTOGRAM_BOOLEAN("Net.ConnectionUsedSSLDeprecatedCipherFallback2",
                         server_ssl_config_.deprecated_cipher_suites_enabled);
-
-  if (server_ssl_config_.version_fallback) {
-    // Record the error code which triggered the fallback and the state the
-    // handshake was in.
-    UMA_HISTOGRAM_SPARSE_SLOWLY("Net.SSLFallbackErrorCode",
-                                -fallback_error_code_);
-    UMA_HISTOGRAM_ENUMERATION("Net.SSLFallbackFailureState",
-                              fallback_failure_state_, SSL_FAILURE_MAX);
-  }
 }
 
 HttpResponseHeaders* HttpNetworkTransaction::GetResponseHeaders() const {
@@ -1553,7 +1605,7 @@ bool HttpNetworkTransaction::ShouldResendRequest() const {
 void HttpNetworkTransaction::ResetConnectionAndRequestForResend() {
   if (stream_.get()) {
     stream_->Close(true);
-    stream_.reset();
+    CacheNetErrorDetailsAndResetStream();
   }
 
   // We need to clear request_headers_ because it contains the real request
@@ -1591,10 +1643,11 @@ int HttpNetworkTransaction::HandleAuthChallenge() {
     return ERR_UNEXPECTED_PROXY_AUTH;
 
   int rv = auth_controllers_[target]->HandleAuthChallenge(
-      headers, (request_->load_flags & LOAD_DO_NOT_SEND_AUTH_DATA) != 0, false,
+      headers, response_.ssl_info,
+      (request_->load_flags & LOAD_DO_NOT_SEND_AUTH_DATA) != 0, false,
       net_log_);
   if (auth_controllers_[target]->HaveAuthHandler())
-      pending_auth_target_ = target;
+    pending_auth_target_ = target;
 
   scoped_refptr<AuthChallengeInfo> auth_info =
       auth_controllers_[target]->auth_info();
@@ -1642,40 +1695,6 @@ bool HttpNetworkTransaction::ForWebSocketHandshake() const {
   return websocket_handshake_stream_base_create_helper_ &&
          request_->url.SchemeIsWSOrWSS();
 }
-
-#define STATE_CASE(s) \
-  case s: \
-    description = base::StringPrintf("%s (0x%08X)", #s, s); \
-    break
-
-std::string HttpNetworkTransaction::DescribeState(State state) {
-  std::string description;
-  switch (state) {
-    STATE_CASE(STATE_NOTIFY_BEFORE_CREATE_STREAM);
-    STATE_CASE(STATE_CREATE_STREAM);
-    STATE_CASE(STATE_CREATE_STREAM_COMPLETE);
-    STATE_CASE(STATE_INIT_REQUEST_BODY);
-    STATE_CASE(STATE_INIT_REQUEST_BODY_COMPLETE);
-    STATE_CASE(STATE_BUILD_REQUEST);
-    STATE_CASE(STATE_BUILD_REQUEST_COMPLETE);
-    STATE_CASE(STATE_SEND_REQUEST);
-    STATE_CASE(STATE_SEND_REQUEST_COMPLETE);
-    STATE_CASE(STATE_READ_HEADERS);
-    STATE_CASE(STATE_READ_HEADERS_COMPLETE);
-    STATE_CASE(STATE_READ_BODY);
-    STATE_CASE(STATE_READ_BODY_COMPLETE);
-    STATE_CASE(STATE_DRAIN_BODY_FOR_AUTH_RESTART);
-    STATE_CASE(STATE_DRAIN_BODY_FOR_AUTH_RESTART_COMPLETE);
-    STATE_CASE(STATE_NONE);
-    default:
-      description = base::StringPrintf("Unknown state 0x%08X (%u)", state,
-                                       state);
-      break;
-  }
-  return description;
-}
-
-#undef STATE_CASE
 
 void HttpNetworkTransaction::CopyConnectionAttemptsFromStreamRequest() {
   DCHECK(stream_request_);

@@ -4,6 +4,8 @@
 
 #include "components/safe_json/safe_json_parser_android.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/values.h"
@@ -33,11 +35,11 @@ void SafeJsonParserAndroid::Start() {
 void SafeJsonParserAndroid::OnSanitizationSuccess(
     const std::string& sanitized_json) {
   // Self-destruct at the end of this method.
-  scoped_ptr<SafeJsonParserAndroid> deleter(this);
+  std::unique_ptr<SafeJsonParserAndroid> deleter(this);
 
   int error_code;
   std::string error;
-  scoped_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
+  std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
       sanitized_json, base::JSON_PARSE_RFC, &error_code, &error);
 
   if (!value) {
@@ -45,7 +47,7 @@ void SafeJsonParserAndroid::OnSanitizationSuccess(
     return;
   }
 
-  success_callback_.Run(value.Pass());
+  success_callback_.Run(std::move(value));
 }
 
 void SafeJsonParserAndroid::OnSanitizationError(const std::string& error) {

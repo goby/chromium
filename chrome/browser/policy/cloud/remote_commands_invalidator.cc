@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/syslog_logging.h"
 #include "components/invalidation/public/invalidation.h"
 #include "components/invalidation/public/invalidation_service.h"
 #include "components/invalidation/public/invalidation_util.h"
@@ -27,6 +28,8 @@ void RemoteCommandsInvalidator::Initialize(
     invalidation::InvalidationService* invalidation_service) {
   DCHECK_EQ(SHUT_DOWN, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Initialize RemoteCommandsInvalidator.";
 
   DCHECK(invalidation_service);
   invalidation_service_ = invalidation_service;
@@ -38,6 +41,8 @@ void RemoteCommandsInvalidator::Initialize(
 void RemoteCommandsInvalidator::Shutdown() {
   DCHECK_NE(SHUT_DOWN, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Shutdown RemoteCommandsInvalidator.";
 
   Stop();
 
@@ -48,6 +53,9 @@ void RemoteCommandsInvalidator::Shutdown() {
 void RemoteCommandsInvalidator::Start() {
   DCHECK_EQ(STOPPED, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Starting RemoteCommandsInvalidator.";
+
   state_ = STARTED;
 
   OnStart();
@@ -56,6 +64,8 @@ void RemoteCommandsInvalidator::Start() {
 void RemoteCommandsInvalidator::Stop() {
   DCHECK_NE(SHUT_DOWN, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Stopping RemoteCommandsInvalidator.";
 
   if (state_ == STARTED) {
     Unregister();
@@ -69,6 +79,8 @@ void RemoteCommandsInvalidator::OnInvalidatorStateChange(
     syncer::InvalidatorState state) {
   DCHECK_EQ(STARTED, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "RemoteCommandsInvalidator state changed: " << state;
 
   invalidation_service_enabled_ = state == syncer::INVALIDATIONS_ENABLED;
   UpdateInvalidationsEnabled();
@@ -78,6 +90,8 @@ void RemoteCommandsInvalidator::OnIncomingInvalidation(
     const syncer::ObjectIdInvalidationMap& invalidation_map) {
   DCHECK_EQ(STARTED, state_);
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "RemoteCommandsInvalidator received invalidation.";
 
   if (!invalidation_service_enabled_)
     LOG(WARNING) << "Unexpected invalidation received.";
@@ -92,6 +106,8 @@ void RemoteCommandsInvalidator::OnIncomingInvalidation(
   // Acknowledge all invalidations.
   for (const auto& it : list)
     it.Acknowledge();
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Invalidations acknowledged.";
 
   DoRemoteCommandsFetch();
 }
@@ -103,6 +119,8 @@ std::string RemoteCommandsInvalidator::GetOwnerName() const {
 void RemoteCommandsInvalidator::ReloadPolicyData(
     const enterprise_management::PolicyData* policy) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "RemoteCommandsInvalidator ReloadPolicyData.";
 
   if (state_ != STARTED)
     return;
@@ -125,6 +143,9 @@ void RemoteCommandsInvalidator::ReloadPolicyData(
 
 void RemoteCommandsInvalidator::Register(
     const invalidation::ObjectId& object_id) {
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Register RemoteCommandsInvalidator.";
+
   // Register this handler with the invalidation service if needed.
   if (!is_registered_) {
     OnInvalidatorStateChange(invalidation_service_->GetInvalidatorState());
@@ -142,6 +163,8 @@ void RemoteCommandsInvalidator::Register(
 }
 
 void RemoteCommandsInvalidator::Unregister() {
+  // TODO(hunyadym): Remove after crbug.com/582506 is fixed.
+  SYSLOG(INFO) << "Unregister RemoteCommandsInvalidator.";
   if (is_registered_) {
     CHECK(invalidation_service_->UpdateRegisteredInvalidationIds(
         this, syncer::ObjectIdSet()));

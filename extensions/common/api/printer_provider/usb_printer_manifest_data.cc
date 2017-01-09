@@ -28,45 +28,49 @@ const UsbPrinterManifestData* UsbPrinterManifestData::Get(
 }
 
 // static
-scoped_ptr<UsbPrinterManifestData> UsbPrinterManifestData::FromValue(
+std::unique_ptr<UsbPrinterManifestData> UsbPrinterManifestData::FromValue(
     const base::Value& value,
     base::string16* error) {
-  scoped_ptr<api::extensions_manifest_types::UsbPrinters> usb_printers =
+  std::unique_ptr<api::extensions_manifest_types::UsbPrinters> usb_printers =
       api::extensions_manifest_types::UsbPrinters::FromValue(value, error);
   if (!usb_printers) {
     return nullptr;
   }
 
-  scoped_ptr<UsbPrinterManifestData> result(new UsbPrinterManifestData());
+  std::unique_ptr<UsbPrinterManifestData> result(new UsbPrinterManifestData());
   for (const auto& input : usb_printers->filters) {
-    DCHECK(input.get());
     UsbDeviceFilter output;
-    output.SetVendorId(input->vendor_id);
-    if (input->product_id && input->interface_class) {
+    output.SetVendorId(input.vendor_id);
+    if (input.product_id && input.interface_class) {
       *error = base::ASCIIToUTF16(
           "Only one of productId or interfaceClass may be specified.");
       return nullptr;
     }
-    if (input->product_id) {
-      output.SetProductId(*input->product_id);
+    if (input.product_id) {
+      output.SetProductId(*input.product_id);
     }
-    if (input->interface_class) {
-      output.SetInterfaceClass(*input->interface_class);
-      if (input->interface_subclass) {
-        output.SetInterfaceSubclass(*input->interface_subclass);
-        if (input->interface_protocol) {
-          output.SetInterfaceProtocol(*input->interface_protocol);
+    if (input.interface_class) {
+      output.SetInterfaceClass(*input.interface_class);
+      if (input.interface_subclass) {
+        output.SetInterfaceSubclass(*input.interface_subclass);
+        if (input.interface_protocol) {
+          output.SetInterfaceProtocol(*input.interface_protocol);
         }
       }
     }
     result->filters_.push_back(output);
   }
-  return result.Pass();
+  return result;
 }
 
 bool UsbPrinterManifestData::SupportsDevice(
     const scoped_refptr<device::UsbDevice>& device) const {
-  return UsbDeviceFilter::MatchesAny(device, filters_);
+  for (const auto& filter : filters_) {
+    if (filter.Matches(device))
+      return true;
+  }
+
+  return false;
 }
 
 }  // namespace extensions

@@ -4,13 +4,16 @@
 
 #include "chrome/test/base/view_event_test_platform_part.h"
 
-#include "ash/ash_switches.h"
+#include <memory>
+
+#include "ash/common/material_design/material_design_controller.h"
+#include "ash/common/test/test_session_state_delegate.h"
 #include "ash/shell.h"
 #include "ash/shell_init_params.h"
 #include "ash/test/ash_test_helper.h"
-#include "ash/test/test_session_state_delegate.h"
 #include "ash/test/test_shell_delegate.h"
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "chromeos/audio/cras_audio_handler.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/network/network_handler.h"
@@ -18,6 +21,7 @@
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window_tree_host.h"
+#include "ui/display/display_switches.h"
 #include "ui/message_center/message_center.h"
 #include "ui/wm/core/wm_state.h"
 
@@ -37,6 +41,7 @@ class ViewEventTestPlatformPartChromeOS : public ViewEventTestPlatformPart {
 
  private:
   wm::WMState wm_state_;
+  std::unique_ptr<aura::Env> env_;
 
   DISALLOW_COPY_AND_ASSIGN(ViewEventTestPlatformPartChromeOS);
 };
@@ -49,12 +54,12 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
   chromeos::DBusThreadManager::Initialize();
   bluez::BluezDBusManager::Initialize(
       chromeos::DBusThreadManager::Get()->GetSystemBus(),
-      chromeos::DBusThreadManager::Get()->IsUsingStub(
-          chromeos::DBusClientBundle::BLUETOOTH));
+      chromeos::DBusThreadManager::Get()->IsUsingFakes());
   chromeos::CrasAudioHandler::InitializeForTesting();
   chromeos::NetworkHandler::Initialize();
+  ash::MaterialDesignController::Initialize();
 
-  aura::Env::CreateInstance(true);
+  env_ = aura::Env::CreateInstance();
   ash::test::TestShellDelegate* shell_delegate =
       new ash::test::TestShellDelegate();
   ash::ShellInitParams init_params;
@@ -62,7 +67,7 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
   init_params.context_factory = context_factory;
   init_params.blocking_pool = content::BrowserThread::GetBlockingPool();
   base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-      ash::switches::kAshHostWindowBounds, "0+0-1280x800");
+      switches::kHostWindowBounds, "0+0-1280x800");
   ash::Shell::CreateInstance(init_params);
   ash::test::AshTestHelper::GetTestSessionStateDelegate()->
       SetActiveUserSessionStarted(true);
@@ -71,7 +76,7 @@ ViewEventTestPlatformPartChromeOS::ViewEventTestPlatformPartChromeOS(
 
 ViewEventTestPlatformPartChromeOS::~ViewEventTestPlatformPartChromeOS() {
   ash::Shell::DeleteInstance();
-  aura::Env::DeleteInstance();
+  env_.reset();
 
   chromeos::NetworkHandler::Shutdown();
   chromeos::CrasAudioHandler::Shutdown();

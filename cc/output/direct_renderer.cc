@@ -4,19 +4,22 @@
 
 #include "cc/output/direct_renderer.h"
 
+#include <stddef.h>
+
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
-#include "base/containers/scoped_ptr_hash_map.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/base/math_util.h"
 #include "cc/output/bsp_tree.h"
 #include "cc/output/bsp_walk_action.h"
 #include "cc/output/copy_output_request.h"
+#include "cc/output/renderer_settings.h"
 #include "cc/quads/draw_quad.h"
+#include "cc/resources/scoped_resource.h"
 #include "ui/gfx/geometry/quad_f.h"
 #include "ui/gfx/geometry/rect_conversions.h"
 #include "ui/gfx/transform.h"
@@ -60,13 +63,33 @@ static gfx::Transform window_matrix(int x, int y, int width, int height) {
 
 namespace cc {
 
-DirectRenderer::DrawingFrame::DrawingFrame()
-    : root_render_pass(NULL), current_render_pass(NULL), current_texture(NULL) {
+DirectRenderer::DrawingFrame::DrawingFrame() = default;
+DirectRenderer::DrawingFrame::~DrawingFrame() = default;
+
+DirectRenderer::DirectRenderer(const RendererSettings* settings,
+                               OutputSurface* output_surface,
+                               ResourceProvider* resource_provider)
+    : settings_(settings),
+      output_surface_(output_surface),
+      resource_provider_(resource_provider),
+      overlay_processor_(new OverlayProcessor(output_surface)) {}
+
+DirectRenderer::~DirectRenderer() = default;
+
+void DirectRenderer::Initialize() {
+  overlay_processor_->Initialize();
+
+  auto* context_provider = output_surface_->context_provider();
+
+  use_partial_swap_ = settings_->partial_swap_enabled && CanPartialSwap();
+  allow_empty_swap_ = use_partial_swap_;
+  if (context_provider &&
+      context_provider->ContextCapabilities().commit_overlay_planes)
+    allow_empty_swap_ = true;
+
+  initialized_ = true;
 }
 
-DirectRenderer::DrawingFrame::~DrawingFrame() {}
-
-//
 // static
 gfx::RectF DirectRenderer::QuadVertexRect() {
   return gfx::RectF(-0.5f, -0.5f, 1.f, 1.f);
@@ -127,44 +150,48 @@ gfx::Rect DirectRenderer::MoveFromDrawToWindowSpace(
   return window_rect;
 }
 
-DirectRenderer::DirectRenderer(RendererClient* client,
-                               const RendererSettings* settings,
-                               OutputSurface* output_surface,
-                               ResourceProvider* resource_provider)
-    : Renderer(client, settings),
-      output_surface_(output_surface),
-      resource_provider_(resource_provider),
-      overlay_processor_(new OverlayProcessor(output_surface)) {
-  overlay_processor_->Initialize();
+const TileDrawQuad* DirectRenderer::CanPassBeDrawnDirectly(
+    const RenderPass* pass) {
+  return nullptr;
 }
 
-DirectRenderer::~DirectRenderer() {}
-
-void DirectRenderer::SetEnlargePassTextureAmountForTesting(
-    const gfx::Vector2d& amount) {
-  enlarge_pass_texture_amount_ = amount;
+void DirectRenderer::SetVisible(bool visible) {
+  DCHECK(initialized_);
+  if (visible_ == visible)
+    return;
+  visible_ = visible;
+  DidChangeVisibility();
 }
 
 void DirectRenderer::DecideRenderPassAllocationsForFrame(
     const RenderPassList& render_passes_in_draw_order) {
-  base::hash_map<RenderPassId, gfx::Size> render_passes_in_frame;
-  for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i)
-    render_passes_in_frame.insert(std::pair<RenderPassId, gfx::Size>(
-        render_passes_in_draw_order[i]->id,
-        RenderPassTextureSize(render_passes_in_draw_order[i].get())));
+  render_pass_bypass_quads_.clear();
 
-  std::vector<RenderPassId> passes_to_delete;
+  std::unordered_map<int, gfx::Size> render_passes_in_frame;
+  RenderPass* root_render_pass = render_passes_in_draw_order.back().get();
+  for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i) {
+    RenderPass* pass = render_passes_in_draw_order[i].get();
+    if (pass != root_render_pass) {
+      if (const TileDrawQuad* tile_quad = CanPassBeDrawnDirectly(pass)) {
+        render_pass_bypass_quads_[pass->id] = *tile_quad;
+        continue;
+      }
+    }
+    render_passes_in_frame.insert(
+        std::pair<int, gfx::Size>(pass->id, RenderPassTextureSize(pass)));
+  }
+
+  std::vector<int> passes_to_delete;
   for (auto pass_iter = render_pass_textures_.begin();
        pass_iter != render_pass_textures_.end(); ++pass_iter) {
-    base::hash_map<RenderPassId, gfx::Size>::const_iterator it =
-        render_passes_in_frame.find(pass_iter->first);
+    auto it = render_passes_in_frame.find(pass_iter->first);
     if (it == render_passes_in_frame.end()) {
       passes_to_delete.push_back(pass_iter->first);
       continue;
     }
 
     gfx::Size required_size = it->second;
-    ScopedResource* texture = pass_iter->second;
+    ScopedResource* texture = pass_iter->second.get();
     DCHECK(texture);
 
     bool size_appropriate = texture->size().width() >= required_size.width() &&
@@ -178,28 +205,24 @@ void DirectRenderer::DecideRenderPassAllocationsForFrame(
   for (size_t i = 0; i < passes_to_delete.size(); ++i)
     render_pass_textures_.erase(passes_to_delete[i]);
 
-  for (size_t i = 0; i < render_passes_in_draw_order.size(); ++i) {
-    if (!render_pass_textures_.contains(render_passes_in_draw_order[i]->id)) {
-      scoped_ptr<ScopedResource> texture =
-          ScopedResource::Create(resource_provider_);
-      render_pass_textures_.set(render_passes_in_draw_order[i]->id,
-                                std::move(texture));
-    }
+  for (auto& pass : render_passes_in_draw_order) {
+    auto& resource = render_pass_textures_[pass->id];
+    if (!resource)
+      resource = ScopedResource::Create(resource_provider_);
   }
 }
 
 void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
                                float device_scale_factor,
-                               const gfx::Rect& device_viewport_rect,
-                               const gfx::Rect& device_clip_rect,
-                               bool disable_picture_quad_image_filtering) {
+                               const gfx::ColorSpace& device_color_space,
+                               const gfx::Size& device_viewport_size) {
+  DCHECK(visible_);
   TRACE_EVENT0("cc", "DirectRenderer::DrawFrame");
   UMA_HISTOGRAM_COUNTS(
       "Renderer4.renderPassCount",
       base::saturated_cast<int>(render_passes_in_draw_order->size()));
 
-  const RenderPass* root_render_pass =
-      render_passes_in_draw_order->back().get();
+  RenderPass* root_render_pass = render_passes_in_draw_order->back().get();
   DCHECK(root_render_pass);
 
   DrawingFrame frame;
@@ -207,24 +230,39 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
   frame.root_render_pass = root_render_pass;
   frame.root_damage_rect = root_render_pass->damage_rect;
   frame.root_damage_rect.Union(overlay_processor_->GetAndResetOverlayDamage());
-  frame.root_damage_rect.Intersect(gfx::Rect(device_viewport_rect.size()));
-  frame.device_viewport_rect = device_viewport_rect;
-  frame.device_clip_rect = device_clip_rect;
-  frame.disable_picture_quad_image_filtering =
-      disable_picture_quad_image_filtering;
-
-  EnsureBackbuffer();
+  frame.root_damage_rect.Intersect(gfx::Rect(device_viewport_size));
+  frame.device_viewport_size = device_viewport_size;
+  frame.device_color_space = device_color_space;
 
   // Only reshape when we know we are going to draw. Otherwise, the reshape
   // can leave the window at the wrong size if we never draw and the proper
   // viewport size is never set.
-  output_surface_->Reshape(device_viewport_rect.size(), device_scale_factor);
+  bool frame_has_alpha = frame.root_render_pass->has_transparent_background;
+  if (device_viewport_size != reshape_surface_size_ ||
+      device_scale_factor != reshape_device_scale_factor_ ||
+      device_color_space != reshape_device_color_space_ ||
+      frame_has_alpha != reshape_has_alpha_) {
+    reshape_surface_size_ = device_viewport_size;
+    reshape_device_scale_factor_ = device_scale_factor;
+    reshape_device_color_space_ = device_color_space;
+    reshape_has_alpha_ = frame.root_render_pass->has_transparent_background;
+    output_surface_->Reshape(reshape_surface_size_,
+                             reshape_device_scale_factor_,
+                             reshape_device_color_space_, reshape_has_alpha_);
+  }
 
   BeginDrawingFrame(&frame);
 
+  // Draw all non-root render passes except for the root render pass.
+  for (const auto& pass : *render_passes_in_draw_order) {
+    if (pass.get() == root_render_pass)
+      break;
+    DrawRenderPassAndExecuteCopyRequests(&frame, pass.get());
+  }
+
+  // Create the overlay candidate for the output surface, and mark it as
+  // always handled.
   if (output_surface_->IsDisplayedAsOverlayPlane()) {
-    // Create the overlay candidate for the output surface, and mark it as
-    // always handled.
     OverlayCandidate output_surface_plane;
     output_surface_plane.display_rect =
         gfx::RectF(root_render_pass->output_rect);
@@ -235,95 +273,58 @@ void DirectRenderer::DrawFrame(RenderPassList* render_passes_in_draw_order,
     frame.overlay_list.push_back(output_surface_plane);
   }
 
-  // If we have any copy requests, we can't remove any quads for overlays or
-  // CALayers because the framebuffer would be missing the removed quads'
-  // contents.
-  bool has_copy_requests = false;
-  for (const auto& pass : *render_passes_in_draw_order) {
-    if (!pass->copy_requests.empty()) {
-      has_copy_requests = true;
-      break;
-    }
-  }
-  if (has_copy_requests) {
-    overlay_processor_->SkipProcessForOverlays();
-  } else {
-    overlay_processor_->ProcessForOverlays(
-        resource_provider_, render_passes_in_draw_order, &frame.overlay_list,
-        &frame.ca_layer_overlay_list, &frame.root_damage_rect);
-  }
+  // Attempt to replace some or all of the quads of the root render pass with
+  // overlays.
+  overlay_processor_->ProcessForOverlays(
+      resource_provider_, root_render_pass, &frame.overlay_list,
+      &frame.ca_layer_overlay_list, &frame.root_damage_rect);
 
-  // The damage rect might be empty now, but if empty swap isn't allowed we
-  // still have to draw.
-  bool should_draw = has_copy_requests || !frame.root_damage_rect.IsEmpty() ||
-                     !Capabilities().allow_empty_swap;
-  // If we have to draw but don't support partial swap the whole output should
+  // We can skip all drawing if the damage rect is now empty.
+  bool skip_drawing_root_render_pass =
+      frame.root_damage_rect.IsEmpty() && allow_empty_swap_;
+
+  // If we have to draw but don't support partial swap, the whole output should
   // be considered damaged.
-  if (should_draw && !Capabilities().using_partial_swap)
+  if (!skip_drawing_root_render_pass && !use_partial_swap_)
     frame.root_damage_rect = root_render_pass->output_rect;
 
-  // If all damage is being drawn with overlays or CALayers then skip drawing
-  // the render passes.
-  if (!should_draw) {
-    BindFramebufferToOutputSurface(&frame);
-  } else {
-    for (const auto& pass : *render_passes_in_draw_order) {
-      DrawRenderPass(&frame, pass.get());
-
-      bool first_request = true;
-      for (auto& copy_request : pass->copy_requests) {
-        // Doing a readback is destructive of our state on Mac, so make sure
-        // we restore the state between readbacks. http://crbug.com/99393.
-        if (!first_request)
-          UseRenderPass(&frame, pass.get());
-        CopyCurrentRenderPassToBitmap(&frame, std::move(copy_request));
-        first_request = false;
+  if (skip_drawing_root_render_pass) {
+    // If any of the overlays is the output surface, then ensure that the
+    // backbuffer be allocated (allocation of the backbuffer is a side-effect
+    // of BindFramebufferToOutputSurface).
+    for (auto& overlay : frame.overlay_list) {
+      if (overlay.use_output_surface_for_resource) {
+        BindFramebufferToOutputSurface(&frame);
+        break;
       }
     }
+  } else {
+    DrawRenderPassAndExecuteCopyRequests(&frame, root_render_pass);
   }
+
   FinishDrawingFrame(&frame);
   render_passes_in_draw_order->clear();
 }
 
 gfx::Rect DirectRenderer::ComputeScissorRectForRenderPass(
     const DrawingFrame* frame) {
-  gfx::Rect render_pass_scissor = frame->current_render_pass->output_rect;
+  if (frame->current_render_pass == frame->root_render_pass)
+    return frame->root_damage_rect;
 
-  if (frame->root_damage_rect == frame->root_render_pass->output_rect ||
-      !frame->current_render_pass->copy_requests.empty())
-    return render_pass_scissor;
+  // If the root damage rect has been expanded due to overlays, all the other
+  // damage rect calculations are incorrect.
+  if (!frame->root_render_pass->damage_rect.Contains(frame->root_damage_rect))
+    return frame->current_render_pass->output_rect;
 
-  gfx::Transform inverse_transform(gfx::Transform::kSkipInitialization);
-  if (frame->current_render_pass->transform_to_root_target.GetInverse(
-          &inverse_transform)) {
-    // Only intersect inverse-projected damage if the transform is invertible.
-    gfx::Rect damage_rect_in_render_pass_space =
-        MathUtil::ProjectEnclosingClippedRect(inverse_transform,
-                                              frame->root_damage_rect);
-    render_pass_scissor.Intersect(damage_rect_in_render_pass_space);
-  }
-
-  return render_pass_scissor;
-}
-
-bool DirectRenderer::NeedDeviceClip(const DrawingFrame* frame) const {
-  if (frame->current_render_pass != frame->root_render_pass)
-    return false;
-
-  return !frame->device_clip_rect.Contains(frame->device_viewport_rect);
-}
-
-gfx::Rect DirectRenderer::DeviceClipRectInDrawSpace(
-    const DrawingFrame* frame) const {
-  gfx::Rect device_clip_rect = frame->device_clip_rect;
-  device_clip_rect -= current_viewport_rect_.OffsetFromOrigin();
-  device_clip_rect += current_draw_rect_.OffsetFromOrigin();
-  return device_clip_rect;
+  DCHECK(frame->current_render_pass->copy_requests.empty() ||
+         (frame->current_render_pass->damage_rect ==
+          frame->current_render_pass->output_rect));
+  return frame->current_render_pass->damage_rect;
 }
 
 gfx::Rect DirectRenderer::DeviceViewportRectInDrawSpace(
     const DrawingFrame* frame) const {
-  gfx::Rect device_viewport_rect = frame->device_viewport_rect;
+  gfx::Rect device_viewport_rect(frame->device_viewport_size);
   device_viewport_rect -= current_viewport_rect_.OffsetFromOrigin();
   device_viewport_rect += current_draw_rect_.OffsetFromOrigin();
   return device_viewport_rect;
@@ -332,7 +333,7 @@ gfx::Rect DirectRenderer::DeviceViewportRectInDrawSpace(
 gfx::Rect DirectRenderer::OutputSurfaceRectInDrawSpace(
     const DrawingFrame* frame) const {
   if (frame->current_render_pass == frame->root_render_pass) {
-    gfx::Rect output_surface_rect(output_surface_->SurfaceSize());
+    gfx::Rect output_surface_rect(frame->device_viewport_size);
     output_surface_rect -= current_viewport_rect_.OffsetFromOrigin();
     output_surface_rect += current_draw_rect_.OffsetFromOrigin();
     return output_surface_rect;
@@ -382,8 +383,6 @@ void DirectRenderer::SetScissorTestRectInDrawSpace(
   SetScissorTestRect(window_space_rect);
 }
 
-void DirectRenderer::FinishDrawingQuadList() {}
-
 void DirectRenderer::DoDrawPolygon(const DrawPolygon& poly,
                                    DrawingFrame* frame,
                                    const gfx::Rect& render_pass_scissor,
@@ -406,7 +405,7 @@ void DirectRenderer::DoDrawPolygon(const DrawPolygon& poly,
 }
 
 void DirectRenderer::FlushPolygons(
-    std::deque<scoped_ptr<DrawPolygon>>* poly_list,
+    std::deque<std::unique_ptr<DrawPolygon>>* poly_list,
     DrawingFrame* frame,
     const gfx::Rect& render_pass_scissor,
     bool use_render_pass_scissor) {
@@ -419,6 +418,27 @@ void DirectRenderer::FlushPolygons(
                                           use_render_pass_scissor);
   bsp_tree.TraverseWithActionHandler(&action_handler);
   DCHECK(poly_list->empty());
+}
+
+void DirectRenderer::DrawRenderPassAndExecuteCopyRequests(
+    DrawingFrame* frame,
+    RenderPass* render_pass) {
+  if (render_pass_bypass_quads_.find(render_pass->id) !=
+      render_pass_bypass_quads_.end()) {
+    return;
+  }
+
+  DrawRenderPass(frame, render_pass);
+
+  bool first_request = true;
+  for (auto& copy_request : render_pass->copy_requests) {
+    // Doing a readback is destructive of our state on Mac, so make sure
+    // we restore the state between readbacks. http://crbug.com/99393.
+    if (!first_request)
+      UseRenderPass(frame, render_pass);
+    CopyCurrentRenderPassToBitmap(frame, std::move(copy_request));
+    first_request = false;
+  }
 }
 
 void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
@@ -436,14 +456,9 @@ void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
         DeviceViewportRectInDrawSpace(frame));
   }
 
-  if (Capabilities().using_partial_swap) {
+  if (use_partial_swap_) {
     render_pass_scissor_in_draw_space.Intersect(
         ComputeScissorRectForRenderPass(frame));
-  }
-
-  if (NeedDeviceClip(frame)) {
-    render_pass_scissor_in_draw_space.Intersect(
-        DeviceClipRectInDrawSpace(frame));
   }
 
   bool render_pass_is_clipped =
@@ -475,14 +490,13 @@ void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
       MoveFromDrawToWindowSpace(frame, render_pass_scissor_in_draw_space));
 
   const QuadList& quad_list = render_pass->quad_list;
-  std::deque<scoped_ptr<DrawPolygon>> poly_list;
+  std::deque<std::unique_ptr<DrawPolygon>> poly_list;
 
   int next_polygon_id = 0;
   int last_sorting_context_id = 0;
   for (auto it = quad_list.BackToFrontBegin(); it != quad_list.BackToFrontEnd();
        ++it) {
     const DrawQuad& quad = **it;
-    gfx::QuadF send_quad(gfx::RectF(quad.visible_rect));
 
     if (render_pass_is_clipped &&
         ShouldSkipQuad(quad, render_pass_scissor_in_draw_space)) {
@@ -498,7 +512,7 @@ void DirectRenderer::DrawRenderPass(DrawingFrame* frame,
     // This layer is in a 3D sorting context so we add it to the list of
     // polygons to go into the BSP tree.
     if (quad.shared_quad_state->sorting_context_id != 0) {
-      scoped_ptr<DrawPolygon> new_polygon(new DrawPolygon(
+      std::unique_ptr<DrawPolygon> new_polygon(new DrawPolygon(
           *it, gfx::RectF(quad.visible_rect),
           quad.shared_quad_state->quad_to_target_transform, next_polygon_id++));
       if (new_polygon->points().size() > 2u) {
@@ -524,39 +538,38 @@ bool DirectRenderer::UseRenderPass(DrawingFrame* frame,
   frame->current_texture = NULL;
   if (render_pass == frame->root_render_pass) {
     BindFramebufferToOutputSurface(frame);
-    InitializeViewport(frame,
-                       render_pass->output_rect,
-                       frame->device_viewport_rect,
-                       output_surface_->SurfaceSize());
+    InitializeViewport(frame, render_pass->output_rect,
+                       gfx::Rect(frame->device_viewport_size),
+                       frame->device_viewport_size);
     return true;
   }
 
-  ScopedResource* texture = render_pass_textures_.get(render_pass->id);
+  ScopedResource* texture = render_pass_textures_[render_pass->id].get();
   DCHECK(texture);
 
   gfx::Size size = RenderPassTextureSize(render_pass);
-  size.Enlarge(enlarge_pass_texture_amount_.x(),
-               enlarge_pass_texture_amount_.y());
+  size.Enlarge(enlarge_pass_texture_amount_.width(),
+               enlarge_pass_texture_amount_.height());
   if (!texture->id()) {
-    texture->Allocate(size,
-                      ResourceProvider::TEXTURE_HINT_IMMUTABLE_FRAMEBUFFER,
-                      resource_provider_->best_texture_format());
+    texture->Allocate(
+        size, ResourceProvider::TEXTURE_HINT_IMMUTABLE_FRAMEBUFFER,
+        resource_provider_->best_texture_format(), frame->device_color_space);
   }
   DCHECK(texture->id());
 
-  if (BindFramebufferToTexture(frame, texture, render_pass->output_rect)) {
+  if (BindFramebufferToTexture(frame, texture)) {
     InitializeViewport(frame, render_pass->output_rect,
                        gfx::Rect(render_pass->output_rect.size()),
-                       render_pass->output_rect.size());
+                       texture->size());
     return true;
   }
 
   return false;
 }
 
-bool DirectRenderer::HasAllocatedResourcesForTesting(RenderPassId id) const {
-  ScopedResource* texture = render_pass_textures_.get(id);
-  return texture && texture->id();
+bool DirectRenderer::HasAllocatedResourcesForTesting(int render_pass_id) const {
+  auto iter = render_pass_textures_.find(render_pass_id);
+  return iter != render_pass_textures_.end() && iter->second->id();
 }
 
 // static

@@ -5,15 +5,14 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_ENROLLMENT_ENTERPRISE_ENROLLMENT_HELPER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_ENROLLMENT_ENTERPRISE_ENROLLMENT_HELPER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/policy/device_cloud_policy_initializer.h"
 
 class GoogleServiceAuthError;
-class Profile;
 
 namespace policy {
 struct EnrollmentConfig;
@@ -67,7 +66,7 @@ class EnterpriseEnrollmentHelper {
   };
 
   // Factory method. Caller takes ownership of the returned object.
-  static scoped_ptr<EnterpriseEnrollmentHelper> Create(
+  static std::unique_ptr<EnterpriseEnrollmentHelper> Create(
       EnrollmentStatusConsumer* status_consumer,
       const policy::EnrollmentConfig& enrollment_config,
       const std::string& enrolling_user_domain);
@@ -90,14 +89,19 @@ class EnterpriseEnrollmentHelper {
   // If |fetch_additional_token| is true, the helper fetches an additional token
   // and passes it to the |status_consumer| on successful enrollment.
   // EnrollUsingAuthCode can be called only once during this object's lifetime,
-  // and only if neither of EnrollUsing* methods was called before.
+  // and only if none of the EnrollUsing* methods was called before.
   virtual void EnrollUsingAuthCode(const std::string& auth_code,
                                    bool fetch_additional_token) = 0;
 
   // Starts enterprise enrollment using |token|.
   // EnrollUsingToken can be called only once during this object's lifetime, and
-  // only if neither of EnrollUsing* was called before.
+  // only if none of the EnrollUsing* was called before.
   virtual void EnrollUsingToken(const std::string& token) = 0;
+
+  // Starts enterprise enrollment using PCA attestation.
+  // EnrollUsingAttestation can be called only once during the object's
+  // lifetime, and only if none of the EnrollUsing* was called before.
+  virtual void EnrollUsingAttestation() = 0;
 
   // Starts device attribute update process. First tries to get
   // permission to update device attributes for current user

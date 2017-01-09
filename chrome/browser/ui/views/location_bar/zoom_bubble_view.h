@@ -5,23 +5,18 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_ZOOM_BUBBLE_VIEW_H_
 #define CHROME_BROWSER_UI_VIEWS_LOCATION_BAR_ZOOM_BUBBLE_VIEW_H_
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/ui/views/frame/immersive_mode_controller.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/extension_icon_image.h"
-#include "ui/views/bubble/bubble_delegate.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/label.h"
 
-class FullscreenController;
-
 namespace content {
-class NotificationDetails;
-class NotificationSource;
 class WebContents;
 }
 
@@ -41,7 +36,7 @@ class ZoomBubbleView : public LocationBarBubbleDelegateView,
                          DisplayReason reason);
 
   // Closes the showing bubble (if one exists).
-  static void CloseBubble();
+  static void CloseCurrentBubble();
 
   // Returns the zoom bubble if the zoom bubble is showing. Returns NULL
   // otherwise.
@@ -66,7 +61,7 @@ class ZoomBubbleView : public LocationBarBubbleDelegateView,
 
     // An image of the extension's icon, which appears in the zoom bubble as an
     // image button.
-    scoped_ptr<const extensions::IconImage> icon_image;
+    std::unique_ptr<const extensions::IconImage> icon_image;
   };
 
   ZoomBubbleView(views::View* anchor_view,
@@ -81,7 +76,7 @@ class ZoomBubbleView : public LocationBarBubbleDelegateView,
   void OnMouseExited(const ui::MouseEvent& event) override;
   void Init() override;
   void WindowClosing() override;
-  void Close() override;
+  void CloseBubble() override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;

@@ -5,10 +5,10 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_AUTH_CHROME_LOGIN_PERFORMER_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_AUTH_CHROME_LOGIN_PERFORMER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/chromeos/policy/wildcard_login_checker.h"
 #include "chromeos/login/auth/auth_status_consumer.h"
@@ -19,6 +19,8 @@
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "google_apis/gaia/google_service_auth_error.h"
+
+class AccountId;
 
 namespace policy {
 class WildcardLoginChecker;
@@ -33,14 +35,14 @@ class ChromeLoginPerformer : public LoginPerformer {
   explicit ChromeLoginPerformer(Delegate* delegate);
   ~ChromeLoginPerformer() override;
 
-  bool IsUserWhitelisted(const std::string& user_id,
+  bool IsUserWhitelisted(const AccountId& account_id,
                          bool* wildcard_match) override;
 
  protected:
   bool RunTrustedCheck(const base::Closure& callback) override;
   void DidRunTrustedCheck(const base::Closure& callback);
 
-  void RunOnlineWhitelistCheck(const std::string& user_id,
+  void RunOnlineWhitelistCheck(const AccountId& account_id,
                                bool wildcard_match,
                                const std::string& refresh_token,
                                const base::Closure& success_callback,
@@ -52,12 +54,12 @@ class ChromeLoginPerformer : public LoginPerformer {
 
   UserContext TransformSupervisedKey(const UserContext& context) override;
 
-  void SetupSupervisedUserFlow(const std::string& user_id) override;
+  void SetupSupervisedUserFlow(const AccountId& account_id) override;
 
-  void SetupEasyUnlockUserFlow(const std::string& user_id) override;
+  void SetupEasyUnlockUserFlow(const AccountId& account_id) override;
 
   scoped_refptr<Authenticator> CreateAuthenticator() override;
-  bool CheckPolicyForUser(const std::string& user_id) override;
+  bool CheckPolicyForUser(const AccountId& account_id) override;
   content::BrowserContext* GetSigninContext() override;
   net::URLRequestContextGetter* GetSigninRequestContext() override;
 
@@ -68,7 +70,7 @@ class ChromeLoginPerformer : public LoginPerformer {
       policy::WildcardLoginChecker::Result result);
 
   // Used to verify logins that matched wildcard on the login whitelist.
-  scoped_ptr<policy::WildcardLoginChecker> wildcard_login_checker_;
+  std::unique_ptr<policy::WildcardLoginChecker> wildcard_login_checker_;
   base::WeakPtrFactory<ChromeLoginPerformer> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeLoginPerformer);

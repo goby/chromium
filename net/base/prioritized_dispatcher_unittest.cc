@@ -2,14 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "net/base/prioritized_dispatcher.h"
+
 #include <ctype.h>
+
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
-#include "net/base/prioritized_dispatcher.h"
 #include "net/base/request_priority.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,8 +20,10 @@ namespace {
 
 // We rely on the priority enum values being sequential having starting at 0,
 // and increasing for higher priorities.
-static_assert(MINIMUM_PRIORITY == 0u && MINIMUM_PRIORITY == IDLE &&
-                  IDLE < LOWEST && LOWEST < HIGHEST &&
+static_assert(MINIMUM_PRIORITY == 0u && MINIMUM_PRIORITY == THROTTLED &&
+                  THROTTLED < IDLE &&
+                  IDLE < LOWEST &&
+                  LOWEST < HIGHEST &&
                   HIGHEST <= MAXIMUM_PRIORITY,
               "priority indexes incompatible");
 
@@ -139,16 +142,16 @@ class PrioritizedDispatcherTest : public testing::Test {
     dispatcher_.reset(new PrioritizedDispatcher(limits));
   }
 
-  TestJob* AddJob(char data, Priority priority) {
-    TestJob* job = new TestJob(dispatcher_.get(), data, priority, &log_);
-    jobs_.push_back(job);
+  std::unique_ptr<TestJob> AddJob(char data, Priority priority) {
+    std::unique_ptr<TestJob> job(
+        new TestJob(dispatcher_.get(), data, priority, &log_));
     job->Add(false);
     return job;
   }
 
-  TestJob* AddJobAtHead(char data, Priority priority) {
-    TestJob* job = new TestJob(dispatcher_.get(), data, priority, &log_);
-    jobs_.push_back(job);
+  std::unique_ptr<TestJob> AddJobAtHead(char data, Priority priority) {
+    std::unique_ptr<TestJob> job(
+        new TestJob(dispatcher_.get(), data, priority, &log_));
     job->Add(true);
     return job;
   }
@@ -161,8 +164,7 @@ class PrioritizedDispatcherTest : public testing::Test {
   }
 
   std::string log_;
-  scoped_ptr<PrioritizedDispatcher> dispatcher_;
-  ScopedVector<TestJob> jobs_;
+  std::unique_ptr<PrioritizedDispatcher> dispatcher_;
 };
 
 TEST_F(PrioritizedDispatcherTest, GetLimits) {
@@ -204,10 +206,10 @@ TEST_F(PrioritizedDispatcherTest, AddAFIFO) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', IDLE);
-  TestJob* job_c = AddJob('c', IDLE);
-  TestJob* job_d = AddJob('d', IDLE);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);
+  std::unique_ptr<TestJob> job_c = AddJob('c', IDLE);
+  std::unique_ptr<TestJob> job_d = AddJob('d', IDLE);
 
   ASSERT_TRUE(job_a->running());
   job_a->Finish();
@@ -225,11 +227,11 @@ TEST_F(PrioritizedDispatcherTest, AddPriority) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', MEDIUM);
-  TestJob* job_c = AddJob('c', HIGHEST);
-  TestJob* job_d = AddJob('d', HIGHEST);
-  TestJob* job_e = AddJob('e', MEDIUM);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', MEDIUM);
+  std::unique_ptr<TestJob> job_c = AddJob('c', HIGHEST);
+  std::unique_ptr<TestJob> job_d = AddJob('d', HIGHEST);
+  std::unique_ptr<TestJob> job_e = AddJob('e', MEDIUM);
 
   ASSERT_TRUE(job_a->running());
   job_a->Finish();
@@ -249,12 +251,12 @@ TEST_F(PrioritizedDispatcherTest, AddAtHead) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', MEDIUM);
-  TestJob* job_b = AddJobAtHead('b', MEDIUM);
-  TestJob* job_c = AddJobAtHead('c', HIGHEST);
-  TestJob* job_d = AddJobAtHead('d', HIGHEST);
-  TestJob* job_e = AddJobAtHead('e', MEDIUM);
-  TestJob* job_f = AddJob('f', MEDIUM);
+  std::unique_ptr<TestJob> job_a = AddJob('a', MEDIUM);
+  std::unique_ptr<TestJob> job_b = AddJobAtHead('b', MEDIUM);
+  std::unique_ptr<TestJob> job_c = AddJobAtHead('c', HIGHEST);
+  std::unique_ptr<TestJob> job_d = AddJobAtHead('d', HIGHEST);
+  std::unique_ptr<TestJob> job_e = AddJobAtHead('e', MEDIUM);
+  std::unique_ptr<TestJob> job_f = AddJob('f', MEDIUM);
 
   ASSERT_TRUE(job_a->running());
   job_a->Finish();
@@ -280,14 +282,14 @@ TEST_F(PrioritizedDispatcherTest, EnforceLimits) {
   limits.reserved_slots[LOW] = 1;
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);    // Uses unreserved slot.
-  TestJob* job_b = AddJob('b', IDLE);    // Uses unreserved slot.
-  TestJob* job_c = AddJob('c', LOWEST);  // Must wait.
-  TestJob* job_d = AddJob('d', LOW);     // Uses reserved slot.
-  TestJob* job_e = AddJob('e', MEDIUM);  // Must wait.
-  TestJob* job_f = AddJob('f', HIGHEST); // Uses reserved slot.
-  TestJob* job_g = AddJob('g', HIGHEST); // Uses reserved slot.
-  TestJob* job_h = AddJob('h', HIGHEST); // Must wait.
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);  // Uses unreserved slot.
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);  // Uses unreserved slot.
+  std::unique_ptr<TestJob> job_c = AddJob('c', LOWEST);   // Must wait.
+  std::unique_ptr<TestJob> job_d = AddJob('d', LOW);      // Uses reserved slot.
+  std::unique_ptr<TestJob> job_e = AddJob('e', MEDIUM);   // Must wait.
+  std::unique_ptr<TestJob> job_f = AddJob('f', HIGHEST);  // Uses reserved slot.
+  std::unique_ptr<TestJob> job_g = AddJob('g', HIGHEST);  // Uses reserved slot.
+  std::unique_ptr<TestJob> job_h = AddJob('h', HIGHEST);  // Must wait.
 
   EXPECT_EQ(5u, dispatcher_->num_running_jobs());
   EXPECT_EQ(3u, dispatcher_->num_queued_jobs());
@@ -320,11 +322,11 @@ TEST_F(PrioritizedDispatcherTest, ChangePriority) {
   limits.reserved_slots[HIGHEST] = 1;
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', LOW);
-  TestJob* job_c = AddJob('c', MEDIUM);
-  TestJob* job_d = AddJob('d', MEDIUM);
-  TestJob* job_e = AddJob('e', IDLE);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', LOW);
+  std::unique_ptr<TestJob> job_c = AddJob('c', MEDIUM);
+  std::unique_ptr<TestJob> job_d = AddJob('d', MEDIUM);
+  std::unique_ptr<TestJob> job_e = AddJob('e', IDLE);
 
   ASSERT_FALSE(job_b->running());
   ASSERT_FALSE(job_c->running());
@@ -355,11 +357,11 @@ TEST_F(PrioritizedDispatcherTest, Cancel) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', IDLE);
-  TestJob* job_c = AddJob('c', IDLE);
-  TestJob* job_d = AddJob('d', IDLE);
-  TestJob* job_e = AddJob('e', IDLE);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);
+  std::unique_ptr<TestJob> job_c = AddJob('c', IDLE);
+  std::unique_ptr<TestJob> job_d = AddJob('d', IDLE);
+  std::unique_ptr<TestJob> job_e = AddJob('e', IDLE);
 
   ASSERT_FALSE(job_b->running());
   ASSERT_FALSE(job_d->running());
@@ -380,14 +382,14 @@ TEST_F(PrioritizedDispatcherTest, Evict) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', LOW);
-  TestJob* job_c = AddJob('c', HIGHEST);
-  TestJob* job_d = AddJob('d', LOW);
-  TestJob* job_e = AddJob('e', HIGHEST);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', LOW);
+  std::unique_ptr<TestJob> job_c = AddJob('c', HIGHEST);
+  std::unique_ptr<TestJob> job_d = AddJob('d', LOW);
+  std::unique_ptr<TestJob> job_e = AddJob('e', HIGHEST);
 
-  EXPECT_EQ(job_b, dispatcher_->EvictOldestLowest());
-  EXPECT_EQ(job_d, dispatcher_->EvictOldestLowest());
+  EXPECT_EQ(job_b.get(), dispatcher_->EvictOldestLowest());
+  EXPECT_EQ(job_d.get(), dispatcher_->EvictOldestLowest());
 
   ASSERT_TRUE(job_a->running());
   job_a->Finish();
@@ -410,9 +412,9 @@ TEST_F(PrioritizedDispatcherTest, AddWhileZeroLimits) {
   Prepare(limits);
 
   dispatcher_->SetLimitsToZero();
-  TestJob* job_a = AddJob('a', LOW);
-  TestJob* job_b = AddJob('b', MEDIUM);
-  TestJob* job_c = AddJobAtHead('c', MEDIUM);
+  std::unique_ptr<TestJob> job_a = AddJob('a', LOW);
+  std::unique_ptr<TestJob> job_b = AddJob('b', MEDIUM);
+  std::unique_ptr<TestJob> job_c = AddJobAtHead('c', MEDIUM);
 
   EXPECT_EQ(0u, dispatcher_->num_running_jobs());
   EXPECT_EQ(3u, dispatcher_->num_queued_jobs());
@@ -437,11 +439,11 @@ TEST_F(PrioritizedDispatcherTest, ReduceLimitsWhileJobQueued) {
   PrioritizedDispatcher::Limits initial_limits(NUM_PRIORITIES, 2);
   Prepare(initial_limits);
 
-  TestJob* job_a = AddJob('a', MEDIUM);
-  TestJob* job_b = AddJob('b', MEDIUM);
-  TestJob* job_c = AddJob('c', MEDIUM);
-  TestJob* job_d = AddJob('d', MEDIUM);
-  TestJob* job_e = AddJob('e', MEDIUM);
+  std::unique_ptr<TestJob> job_a = AddJob('a', MEDIUM);
+  std::unique_ptr<TestJob> job_b = AddJob('b', MEDIUM);
+  std::unique_ptr<TestJob> job_c = AddJob('c', MEDIUM);
+  std::unique_ptr<TestJob> job_d = AddJob('d', MEDIUM);
+  std::unique_ptr<TestJob> job_e = AddJob('e', MEDIUM);
 
   EXPECT_EQ(2u, dispatcher_->num_running_jobs());
   EXPECT_EQ(3u, dispatcher_->num_queued_jobs());
@@ -481,9 +483,9 @@ TEST_F(PrioritizedDispatcherTest, ZeroLimitsThenCancel) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', IDLE);
-  TestJob* job_c = AddJob('c', IDLE);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);
+  std::unique_ptr<TestJob> job_c = AddJob('c', IDLE);
   dispatcher_->SetLimitsToZero();
 
   ASSERT_TRUE(job_a->running());
@@ -511,8 +513,8 @@ TEST_F(PrioritizedDispatcherTest, ZeroLimitsThenIncreasePriority) {
   limits.reserved_slots[HIGHEST] = 1;
   Prepare(limits);
 
-  TestJob* job_a = AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', IDLE);
+  std::unique_ptr<TestJob> job_a = AddJob('a', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);
   EXPECT_TRUE(job_a->running());
   EXPECT_FALSE(job_b->running());
   dispatcher_->SetLimitsToZero();
@@ -537,7 +539,7 @@ TEST_F(PrioritizedDispatcherTest, CancelMissing) {
   PrioritizedDispatcher::Limits limits(NUM_PRIORITIES, 1);
   Prepare(limits);
   AddJob('a', IDLE);
-  TestJob* job_b = AddJob('b', IDLE);
+  std::unique_ptr<TestJob> job_b = AddJob('b', IDLE);
   PrioritizedDispatcher::Handle handle = job_b->handle();
   ASSERT_FALSE(handle.is_null());
   dispatcher_->Cancel(handle);

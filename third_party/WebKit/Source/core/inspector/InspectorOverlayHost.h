@@ -31,51 +31,35 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "core/CoreExport.h"
-#include "wtf/PassRefPtr.h"
-#include "wtf/RefCounted.h"
 
 namespace blink {
 
-class CORE_EXPORT InspectorOverlayHost final : public RefCountedWillBeGarbageCollectedFinalized<InspectorOverlayHost>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<InspectorOverlayHost> create()
-    {
-        return adoptRefWillBeNoop(new InspectorOverlayHost());
-    }
-    ~InspectorOverlayHost();
-    DECLARE_TRACE();
+class CORE_EXPORT InspectorOverlayHost final
+    : public GarbageCollected<InspectorOverlayHost>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void resume();
-    void stepOver();
-    void startPropertyChange(const String&);
-    void changeProperty(float delta);
-    void endPropertyChange();
-    void clearSelection(bool commitChanges);
-    void nextSelector();
-    void previousSelector();
+ public:
+  static InspectorOverlayHost* create() { return new InspectorOverlayHost(); }
+  DECLARE_TRACE();
 
-    class Listener : public WillBeGarbageCollectedMixin {
-    public:
-        virtual ~Listener() { }
-        virtual void overlayResumed() = 0;
-        virtual void overlaySteppedOver() = 0;
-        virtual void overlayStartedPropertyChange(const String&) = 0;
-        virtual void overlayPropertyChanged(float cssDelta) = 0;
-        virtual void overlayEndedPropertyChange() = 0;
-        virtual void overlayClearSelection(bool commitChanges) = 0;
-        virtual void overlayNextSelector() = 0;
-        virtual void overlayPreviousSelector() = 0;
-    };
-    void setListener(Listener* listener) { m_listener = listener; }
+  void resume();
+  void stepOver();
 
-private:
-    InspectorOverlayHost();
+  class Listener : public GarbageCollectedMixin {
+   public:
+    virtual ~Listener() {}
+    virtual void overlayResumed() = 0;
+    virtual void overlaySteppedOver() = 0;
+  };
+  void setListener(Listener* listener) { m_listener = listener; }
 
-    RawPtrWillBeMember<Listener> m_listener;
+ private:
+  InspectorOverlayHost();
 
+  Member<Listener> m_listener;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InspectorOverlayHost_h
+#endif  // InspectorOverlayHost_h

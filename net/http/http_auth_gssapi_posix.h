@@ -8,24 +8,14 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/native_library.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 #include "net/http/http_auth.h"
 
 #if defined(OS_MACOSX)
-// The OSX 10.9+ SDKs mark the functions in Kereberos.framework as deprecated,
-// so the warnings must be manually suppressed.
-#if defined(MAC_OS_X_VERSION_10_9) && \
-    MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_9
-#define GSSKRB_APPLE_DEPRECATED(x)
-#endif
-
-// Chrome supports OSX 10.6, which doesn't have access to GSS.framework. Chrome
-// always dlopens libgssapi_krb5.dylib, which is provided by
-// Kerberos.framework. On OSX 10.7+ this is an ABI compatible shim that loads
-// GSS.framework.
-#include <Kerberos/gssapi.h>
+#include <GSS/gssapi.h>
 #elif defined(OS_FREEBSD)
 #include <gssapi/gssapi.h>
 #else
@@ -271,6 +261,7 @@ class NET_EXPORT_PRIVATE HttpAuthGSSAPI {
   // credentials are used instead.
   int GenerateAuthToken(const AuthCredentials* credentials,
                         const std::string& spn,
+                        const std::string& channel_bindings,
                         std::string* auth_token,
                         const CompletionCallback& callback);
 
@@ -281,6 +272,7 @@ class NET_EXPORT_PRIVATE HttpAuthGSSAPI {
 
  private:
   int GetNextSecurityToken(const std::string& spn,
+                           const std::string& channel_bindings,
                            gss_buffer_t in_token,
                            gss_buffer_t out_token);
 

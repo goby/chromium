@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "ios/web/navigation/crw_session_entry.h"
+
 #import <Foundation/Foundation.h>
+#include <stdint.h>
+
+#include <utility>
 
 #include "base/mac/scoped_nsobject.h"
 #include "base/strings/sys_string_conversions.h"
 #import "ios/testing/ocmock_complex_type_helper.h"
-#import "ios/web/navigation/crw_session_entry.h"
 #include "ios/web/navigation/navigation_item_impl.h"
 #include "ios/web/public/referrer.h"
 #import "net/base/mac/url_conversions.h"
@@ -35,13 +39,14 @@ class CRWSessionEntryTest : public PlatformTest {
     GURL url("http://init.test");
     ui::PageTransition transition =
         ui::PAGE_TRANSITION_AUTO_BOOKMARK;
-    scoped_ptr<web::NavigationItemImpl> item(new web::NavigationItemImpl());
+    std::unique_ptr<web::NavigationItemImpl> item(
+        new web::NavigationItemImpl());
     item->SetURL(url);
     item->SetTransitionType(transition);
     item->SetTimestamp(base::Time::Now());
     item->SetPostData([@"Test data" dataUsingEncoding:NSUTF8StringEncoding]);
     sessionEntry_.reset(
-        [[CRWSessionEntry alloc] initWithNavigationItem:item.Pass()]);
+        [[CRWSessionEntry alloc] initWithNavigationItem:std::move(item)]);
   }
   void TearDown() override { sessionEntry_.reset(); }
 
@@ -85,7 +90,8 @@ void CRWSessionEntryTest::expectEqualSessionEntries(
             navItem2->IsOverridingUserAgent());
   EXPECT_TRUE((!navItem1->HasPostData() && !navItem2->HasPostData()) ||
               [navItem1->GetPostData() isEqualToData:navItem2->GetPostData()]);
-  EXPECT_EQ(navItem2->GetTransitionType(), transition);
+  EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+      navItem2->GetTransitionType(), transition));
   EXPECT_NSEQ(navItem1->GetHttpRequestHeaders(),
               navItem2->GetHttpRequestHeaders());
 }
@@ -165,7 +171,7 @@ TEST_F(CRWSessionEntryTest, InitWithCoderNewStyle) {
   web::NavigationItem* item = [sessionEntry_ navigationItem];
   item->SetVirtualURL(GURL("http://user.friendly"));
   item->SetTitle(base::SysNSStringToUTF16(@"Title"));
-  int64 timestamp = item->GetTimestamp().ToInternalValue();
+  int64_t timestamp = item->GetTimestamp().ToInternalValue();
 
   std::string virtualUrl = item->GetVirtualURL().spec();
   std::string referrerUrl = item->GetReferrer().url.spec();

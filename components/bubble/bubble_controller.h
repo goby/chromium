@@ -5,7 +5,9 @@
 #ifndef COMPONENTS_BUBBLE_BUBBLE_CONTROLLER_H_
 #define COMPONENTS_BUBBLE_BUBBLE_CONTROLLER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "components/bubble/bubble_close_reason.h"
@@ -14,11 +16,15 @@ class BubbleDelegate;
 class BubbleManager;
 class BubbleUi;
 
+namespace content {
+class RenderFrameHost;
+}
+
 // BubbleController is responsible for the lifetime of the delegate and its UI.
 class BubbleController : public base::SupportsWeakPtr<BubbleController> {
  public:
   explicit BubbleController(BubbleManager* manager,
-                            scoped_ptr<BubbleDelegate> delegate);
+                            std::unique_ptr<BubbleDelegate> delegate);
   virtual ~BubbleController();
 
   // Calls CloseBubble on the associated BubbleManager.
@@ -47,12 +53,15 @@ class BubbleController : public base::SupportsWeakPtr<BubbleController> {
   // Returns true if the bubble should be closed.
   bool ShouldClose(BubbleCloseReason reason) const;
 
+  // Returns true if |frame| owns this bubble.
+  bool OwningFrameIs(const content::RenderFrameHost* frame) const;
+
   // Cleans up the delegate and its UI.
-  void DoClose();
+  void DoClose(BubbleCloseReason reason);
 
   BubbleManager* manager_;
-  scoped_ptr<BubbleDelegate> delegate_;
-  scoped_ptr<BubbleUi> bubble_ui_;
+  std::unique_ptr<BubbleDelegate> delegate_;
+  std::unique_ptr<BubbleUi> bubble_ui_;
 
   // Verify that functions that affect the UI are done on the same thread.
   base::ThreadChecker thread_checker_;

@@ -3,19 +3,19 @@
 # found in the LICENSE file.
 
 source_set("web") {
+  configs += [ "//build/config/compiler:enable_arc" ]
   sources = [
     "web_controller_provider.h",
     "web_controller_provider.mm",
-    "web_ui_ios.h",
-    "web_ui_ios_controller.cc",
-    "web_ui_ios_controller.h",
-    "web_ui_ios_controller_factory.h",
-    "web_ui_ios_message_handler.cc",
-    "web_ui_ios_message_handler.h",
+    "web_controller_provider_factory.h",
+    "web_controller_provider_factory.mm",
   ]
 
   deps = [
     "//base",
     "//ios/web",
+    "//url",
   ]
+
+  allow_circular_includes_from = [ "//ios/web" ]
 }

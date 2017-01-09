@@ -5,9 +5,12 @@
 #ifndef DEVICE_BLUETOOTH_TEST_MOCK_BLUETOOTH_GATT_NOTIFY_SESSION_H_
 #define DEVICE_BLUETOOTH_TEST_MOCK_BLUETOOTH_GATT_NOTIFY_SESSION_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 #include "device/bluetooth/bluetooth_gatt_notify_session.h"
 #include "testing/gmock/include/gmock/gmock.h"
@@ -20,10 +23,9 @@ class MockBluetoothGattCharacteristic;
 class MockBluetoothGattNotifySession : public BluetoothGattNotifySession {
  public:
   explicit MockBluetoothGattNotifySession(
-      const std::string& characteristic_identifier);
+      base::WeakPtr<BluetoothRemoteGattCharacteristic> characteristic);
   virtual ~MockBluetoothGattNotifySession();
 
-  MOCK_CONST_METHOD0(GetCharacteristicIdentifier, std::string());
   MOCK_METHOD0(IsActive, bool());
   MOCK_METHOD1(Stop, void(const base::Closure&));
 

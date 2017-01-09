@@ -34,31 +34,33 @@ class AXObjectCacheImpl;
 class LayoutMenuList;
 
 class AXMenuList final : public AXLayoutObject {
-public:
-    static AXMenuList* create(LayoutMenuList* layoutObject, AXObjectCacheImpl&);
+  WTF_MAKE_NONCOPYABLE(AXMenuList);
 
-    bool isCollapsed() const override;
-    AccessibilityExpanded isExpanded() const final;
-    bool press() const override;
-    void clearChildren() override;
-    bool nameFromContents() const override;
+ public:
+  static AXMenuList* create(LayoutMenuList* layoutObject, AXObjectCacheImpl&);
 
-    void didUpdateActiveOption(int optionIndex);
-    void didShowPopup();
-    void didHidePopup();
+  bool isCollapsed() const override;
+  AccessibilityExpanded isExpanded() const final;
+  bool press() const override;
+  void clearChildren() override;
+  bool nameFromContents() const override;
 
-private:
-    AXMenuList(LayoutMenuList*, AXObjectCacheImpl&);
+  void didUpdateActiveOption(int optionIndex);
+  void didShowPopup();
+  void didHidePopup();
 
-    bool isMenuList() const override { return true; }
-    AccessibilityRole determineAccessibilityRole() final;
-    bool canSetFocusAttribute() const override;
+ private:
+  AXMenuList(LayoutMenuList*, AXObjectCacheImpl&);
 
-    void addChildren() override;
+  bool isMenuList() const override { return true; }
+  AccessibilityRole determineAccessibilityRole() final;
+  bool canSetFocusAttribute() const override;
+
+  void addChildren() override;
 };
 
 DEFINE_AX_OBJECT_TYPE_CASTS(AXMenuList, isMenuList());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // AXMenuList_h
+#endif  // AXMenuList_h

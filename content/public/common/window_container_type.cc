@@ -4,6 +4,8 @@
 
 #include "content/public/common/window_container_type.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_util.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
@@ -15,6 +17,13 @@ const char kBackground[] = "background";
 const char kPersistent[] = "persistent";
 
 }  // namespace
+
+const WindowContainerType WINDOW_CONTAINER_TYPE_NORMAL =
+    content::mojom::WindowContainerType::NORMAL;
+const WindowContainerType WINDOW_CONTAINER_TYPE_BACKGROUND =
+    content::mojom::WindowContainerType::BACKGROUND;
+const WindowContainerType WINDOW_CONTAINER_TYPE_PERSISTENT =
+    content::mojom::WindowContainerType::PERSISTENT;
 
 WindowContainerType WindowFeaturesToContainerType(
     const blink::WebWindowFeatures& window_features) {

@@ -34,41 +34,45 @@
 #include "../platform/WebCommon.h"
 #include "WebFrame.h"
 
+#if INSIDE_BLINK
+#include <memory>
+#endif
+
 namespace blink {
 
 class WebPlugin;
 class WebString;
 
 class WebHelperPlugin {
-public:
-    // May return null if initialization fails. If the returned pointer is
-    // non-null, the caller must free it by calling destroy().
-    BLINK_EXPORT static WebHelperPlugin* create(const WebString& PluginType, WebLocalFrame*);
+ public:
+  // May return null if initialization fails. If the returned pointer is
+  // non-null, the caller must free it by calling destroy().
+  BLINK_EXPORT static WebHelperPlugin* create(const WebString& PluginType,
+                                              WebLocalFrame*);
 
-    // Returns a WebPlugin corresponding to the instantiated plugin. This will
-    // never return null.
-    virtual WebPlugin* getPlugin() = 0;
+  // Returns a WebPlugin corresponding to the instantiated plugin. This will
+  // never return null.
+  virtual WebPlugin* getPlugin() = 0;
 
-    // Initiates destruction of the WebHelperPlugin.
-    virtual void destroy() = 0;
+  // Initiates destruction of the WebHelperPlugin.
+  virtual void destroy() = 0;
 
-protected:
-    virtual ~WebHelperPlugin() { }
+ protected:
+  virtual ~WebHelperPlugin() {}
 };
 
-} // namespace blink
-
-namespace WTF {
-
-template<typename T> struct OwnedPtrDeleter;
-template<> struct OwnedPtrDeleter<blink::WebHelperPlugin> {
-    static void deletePtr(blink::WebHelperPlugin* plugin)
-    {
-        if (plugin)
-            plugin->destroy();
-    }
+#if INSIDE_BLINK
+struct WebHelperPluginDeleter {
+  void operator()(WebHelperPlugin* plugin) {
+    if (plugin)
+      plugin->destroy();
+  }
 };
 
-} // namespace WTF
+using WebHelperPluginUniquePtr =
+    std::unique_ptr<WebHelperPlugin, WebHelperPluginDeleter>;
+#endif
+
+}  // namespace blink
 
 #endif

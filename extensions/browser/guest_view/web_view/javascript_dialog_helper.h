@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_GUEST_VIEW_WEB_VIEW_JAVASCRIPT_DIALOG_HELPER_H_
 #define EXTENSIONS_BROWSER_GUEST_VIEW_WEB_VIEW_JAVASCRIPT_DIALOG_HELPER_H_
 
+#include "base/macros.h"
 #include "content/public/browser/javascript_dialog_manager.h"
 
 namespace extensions {
@@ -20,22 +21,20 @@ class JavaScriptDialogHelper : public content::JavaScriptDialogManager {
   void RunJavaScriptDialog(
       content::WebContents* web_contents,
       const GURL& origin_url,
-      const std::string& accept_lang,
       content::JavaScriptMessageType javascript_message_type,
       const base::string16& message_text,
       const base::string16& default_prompt_text,
       const DialogClosedCallback& callback,
       bool* did_suppress_message) override;
   void RunBeforeUnloadDialog(content::WebContents* web_contents,
-                             const base::string16& message_text,
                              bool is_reload,
                              const DialogClosedCallback& callback) override;
   bool HandleJavaScriptDialog(content::WebContents* web_contents,
                               bool accept,
                               const base::string16* prompt_override) override;
-  void CancelActiveAndPendingDialogs(
-      content::WebContents* web_contents) override;
-  void ResetDialogState(content::WebContents* web_contents) override;
+  void CancelDialogs(content::WebContents* web_contents,
+                     bool suppress_callbacks,
+                     bool reset_state) override;
 
  private:
   void OnPermissionResponse(

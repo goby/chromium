@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_CHROMEOS_CHROME_BROWSER_MAIN_CHROMEOS_H_
 #define CHROME_BROWSER_CHROMEOS_CHROME_BROWSER_MAIN_CHROMEOS_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "chrome/browser/chrome_browser_main_linux.h"
 #include "chrome/browser/chromeos/external_metrics.h"
+#include "chrome/browser/memory/memory_kills_monitor.h"
 #include "chromeos/system/version_loader.h"
 
 namespace session_manager {
@@ -16,22 +19,24 @@ class SessionManager;
 }
 
 namespace arc {
-class ArcBridgeService;
+class ArcServiceLauncher;
 }
 
 namespace chromeos {
 
+class ArcKioskAppManager;
 class DataPromoNotification;
-class EventRewriter;
 class EventRewriterController;
+class ExtensionVolumeObserver;
 class IdleActionWarningObserver;
-class MagnificationManager;
+class LoginLockStateNotifier;
+class LowDiskNotification;
+class NetworkPrefStateObserver;
+class NetworkThrottlingObserver;
 class PeripheralBatteryObserver;
-class PowerButtonObserver;
 class PowerPrefs;
 class RendererFreezer;
-class SessionManagerObserver;
-class SwapMetrics;
+class ShutdownPolicyForwarder;
 class WakeOnWifiManager;
 
 namespace default_app_order {
@@ -64,24 +69,34 @@ class ChromeBrowserMainPartsChromeos : public ChromeBrowserMainPartsLinux {
   void PostDestroyThreads() override;
 
  private:
-  scoped_ptr<default_app_order::ExternalLoader> app_order_loader_;
-  scoped_ptr<PeripheralBatteryObserver> peripheral_battery_observer_;
-  scoped_ptr<PowerPrefs> power_prefs_;
-  scoped_ptr<PowerButtonObserver> power_button_observer_;
-  scoped_ptr<IdleActionWarningObserver> idle_action_warning_observer_;
-  scoped_ptr<DataPromoNotification> data_promo_notification_;
-  scoped_ptr<RendererFreezer> renderer_freezer_;
-  scoped_ptr<WakeOnWifiManager> wake_on_wifi_manager_;
+  std::unique_ptr<default_app_order::ExternalLoader> app_order_loader_;
+  std::unique_ptr<NetworkPrefStateObserver> network_pref_state_observer_;
+  std::unique_ptr<ExtensionVolumeObserver> extension_volume_observer_;
+  std::unique_ptr<PeripheralBatteryObserver> peripheral_battery_observer_;
+  std::unique_ptr<PowerPrefs> power_prefs_;
+  std::unique_ptr<LoginLockStateNotifier> login_lock_state_notifier_;
+  std::unique_ptr<IdleActionWarningObserver> idle_action_warning_observer_;
+  std::unique_ptr<DataPromoNotification> data_promo_notification_;
+  std::unique_ptr<RendererFreezer> renderer_freezer_;
+  std::unique_ptr<WakeOnWifiManager> wake_on_wifi_manager_;
+  std::unique_ptr<NetworkThrottlingObserver> network_throttling_observer_;
 
-  scoped_ptr<internal::DBusServices> dbus_services_;
+  std::unique_ptr<internal::DBusServices> dbus_services_;
 
-  scoped_ptr<session_manager::SessionManager> session_manager_;
+  std::unique_ptr<session_manager::SessionManager> session_manager_;
 
-  scoped_ptr<EventRewriterController> keyboard_event_rewriters_;
+  std::unique_ptr<ShutdownPolicyForwarder> shutdown_policy_forwarder_;
+
+  std::unique_ptr<EventRewriterController> keyboard_event_rewriters_;
 
   scoped_refptr<chromeos::ExternalMetrics> external_metrics_;
 
-  scoped_ptr<arc::ArcBridgeService> arc_bridge_service_;
+  std::unique_ptr<arc::ArcServiceLauncher> arc_service_launcher_;
+
+  std::unique_ptr<LowDiskNotification> low_disk_notification_;
+  std::unique_ptr<ArcKioskAppManager> arc_kiosk_app_manager_;
+
+  std::unique_ptr<memory::MemoryKillsMonitor::Handle> memory_kills_monitor_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainPartsChromeos);
 };

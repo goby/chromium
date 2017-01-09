@@ -4,8 +4,10 @@
 
 #include "components/bookmarks/browser/bookmark_node_data.h"
 
+#include <memory>
+
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -15,7 +17,6 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/clipboard/clipboard.h"
 #include "ui/base/dragdrop/os_exchange_data.h"
-#include "ui/events/platform/platform_event_source.h"
 #include "url/gurl.h"
 
 using base::ASCIIToUTF16;
@@ -27,8 +28,7 @@ class BookmarkNodeDataTest : public testing::Test {
   BookmarkNodeDataTest() {}
 
   void SetUp() override {
-    event_source_ = ui::PlatformEventSource::CreateDefault();
-    model_ = client_.CreateModel();
+    model_ = TestBookmarkClient::CreateModel();
     test::WaitForBookmarkModelToLoad(model_.get());
     bool success = profile_dir_.CreateUniqueTempDir();
     ASSERT_TRUE(success);
@@ -36,13 +36,14 @@ class BookmarkNodeDataTest : public testing::Test {
 
   void TearDown() override {
     model_.reset();
-    event_source_.reset();
     bool success = profile_dir_.Delete();
     ASSERT_TRUE(success);
     ui::Clipboard::DestroyClipboardForCurrentThread();
   }
 
-  const base::FilePath& GetProfilePath() const { return profile_dir_.path(); }
+  const base::FilePath& GetProfilePath() const {
+    return profile_dir_.GetPath();
+  }
 
   BookmarkModel* model() { return model_.get(); }
 
@@ -51,9 +52,7 @@ class BookmarkNodeDataTest : public testing::Test {
 
  private:
   base::ScopedTempDir profile_dir_;
-  TestBookmarkClient client_;
-  scoped_ptr<BookmarkModel> model_;
-  scoped_ptr<ui::PlatformEventSource> event_source_;
+  std::unique_ptr<BookmarkModel> model_;
   base::MessageLoopForUI loop_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkNodeDataTest);
@@ -61,7 +60,8 @@ class BookmarkNodeDataTest : public testing::Test {
 
 namespace {
 
-ui::OSExchangeData::Provider* CloneProvider(const ui::OSExchangeData& data) {
+std::unique_ptr<ui::OSExchangeData::Provider> CloneProvider(
+    const ui::OSExchangeData& data) {
   return data.provider().Clone();
 }
 
@@ -136,7 +136,7 @@ TEST_F(BookmarkNodeDataTest, URL) {
   // Make sure asking for the node with a different profile returns NULL.
   base::ScopedTempDir other_profile_dir;
   EXPECT_TRUE(other_profile_dir.CreateUniqueTempDir());
-  EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.path()) ==
+  EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.GetPath()) ==
               NULL);
 
   // Writing should also put the URL and title on the clipboard.
@@ -185,7 +185,7 @@ TEST_F(BookmarkNodeDataTest, Folder) {
   // A different profile should return NULL for the node.
   base::ScopedTempDir other_profile_dir;
   EXPECT_TRUE(other_profile_dir.CreateUniqueTempDir());
-  EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.path()) ==
+  EXPECT_TRUE(read_data.GetFirstNode(model(), other_profile_dir.GetPath()) ==
               NULL);
 }
 

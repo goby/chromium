@@ -31,6 +31,7 @@
 #ifndef SVGAnimatedInteger_h
 #define SVGAnimatedInteger_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGInteger.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
 #include "platform/heap/Handle.h"
@@ -40,33 +41,40 @@ namespace blink {
 class SVGAnimatedIntegerOptionalInteger;
 
 // SVG Spec: http://www.w3.org/TR/SVG11/types.html#InterfaceSVGAnimatedInteger
-class SVGAnimatedInteger : public SVGAnimatedProperty<SVGInteger> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedInteger> create(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGInteger> initialValue)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedInteger(contextElement, attributeName, initialValue));
-    }
+class SVGAnimatedInteger : public SVGAnimatedProperty<SVGInteger>,
+                           public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void synchronizeAttribute() override;
+ public:
+  static SVGAnimatedInteger* create(SVGElement* contextElement,
+                                    const QualifiedName& attributeName,
+                                    SVGInteger* initialValue) {
+    return new SVGAnimatedInteger(contextElement, attributeName, initialValue);
+  }
 
-    void setParentOptionalInteger(SVGAnimatedIntegerOptionalInteger* numberOptionalInteger)
-    {
-        m_parentIntegerOptionalInteger = numberOptionalInteger;
-    }
+  void synchronizeAttribute() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  void setParentOptionalInteger(
+      SVGAnimatedIntegerOptionalInteger* numberOptionalInteger) {
+    m_parentIntegerOptionalInteger = numberOptionalInteger;
+  }
 
-protected:
-    SVGAnimatedInteger(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGInteger> initialValue)
-        : SVGAnimatedProperty<SVGInteger>(contextElement, attributeName, initialValue)
-        , m_parentIntegerOptionalInteger(nullptr)
-    {
-    }
+  DECLARE_VIRTUAL_TRACE();
 
-    RawPtrWillBeMember<SVGAnimatedIntegerOptionalInteger> m_parentIntegerOptionalInteger;
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ protected:
+  SVGAnimatedInteger(SVGElement* contextElement,
+                     const QualifiedName& attributeName,
+                     SVGInteger* initialValue)
+      : SVGAnimatedProperty<SVGInteger>(contextElement,
+                                        attributeName,
+                                        initialValue),
+        m_parentIntegerOptionalInteger(nullptr) {}
+
+  Member<SVGAnimatedIntegerOptionalInteger> m_parentIntegerOptionalInteger;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGAnimatedInteger_h
+#endif  // SVGAnimatedInteger_h

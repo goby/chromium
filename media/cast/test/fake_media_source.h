@@ -10,16 +10,19 @@
 #ifndef MEDIA_CAST_TEST_FAKE_MEDIA_SOURCE_H_
 #define MEDIA_CAST_TEST_FAKE_MEDIA_SOURCE_H_
 
+#include <stdint.h>
+
 #include <queue>
 
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/tick_clock.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_converter.h"
+#include "media/base/audio_parameters.h"
 #include "media/cast/cast_config.h"
 #include "media/filters/audio_renderer_algorithm.h"
 #include "media/filters/ffmpeg_demuxer.h"
@@ -35,6 +38,9 @@ class AudioFifo;
 class AudioTimestampHelper;
 class FFmpegGlue;
 class InMemoryUrlProtocol;
+class VideoFrame;
+
+struct ScopedPtrAVFreeContext;
 
 namespace cast {
 
@@ -51,8 +57,8 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   // |keep_frames| is true if all VideoFrames are saved in a queue.
   FakeMediaSource(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                   base::TickClock* clock,
-                  const AudioSenderConfig& audio_config,
-                  const VideoSenderConfig& video_config,
+                  const FrameSenderConfig& audio_config,
+                  const FrameSenderConfig& video_config,
                   bool keep_frames);
   ~FakeMediaSource() final;
 
@@ -67,7 +73,7 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   void Start(scoped_refptr<AudioFrameInput> audio_frame_input,
              scoped_refptr<VideoFrameInput> video_frame_input);
 
-  const VideoSenderConfig& get_video_config() const { return video_config_; }
+  const FrameSenderConfig& get_video_config() const { return video_config_; }
 
   scoped_refptr<media::VideoFrame> PopOldestInsertedVideoFrame();
 
@@ -104,24 +110,22 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   void Decode(bool decode_audio);
 
   // media::AudioConverter::InputCallback implementation.
-  double ProvideInput(media::AudioBus* output_bus, base::TimeDelta buffer_delay)
-      final;
+  double ProvideInput(media::AudioBus* output_bus,
+                      uint32_t frames_delayed) final;
 
   AVStream* av_audio_stream();
   AVStream* av_video_stream();
-  AVCodecContext* av_audio_context();
-  AVCodecContext* av_video_context();
 
   const scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   const media::AudioParameters output_audio_params_;
-  const VideoSenderConfig video_config_;
+  const FrameSenderConfig video_config_;
   const bool keep_frames_;
   bool variable_frame_size_mode_;
   gfx::Size current_frame_size_;
   base::TimeTicks next_frame_size_change_time_;
   scoped_refptr<AudioFrameInput> audio_frame_input_;
   scoped_refptr<VideoFrameInput> video_frame_input_;
-  uint8 synthetic_count_;
+  uint8_t synthetic_count_;
   base::TickClock* const clock_;  // Not owned by this class.
 
   // Time when the stream starts.
@@ -130,33 +134,35 @@ class FakeMediaSource : public media::AudioConverter::InputCallback {
   // The following three members are used only for fake frames.
   int audio_frame_count_;  // Each audio frame is exactly 10ms.
   int video_frame_count_;
-  scoped_ptr<TestAudioBusFactory> audio_bus_factory_;
+  std::unique_ptr<TestAudioBusFactory> audio_bus_factory_;
 
   base::MemoryMappedFile file_data_;
-  scoped_ptr<InMemoryUrlProtocol> protocol_;
-  scoped_ptr<FFmpegGlue> glue_;
+  std::unique_ptr<InMemoryUrlProtocol> protocol_;
+  std::unique_ptr<FFmpegGlue> glue_;
   AVFormatContext* av_format_context_;
 
   int audio_stream_index_;
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> av_audio_context_;
   AudioParameters source_audio_params_;
   double playback_rate_;
 
   int video_stream_index_;
+  std::unique_ptr<AVCodecContext, ScopedPtrAVFreeContext> av_video_context_;
   int video_frame_rate_numerator_;
   int video_frame_rate_denominator_;
 
   // These are used for audio resampling.
-  scoped_ptr<media::AudioConverter> audio_converter_;
-  scoped_ptr<media::AudioFifo> audio_fifo_;
-  scoped_ptr<media::AudioBus> audio_fifo_input_bus_;
+  std::unique_ptr<media::AudioConverter> audio_converter_;
+  std::unique_ptr<media::AudioFifo> audio_fifo_;
+  std::unique_ptr<media::AudioBus> audio_fifo_input_bus_;
   media::AudioRendererAlgorithm audio_algo_;
 
   // Track the timestamp of audio sent to the receiver.
-  scoped_ptr<media::AudioTimestampHelper> audio_sent_ts_;
+  std::unique_ptr<media::AudioTimestampHelper> audio_sent_ts_;
 
   std::queue<scoped_refptr<VideoFrame> > video_frame_queue_;
   std::queue<scoped_refptr<VideoFrame> > inserted_video_frame_queue_;
-  int64 video_first_pts_;
+  int64_t video_first_pts_;
   bool video_first_pts_set_;
   base::TimeDelta last_video_frame_timestamp_;
 

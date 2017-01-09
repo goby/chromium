@@ -5,18 +5,23 @@
 #ifndef CHROME_BROWSER_PROFILES_PROFILE_AVATAR_ICON_UTIL_H_
 #define CHROME_BROWSER_PROFILES_PROFILE_AVATAR_ICON_UTIL_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "third_party/skia/include/core/SkColor.h"
 
 namespace base {
 class FilePath;
+class ListValue;
 }
 
 namespace gfx {
 class Image;
 }
 
+class GURL;
 class SkBitmap;
 
 namespace profiles {
@@ -34,12 +39,25 @@ extern const SkColor kAvatarBubbleAccountsBackgroundColor;
 extern const SkColor kAvatarBubbleGaiaBackgroundColor;
 extern const SkColor kUserManagerBackgroundColor;
 
+// Avatar shape.
+enum AvatarShape {
+  SHAPE_CIRCLE,  // Only available for desktop platforms
+  SHAPE_SQUARE,
+};
+
 // Returns a version of |image| of a specific size. Note that no checks are
 // done on the width/height so make sure they're reasonable values; in the
 // range of 16-256 is probably best.
 gfx::Image GetSizedAvatarIcon(const gfx::Image& image,
                               bool is_rectangle,
-                              int width, int height);
+                              int width,
+                              int height,
+                              AvatarShape shape);
+
+gfx::Image GetSizedAvatarIcon(const gfx::Image& image,
+                              bool is_rectangle,
+                              int width,
+                              int height);
 
 // Returns a version of |image| suitable for use in menus.
 gfx::Image GetAvatarIconForMenu(const gfx::Image& image,
@@ -78,6 +96,9 @@ int GetDefaultAvatarIconResourceIDAtIndex(size_t index);
 // Gets the resource filename of the default avatar icon at |index|.
 const char* GetDefaultAvatarIconFileNameAtIndex(size_t index);
 
+// Gets the resource ID of the default avatar label at |index|.
+int GetDefaultAvatarLabelResourceIDAtIndex(size_t index);
+
 // Gets the full path of the high res avatar icon at |index|.
 base::FilePath GetPathOfHighResAvatarAtIndex(size_t index);
 
@@ -90,6 +111,21 @@ bool IsDefaultAvatarIconIndex(size_t index);
 // Checks if the given URL points to one of the default avatar icons. If it
 // is, returns true and its index through |icon_index|. If not, returns false.
 bool IsDefaultAvatarIconUrl(const std::string& icon_url, size_t *icon_index);
+
+// Given an image URL this function builds a new URL set to |thumbnail_size|.
+// For example, if |thumbnail_size| was set to 256 and |old_url| was either:
+//   https://example.com/--Abc/AAAAAAAAAAI/AAAAAAAAACQ/Efg/photo.jpg
+//   or
+//   https://example.com/--Abc/AAAAAAAAAAI/AAAAAAAAACQ/Efg/s64-c/photo.jpg
+// then return value in |new_url| would be:
+//   https://example.com/--Abc/AAAAAAAAAAI/AAAAAAAAACQ/Efg/s256-c/photo.jpg
+bool GetImageURLWithThumbnailSize(
+    const GURL& old_url, int thumbnail_size, GURL* new_url);
+
+// Returns a list of dictionaries containing the default profile avatar icons as
+// well as avatar labels used for accessibility purposes. The list is ordered
+// according to the avatars' default order.
+std::unique_ptr<base::ListValue> GetDefaultProfileAvatarIconsAndLabels();
 
 }  // namespace profiles
 

@@ -4,6 +4,8 @@
 
 #include "chrome/test/chromedriver/chrome/devtools_client_impl.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
@@ -29,7 +31,7 @@ const char kOldInspectorContextError[] =
     "Execution context with given id not found.";
 
 Status ParseInspectorError(const std::string& error_json) {
-  scoped_ptr<base::Value> error = base::JSONReader::Read(error_json);
+  std::unique_ptr<base::Value> error = base::JSONReader::Read(error_json);
   base::DictionaryValue* error_dict;
   if (!error || !error->GetAsDictionary(&error_dict))
     return Status(kUnknownError, "inspector error with no error message");
@@ -81,11 +83,10 @@ InspectorCommandResponse::~InspectorCommandResponse() {}
 
 const char DevToolsClientImpl::kBrowserwideDevToolsClientId[] = "browser";
 
-DevToolsClientImpl::DevToolsClientImpl(
-    const SyncWebSocketFactory& factory,
-    const std::string& url,
-    const std::string& id)
-    : socket_(factory.Run().Pass()),
+DevToolsClientImpl::DevToolsClientImpl(const SyncWebSocketFactory& factory,
+                                       const std::string& url,
+                                       const std::string& id)
+    : socket_(factory.Run()),
       url_(url),
       crashed_(false),
       id_(id),
@@ -100,7 +101,7 @@ DevToolsClientImpl::DevToolsClientImpl(
     const std::string& url,
     const std::string& id,
     const FrontendCloserFunc& frontend_closer_func)
-    : socket_(factory.Run().Pass()),
+    : socket_(factory.Run()),
       url_(url),
       crashed_(false),
       id_(id),
@@ -116,7 +117,7 @@ DevToolsClientImpl::DevToolsClientImpl(
     const std::string& id,
     const FrontendCloserFunc& frontend_closer_func,
     const ParserFunc& parser_func)
-    : socket_(factory.Run().Pass()),
+    : socket_(factory.Run()),
       url_(url),
       crashed_(false),
       id_(id),
@@ -170,24 +171,39 @@ Status DevToolsClientImpl::ConnectIfNecessary() {
 Status DevToolsClientImpl::SendCommand(
     const std::string& method,
     const base::DictionaryValue& params) {
-  scoped_ptr<base::DictionaryValue> result;
-  return SendCommandInternal(method, params, &result, true);
+  return SendCommandWithTimeout(method, params, nullptr);
+}
+
+Status DevToolsClientImpl::SendCommandWithTimeout(
+    const std::string& method,
+    const base::DictionaryValue& params,
+    const Timeout* timeout) {
+  std::unique_ptr<base::DictionaryValue> result;
+  return SendCommandInternal(method, params, &result, true, true, timeout);
 }
 
 Status DevToolsClientImpl::SendAsyncCommand(
     const std::string& method,
     const base::DictionaryValue& params) {
-  scoped_ptr<base::DictionaryValue> result;
-  return SendCommandInternal(method, params, &result, false);
+  std::unique_ptr<base::DictionaryValue> result;
+  return SendCommandInternal(method, params, &result, false, false, nullptr);
 }
 
 Status DevToolsClientImpl::SendCommandAndGetResult(
     const std::string& method,
     const base::DictionaryValue& params,
-    scoped_ptr<base::DictionaryValue>* result) {
-  scoped_ptr<base::DictionaryValue> intermediate_result;
+    std::unique_ptr<base::DictionaryValue>* result) {
+  return SendCommandAndGetResultWithTimeout(method, params, nullptr, result);
+}
+
+Status DevToolsClientImpl::SendCommandAndGetResultWithTimeout(
+    const std::string& method,
+    const base::DictionaryValue& params,
+    const Timeout* timeout,
+    std::unique_ptr<base::DictionaryValue>* result) {
+  std::unique_ptr<base::DictionaryValue> intermediate_result;
   Status status = SendCommandInternal(
-      method, params, &intermediate_result, true);
+      method, params, &intermediate_result, true, true, timeout);
   if (status.IsError())
     return status;
   if (!intermediate_result)
@@ -196,22 +212,27 @@ Status DevToolsClientImpl::SendCommandAndGetResult(
   return Status(kOk);
 }
 
+Status DevToolsClientImpl::SendCommandAndIgnoreResponse(
+    const std::string& method,
+    const base::DictionaryValue& params) {
+  return SendCommandInternal(method, params, nullptr, true, false, nullptr);
+}
+
 void DevToolsClientImpl::AddListener(DevToolsEventListener* listener) {
   CHECK(listener);
   listeners_.push_back(listener);
 }
 
 Status DevToolsClientImpl::HandleReceivedEvents() {
-  return HandleEventsUntil(base::Bind(&ConditionIsMet), base::TimeDelta());
+  return HandleEventsUntil(base::Bind(&ConditionIsMet),
+                           Timeout(base::TimeDelta()));
 }
 
 Status DevToolsClientImpl::HandleEventsUntil(
-    const ConditionalFunc& conditional_func, const base::TimeDelta& timeout) {
+    const ConditionalFunc& conditional_func, const Timeout& timeout) {
   if (!socket_->IsConnected())
     return Status(kDisconnected, "not connected to DevTools");
 
-  base::TimeTicks deadline = base::TimeTicks::Now() + timeout;
-  base::TimeDelta next_message_timeout = timeout;
   while (true) {
     if (!socket_->HasNextMessage()) {
       bool is_condition_met = false;
@@ -222,10 +243,9 @@ Status DevToolsClientImpl::HandleEventsUntil(
         return Status(kOk);
     }
 
-    Status status = ProcessNextMessage(-1, next_message_timeout);
+    Status status = ProcessNextMessage(-1, timeout);
     if (status.IsError())
       return status;
-    next_message_timeout = deadline - base::TimeTicks::Now();
   }
 }
 
@@ -237,8 +257,10 @@ DevToolsClientImpl::ResponseInfo::~ResponseInfo() {}
 Status DevToolsClientImpl::SendCommandInternal(
     const std::string& method,
     const base::DictionaryValue& params,
-    scoped_ptr<base::DictionaryValue>* result,
-    bool wait_for_response) {
+    std::unique_ptr<base::DictionaryValue>* result,
+    bool expect_response,
+    bool wait_for_response,
+    const Timeout* timeout) {
   if (!socket_->IsConnected())
     return Status(kDisconnected, "not connected to DevTools");
 
@@ -255,35 +277,42 @@ Status DevToolsClientImpl::SendCommandInternal(
   if (!socket_->Send(message))
     return Status(kDisconnected, "unable to send message to renderer");
 
-  if (wait_for_response) {
+  if (expect_response) {
     linked_ptr<ResponseInfo> response_info =
         make_linked_ptr(new ResponseInfo(method));
+    if (timeout)
+      response_info->command_timeout = *timeout;
     response_info_map_[command_id] = response_info;
-    while (response_info->state == kWaiting) {
-      Status status = ProcessNextMessage(
-          command_id, base::TimeDelta::FromMinutes(10));
-      if (status.IsError()) {
-        if (response_info->state == kReceived)
-          response_info_map_.erase(command_id);
-        return status;
+
+    if (wait_for_response) {
+      while (response_info->state == kWaiting) {
+        Status status = ProcessNextMessage(
+            command_id, Timeout(base::TimeDelta::FromMinutes(10), timeout));
+        if (status.IsError()) {
+          if (response_info->state == kReceived)
+            response_info_map_.erase(command_id);
+          return status;
+        }
       }
+      if (response_info->state == kBlocked) {
+        response_info->state = kIgnored;
+        return Status(kUnexpectedAlertOpen);
+      }
+      CHECK_EQ(response_info->state, kReceived);
+      internal::InspectorCommandResponse& response = response_info->response;
+      if (!response.result)
+        return ParseInspectorError(response.error);
+      *result = std::move(response.result);
     }
-    if (response_info->state == kBlocked) {
-      response_info->state = kIgnored;
-      return Status(kUnexpectedAlertOpen);
-    }
-    CHECK_EQ(response_info->state, kReceived);
-    internal::InspectorCommandResponse& response = response_info->response;
-    if (!response.result)
-      return ParseInspectorError(response.error);
-    *result = response.result.Pass();
+  } else {
+    CHECK(!wait_for_response);
   }
   return Status(kOk);
 }
 
 Status DevToolsClientImpl::ProcessNextMessage(
     int expected_id,
-    const base::TimeDelta& timeout) {
+    const Timeout& timeout) {
   ScopedIncrementer increment_stack_count(&stack_count_);
 
   Status status = EnsureListenersNotifiedOfConnect();
@@ -320,7 +349,7 @@ Status DevToolsClientImpl::ProcessNextMessage(
     case SyncWebSocket::kTimeout: {
       std::string err =
           "Timed out receiving message from renderer: " +
-          base::StringPrintf("%.3lf", timeout.InSecondsF());
+          base::StringPrintf("%.3lf", timeout.GetDuration().InSecondsF());
       LOG(ERROR) << err;
       return Status(kTimeout, err);
     }
@@ -458,7 +487,8 @@ Status DevToolsClientImpl::EnsureListenersNotifiedOfCommandResponse() {
     Status status = listener->OnCommandSuccess(
         this,
         unnotified_cmd_response_info_->method,
-        *unnotified_cmd_response_info_->response.result.get());
+        *unnotified_cmd_response_info_->response.result.get(),
+        unnotified_cmd_response_info_->command_timeout);
     if (status.IsError())
       return status;
   }
@@ -473,7 +503,7 @@ bool ParseInspectorMessage(
     InspectorMessageType* type,
     InspectorEvent* event,
     InspectorCommandResponse* command_response) {
-  scoped_ptr<base::Value> message_value = base::JSONReader::Read(message);
+  std::unique_ptr<base::Value> message_value = base::JSONReader::Read(message);
   base::DictionaryValue* message_dict;
   if (!message_value || !message_value->GetAsDictionary(&message_dict))
     return false;

@@ -8,16 +8,18 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_MEDIA_GALLERIES_MEDIA_GALLERIES_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_MEDIA_GALLERIES_MEDIA_GALLERIES_API_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/media_galleries/gallery_watch_manager_observer.h"
 #include "chrome/browser/media_galleries/media_file_system_registry.h"
-#include "chrome/browser/media_galleries/media_scan_manager_observer.h"
 #include "chrome/common/extensions/api/media_galleries.h"
 #include "chrome/common/media_galleries/metadata_types.h"
 #include "components/storage_monitor/media_storage_util.h"
@@ -27,26 +29,16 @@
 
 namespace MediaGalleries = extensions::api::media_galleries;
 
-class MediaGalleriesScanResultController;
-
 namespace content {
 class BlobHandle;
-class WebContents;
-}
-
-namespace metadata {
-class SafeMediaMetadataParser;
 }
 
 namespace extensions {
-
-class Extension;
 
 // The profile-keyed service that manages the media galleries extension API.
 // Created at the same time as the Profile. This is also the event router.
 class MediaGalleriesEventRouter : public BrowserContextKeyedAPI,
                                   public GalleryWatchManagerObserver,
-                                  public MediaScanManagerObserver,
                                   public extensions::EventRouter::Observer {
  public:
   // KeyedService implementation.
@@ -60,15 +52,6 @@ class MediaGalleriesEventRouter : public BrowserContextKeyedAPI,
   static MediaGalleriesEventRouter* Get(content::BrowserContext* context);
 
   bool ExtensionHasGalleryChangeListener(const std::string& extension_id) const;
-  bool ExtensionHasScanProgressListener(const std::string& extension_id) const;
-
-  // MediaScanManagerObserver implementation.
-  void OnScanStarted(const std::string& extension_id) override;
-  void OnScanCancelled(const std::string& extension_id) override;
-  void OnScanFinished(const std::string& extension_id,
-                      int gallery_count,
-                      const MediaGalleryScanResult& file_counts) override;
-  void OnScanError(const std::string& extension_id) override;
 
  private:
   friend class BrowserContextKeyedAPIFactory<MediaGalleriesEventRouter>;
@@ -76,7 +59,7 @@ class MediaGalleriesEventRouter : public BrowserContextKeyedAPI,
   void DispatchEventToExtension(const std::string& extension_id,
                                 events::HistogramValue histogram_value,
                                 const std::string& event_name,
-                                scoped_ptr<base::ListValue> event_args);
+                                std::unique_ptr<base::ListValue> event_args);
 
   explicit MediaGalleriesEventRouter(content::BrowserContext* context);
   ~MediaGalleriesEventRouter() override;
@@ -141,28 +124,6 @@ class MediaGalleriesGetMediaFileSystemsFunction
   void GetMediaFileSystemsForExtension(const MediaFileSystemsCallback& cb);
 };
 
-class MediaGalleriesGetAllMediaFileSystemMetadataFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.getAllMediaFileSystemMetadata",
-                             MEDIAGALLERIES_GETALLMEDIAFILESYSTEMMETADATA)
-
- protected:
-  ~MediaGalleriesGetAllMediaFileSystemMetadataFunction() override;
-  bool RunAsync() override;
-
- private:
-  // Bottom half for RunAsync, invoked after the preferences is initialized.
-  // Gets the list of permitted galleries and checks if they are available.
-  void OnPreferencesInit();
-
-  // Callback to run upon getting the list of available devices.
-  // Sends the list of media filesystem metadata back to the extension.
-  void OnGetGalleries(
-      const MediaGalleryPrefIdSet& permitted_gallery_ids,
-      const storage_monitor::MediaStorageUtil::DeviceIdSet* available_devices);
-};
-
 class MediaGalleriesAddUserSelectedFolderFunction
     : public ChromeAsyncExtensionFunction {
  public:
@@ -196,79 +157,6 @@ class MediaGalleriesAddUserSelectedFolderFunction
   void GetMediaFileSystemsForExtension(const MediaFileSystemsCallback& cb);
 };
 
-class MediaGalleriesDropPermissionForMediaFileSystemFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.dropPermissionForMediaFileSystem",
-                             MEDIAGALLERIES_DROPPERMISSIONFORMEDIAFILESYSTEM)
-
- protected:
-  ~MediaGalleriesDropPermissionForMediaFileSystemFunction() override;
-  bool RunAsync() override;
-
- private:
-  // Bottom half for RunAsync, invoked after the preferences is initialized.
-  void OnPreferencesInit(MediaGalleryPrefId pref_id);
-};
-
-class MediaGalleriesStartMediaScanFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.startMediaScan",
-                             MEDIAGALLERIES_STARTMEDIASCAN)
-
- protected:
-  ~MediaGalleriesStartMediaScanFunction() override;
-  bool RunAsync() override;
-
- private:
-  // Bottom half for RunAsync, invoked after the preferences is initialized.
-  void OnPreferencesInit();
-};
-
-class MediaGalleriesCancelMediaScanFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.cancelMediaScan",
-                             MEDIAGALLERIES_CANCELMEDIASCAN)
-
- protected:
-  ~MediaGalleriesCancelMediaScanFunction() override;
-  bool RunAsync() override;
-
- private:
-  // Bottom half for RunAsync, invoked after the preferences is initialized.
-  void OnPreferencesInit();
-};
-
-class MediaGalleriesAddScanResultsFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.addScanResults",
-                             MEDIAGALLERIES_ADDSCANRESULTS)
-
- protected:
-  ~MediaGalleriesAddScanResultsFunction() override;
-  bool RunAsync() override;
-
-  // Pulled out for testing.
-  virtual MediaGalleriesScanResultController* MakeDialog(
-      content::WebContents* web_contents,
-      const extensions::Extension& extension,
-      const base::Closure& on_finish);
-
- private:
-  // Bottom half for RunAsync, invoked after the preferences is initialized.
-  void OnPreferencesInit();
-
-  // Grabs galleries from the media file system registry and passes them to
-  // ReturnGalleries().
-  void GetAndReturnGalleries();
-
-  // Returns galleries to the caller.
-  void ReturnGalleries(const std::vector<MediaFileSystemInfo>& filesystems);
-};
-
 class MediaGalleriesGetMetadataFunction : public ChromeAsyncExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("mediaGalleries.getMetadata",
@@ -285,18 +173,19 @@ class MediaGalleriesGetMetadataFunction : public ChromeAsyncExtensionFunction {
 
   void GetMetadata(MediaGalleries::GetMetadataType metadata_type,
                    const std::string& blob_uuid,
-                   scoped_ptr<std::string> blob_header,
-                   int64 total_blob_length);
+                   std::unique_ptr<std::string> blob_header,
+                   int64_t total_blob_length);
 
   void OnSafeMediaMetadataParserDone(
-      bool parse_success, scoped_ptr<base::DictionaryValue> result_dictionary,
-      scoped_ptr<std::vector<metadata::AttachedImage> > attached_images);
+      bool parse_success,
+      std::unique_ptr<base::DictionaryValue> result_dictionary,
+      std::unique_ptr<std::vector<metadata::AttachedImage>> attached_images);
 
   void ConstructNextBlob(
-      scoped_ptr<base::DictionaryValue> result_dictionary,
-      scoped_ptr<std::vector<metadata::AttachedImage> > attached_images,
-      scoped_ptr<std::vector<std::string> > blob_uuids,
-      scoped_ptr<content::BlobHandle> current_blob);
+      std::unique_ptr<base::DictionaryValue> result_dictionary,
+      std::unique_ptr<std::vector<metadata::AttachedImage>> attached_images,
+      std::unique_ptr<std::vector<std::string>> blob_uuids,
+      std::unique_ptr<content::BlobHandle> current_blob);
 };
 
 class MediaGalleriesAddGalleryWatchFunction
@@ -328,34 +217,6 @@ class MediaGalleriesRemoveGalleryWatchFunction
 
  private:
   void OnPreferencesInit(const std::string& pref_id);
-};
-
-class MediaGalleriesGetAllGalleryWatchFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.getAllGalleryWatch",
-                             MEDIAGALLERIES_GETALLGALLERYWATCH);
-
- protected:
-  ~MediaGalleriesGetAllGalleryWatchFunction() override;
-  bool RunAsync() override;
-
- private:
-  void OnPreferencesInit();
-};
-
-class MediaGalleriesRemoveAllGalleryWatchFunction
-    : public ChromeAsyncExtensionFunction {
- public:
-  DECLARE_EXTENSION_FUNCTION("mediaGalleries.removeAllGalleryWatch",
-                             MEDIAGALLERIES_REMOVEALLGALLERYWATCH);
-
- protected:
-  ~MediaGalleriesRemoveAllGalleryWatchFunction() override;
-  bool RunAsync() override;
-
- private:
-  void OnPreferencesInit();
 };
 
 }  // namespace extensions

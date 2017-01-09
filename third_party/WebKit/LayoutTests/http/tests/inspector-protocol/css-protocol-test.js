@@ -12,9 +12,10 @@ InspectorTest.dumpStyleSheetText = function(styleSheetId, callback)
     }
 }
 
-function updateStyleSheetRange(command, styleSheetId, expectError, options, callback)
+function modifyStyleSheet(command, presetStyleSheetId, styleSheetId, expectError, options, callback)
 {
-    options.styleSheetId = styleSheetId;
+    if (presetStyleSheetId)
+        options.styleSheetId = styleSheetId;
     if (expectError)
         InspectorTest.sendCommand(command, options, onResponse);
     else
@@ -32,16 +33,20 @@ function updateStyleSheetRange(command, styleSheetId, expectError, options, call
             InspectorTest.completeTest();
             return;
         }
-        InspectorTest.log("Expected protocol error: " + message.error.message);
+        InspectorTest.log("Expected protocol error: " + message.error.message + (message.error.data ? " (" + message.error.data + ")" : ""));
         callback();
     }
 }
 
-InspectorTest.setPropertyText = updateStyleSheetRange.bind(null, "CSS.setPropertyText");
-InspectorTest.setRuleSelector = updateStyleSheetRange.bind(null, "CSS.setRuleSelector");
-InspectorTest.setStyleText = updateStyleSheetRange.bind(null, "CSS.setStyleText");
-InspectorTest.setMediaText = updateStyleSheetRange.bind(null, "CSS.setMediaText");
-InspectorTest.addRule = updateStyleSheetRange.bind(null, "CSS.addRule");
+InspectorTest.setPropertyText = modifyStyleSheet.bind(null, "CSS.setPropertyText", true);
+InspectorTest.setRuleSelector = modifyStyleSheet.bind(null, "CSS.setRuleSelector", true);
+InspectorTest.setMediaText = modifyStyleSheet.bind(null, "CSS.setMediaText", true);
+InspectorTest.addRule = modifyStyleSheet.bind(null, "CSS.addRule", true);
+InspectorTest.setStyleTexts = function(styleSheetId, expectError, edits, callback)
+{
+    var options = { edits: edits };
+    modifyStyleSheet("CSS.setStyleTexts", false, styleSheetId, expectError, options, callback);
+}
 
 InspectorTest.requestMainFrameId = function(callback)
 {
@@ -86,7 +91,7 @@ InspectorTest.dumpRuleMatch = function(ruleMatch)
         var matching = matchingSelectors.indexOf(i) !== -1;
         if (matching)
             selectorLine += "*";
-        selectorLine += selectors[i].value;
+        selectorLine += selectors[i].text;
         if (matching)
             selectorLine += "*";
     }
@@ -147,15 +152,15 @@ InspectorTest.loadAndDumpMatchingRulesForNode = function(nodeId, callback, omitL
 
 InspectorTest.loadAndDumpCSSAnimationsForNode = function(nodeId, callback)
 {
-    InspectorTest.sendCommandOrDie("CSS.getCSSAnimationsForNode", { "nodeId": nodeId }, cssAnimationsLoaded);
+    InspectorTest.sendCommandOrDie("CSS.getMatchedStylesForNode", { "nodeId": nodeId }, cssAnimationsLoaded);
 
     function cssAnimationsLoaded(result)
     {
         InspectorTest.log("Dumping CSS keyframed animations: ");
         for (var keyframesRule of result.cssKeyframesRules) {
-            InspectorTest.log("@keyframes " + keyframesRule.animationName + " {");
+            InspectorTest.log("@keyframes " + keyframesRule.animationName.text + " {");
             for (var keyframe of keyframesRule.keyframes) {
-                indentLog(4, keyframe.keyText + " {");
+                indentLog(4, keyframe.keyText.text + " {");
                 InspectorTest.dumpStyle(keyframe.style, 4);
                 indentLog(4, "}");
             }

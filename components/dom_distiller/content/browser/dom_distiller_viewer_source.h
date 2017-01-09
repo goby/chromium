@@ -5,11 +5,11 @@
 #ifndef COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_DOM_DISTILLER_VIEWER_SOURCE_H_
 #define COMPONENTS_DOM_DISTILLER_CONTENT_BROWSER_DOM_DISTILLER_VIEWER_SOURCE_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/dom_distiller/content/browser/distiller_ui_handle.h"
 #include "content/public/browser/url_data_source.h"
 
@@ -17,16 +17,13 @@ namespace dom_distiller {
 
 class DomDistillerServiceInterface;
 class DomDistillerViewerSourceTest;
-class ViewerHandle;
-class ViewRequestDelegate;
 
 // Serves HTML and resources for viewing distilled articles.
 class DomDistillerViewerSource : public content::URLDataSource {
  public:
-  DomDistillerViewerSource(
-      DomDistillerServiceInterface* dom_distiller_service,
-      const std::string& scheme,
-      scoped_ptr<DistillerUIHandle> ui_handle);
+  DomDistillerViewerSource(DomDistillerServiceInterface* dom_distiller_service,
+                           const std::string& scheme,
+                           std::unique_ptr<DistillerUIHandle> ui_handle);
   ~DomDistillerViewerSource() override;
 
   class RequestViewerHandle;
@@ -35,15 +32,14 @@ class DomDistillerViewerSource : public content::URLDataSource {
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string& path) const override;
   bool ShouldServiceRequest(const net::URLRequest* request) const override;
   void WillServiceRequest(const net::URLRequest* request,
                           std::string* path) const override;
-  std::string GetContentSecurityPolicyObjectSrc() const override;
-  std::string GetContentSecurityPolicyFrameSrc() const override;
+  std::string GetContentSecurityPolicyStyleSrc() const override;
+  std::string GetContentSecurityPolicyChildSrc() const override;
 
  private:
   friend class DomDistillerViewerSourceTest;
@@ -57,7 +53,7 @@ class DomDistillerViewerSource : public content::URLDataSource {
 
   // An object for accessing chrome-specific UI controls including external
   // feedback and opening the distiller settings.
-  scoped_ptr<DistillerUIHandle> distiller_ui_handle_;
+  std::unique_ptr<DistillerUIHandle> distiller_ui_handle_;
 
   DISALLOW_COPY_AND_ASSIGN(DomDistillerViewerSource);
 };

@@ -8,10 +8,12 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "build/build_config.h"
 #include "tools/gn/standard_out.h"
 #include "tools/gn/switches.h"
+#include "tools/gn/target.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -53,16 +55,21 @@ int GetThreadCount() {
   //
   // One less worker thread than the number of physical CPUs seems to be a
   // good value, both theoretically and experimentally. But always use at
-  // least three workers to prevent us from being too sensitive to I/O latency
+  // least some workers to prevent us from being too sensitive to I/O latency
   // on low-end systems.
+  //
+  // The minimum thread count is based on measuring the optimal threads for the
+  // Chrome build on a several-year-old 4-core MacBook.
   int num_cores = GetCPUCount() / 2;  // Almost all CPUs now are hyperthreaded.
-  return std::max(num_cores - 1, 3);
+  return std::max(num_cores - 1, 8);
 }
 
 }  // namespace
 
 Scheduler::Scheduler()
-    : pool_(new base::SequencedWorkerPool(GetThreadCount(), "worker_")),
+    : pool_(new base::SequencedWorkerPool(GetThreadCount(),
+                                          "worker_",
+                                          base::TaskPriority::USER_VISIBLE)),
       input_file_manager_(new InputFileManager),
       verbose_logging_(false),
       work_count_(0),
@@ -92,14 +99,14 @@ bool Scheduler::Run() {
 }
 
 void Scheduler::Log(const std::string& verb, const std::string& msg) {
-  if (base::MessageLoop::current() == &main_loop_) {
+  if (task_runner()->BelongsToCurrentThread()) {
     LogOnMainThread(verb, msg);
   } else {
     // The run loop always joins on the sub threads, so the lifetime of this
     // object outlives the invocations of this function, hence "unretained".
-    main_loop_.PostTask(FROM_HERE,
-                        base::Bind(&Scheduler::LogOnMainThread,
-                                   base::Unretained(this), verb, msg));
+    task_runner()->PostTask(FROM_HERE,
+                            base::Bind(&Scheduler::LogOnMainThread,
+                                       base::Unretained(this), verb, msg));
   }
 }
 
@@ -113,14 +120,14 @@ void Scheduler::FailWithError(const Err& err) {
     is_failed_ = true;
   }
 
-  if (base::MessageLoop::current() == &main_loop_) {
+  if (task_runner()->BelongsToCurrentThread()) {
     FailWithErrorOnMainThread(err);
   } else {
     // The run loop always joins on the sub threads, so the lifetime of this
     // object outlives the invocations of this function, hence "unretained".
-    main_loop_.PostTask(FROM_HERE,
-                        base::Bind(&Scheduler::FailWithErrorOnMainThread,
-                                   base::Unretained(this), err));
+    task_runner()->PostTask(FROM_HERE,
+                            base::Bind(&Scheduler::FailWithErrorOnMainThread,
+                                       base::Unretained(this), err));
   }
 }
 
@@ -153,6 +160,28 @@ void Scheduler::AddUnknownGeneratedInput(const Target* target,
   unknown_generated_inputs_.insert(std::make_pair(file, target));
 }
 
+void Scheduler::AddWriteRuntimeDepsTarget(const Target* target) {
+  base::AutoLock lock(lock_);
+  write_runtime_deps_targets_.push_back(target);
+}
+
+std::vector<const Target*> Scheduler::GetWriteRuntimeDepsTargets() const {
+  base::AutoLock lock(lock_);
+  return write_runtime_deps_targets_;
+}
+
+bool Scheduler::IsFileGeneratedByWriteRuntimeDeps(
+    const OutputFile& file) const {
+  base::AutoLock lock(lock_);
+  // Number of targets should be quite small, so brute-force search is fine.
+  for (const Target* target : write_runtime_deps_targets_) {
+    if (file == target->write_runtime_deps_output()) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::multimap<SourceFile, const Target*>
     Scheduler::GetUnknownGeneratedInputs() const {
   base::AutoLock lock(lock_);
@@ -181,12 +210,11 @@ void Scheduler::IncrementWorkCount() {
 
 void Scheduler::DecrementWorkCount() {
   if (!base::AtomicRefCountDec(&work_count_)) {
-    if (base::MessageLoop::current() == &main_loop_) {
+    if (task_runner()->BelongsToCurrentThread()) {
       OnComplete();
     } else {
-      main_loop_.PostTask(FROM_HERE,
-                          base::Bind(&Scheduler::OnComplete,
-                                     base::Unretained(this)));
+      task_runner()->PostTask(FROM_HERE, base::Bind(&Scheduler::OnComplete,
+                                                    base::Unretained(this)));
     }
   }
 }
@@ -209,6 +237,6 @@ void Scheduler::DoWork(const base::Closure& closure) {
 
 void Scheduler::OnComplete() {
   // Should be called on the main thread.
-  DCHECK(base::MessageLoop::current() == main_loop());
+  DCHECK(task_runner()->BelongsToCurrentThread());
   runner_.Quit();
 }

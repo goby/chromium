@@ -5,24 +5,26 @@
 #ifndef NET_TEST_EMBEDDED_TEST_SERVER_EMBEDDED_TEST_SERVER_H_
 #define NET_TEST_EMBEDDED_TEST_SERVER_EMBEDDED_TEST_SERVER_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
-#include "crypto/rsa_private_key.h"
 #include "net/base/address_list.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cert/x509_certificate.h"
+#include "net/socket/ssl_server_socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
 #include "net/ssl/ssl_server_config.h"
@@ -49,21 +51,21 @@ struct HttpRequest;
 //
 // void SetUp() {
 //   test_server_.reset(new EmbeddedTestServer());
-//   ASSERT_TRUE(test_server_.Start());
 //   test_server_->RegisterRequestHandler(
 //       base::Bind(&FooTest::HandleRequest, base::Unretained(this)));
+//   ASSERT_TRUE(test_server_.Start());
 // }
 //
-// scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+// std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
 //   GURL absolute_url = test_server_->GetURL(request.relative_url);
 //   if (absolute_url.path() != "/test")
-//     return scoped_ptr<HttpResponse>();
+//     return std::unique_ptr<HttpResponse>();
 //
-//   scoped_ptr<BasicHttpResponse> http_response(new BasicHttpResponse());
-//   http_response->set_code(test_server::SUCCESS);
+//   std::unique_ptr<BasicHttpResponse> http_response(new BasicHttpResponse());
+//   http_response->set_code(net::HTTP_OK);
 //   http_response->set_content("hello");
 //   http_response->set_content_type("text/plain");
-//   return http_response.Pass();
+//   return http_response;
 // }
 //
 // For a test that spawns another process such as browser_tests, it is
@@ -111,8 +113,11 @@ class EmbeddedTestServer {
     CERT_COMMON_NAME_IS_DOMAIN,
   };
 
-  typedef base::Callback<scoped_ptr<HttpResponse>(
-      const HttpRequest& request)> HandleRequestCallback;
+  typedef base::Callback<std::unique_ptr<HttpResponse>(
+      const HttpRequest& request)>
+      HandleRequestCallback;
+  typedef base::Callback<void(const HttpRequest& request)>
+      MonitorRequestCallback;
 
   // Creates a http test server. Start() must be called to start the server.
   // |type| indicates the protocol type of the server (HTTP/HTTPS).
@@ -129,7 +134,7 @@ class EmbeddedTestServer {
   // This is the equivalent of calling InitializeAndListen() followed by
   // StartAcceptingConnections().
   // Returns whether a listening socket has been successfully created.
-  bool Start();
+  bool Start() WARN_UNUSED_RESULT;
 
   // Starts listening for incoming connections but will not yet accept them.
   // Returns whether a listening socket has been succesfully created.
@@ -170,7 +175,7 @@ class EmbeddedTestServer {
   bool GetAddressList(AddressList* address_list) const WARN_UNUSED_RESULT;
 
   // Returns the port number used by the server.
-  uint16 port() const { return port_; }
+  uint16_t port() const { return port_; }
 
   void SetSSLConfig(ServerCertificate cert, const SSLServerConfig& ssl_config);
   void SetSSLConfig(ServerCertificate cert);
@@ -200,19 +205,33 @@ class EmbeddedTestServer {
 
   // The most general purpose method. Any request processing can be added using
   // this method. Takes ownership of the object. The |callback| is called
-  // on UI thread.
+  // on the server's IO thread so all handlers must be registered before the
+  // server is started.
   void RegisterRequestHandler(const HandleRequestCallback& callback);
 
+  // Adds request monitors. The |callback| is called before any handlers are
+  // called, but can not respond it. This is useful to monitor requests that
+  // will be handled by other request handlers. The |callback| is called
+  // on the server's IO thread so all monitors must be registered before the
+  // server is started.
+  void RegisterRequestMonitor(const MonitorRequestCallback& callback);
+
   // Adds default handlers, including those added by AddDefaultHandlers, to be
-  // tried after all other user-specified handlers have been tried.
+  // tried after all other user-specified handlers have been tried. The
+  // |callback| is called on the server's IO thread so all handlers must be
+  // registered before the server is started.
   void RegisterDefaultHandler(const HandleRequestCallback& callback);
+
+  bool FlushAllSocketsAndConnectionsOnUIThread();
+  void FlushAllSocketsAndConnections();
 
  private:
   // Shuts down the server.
   void ShutdownOnIOThread();
 
   // Upgrade the TCP connection to one over SSL.
-  scoped_ptr<StreamSocket> DoSSLUpgrade(scoped_ptr<StreamSocket> connection);
+  std::unique_ptr<StreamSocket> DoSSLUpgrade(
+      std::unique_ptr<StreamSocket> connection);
   // Handles async callback when the SSL handshake has been completed.
   void OnHandshakeDone(HttpConnection* connection, int rv);
 
@@ -223,7 +242,7 @@ class EmbeddedTestServer {
   void OnAcceptCompleted(int rv);
   // Adds the new |socket| to the list of clients and begins the reading
   // data.
-  void HandleAcceptResult(scoped_ptr<StreamSocket> socket);
+  void HandleAcceptResult(std::unique_ptr<StreamSocket> socket);
 
   // Attempts to read data from the |connection|'s socket.
   void ReadData(HttpConnection* connection);
@@ -239,7 +258,11 @@ class EmbeddedTestServer {
   // Handles a request when it is parsed. It passes the request to registered
   // request handlers and sends a http response.
   void HandleRequest(HttpConnection* connection,
-                     scoped_ptr<HttpRequest> request);
+                     std::unique_ptr<HttpRequest> request);
+
+  // Initializes the SSLServerContext so that SSLServerSocket connections may
+  // share the same cache
+  void InitializeSSLServerContext();
 
   HttpConnection* FindConnection(StreamSocket* socket);
 
@@ -249,27 +272,28 @@ class EmbeddedTestServer {
 
   const bool is_using_ssl_;
 
-  scoped_ptr<base::Thread> io_thread_;
+  std::unique_ptr<base::Thread> io_thread_;
 
-  scoped_ptr<TCPServerSocket> listen_socket_;
-  scoped_ptr<StreamSocket> accepted_socket_;
+  std::unique_ptr<TCPServerSocket> listen_socket_;
+  std::unique_ptr<StreamSocket> accepted_socket_;
 
   EmbeddedTestServerConnectionListener* connection_listener_;
-  uint16 port_;
+  uint16_t port_;
   GURL base_url_;
   IPEndPoint local_endpoint_;
 
-  // Owns the HttpConnection objects.
-  std::map<StreamSocket*, HttpConnection*> connections_;
+  std::map<StreamSocket*, std::unique_ptr<HttpConnection>> connections_;
 
-  // Vector of registered and default request handlers.
+  // Vector of registered and default request handlers and monitors.
   std::vector<HandleRequestCallback> request_handlers_;
+  std::vector<MonitorRequestCallback> request_monitors_;
   std::vector<HandleRequestCallback> default_request_handlers_;
 
   base::ThreadChecker thread_checker_;
 
   net::SSLServerConfig ssl_config_;
   ServerCertificate cert_;
+  std::unique_ptr<SSLServerContext> context_;
 
   base::WeakPtrFactory<EmbeddedTestServer> weak_factory_;
 

@@ -5,7 +5,9 @@
 #ifndef CC_LAYERS_UI_RESOURCE_LAYER_H_
 #define CC_LAYERS_UI_RESOURCE_LAYER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/layers/layer.h"
 #include "cc/resources/ui_resource_client.h"
@@ -14,11 +16,10 @@
 namespace cc {
 
 class LayerTreeHost;
-class ScopedUIResource;
 
 class CC_EXPORT UIResourceLayer : public Layer {
  public:
-  static scoped_refptr<UIResourceLayer> Create(const LayerSettings& settings);
+  static scoped_refptr<UIResourceLayer> Create();
 
   void PushPropertiesTo(LayerImpl* layer) override;
 
@@ -48,12 +49,12 @@ class CC_EXPORT UIResourceLayer : public Layer {
   };
 
  protected:
-  explicit UIResourceLayer(const LayerSettings& settings);
+  UIResourceLayer();
   ~UIResourceLayer() override;
 
   bool HasDrawableContent() const override;
 
-  scoped_ptr<UIResourceHolder> ui_resource_holder_;
+  std::unique_ptr<UIResourceHolder> ui_resource_holder_;
   SkBitmap bitmap_;
 
   gfx::PointF uv_top_left_;
@@ -61,7 +62,7 @@ class CC_EXPORT UIResourceLayer : public Layer {
   float vertex_opacity_[4];
 
  private:
-  scoped_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
+  std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
   void RecreateUIResourceHolder();
 
   DISALLOW_COPY_AND_ASSIGN(UIResourceLayer);

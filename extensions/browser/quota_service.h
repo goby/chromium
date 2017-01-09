@@ -14,24 +14,28 @@
 #ifndef EXTENSIONS_BROWSER_QUOTA_SERVICE_H_
 #define EXTENSIONS_BROWSER_QUOTA_SERVICE_H_
 
+#include <stdint.h>
+
 #include <list>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/containers/hash_tables.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
+#include "extensions/common/extension_id.h"
 
 class ExtensionFunction;
 
 namespace extensions {
 class QuotaLimitHeuristic;
 
-typedef std::list<QuotaLimitHeuristic*> QuotaLimitHeuristics;
+using QuotaLimitHeuristics = std::list<std::unique_ptr<QuotaLimitHeuristic>>;
 
 // The QuotaService takes care that calls to certain extension
 // functions do not exceed predefined quotas.
@@ -58,17 +62,26 @@ class QuotaService : public base::NonThreadSafe {
                      const base::ListValue* args,
                      const base::TimeTicks& event_time);
 
+  // An active ScopedDisablePurgeForTesting prevents QuotaService's constructor
+  // from starting a purge timer.
+  class ScopedDisablePurgeForTesting {
+   public:
+    ScopedDisablePurgeForTesting();
+    ~ScopedDisablePurgeForTesting();
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(ScopedDisablePurgeForTesting);
+  };
+
  private:
-  typedef std::string ExtensionId;
-  typedef std::string FunctionName;
+  using FunctionName = std::string;
   // All QuotaLimitHeuristic instances in this map are owned by us.
-  typedef std::map<FunctionName, QuotaLimitHeuristics> FunctionHeuristicsMap;
+  using FunctionHeuristicsMap = std::map<FunctionName, QuotaLimitHeuristics>;
 
   // Purge resets all accumulated data as if the service was just created.
   // Called periodically so we don't consume an unbounded amount of memory
   // while tracking quota.
   void Purge();
-  void PurgeFunctionHeuristicsMap(FunctionHeuristicsMap* map);
   base::RepeatingTimer purge_timer_;
 
   // Our quota tracking state for extensions that have invoked quota limited
@@ -92,7 +105,7 @@ class QuotaLimitHeuristic {
   struct Config {
     // The maximum number of tokens a bucket can contain, and is refilled to
     // every epoch.
-    int64 refill_token_count;
+    int64_t refill_token_count;
 
     // Specifies how frequently the bucket is logically refilled with tokens.
     base::TimeDelta refill_interval;
@@ -126,10 +139,10 @@ class QuotaLimitHeuristic {
 
    private:
     base::TimeTicks expiration_;
-    int64 num_tokens_;
+    int64_t num_tokens_;
     DISALLOW_COPY_AND_ASSIGN(Bucket);
   };
-  typedef std::list<Bucket*> BucketList;
+  using BucketList = std::list<Bucket*>;
 
   // A helper interface to retrieve the bucket corresponding to |args| from
   // the set of buckets (which is typically stored in the BucketMapper itself)
@@ -189,7 +202,7 @@ class QuotaLimitHeuristic {
   const Config config_;
 
   // The mapper used in Map. Cannot be NULL.
-  scoped_ptr<BucketMapper> bucket_mapper_;
+  std::unique_ptr<BucketMapper> bucket_mapper_;
 
   // The name of the heuristic for formatting error messages.
   std::string name_;

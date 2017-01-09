@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/memory/ref_counted.h"
 #include "base/strings/stringprintf.h"
 #include "extensions/browser/api/dns/host_resolver_wrapper.h"
@@ -24,7 +26,8 @@ const std::string kHostname = "127.0.0.1";
 class SocketsTcpApiTest : public ShellApiTest {
  public:
   SocketsTcpApiTest()
-      : resolver_event_(true, false),
+      : resolver_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED),
         resolver_creator_(new MockHostResolverCreator()) {}
 
   void SetUpOnMainThread() override {
@@ -58,22 +61,24 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketsTcpCreateGood) {
   socket_create_function->set_extension(empty_extension.get());
   socket_create_function->set_has_callback(true);
 
-  scoped_ptr<base::Value> result(
+  std::unique_ptr<base::Value> result(
       api_test_utils::RunFunctionAndReturnSingleResult(
           socket_create_function.get(), "[]", browser_context()));
 
-  ASSERT_EQ(base::Value::TYPE_DICTIONARY, result->GetType());
-  scoped_ptr<base::DictionaryValue> value =
-      base::DictionaryValue::From(result.Pass());
+  ASSERT_EQ(base::Value::Type::DICTIONARY, result->GetType());
+  std::unique_ptr<base::DictionaryValue> value =
+      base::DictionaryValue::From(std::move(result));
   int socketId = -1;
   EXPECT_TRUE(value->GetInteger("socketId", &socketId));
   ASSERT_TRUE(socketId > 0);
 }
 
 IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
-  scoped_ptr<net::SpawnedTestServer> test_server(new net::SpawnedTestServer(
-      net::SpawnedTestServer::TYPE_TCP_ECHO, net::SpawnedTestServer::kLocalhost,
-      base::FilePath(FILE_PATH_LITERAL("net/data"))));
+  std::unique_ptr<net::SpawnedTestServer> test_server(
+      new net::SpawnedTestServer(
+          net::SpawnedTestServer::TYPE_TCP_ECHO,
+          net::SpawnedTestServer::kLocalhost,
+          base::FilePath(FILE_PATH_LITERAL("net/data"))));
   EXPECT_TRUE(test_server->Start());
 
   net::HostPortPair host_port_pair = test_server->host_port_pair();
@@ -97,7 +102,7 @@ IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtension) {
 }
 
 IN_PROC_BROWSER_TEST_F(SocketsTcpApiTest, SocketTcpExtensionTLS) {
-  scoped_ptr<net::SpawnedTestServer> test_https_server(
+  std::unique_ptr<net::SpawnedTestServer> test_https_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_HTTPS, net::BaseTestServer::SSLOptions(),
           base::FilePath(FILE_PATH_LITERAL("net/data"))));

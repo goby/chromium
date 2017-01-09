@@ -4,18 +4,17 @@
 
 #include "ui/base/ime/input_method_factory.h"
 
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "ui/base/ime/mock_input_method.h"
 
 #if defined(OS_CHROMEOS)
 #include "ui/base/ime/input_method_chromeos.h"
 #elif defined(OS_WIN)
-#include "base/win/metro.h"
 #include "ui/base/ime/input_method_win.h"
-#include "ui/base/ime/remote_input_method_win.h"
 #elif defined(OS_MACOSX)
 #include "ui/base/ime/input_method_mac.h"
-#elif defined(USE_AURA) && defined(OS_LINUX) && defined(USE_X11) && \
-      !defined(OS_CHROMEOS)
+#elif defined(USE_AURA) && defined(OS_LINUX) && defined(USE_X11)
 #include "ui/base/ime/input_method_auralinux.h"
 #elif defined(OS_ANDROID)
 #include "ui/base/ime/input_method_android.h"
@@ -35,7 +34,7 @@ bool g_create_input_method_called = false;
 
 namespace ui {
 
-scoped_ptr<InputMethod> CreateInputMethod(
+std::unique_ptr<InputMethod> CreateInputMethod(
     internal::InputMethodDelegate* delegate,
     gfx::AcceleratedWidget widget) {
   if (!g_create_input_method_called)
@@ -44,27 +43,24 @@ scoped_ptr<InputMethod> CreateInputMethod(
   if (g_input_method_for_testing) {
     ui::InputMethod* ret = g_input_method_for_testing;
     g_input_method_for_testing = nullptr;
-    return make_scoped_ptr(ret);
+    return base::WrapUnique(ret);
   }
 
   if (g_input_method_set_for_testing)
-    return make_scoped_ptr(new MockInputMethod(delegate));
+    return base::MakeUnique<MockInputMethod>(delegate);
 
 #if defined(OS_CHROMEOS)
-  return make_scoped_ptr(new InputMethodChromeOS(delegate));
+  return base::MakeUnique<InputMethodChromeOS>(delegate);
 #elif defined(OS_WIN)
-  if (IsRemoteInputMethodWinRequired(widget))
-    return CreateRemoteInputMethodWin(delegate);
-  return make_scoped_ptr(new InputMethodWin(delegate, widget));
+  return base::MakeUnique<InputMethodWin>(delegate, widget);
 #elif defined(OS_MACOSX)
-  return make_scoped_ptr(new InputMethodMac(delegate));
-#elif defined(USE_AURA) && defined(OS_LINUX) && defined(USE_X11) && \
-      !defined(OS_CHROMEOS)
-  return make_scoped_ptr(new InputMethodAuraLinux(delegate));
+  return base::MakeUnique<InputMethodMac>(delegate);
+#elif defined(USE_AURA) && defined(OS_LINUX) && defined(USE_X11)
+  return base::MakeUnique<InputMethodAuraLinux>(delegate);
 #elif defined(OS_ANDROID)
-  return make_scoped_ptr(new InputMethodAndroid(delegate));
+  return base::MakeUnique<InputMethodAndroid>(delegate);
 #else
-  return make_scoped_ptr(new InputMethodMinimal(delegate));
+  return base::MakeUnique<InputMethodMinimal>(delegate);
 #endif
 }
 

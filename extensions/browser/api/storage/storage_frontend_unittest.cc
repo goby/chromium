@@ -2,22 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "extensions/browser/api/storage/storage_frontend.h"
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/browser/api/extensions_api_client.h"
-#include "extensions/browser/api/storage/leveldb_settings_storage_factory.h"
 #include "extensions/browser/api/storage/settings_namespace.h"
 #include "extensions/browser/api/storage/settings_test_util.h"
-#include "extensions/browser/api/storage/storage_frontend.h"
 #include "extensions/browser/extensions_test.h"
 #include "extensions/browser/value_store/value_store.h"
+#include "extensions/browser/value_store/value_store_factory_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using content::BrowserThread;
@@ -40,33 +43,32 @@ const ValueStore::WriteOptions DEFAULTS = ValueStore::DEFAULTS;
 class ExtensionSettingsFrontendTest : public ExtensionsTest {
  public:
   ExtensionSettingsFrontendTest()
-      : storage_factory_(new util::ScopedSettingsStorageFactory()),
-        ui_thread_(BrowserThread::UI, base::MessageLoop::current()),
+      : ui_thread_(BrowserThread::UI, base::MessageLoop::current()),
         file_thread_(BrowserThread::FILE, base::MessageLoop::current()) {}
 
   void SetUp() override {
     ExtensionsTest::SetUp();
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
+    storage_factory_ = new ValueStoreFactoryImpl(temp_dir_.GetPath());
     ResetFrontend();
   }
 
   void TearDown() override {
     frontend_.reset();
     // Execute any pending deletion tasks.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     ExtensionsTest::TearDown();
   }
 
  protected:
   void ResetFrontend() {
-    storage_factory_->Reset(new LeveldbSettingsStorageFactory());
-    frontend_ = StorageFrontend::CreateForTesting(storage_factory_,
-                                                  browser_context()).Pass();
+    frontend_ =
+        StorageFrontend::CreateForTesting(storage_factory_, browser_context());
   }
 
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<StorageFrontend> frontend_;
-  scoped_refptr<util::ScopedSettingsStorageFactory> storage_factory_;
+  std::unique_ptr<StorageFrontend> frontend_;
+  scoped_refptr<ValueStoreFactoryImpl> storage_factory_;
 
  private:
   base::MessageLoop message_loop_;
@@ -138,7 +140,7 @@ TEST_F(ExtensionSettingsFrontendTest, SettingsClearedOnUninstall) {
 
   // This would be triggered by extension uninstall via a DataDeleter.
   frontend_->DeleteStorageSoon(id);
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // The storage area may no longer be valid post-uninstall, so re-request.
   storage = util::GetStorage(extension, settings::LOCAL, frontend_.get());
@@ -161,7 +163,7 @@ TEST_F(ExtensionSettingsFrontendTest, LeveldbDatabaseDeletedFromDiskOnClear) {
     base::StringValue bar("bar");
     ValueStore::WriteResult result = storage->Set(DEFAULTS, "foo", bar);
     ASSERT_TRUE(result->status().ok());
-    EXPECT_TRUE(base::PathExists(temp_dir_.path()));
+    EXPECT_TRUE(base::PathExists(temp_dir_.GetPath()));
   }
 
   // Should need to both clear the database and delete the frontend for the
@@ -169,15 +171,15 @@ TEST_F(ExtensionSettingsFrontendTest, LeveldbDatabaseDeletedFromDiskOnClear) {
   {
     ValueStore::WriteResult result = storage->Clear();
     ASSERT_TRUE(result->status().ok());
-    EXPECT_TRUE(base::PathExists(temp_dir_.path()));
+    EXPECT_TRUE(base::PathExists(temp_dir_.GetPath()));
   }
 
   frontend_.reset();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   // TODO(kalman): Figure out why this fails, despite appearing to work.
   // Leaving this commented out rather than disabling the whole test so that the
   // deletion code paths are at least exercised.
-  //EXPECT_FALSE(base::PathExists(temp_dir_.path()));
+  // EXPECT_FALSE(base::PathExists(temp_dir_.GetPath()));
 }
 
 // Disabled (slow), http://crbug.com/322751 .
@@ -193,7 +195,7 @@ TEST_F(ExtensionSettingsFrontendTest,
       util::GetStorage(extension, settings::LOCAL, frontend_.get());
 
   // Sync storage should run out after ~100K.
-  scoped_ptr<base::Value> kilobyte = util::CreateKilobyte();
+  std::unique_ptr<base::Value> kilobyte = util::CreateKilobyte();
   for (int i = 0; i < 100; ++i) {
     sync_storage->Set(DEFAULTS, base::IntToString(i), *kilobyte);
   }
@@ -210,7 +212,7 @@ TEST_F(ExtensionSettingsFrontendTest,
       local_storage->Set(DEFAULTS, "WontError", *kilobyte)->status().ok());
 
   // Local storage should run out after ~5MB.
-  scoped_ptr<base::Value> megabyte = util::CreateMegabyte();
+  std::unique_ptr<base::Value> megabyte = util::CreateMegabyte();
   for (int i = 0; i < 5; ++i) {
     local_storage->Set(DEFAULTS, base::IntToString(i), *megabyte);
   }

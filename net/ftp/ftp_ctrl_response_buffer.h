@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-
 #ifndef NET_FTP_FTP_CTRL_RESPONSE_BUFFER_H_
 #define NET_FTP_FTP_CTRL_RESPONSE_BUFFER_H_
 
@@ -10,9 +9,9 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "net/base/net_export.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 
 namespace net {
 
@@ -20,6 +19,7 @@ struct NET_EXPORT_PRIVATE FtpCtrlResponse {
   static const int kInvalidStatusCode;
 
   FtpCtrlResponse();
+  FtpCtrlResponse(const FtpCtrlResponse& other);
   ~FtpCtrlResponse();
 
   int status_code;                 // Three-digit status code.
@@ -28,7 +28,7 @@ struct NET_EXPORT_PRIVATE FtpCtrlResponse {
 
 class NET_EXPORT_PRIVATE FtpCtrlResponseBuffer {
  public:
-  FtpCtrlResponseBuffer(const BoundNetLog& net_log);
+  FtpCtrlResponseBuffer(const NetLogWithSource& net_log);
   ~FtpCtrlResponseBuffer();
 
   // Called when data is received from the control socket. Returns error code.
@@ -45,6 +45,7 @@ class NET_EXPORT_PRIVATE FtpCtrlResponseBuffer {
  private:
   struct ParsedLine {
     ParsedLine();
+    ParsedLine(const ParsedLine& other);
 
     // Indicates that this line begins with a valid 3-digit status code.
     bool has_status_code;
@@ -91,7 +92,7 @@ class NET_EXPORT_PRIVATE FtpCtrlResponseBuffer {
   // As we read full responses (possibly multiline), we add them to the queue.
   std::queue<FtpCtrlResponse> responses_;
 
-  BoundNetLog net_log_;
+  NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(FtpCtrlResponseBuffer);
 };

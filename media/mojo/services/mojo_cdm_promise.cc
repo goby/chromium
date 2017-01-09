@@ -5,27 +5,25 @@
 #include "media/mojo/services/mojo_cdm_promise.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/logging.h"
 #include "media/base/decryptor.h"
-#include "media/base/media_keys.h"
 
 namespace media {
 
-static interfaces::CdmPromiseResultPtr GetRejectResult(
-    MediaKeys::Exception exception,
+static mojom::CdmPromiseResultPtr GetRejectResult(
+    CdmPromise::Exception exception,
     uint32_t system_code,
     const std::string& error_message) {
-  interfaces::CdmPromiseResultPtr cdm_promise_result(
-      interfaces::CdmPromiseResult::New());
+  mojom::CdmPromiseResultPtr cdm_promise_result(mojom::CdmPromiseResult::New());
   cdm_promise_result->success = false;
-  cdm_promise_result->exception =
-      static_cast<interfaces::CdmException>(exception);
+  cdm_promise_result->exception = exception;
   cdm_promise_result->system_code = system_code;
   cdm_promise_result->error_message = error_message;
-  return cdm_promise_result.Pass();
+  return cdm_promise_result;
 }
 
 template <typename... T>
@@ -36,31 +34,29 @@ MojoCdmPromise<T...>::MojoCdmPromise(const CallbackType& callback)
 
 template <typename... T>
 MojoCdmPromise<T...>::~MojoCdmPromise() {
-  if (!callback_.is_null())
-    DVLOG(1) << "Promise not resolved before destruction.";
+  if (IsPromiseSettled())
+    return;
+
+  DCHECK(!callback_.is_null());
+  RejectPromiseOnDestruction();
 }
 
 template <typename... T>
 void MojoCdmPromise<T...>::resolve(const T&... result) {
   MarkPromiseSettled();
-  interfaces::CdmPromiseResultPtr cdm_promise_result(
-      interfaces::CdmPromiseResult::New());
+  mojom::CdmPromiseResultPtr cdm_promise_result(mojom::CdmPromiseResult::New());
   cdm_promise_result->success = true;
-  callback_.Run(
-      cdm_promise_result.Pass(),
-      mojo::TypeConverter<typename MojoTypeTrait<T>::MojoType, T>::Convert(
-          result)...);
-  callback_.reset();
+  callback_.Run(std::move(cdm_promise_result), result...);
+  callback_.Reset();
 }
 
 template <typename... T>
-void MojoCdmPromise<T...>::reject(MediaKeys::Exception exception,
+void MojoCdmPromise<T...>::reject(CdmPromise::Exception exception,
                                   uint32_t system_code,
                                   const std::string& error_message) {
   MarkPromiseSettled();
-  callback_.Run(GetRejectResult(exception, system_code, error_message),
-                MojoTypeTrait<T>::DefaultValue()...);
-  callback_.reset();
+  callback_.Run(GetRejectResult(exception, system_code, error_message), T()...);
+  callback_.Reset();
 }
 
 template class MojoCdmPromise<>;

@@ -6,17 +6,20 @@
 #define CONTENT_BROWSER_NOTIFICATIONS_PLATFORM_NOTIFICATION_CONTEXT_IMPL_H_
 
 #include <stdint.h>
-#include <set>
 #include <string>
+#include <vector>
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "content/browser/notifications/notification_id_generator.h"
 #include "content/browser/service_worker/service_worker_context_observer.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/platform_notification_context.h"
+#include "third_party/WebKit/public/platform/modules/notifications/notification_service.mojom.h"
 
 class GURL;
 
@@ -26,9 +29,11 @@ class SequencedTaskRunner;
 
 namespace content {
 
+class BlinkNotificationServiceImpl;
 class BrowserContext;
 class NotificationDatabase;
 struct NotificationDatabaseData;
+class ResourceContext;
 class ServiceWorkerContextWrapper;
 
 // Implementation of the Web Notification storage context. The public methods
@@ -53,14 +58,30 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   // To be called on the UI thread when the context is being shut down.
   void Shutdown();
 
+  // Creates a BlinkNotificationServiceImpl that is owned by this context. Must
+  // be called on the UI thread, although the service will be created on and
+  // bound to the IO thread.
+  void CreateService(
+      int render_process_id,
+      mojo::InterfaceRequest<blink::mojom::NotificationService> request);
+
+  // Removes |service| from the list of owned services, for example because the
+  // Mojo pipe disconnected. Must be called on the IO thread.
+  void RemoveService(BlinkNotificationServiceImpl* service);
+
+  // Returns the notification Id generator owned by the context.
+  NotificationIdGenerator* notification_id_generator() {
+    return &notification_id_generator_;
+  }
+
   // PlatformNotificationContext implementation.
-  void ReadNotificationData(int64_t notification_id,
+  void ReadNotificationData(const std::string& notification_id,
                             const GURL& origin,
                             const ReadResultCallback& callback) override;
   void WriteNotificationData(const GURL& origin,
                              const NotificationDatabaseData& database_data,
                              const WriteResultCallback& callback) override;
-  void DeleteNotificationData(int64_t notification_id,
+  void DeleteNotificationData(const std::string& notification_id,
                               const GURL& origin,
                               const DeleteResultCallback& callback) override;
   void ReadAllNotificationDataForServiceWorkerRegistration(
@@ -80,6 +101,10 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
 
   void InitializeOnIO();
   void ShutdownOnIO();
+  void CreateServiceOnIO(
+      int render_process_id,
+      ResourceContext* resource_context,
+      mojo::InterfaceRequest<blink::mojom::NotificationService> request);
 
   // Initializes the database if neccesary. Must be called on the IO thread.
   // |success_closure| will be invoked on a the |task_runner_| thread when
@@ -97,7 +122,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   // Actually reads the notification data from the database. Must only be
   // called on the |task_runner_| thread. |callback| will be invoked on the
   // IO thread when the operation has completed.
-  void DoReadNotificationData(int64_t notification_id,
+  void DoReadNotificationData(const std::string& notification_id,
                               const GURL& origin,
                               const ReadResultCallback& callback);
 
@@ -119,7 +144,7 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   // Actually deletes the notification information from the database. Must only
   // be called on the |task_runner_| thread. |callback| will be invoked on the
   // IO thread when the operation has completed.
-  void DoDeleteNotificationData(int64_t notification_id,
+  void DoDeleteNotificationData(const std::string& notification_id,
                                 const GURL& origin,
                                 const DeleteResultCallback& callback);
 
@@ -147,10 +172,16 @@ class CONTENT_EXPORT PlatformNotificationContextImpl
   scoped_refptr<ServiceWorkerContextWrapper> service_worker_context_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  scoped_ptr<NotificationDatabase> database_;
+  std::unique_ptr<NotificationDatabase> database_;
+
+  NotificationIdGenerator notification_id_generator_;
 
   // Indicates whether the database should be pruned when it's opened.
   bool prune_database_on_open_ = false;
+
+  // The notification services are owned by the platform context, and will be
+  // removed when either this class is destroyed or the Mojo pipe disconnects.
+  std::vector<std::unique_ptr<BlinkNotificationServiceImpl>> services_;
 
   DISALLOW_COPY_AND_ASSIGN(PlatformNotificationContextImpl);
 };

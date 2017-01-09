@@ -5,20 +5,21 @@
 #ifndef CHROME_BROWSER_SYNC_TEST_INTEGRATION_RETRY_VERIFIER_H_
 #define CHROME_BROWSER_SYNC_TEST_INTEGRATION_RETRY_VERIFIER_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 
 namespace syncer {
-namespace sessions {
-class SyncSessionSnapshot;
-}  // namespace sessions
+class SyncCycleSnapshot;
 }  // namespace syncer
 
 // The minimum and maximum wait times for a retry. The actual retry would take
 // place somewhere in this range. The algorithm that calculates the retry wait
 // time uses rand functions.
 struct DelayInfo {
-  int64 min_delay;
-  int64 max_delay;
+  int64_t min_delay;
+  int64_t max_delay;
 };
 
 // Class to verify retries take place using the exponential backoff algorithm.
@@ -31,9 +32,8 @@ class RetryVerifier {
 
   // Initialize with the current sync session snapshot. Using the snapshot
   // we will figure out when the first retry sync happened.
-  void Initialize(const syncer::sessions::SyncSessionSnapshot& snap);
-  void VerifyRetryInterval(
-      const syncer::sessions::SyncSessionSnapshot& snap);
+  void Initialize(const syncer::SyncCycleSnapshot& snap);
+  void VerifyRetryInterval(const syncer::SyncCycleSnapshot& snap);
   bool done() const { return done_; }
   bool Succeeded() const { return done() && success_; }
 

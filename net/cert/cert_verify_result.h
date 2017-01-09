@@ -10,6 +10,7 @@
 #include "base/memory/ref_counted.h"
 #include "net/base/net_export.h"
 #include "net/cert/cert_status_flags.h"
+#include "net/cert/ocsp_verify_result.h"
 #include "net/cert/x509_cert_types.h"
 
 namespace net {
@@ -20,14 +21,12 @@ class X509Certificate;
 class NET_EXPORT CertVerifyResult {
  public:
   CertVerifyResult();
+  CertVerifyResult(const CertVerifyResult& other);
   ~CertVerifyResult();
 
   void Reset();
 
-  // Copies from |other| to |this|.
-  void CopyFrom(const CertVerifyResult& other) {
-    *this = other;
-  }
+  bool operator==(const CertVerifyResult& other) const;
 
   // The certificate and chain that was constructed during verification.
   // Note that the though the verified certificate will match the originally
@@ -37,7 +36,7 @@ class NET_EXPORT CertVerifyResult {
   // running within the sandbox.
   scoped_refptr<X509Certificate> verified_cert;
 
-  // Bitmask of CERT_STATUS_* from net/base/cert_status_flags.h. Note that
+  // Bitmask of CERT_STATUS_* from net/cert/cert_status_flags.h. Note that
   // these status flags apply to the certificate chain returned in
   // |verified_cert|, rather than the originally supplied certificate
   // chain.
@@ -68,6 +67,9 @@ class NET_EXPORT CertVerifyResult {
   // True if a fallback to the common name was used when matching the host
   // name, rather than using the subjectAltName.
   bool common_name_fallback_used;
+
+  // Verification of stapled OCSP response, if present.
+  OCSPVerifyResult ocsp_result;
 };
 
 }  // namespace net

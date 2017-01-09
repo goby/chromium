@@ -4,10 +4,13 @@
 
 #include "content/renderer/pepper/plugin_object.h"
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "content/renderer/pepper/pepper_plugin_instance_impl.h"
@@ -74,6 +77,13 @@ PP_Var PluginObject::Create(PepperPluginInstanceImpl* instance,
   V8VarConverter var_converter(instance->pp_instance(),
                                V8VarConverter::kAllowObjectVars);
   PepperTryCatchVar try_catch(instance, &var_converter, NULL);
+  // If the V8 context is empty, we may be in the process of tearing down the
+  // frame and may not have a valid isolate (in particular due to re-entrancy).
+  // We shouldn't try to call gin::CreateHandle.
+  if (try_catch.GetContext().IsEmpty()) {
+    ppp_class->Deallocate(ppp_class_data);
+    return PP_MakeUndefined();
+  }
   gin::Handle<PluginObject> object =
       gin::CreateHandle(instance->GetIsolate(),
                         new PluginObject(instance, ppp_class, ppp_class_data));
@@ -85,6 +95,12 @@ PP_Var PluginObject::Create(PepperPluginInstanceImpl* instance,
 v8::Local<v8::Value> PluginObject::GetNamedProperty(
     v8::Isolate* isolate,
     const std::string& identifier) {
+  if (!instance_) {
+    std::string error = "Property " + identifier + " does not exist.";
+    isolate->ThrowException(
+        v8::Exception::ReferenceError(gin::StringToV8(isolate, error)));
+    return v8::Local<v8::Value>();
+  }
   ScopedPPVar identifier_var(ScopedPPVar::PassRef(),
                              StringVar::StringToPPVar(identifier));
   return GetPropertyOrMethod(instance_->GetIsolate(), identifier_var.get());
@@ -93,8 +109,12 @@ v8::Local<v8::Value> PluginObject::GetNamedProperty(
 bool PluginObject::SetNamedProperty(v8::Isolate* isolate,
                                     const std::string& identifier,
                                     v8::Local<v8::Value> value) {
-  if (!instance_)
+  if (!instance_) {
+    std::string error = "Property " + identifier + " does not exist.";
+    isolate->ThrowException(
+        v8::Exception::ReferenceError(gin::StringToV8(isolate, error)));
     return false;
+  }
   ScopedPPVar identifier_var(ScopedPPVar::PassRef(),
                              StringVar::StringToPPVar(identifier));
   V8VarConverter var_converter(instance_->pp_instance(),
@@ -127,8 +147,12 @@ bool PluginObject::SetNamedProperty(v8::Isolate* isolate,
 std::vector<std::string> PluginObject::EnumerateNamedProperties(
     v8::Isolate* isolate) {
   std::vector<std::string> result;
-  if (!instance_)
+  if (!instance_) {
+    std::string error = "Plugin object deleted";
+    isolate->ThrowException(
+        v8::Exception::ReferenceError(gin::StringToV8(isolate, error)));
     return result;
+  }
 
   V8VarConverter var_converter(instance_->pp_instance(),
                                V8VarConverter::kAllowObjectVars);

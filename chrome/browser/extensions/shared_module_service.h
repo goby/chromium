@@ -7,7 +7,9 @@
 
 #include <list>
 
+#include "base/macros.h"
 #include "base/scoped_observer.h"
+#include "chrome/browser/extensions/install_gate.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/common/manifest_handlers/shared_module_info.h"
 
@@ -20,7 +22,8 @@ class Extension;
 class ExtensionSet;
 class ExtensionRegistry;
 
-class SharedModuleService : public ExtensionRegistryObserver {
+class SharedModuleService : public ExtensionRegistryObserver,
+                            public InstallGate {
  public:
   enum ImportStatus {
     // No imports needed.
@@ -52,7 +55,12 @@ class SharedModuleService : public ExtensionRegistryObserver {
   ImportStatus SatisfyImports(const Extension* extension);
 
   // Returns a set of extensions that import a given extension.
-  scoped_ptr<ExtensionSet> GetDependentExtensions(const Extension* extension);
+  std::unique_ptr<ExtensionSet> GetDependentExtensions(
+      const Extension* extension);
+
+  // InstallGate:
+  Action ShouldDelay(const Extension* extension,
+                     bool install_immediately) override;
 
  private:
   // Uninstall shared modules which are not used by other extensions.

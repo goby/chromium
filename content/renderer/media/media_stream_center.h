@@ -7,15 +7,13 @@
 
 #include <map>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/common/media/media_stream_options.h"
-#include "content/public/renderer/render_process_observer.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamCenter.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrackSourcesRequest.h"
 
 namespace blink {
 class WebAudioSourceProvider;
@@ -28,6 +26,8 @@ class PeerConnectionDependencyFactory;
 class CONTENT_EXPORT MediaStreamCenter
     : NON_EXPORTED_BASE(public blink::WebMediaStreamCenter) {
  public:
+  // TODO(miu): Remove these constructor args. They are no longer used.
+  // http://crbug.com/577874
   MediaStreamCenter(blink::WebMediaStreamCenterClient* client,
                     PeerConnectionDependencyFactory* factory);
   ~MediaStreamCenter() override;
@@ -58,10 +58,6 @@ class CONTENT_EXPORT MediaStreamCenter
   bool didRemoveMediaStreamTrack(
       const blink::WebMediaStream& stream,
       const blink::WebMediaStreamTrack& track) override;
-
-  // |rtc_factory_| is a weak pointer and is owned by the RenderThreadImpl.
-  // It is valid as long as  RenderThreadImpl exist.
-  PeerConnectionDependencyFactory* rtc_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamCenter);
 };

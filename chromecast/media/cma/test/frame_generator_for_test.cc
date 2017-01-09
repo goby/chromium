@@ -4,6 +4,10 @@
 
 #include "chromecast/media/cma/test/frame_generator_for_test.h"
 
+#include <stdint.h>
+#include <utility>
+
+#include "base/macros.h"
 #include "chromecast/media/cma/base/decoder_buffer_adapter.h"
 #include "chromecast/media/cma/base/decoder_buffer_base.h"
 #include "media/base/decoder_buffer.h"
@@ -65,8 +69,8 @@ scoped_refptr<DecoderBufferBase> FrameGeneratorForTest::Generate() {
 
   // Generate the decrypt configuration.
   if (frame_spec.has_decrypt_config) {
-    uint32 frame_size = buffer->data_size();
-    uint32 chunk_size = 1;
+    uint32_t frame_size = buffer->data_size();
+    uint32_t chunk_size = 1;
     std::vector< ::media::SubsampleEntry> subsamples;
     while (frame_size > 0) {
       ::media::SubsampleEntry subsample;
@@ -93,12 +97,10 @@ scoped_refptr<DecoderBufferBase> FrameGeneratorForTest::Generate() {
       0x0, 0x2, 0x1, 0x3, 0x5, 0x4, 0x7, 0x6,
       0x9, 0x8, 0xb, 0xa, 0xd, 0xc, 0xf, 0xe };
 
-    scoped_ptr< ::media::DecryptConfig> decrypt_config(
-        new ::media::DecryptConfig(
-            std::string(key_id, arraysize(key_id)),
-            std::string(iv, arraysize(iv)),
-            subsamples));
-    buffer->set_decrypt_config(decrypt_config.Pass());
+    std::unique_ptr<::media::DecryptConfig> decrypt_config(
+        new ::media::DecryptConfig(std::string(key_id, arraysize(key_id)),
+                                   std::string(iv, arraysize(iv)), subsamples));
+    buffer->set_decrypt_config(std::move(decrypt_config));
   }
 
   return scoped_refptr<DecoderBufferBase>(new DecoderBufferAdapter(buffer));

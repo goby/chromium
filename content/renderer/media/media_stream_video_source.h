@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/threading/non_thread_safe.h"
@@ -16,8 +17,9 @@
 #include "content/common/media/video_capture.h"
 #include "content/public/renderer/media_stream_video_sink.h"
 #include "content/renderer/media/media_stream_source.h"
-#include "media/base/video_capture_types.h"
+#include "content/renderer/media/secure_display_link_tracker.h"
 #include "media/base/video_frame.h"
+#include "media/capture/video_capture_types.h"
 #include "third_party/WebKit/public/platform/WebMediaConstraints.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
@@ -45,17 +47,6 @@ class CONTENT_EXPORT MediaStreamVideoSource
     : public MediaStreamSource,
       NON_EXPORTED_BASE(public base::NonThreadSafe) {
  public:
-  // Constraint keys used by a video source.
-  // Specified by draft-alvestrand-constraints-resolution-00b
-  static const char kMinAspectRatio[];  // minAspectRatio
-  static const char kMaxAspectRatio[];  // maxAspectRatio
-  static const char kMaxWidth[];  // maxWidth
-  static const char kMinWidth[];  // minWidth
-  static const char kMaxHeight[];  // maxHeight
-  static const char kMinHeight[];  // minHeight
-  static const char kMaxFrameRate[];  // maxFrameRate
-  static const char kMinFrameRate[];  // minFrameRate
-
   enum {
     // Default resolution. If no constraints are specified and the delegate
     // support it, this is the resolution that will be used.
@@ -80,11 +71,23 @@ class CONTENT_EXPORT MediaStreamVideoSource
                 const ConstraintsCallback& callback);
   void RemoveTrack(MediaStreamVideoTrack* track);
 
-  // Return true if |name| is a constraint supported by MediaStreamVideoSource.
-  static bool IsConstraintSupported(const std::string& name);
+  // Called by |track| to notify the source whether it has any paths to a
+  // consuming endpoint.
+  void UpdateHasConsumers(MediaStreamVideoTrack* track, bool has_consumers);
+
+  void UpdateCapturingLinkSecure(MediaStreamVideoTrack* track, bool is_secure);
+
+  // Request underlying source to capture a new frame.
+  virtual void RequestRefreshFrame() {}
 
   // Returns the task runner where video frames will be delivered on.
   base::SingleThreadTaskRunner* io_task_runner() const;
+
+  const media::VideoCaptureFormat* GetCurrentFormat() const;
+
+  base::WeakPtr<MediaStreamVideoSource> GetWeakPtr() {
+    return weak_factory_.GetWeakPtr();
+  }
 
  protected:
   void DoStopSource() override;
@@ -123,6 +126,16 @@ class CONTENT_EXPORT MediaStreamVideoSource
   // call OnSupportedFormats after this method has been called. After this
   // method has been called, MediaStreamVideoSource may be deleted.
   virtual void StopSourceImpl() = 0;
+
+  // Optionally overridden by subclasses to act on whether there are any
+  // consumers present. When none are present, the source can stop delivering
+  // frames, giving it the option of running in an "idle" state to minimize
+  // resource usage.
+  virtual void OnHasConsumers(bool has_consumers) {}
+
+  // Optionally overridden by subclasses to act on whether the capturing link
+  // has become secure or insecure.
+  virtual void OnCapturingLinkSecured(bool is_secure) {}
 
   enum State {
     NEW,
@@ -163,6 +176,7 @@ class CONTENT_EXPORT MediaStreamVideoSource
                     const VideoCaptureDeliverFrameCB& frame_callback,
                     const blink::WebMediaConstraints& constraints,
                     const ConstraintsCallback& callback);
+    TrackDescriptor(const TrackDescriptor& other);
     ~TrackDescriptor();
 
     MediaStreamVideoTrack* track;
@@ -179,6 +193,13 @@ class CONTENT_EXPORT MediaStreamVideoSource
 
   // Tracks that currently are connected to this source.
   std::vector<MediaStreamVideoTrack*> tracks_;
+
+  // Tracks that have no paths to a consuming endpoint, and so do not need
+  // frames delivered from the source. This is a subset of |tracks_|.
+  std::vector<MediaStreamVideoTrack*> suspended_tracks_;
+
+  // This is used for tracking if all connected video sinks are secure.
+  SecureDisplayLinkTracker<MediaStreamVideoTrack> secure_tracker_;
 
   // NOTE: Weak pointers must be invalidated before all other member variables.
   base::WeakPtrFactory<MediaStreamVideoSource> weak_factory_;

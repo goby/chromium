@@ -4,8 +4,11 @@
 
 #include "chrome/browser/media_galleries/fileapi/itunes_file_util.h"
 
+#include <stddef.h>
+
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind_helpers.h"
@@ -66,14 +69,14 @@ ITunesFileUtil::~ITunesFileUtil() {
 }
 
 void ITunesFileUtil::GetFileInfoOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const GetFileInfoCallback& callback) {
   ITunesDataProvider* data_provider = GetDataProvider();
   // |data_provider| may be NULL if the file system was revoked before this
   // operation had a chance to run.
   if (!data_provider) {
-    GetFileInfoWithFreshDataProvider(context.Pass(), url, callback, false);
+    GetFileInfoWithFreshDataProvider(std::move(context), url, callback, false);
   } else {
     data_provider->RefreshData(
         base::Bind(&ITunesFileUtil::GetFileInfoWithFreshDataProvider,
@@ -83,14 +86,15 @@ void ITunesFileUtil::GetFileInfoOnTaskRunnerThread(
 }
 
 void ITunesFileUtil::ReadDirectoryOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const ReadDirectoryCallback& callback) {
   ITunesDataProvider* data_provider = GetDataProvider();
   // |data_provider| may be NULL if the file system was revoked before this
   // operation had a chance to run.
   if (!data_provider) {
-    ReadDirectoryWithFreshDataProvider(context.Pass(), url, callback, false);
+    ReadDirectoryWithFreshDataProvider(std::move(context), url, callback,
+                                       false);
   } else {
     data_provider->RefreshData(
         base::Bind(&ITunesFileUtil::ReadDirectoryWithFreshDataProvider,
@@ -100,14 +104,14 @@ void ITunesFileUtil::ReadDirectoryOnTaskRunnerThread(
 }
 
 void ITunesFileUtil::CreateSnapshotFileOnTaskRunnerThread(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const CreateSnapshotFileCallback& callback) {
   ITunesDataProvider* data_provider = GetDataProvider();
   // |data_provider| may be NULL if the file system was revoked before this
   // operation had a chance to run.
   if (!data_provider) {
-    CreateSnapshotFileWithFreshDataProvider(context.Pass(), url, callback,
+    CreateSnapshotFileWithFreshDataProvider(std::move(context), url, callback,
                                             false);
   } else {
     data_provider->RefreshData(
@@ -347,7 +351,7 @@ base::File::Error ITunesFileUtil::GetLocalFilePath(
 }
 
 void ITunesFileUtil::GetFileInfoWithFreshDataProvider(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const GetFileInfoCallback& callback,
     bool valid_parse) {
@@ -361,12 +365,12 @@ void ITunesFileUtil::GetFileInfoWithFreshDataProvider(
     }
     return;
   }
-  NativeMediaFileUtil::GetFileInfoOnTaskRunnerThread(context.Pass(), url,
+  NativeMediaFileUtil::GetFileInfoOnTaskRunnerThread(std::move(context), url,
                                                      callback);
 }
 
 void ITunesFileUtil::ReadDirectoryWithFreshDataProvider(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const ReadDirectoryCallback& callback,
     bool valid_parse) {
@@ -379,12 +383,12 @@ void ITunesFileUtil::ReadDirectoryWithFreshDataProvider(
     }
     return;
   }
-  NativeMediaFileUtil::ReadDirectoryOnTaskRunnerThread(context.Pass(), url,
+  NativeMediaFileUtil::ReadDirectoryOnTaskRunnerThread(std::move(context), url,
                                                        callback);
 }
 
 void ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider(
-    scoped_ptr<storage::FileSystemOperationContext> context,
+    std::unique_ptr<storage::FileSystemOperationContext> context,
     const storage::FileSystemURL& url,
     const CreateSnapshotFileCallback& callback,
     bool valid_parse) {
@@ -401,8 +405,8 @@ void ITunesFileUtil::CreateSnapshotFileWithFreshDataProvider(
     }
     return;
   }
-  NativeMediaFileUtil::CreateSnapshotFileOnTaskRunnerThread(context.Pass(), url,
-                                                            callback);
+  NativeMediaFileUtil::CreateSnapshotFileOnTaskRunnerThread(std::move(context),
+                                                            url, callback);
 }
 
 ITunesDataProvider* ITunesFileUtil::GetDataProvider() {

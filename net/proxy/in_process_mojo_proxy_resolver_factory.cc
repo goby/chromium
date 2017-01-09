@@ -4,7 +4,10 @@
 
 #include "net/proxy/in_process_mojo_proxy_resolver_factory.h"
 
+#include <utility>
+
 #include "base/memory/singleton.h"
+#include "mojo/public/cpp/bindings/strong_binding.h"
 #include "net/proxy/mojo_proxy_resolver_factory_impl.h"
 
 namespace net {
@@ -16,21 +19,19 @@ InProcessMojoProxyResolverFactory::GetInstance() {
 }
 
 InProcessMojoProxyResolverFactory::InProcessMojoProxyResolverFactory() {
-  // Implementation lifetime is strongly bound to the life of the connection via
-  // |factory_|. When |factory_| is destroyed, the Mojo connection is terminated
-  // which causes this object to be destroyed.
-  new MojoProxyResolverFactoryImpl(mojo::GetProxy(&factory_));
+  mojo::MakeStrongBinding(base::MakeUnique<MojoProxyResolverFactoryImpl>(),
+                          mojo::GetProxy(&factory_));
 }
 
 InProcessMojoProxyResolverFactory::~InProcessMojoProxyResolverFactory() =
     default;
 
-scoped_ptr<base::ScopedClosureRunner>
+std::unique_ptr<base::ScopedClosureRunner>
 InProcessMojoProxyResolverFactory::CreateResolver(
-    const mojo::String& pac_script,
+    const std::string& pac_script,
     mojo::InterfaceRequest<interfaces::ProxyResolver> req,
     interfaces::ProxyResolverFactoryRequestClientPtr client) {
-  factory_->CreateResolver(pac_script, req.Pass(), client.Pass());
+  factory_->CreateResolver(pac_script, std::move(req), std::move(client));
   return nullptr;
 }
 

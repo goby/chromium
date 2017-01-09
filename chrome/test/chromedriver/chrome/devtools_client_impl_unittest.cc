@@ -2,21 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/test/chromedriver/chrome/devtools_client_impl.h"
+
 #include <list>
+#include <memory>
 #include <string>
 
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
-#include "chrome/test/chromedriver/chrome/devtools_client_impl.h"
 #include "chrome/test/chromedriver/chrome/devtools_event_listener.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 #include "chrome/test/chromedriver/net/sync_websocket.h"
 #include "chrome/test/chromedriver/net/sync_websocket_factory.h"
+#include "chrome/test/chromedriver/net/timeout.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 
@@ -41,7 +44,7 @@ class MockSyncWebSocket : public SyncWebSocket {
 
   bool Send(const std::string& message) override {
     EXPECT_TRUE(connected_);
-    scoped_ptr<base::Value> value = base::JSONReader::Read(message);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
     base::DictionaryValue* dict = NULL;
     EXPECT_TRUE(value->GetAsDictionary(&dict));
     if (!dict)
@@ -62,8 +65,8 @@ class MockSyncWebSocket : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
-    if (timeout <= base::TimeDelta())
+      const Timeout& timeout) override {
+    if (timeout.IsExpired())
       return SyncWebSocket::kTimeout;
     base::DictionaryValue response;
     response.SetInteger("id", id_);
@@ -84,8 +87,8 @@ class MockSyncWebSocket : public SyncWebSocket {
 };
 
 template <typename T>
-scoped_ptr<SyncWebSocket> CreateMockSyncWebSocket() {
-  return scoped_ptr<SyncWebSocket>(new T());
+std::unique_ptr<SyncWebSocket> CreateMockSyncWebSocket() {
+  return std::unique_ptr<SyncWebSocket>(new T());
 }
 
 class DevToolsClientImplTest : public testing::Test {
@@ -116,7 +119,7 @@ TEST_F(DevToolsClientImplTest, SendCommandAndGetResult) {
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   base::DictionaryValue params;
   params.SetInteger("param", 1);
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   Status status = client.SendCommandAndGetResult("method", params, &result);
   ASSERT_EQ(kOk, status.code());
   std::string json;
@@ -142,7 +145,7 @@ class MockSyncWebSocket2 : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     EXPECT_TRUE(false);
     return SyncWebSocket::kDisconnected;
   }
@@ -178,7 +181,7 @@ class MockSyncWebSocket3 : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     EXPECT_TRUE(false);
     return SyncWebSocket::kDisconnected;
   }
@@ -219,7 +222,7 @@ class MockSyncWebSocket4 : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     return SyncWebSocket::kDisconnected;
   }
 
@@ -260,7 +263,7 @@ class FakeSyncWebSocket : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     return SyncWebSocket::kOk;
   }
 
@@ -484,7 +487,7 @@ TEST_F(DevToolsClientImplTest, SendCommandEventBeforeResponse) {
   client.AddListener(&listener);
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   base::DictionaryValue params;
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   ASSERT_TRUE(client.SendCommandAndGetResult("method", params, &result).IsOk());
   ASSERT_TRUE(result);
   int key;
@@ -516,7 +519,7 @@ TEST(ParseInspectorMessage, EventNoParams) {
       "{\"method\":\"method\"}", 0, &type, &event, &response));
   ASSERT_EQ(internal::kEventMessageType, type);
   ASSERT_STREQ("method", event.method.c_str());
-  ASSERT_TRUE(event.params->IsType(base::Value::TYPE_DICTIONARY));
+  ASSERT_TRUE(event.params->IsType(base::Value::Type::DICTIONARY));
 }
 
 TEST(ParseInspectorMessage, EventWithParams) {
@@ -581,7 +584,7 @@ TEST_F(DevToolsClientImplTest, HandleEventsUntil) {
   client.AddListener(&listener);
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue),
-                                           long_timeout_);
+                                           Timeout(long_timeout_));
   ASSERT_EQ(kOk, status.code());
 }
 
@@ -593,7 +596,7 @@ TEST_F(DevToolsClientImplTest, HandleEventsUntilTimeout) {
                             base::Bind(&ReturnEvent));
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue),
-                                           base::TimeDelta());
+                                           Timeout(base::TimeDelta()));
   ASSERT_EQ(kTimeout, status.code());
 }
 
@@ -605,7 +608,7 @@ TEST_F(DevToolsClientImplTest, WaitForNextEventCommand) {
                             base::Bind(&ReturnCommand));
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue),
-                                           long_timeout_);
+                                           Timeout(long_timeout_));
   ASSERT_EQ(kUnknownError, status.code());
 }
 
@@ -617,7 +620,7 @@ TEST_F(DevToolsClientImplTest, WaitForNextEventError) {
                             base::Bind(&ReturnError));
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   Status status = client.HandleEventsUntil(base::Bind(&AlwaysTrue),
-                                           long_timeout_);
+                                           Timeout(long_timeout_));
   ASSERT_EQ(kUnknownError, status.code());
 }
 
@@ -629,7 +632,7 @@ TEST_F(DevToolsClientImplTest, WaitForNextEventConditionalFuncReturnsError) {
                             base::Bind(&ReturnEvent));
   ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
   Status status = client.HandleEventsUntil(base::Bind(&AlwaysError),
-                                           long_timeout_);
+                                           Timeout(long_timeout_));
   ASSERT_EQ(kUnknownError, status.code());
 }
 
@@ -644,7 +647,7 @@ TEST_F(DevToolsClientImplTest, NestedCommandsWithOutOfOrderResults) {
       base::Bind(&ReturnOutOfOrderResponses, &recurse_count, &client));
   base::DictionaryValue params;
   params.SetInteger("param", 1);
-  scoped_ptr<base::DictionaryValue> result;
+  std::unique_ptr<base::DictionaryValue> result;
   ASSERT_TRUE(client.SendCommandAndGetResult("method", params, &result).IsOk());
   ASSERT_TRUE(result);
   int key;
@@ -711,7 +714,7 @@ class OnConnectedSyncWebSocket : public SyncWebSocket {
 
   bool Send(const std::string& message) override {
     EXPECT_TRUE(connected_);
-    scoped_ptr<base::Value> value = base::JSONReader::Read(message);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
     base::DictionaryValue* dict = NULL;
     EXPECT_TRUE(value->GetAsDictionary(&dict));
     if (!dict)
@@ -741,7 +744,7 @@ class OnConnectedSyncWebSocket : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     if (queued_response_.empty())
       return SyncWebSocket::kDisconnected;
     *message = queued_response_.front();
@@ -804,7 +807,7 @@ class MockSyncWebSocket5 : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     if (request_no_ == 0) {
       *message = "{\"method\": \"m\", \"params\": {}}";
     } else {
@@ -954,7 +957,7 @@ class MockSyncWebSocket6 : public SyncWebSocket {
 
   SyncWebSocket::StatusCode ReceiveNextMessage(
       std::string* message,
-      const base::TimeDelta& timeout) override {
+      const Timeout& timeout) override {
     if (messages_->empty())
       return SyncWebSocket::kDisconnected;
     *message = messages_->front();
@@ -993,9 +996,9 @@ class MockDevToolsEventListener : public DevToolsEventListener {
   int id_;
 };
 
-scoped_ptr<SyncWebSocket> CreateMockSyncWebSocket6(
+std::unique_ptr<SyncWebSocket> CreateMockSyncWebSocket6(
     std::list<std::string>* messages) {
-  return make_scoped_ptr(new MockSyncWebSocket6(messages));
+  return base::MakeUnique<MockSyncWebSocket6>(messages);
 }
 
 }  // namespace
@@ -1067,7 +1070,8 @@ class MockCommandListener : public DevToolsEventListener {
 
   Status OnCommandSuccess(DevToolsClient* client,
                           const std::string& method,
-                          const base::DictionaryValue& result) override {
+                          const base::DictionaryValue& result,
+                          const Timeout& command_timeout) override {
     msgs_.push_back(method);
     if (!callback_.is_null())
       callback_.Run(client);
@@ -1101,4 +1105,73 @@ TEST_F(DevToolsClientImplTest, ReceivesCommandResponse) {
   ASSERT_EQ(2u, listener2.msgs_.size());
   ASSERT_EQ("cmd", listener2.msgs_.front());
   ASSERT_EQ("event", listener2.msgs_.back());
+}
+
+namespace {
+
+class MockSyncWebSocket7 : public SyncWebSocket {
+ public:
+  MockSyncWebSocket7() : id_(-1), sent_messages_(0), sent_responses_(0) {}
+  ~MockSyncWebSocket7() override {}
+
+  bool IsConnected() override { return true; }
+
+  bool Connect(const GURL& url) override { return true; }
+
+  bool Send(const std::string& message) override {
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(message);
+    base::DictionaryValue* dict = nullptr;
+    EXPECT_TRUE(value->GetAsDictionary(&dict));
+    if (!dict)
+      return false;
+    EXPECT_TRUE(dict->GetInteger("id", &id_));
+    std::string method;
+    EXPECT_TRUE(dict->GetString("method", &method));
+    EXPECT_STREQ("method", method.c_str());
+    base::DictionaryValue* params = nullptr;
+    EXPECT_TRUE(dict->GetDictionary("params", &params));
+    if (!params)
+      return false;
+    sent_messages_++;
+    return true;
+  }
+
+  SyncWebSocket::StatusCode ReceiveNextMessage(
+      std::string* message,
+      const Timeout& timeout) override {
+    EXPECT_LE(sent_responses_, 1);
+    EXPECT_EQ(sent_messages_, 2);
+    base::DictionaryValue response;
+    if (sent_responses_ == 0)
+      response.SetInteger("id", 1);
+    else
+      response.SetInteger("id", 2);
+    base::DictionaryValue result;
+    result.SetInteger("param", 1);
+    response.Set("result", result.DeepCopy());
+    base::JSONWriter::Write(response, message);
+    sent_responses_++;
+    return SyncWebSocket::kOk;
+  }
+
+  bool HasNextMessage() override { return sent_messages_ > sent_responses_; }
+
+private:
+  int id_;
+  int sent_messages_;
+  int sent_responses_;
+};
+
+} // namespace
+
+TEST_F(DevToolsClientImplTest, SendCommandAndIgnoreResponse) {
+  SyncWebSocketFactory factory =
+      base::Bind(&CreateMockSyncWebSocket<MockSyncWebSocket7>);
+  DevToolsClientImpl client(factory, "http://url", "id",
+                            base::Bind(&CloserFunc));
+  ASSERT_EQ(kOk, client.ConnectIfNecessary().code());
+  base::DictionaryValue params;
+  params.SetInteger("param", 1);
+  ASSERT_EQ(kOk, client.SendCommandAndIgnoreResponse("method", params).code());
+  ASSERT_EQ(kOk, client.SendCommand("method", params).code());
 }

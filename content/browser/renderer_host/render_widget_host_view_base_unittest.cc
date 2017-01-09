@@ -6,14 +6,14 @@
 
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/modules/screen_orientation/WebScreenOrientationType.h"
-#include "ui/gfx/display.h"
+#include "ui/display/display.h"
 
 namespace content {
 
 namespace {
 
-gfx::Display CreateDisplay(int width, int height, int angle) {
-  gfx::Display display;
+display::Display CreateDisplay(int width, int height, int angle) {
+  display::Display display;
   display.SetRotationAsDegree(angle);
   display.set_bounds(gfx::Rect(width, height));
 
@@ -25,58 +25,58 @@ gfx::Display CreateDisplay(int width, int height, int angle) {
 TEST(RenderWidgetHostViewBaseTest, OrientationTypeForMobile) {
   // Square display (width == height).
   {
-    gfx::Display display = CreateDisplay(100, 100, 0);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitPrimary,
+    display::Display display = CreateDisplay(100, 100, 0);
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(200, 200, 90);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapePrimary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(0, 0, 180);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(10000, 10000, 270);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapeSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
   }
 
   // natural width > natural height.
   {
-    gfx::Display display = CreateDisplay(1, 0, 0);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapePrimary,
+    display::Display display = CreateDisplay(1, 0, 0);
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(19999, 20000, 90);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(200, 100, 180);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapeSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(1, 10000, 270);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitPrimary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
   }
 
   // natural width < natural height.
   {
-    gfx::Display display = CreateDisplay(0, 1, 0);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitPrimary,
+    display::Display display = CreateDisplay(0, 1, 0);
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(20000, 19999, 90);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapePrimary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(100, 200, 180);
-    EXPECT_EQ(blink::WebScreenOrientationPortraitSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
 
     display = CreateDisplay(10000, 1, 270);
-    EXPECT_EQ(blink::WebScreenOrientationLandscapeSecondary,
+    EXPECT_EQ(SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY,
               RenderWidgetHostViewBase::GetOrientationTypeForMobile(display));
   }
 }
@@ -90,31 +90,31 @@ TEST(RenderWidgetHostViewBaseTest, OrientationTypeForDesktop) {
 
   // natural width > natural height.
   {
-    gfx::Display display = CreateDisplay(1, 0, 0);
-    blink::WebScreenOrientationType landscape_1 =
+    display::Display display = CreateDisplay(1, 0, 0);
+    ScreenOrientationValues landscape_1 =
         RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
-    EXPECT_TRUE(landscape_1 == blink::WebScreenOrientationLandscapePrimary ||
-                landscape_1 == blink::WebScreenOrientationLandscapeSecondary);
+    EXPECT_TRUE(landscape_1 == SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY ||
+                landscape_1 == SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY);
 
     display = CreateDisplay(200, 100, 180);
-    blink::WebScreenOrientationType landscape_2 =
+    ScreenOrientationValues landscape_2 =
         RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
-    EXPECT_TRUE(landscape_2 == blink::WebScreenOrientationLandscapePrimary ||
-                landscape_2 == blink::WebScreenOrientationLandscapeSecondary);
+    EXPECT_TRUE(landscape_2 == SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY ||
+                landscape_2 == SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY);
 
     EXPECT_NE(landscape_1, landscape_2);
 
     display = CreateDisplay(19999, 20000, 90);
-    blink::WebScreenOrientationType portrait_1 =
+    ScreenOrientationValues portrait_1 =
         RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
-    EXPECT_TRUE(portrait_1 == blink::WebScreenOrientationPortraitPrimary ||
-                portrait_1 == blink::WebScreenOrientationPortraitSecondary);
+    EXPECT_TRUE(portrait_1 == SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY ||
+                portrait_1 == SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY);
 
     display = CreateDisplay(1, 10000, 270);
-    blink::WebScreenOrientationType portrait_2 =
+    ScreenOrientationValues portrait_2 =
         RenderWidgetHostViewBase::GetOrientationTypeForDesktop(display);
-    EXPECT_TRUE(portrait_2 == blink::WebScreenOrientationPortraitPrimary ||
-                portrait_2 == blink::WebScreenOrientationPortraitSecondary);
+    EXPECT_TRUE(portrait_2 == SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY ||
+                portrait_2 == SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY);
 
     EXPECT_NE(portrait_1, portrait_2);
 

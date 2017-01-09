@@ -4,6 +4,8 @@
 
 #include "chrome/browser/ui/app_list/search/omnibox_result.h"
 
+#include <stddef.h>
+
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
@@ -13,10 +15,7 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
-#include "grit/theme_resources.h"
 #include "ui/app_list/app_list_constants.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
-#include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "ui/gfx/vector_icons_public.h"
 #include "url/gurl.h"
@@ -157,29 +156,22 @@ void OmniboxResult::Open(int event_flags) {
                             ui::DispositionFromEventFlags(event_flags));
 }
 
-scoped_ptr<SearchResult> OmniboxResult::Duplicate() const {
-  return scoped_ptr<SearchResult>(new OmniboxResult(profile_, list_controller_,
-                                                    autocomplete_controller_,
-                                                    is_voice_query_, match_));
+std::unique_ptr<SearchResult> OmniboxResult::Duplicate() const {
+  return std::unique_ptr<SearchResult>(
+      new OmniboxResult(profile_, list_controller_, autocomplete_controller_,
+                        is_voice_query_, match_));
 }
 
 void OmniboxResult::UpdateIcon() {
-  BookmarkModel* bookmark_model = BookmarkModelFactory::GetForProfile(profile_);
+  BookmarkModel* bookmark_model =
+      BookmarkModelFactory::GetForBrowserContext(profile_);
   bool is_bookmarked =
       bookmark_model && bookmark_model->IsBookmarked(match_.destination_url);
 
-  if (ui::MaterialDesignController::IsModeMaterial()) {
-    gfx::VectorIconId icon_id = is_bookmarked ?
-        gfx::VectorIconId::OMNIBOX_STAR :
-        AutocompleteMatch::TypeToVectorIcon(match_.type);
-    SetIcon(gfx::CreateVectorIcon(icon_id, 16, app_list::kIconColor));
-    return;
-  }
-
-  int resource_id = is_bookmarked ? IDR_OMNIBOX_STAR
-                                  : AutocompleteMatch::TypeToIcon(match_.type);
-  SetIcon(
-      *ui::ResourceBundle::GetSharedInstance().GetImageSkiaNamed(resource_id));
+  gfx::VectorIconId icon_id = is_bookmarked ?
+      gfx::VectorIconId::OMNIBOX_STAR :
+      AutocompleteMatch::TypeToVectorIcon(match_.type);
+  SetIcon(gfx::CreateVectorIcon(icon_id, 16, app_list::kIconColor));
 }
 
 void OmniboxResult::UpdateTitleAndDetails() {

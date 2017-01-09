@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_METRICS_NET_NETWORK_METRICS_PROVIDER_H_
 #define COMPONENTS_METRICS_NET_NETWORK_METRICS_PROVIDER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_base.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/metrics/net/wifi_access_point_info_provider.h"
 #include "components/metrics/proto/system_profile.pb.h"
@@ -29,7 +31,7 @@ class NetworkMetricsProvider
 
  private:
   // MetricsProvider:
-  void OnDidCreateMetricsLog() override;
+  void ProvideGeneralMetrics(ChromeUserMetricsExtension* uma_proto) override;
   void ProvideSystemProfileMetrics(SystemProfileProto* system_profile) override;
 
   // ConnectionTypeObserver:
@@ -52,6 +54,9 @@ class NetworkMetricsProvider
       const WifiAccessPointInfoProvider::WifiAccessPointInfo& info,
       SystemProfileProto::Network* network_proto);
 
+  // Logs metrics that are functions of other metrics being uploaded.
+  void LogAggregatedMetrics();
+
   // Task runner used for blocking file I/O.
   base::TaskRunner* io_task_runner_;
 
@@ -67,7 +72,12 @@ class NetworkMetricsProvider
   net::WifiPHYLayerProtocol wifi_phy_layer_protocol_;
 
   // Helper object for retrieving connected wifi access point information.
-  scoped_ptr<WifiAccessPointInfoProvider> wifi_access_point_info_provider_;
+  std::unique_ptr<WifiAccessPointInfoProvider> wifi_access_point_info_provider_;
+
+  // These metrics track histogram totals for the Net.ErrorCodesForMainFrame3
+  // histogram. They are used to compute deltas at upload time.
+  base::HistogramBase::Count total_aborts_;
+  base::HistogramBase::Count total_codes_;
 
   base::WeakPtrFactory<NetworkMetricsProvider> weak_ptr_factory_;
 

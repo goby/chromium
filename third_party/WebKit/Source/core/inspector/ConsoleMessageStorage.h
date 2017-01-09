@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -6,47 +6,34 @@
 #define ConsoleMessageStorage_h
 
 #include "core/CoreExport.h"
-#include "core/inspector/ConsoleMessage.h"
 #include "platform/heap/Handle.h"
 #include "wtf/Forward.h"
 
 namespace blink {
 
-class FrameHost;
-class LocalDOMWindow;
-class WorkerGlobalScopeProxy;
+class ConsoleMessage;
+class ExecutionContext;
 
-class ConsoleMessageStorage final : public NoBaseWillBeGarbageCollected<ConsoleMessageStorage> {
-    WTF_MAKE_NONCOPYABLE(ConsoleMessageStorage);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(ConsoleMessageStorage);
-public:
-    static PassOwnPtrWillBeRawPtr<ConsoleMessageStorage> create()
-    {
-        return adoptPtrWillBeNoop(new ConsoleMessageStorage());
-    }
+class CORE_EXPORT ConsoleMessageStorage
+    : public GarbageCollected<ConsoleMessageStorage> {
+  WTF_MAKE_NONCOPYABLE(ConsoleMessageStorage);
 
-    void reportMessage(ExecutionContext*, PassRefPtrWillBeRawPtr<ConsoleMessage>);
-    void clear(ExecutionContext*);
+ public:
+  ConsoleMessageStorage();
 
-    CORE_EXPORT Vector<unsigned> argumentCounts() const;
+  void addConsoleMessage(ExecutionContext*, ConsoleMessage*);
+  void clear();
+  size_t size() const;
+  ConsoleMessage* at(size_t index) const;
+  int expiredCount() const;
 
-    void adoptWorkerMessagesAfterTermination(WorkerGlobalScopeProxy*);
-    void frameWindowDiscarded(LocalDOMWindow*);
+  DECLARE_TRACE();
 
-    size_t size() const;
-    ConsoleMessage* at(size_t index) const;
-
-    int expiredCount() const;
-
-    DECLARE_TRACE();
-
-private:
-    ConsoleMessageStorage();
-
-    int m_expiredCount;
-    WillBeHeapDeque<RefPtrWillBeMember<ConsoleMessage> > m_messages;
+ private:
+  int m_expiredCount;
+  HeapDeque<Member<ConsoleMessage>> m_messages;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ConsoleMessageStorage_h
+#endif  // ConsoleMessageStorage_h

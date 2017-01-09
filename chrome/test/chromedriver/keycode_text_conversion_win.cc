@@ -6,9 +6,11 @@
 
 #include <VersionHelpers.h>
 #include <stdlib.h>
+#include <string.h>
 #include <windows.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/test/chromedriver/chrome/ui_events.h"
 
@@ -77,7 +79,7 @@ bool SwitchToUSKeyboardLayout() {
     if ((size = ::GetKeyboardLayoutList(0, NULL)) <= 0)
       return false;
 
-    scoped_ptr<HKL[]> keyboard_handles_list(new HKL[size]);
+    std::unique_ptr<HKL[]> keyboard_handles_list(new HKL[size]);
     ::GetKeyboardLayoutList(size, keyboard_handles_list.get());
 
     for (int keyboard_index = 0; keyboard_index < size; keyboard_index++) {

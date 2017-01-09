@@ -34,11 +34,10 @@
 #include "core/html/imports/HTMLImport.h"
 #include "platform/heap/Handle.h"
 #include "platform/weborigin/KURL.h"
-#include "wtf/WeakPtr.h"
 
 namespace blink {
 
-class CustomElementMicrotaskImportStep;
+class V0CustomElementMicrotaskImportStep;
 class HTMLImportLoader;
 class HTMLImportChildClient;
 class HTMLLinkElement;
@@ -50,63 +49,53 @@ class HTMLLinkElement;
 // HTMLImportChild of same link URL.
 //
 class HTMLImportChild final : public HTMLImport {
-public:
-    HTMLImportChild(const KURL&, HTMLImportLoader*, SyncMode);
-    ~HTMLImportChild() override;
-    void dispose();
+ public:
+  HTMLImportChild(const KURL&, HTMLImportLoader*, SyncMode);
+  ~HTMLImportChild() override;
+  void dispose();
 
-    HTMLLinkElement* link() const;
-    const KURL& url() const { return m_url; }
+  HTMLLinkElement* link() const;
+  const KURL& url() const { return m_url; }
 
-    void ownerInserted();
-    void didShareLoader();
-    void didStartLoading();
-#if !ENABLE(OILPAN)
-    WeakPtr<HTMLImportChild> weakPtr() { return m_weakFactory.createWeakPtr(); }
-#endif
+  void ownerInserted();
+  void didShareLoader();
+  void didStartLoading();
 
-    // HTMLImport
-    Document* document() const override;
-    bool hasFinishedLoading() const override;
-    HTMLImportLoader* loader() const override;
-    void stateWillChange() override;
-    void stateDidChange() override;
-    DECLARE_VIRTUAL_TRACE();
+  // HTMLImport
+  Document* document() const override;
+  bool hasFinishedLoading() const override;
+  HTMLImportLoader* loader() const override;
+  void stateWillChange() override;
+  void stateDidChange() override;
+  DECLARE_VIRTUAL_TRACE();
 
 #if !defined(NDEBUG)
-    void showThis() override;
+  void showThis() override;
 #endif
 
-    void setClient(HTMLImportChildClient*);
-#if !ENABLE(OILPAN)
-    void clearClient();
-#endif
+  void setClient(HTMLImportChildClient*);
 
-    void didFinishLoading();
-    void didFinishUpgradingCustomElements();
-    void normalize();
+  void didFinishLoading();
+  void didFinishUpgradingCustomElements();
+  void normalize();
 
-private:
-    void didFinish();
-    void shareLoader();
-    void createCustomElementMicrotaskStepIfNeeded();
-    void invalidateCustomElementMicrotaskStep();
+ private:
+  void didFinish();
+  void shareLoader();
+  void createCustomElementMicrotaskStepIfNeeded();
+  void invalidateCustomElementMicrotaskStep();
 
-    KURL m_url;
-    WeakPtrWillBeWeakMember<CustomElementMicrotaskImportStep> m_customElementMicrotaskStep;
-#if !ENABLE(OILPAN)
-    WeakPtrFactory<HTMLImportChild> m_weakFactory;
-#endif
-    RawPtrWillBeMember<HTMLImportLoader> m_loader;
-    RawPtrWillBeMember<HTMLImportChildClient> m_client;
+  KURL m_url;
+  WeakMember<V0CustomElementMicrotaskImportStep> m_customElementMicrotaskStep;
+  Member<HTMLImportLoader> m_loader;
+  Member<HTMLImportChildClient> m_client;
 };
 
-inline HTMLImportChild* toHTMLImportChild(HTMLImport* import)
-{
-    ASSERT(!import || !import->isRoot());
-    return static_cast<HTMLImportChild*>(import);
+inline HTMLImportChild* toHTMLImportChild(HTMLImport* import) {
+  DCHECK(!import || !import->isRoot());
+  return static_cast<HTMLImportChild*>(import);
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // HTMLImportChild_h
+#endif  // HTMLImportChild_h

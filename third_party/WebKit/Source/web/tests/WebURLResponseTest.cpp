@@ -28,48 +28,58 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebURLResponse.h"
 
+#include "platform/weborigin/KURL.h"
+#include "public/platform/WebURL.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
+namespace {
+
 class TestExtraData : public WebURLResponse::ExtraData {
-public:
-    explicit TestExtraData(bool* alive)
-        : m_alive(alive)
-    {
-        *alive = true;
-    }
+ public:
+  explicit TestExtraData(bool* alive) : m_alive(alive) { *alive = true; }
 
-    ~TestExtraData() override { *m_alive = false; }
+  ~TestExtraData() override { *m_alive = false; }
 
-private:
-    bool* m_alive;
+ private:
+  bool* m_alive;
 };
 
-TEST(WebURLResponseTest, ExtraData)
-{
-    bool alive = false;
-    {
-        WebURLResponse urlResponse;
-        TestExtraData* extraData = new TestExtraData(&alive);
-        EXPECT_TRUE(alive);
+}  // anonymous namespace
 
-        urlResponse.initialize();
-        urlResponse.setExtraData(extraData);
-        EXPECT_EQ(extraData, urlResponse.extraData());
-        {
-            WebURLResponse otherUrlResponse = urlResponse;
-            EXPECT_TRUE(alive);
-            EXPECT_EQ(extraData, otherUrlResponse.extraData());
-            EXPECT_EQ(extraData, urlResponse.extraData());
-        }
-        EXPECT_TRUE(alive);
-        EXPECT_EQ(extraData, urlResponse.extraData());
+TEST(WebURLResponseTest, ExtraData) {
+  bool alive = false;
+  {
+    WebURLResponse urlResponse;
+    TestExtraData* extraData = new TestExtraData(&alive);
+    EXPECT_TRUE(alive);
+
+    urlResponse.setExtraData(extraData);
+    EXPECT_EQ(extraData, urlResponse.getExtraData());
+    {
+      WebURLResponse otherUrlResponse = urlResponse;
+      EXPECT_TRUE(alive);
+      EXPECT_EQ(extraData, otherUrlResponse.getExtraData());
+      EXPECT_EQ(extraData, urlResponse.getExtraData());
     }
-    EXPECT_FALSE(alive);
+    EXPECT_TRUE(alive);
+    EXPECT_EQ(extraData, urlResponse.getExtraData());
+  }
+  EXPECT_FALSE(alive);
 }
 
-} // namespace blink
+TEST(WebURLResponseTest, NewInstanceIsNull) {
+  WebURLResponse instance;
+  EXPECT_TRUE(instance.isNull());
+}
+
+TEST(WebURLResponseTest, NotNullAfterSetURL) {
+  WebURLResponse instance;
+  instance.setURL(KURL(ParsedURLString, "http://localhost/"));
+  EXPECT_FALSE(instance.isNull());
+}
+
+}  // namespace blink

@@ -5,7 +5,8 @@
 #include "skia/ext/platform_canvas.h"
 
 #include "base/logging.h"
-#include "skia/ext/bitmap_platform_device.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "skia/ext/platform_device.h"
 #include "third_party/skia/include/core/SkMetaData.h"
 #include "third_party/skia/include/core/SkTypes.h"
@@ -33,10 +34,6 @@ bool GetBoolMetaData(const SkCanvas& canvas, const char* key) {
 
 namespace skia {
 
-SkBaseDevice* GetTopDevice(const SkCanvas& canvas) {
-  return canvas.getTopDevice(true);
-}
-
 SkBitmap ReadPixels(SkCanvas* canvas) {
   SkBitmap bitmap;
   bitmap.setInfo(canvas->imageInfo());
@@ -62,48 +59,21 @@ bool GetWritablePixels(SkCanvas* canvas, SkPixmap* result) {
 }
 
 bool SupportsPlatformPaint(const SkCanvas* canvas) {
-  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
-  return platform_device && platform_device->SupportsPlatformPaint();
-}
-
-PlatformSurface BeginPlatformPaint(SkCanvas* canvas) {
-  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
-  if (platform_device)
-    return platform_device->BeginPlatformPaint();
-
-  return 0;
-}
-
-void EndPlatformPaint(SkCanvas* canvas) {
-  PlatformDevice* platform_device = GetPlatformDevice(GetTopDevice(*canvas));
-  if (platform_device)
-    platform_device->EndPlatformPaint();
-}
-
-void MakeOpaque(SkCanvas* canvas, int x, int y, int width, int height) {
-  if (width <= 0 || height <= 0)
-    return;
-
-  SkRect rect;
-  rect.setXYWH(SkIntToScalar(x), SkIntToScalar(y),
-               SkIntToScalar(width), SkIntToScalar(height));
-  SkPaint paint;
-  paint.setColor(SK_ColorBLACK);
-  paint.setXfermodeMode(SkXfermode::kDstATop_Mode);
-  canvas->drawRect(rect, paint);
+  return GetPlatformDevice(canvas->getTopDevice(true)) != nullptr;
 }
 
 size_t PlatformCanvasStrideForWidth(unsigned width) {
   return 4 * width;
 }
 
-SkCanvas* CreateCanvas(const skia::RefPtr<SkBaseDevice>& device, OnFailureType failureType) {
+std::unique_ptr<SkCanvas> CreateCanvas(const sk_sp<SkBaseDevice>& device,
+                                       OnFailureType failureType) {
   if (!device) {
     if (CRASH_ON_FAILURE == failureType)
       SK_CRASH();
     return nullptr;
   }
-  return new SkCanvas(device.get());
+  return base::MakeUnique<SkCanvas>(device.get());
 }
 
 SkMetaData& GetMetaData(const SkCanvas& canvas) {
@@ -122,13 +92,30 @@ bool IsPreviewMetafile(const SkCanvas& canvas) {
 }
 
 CGContextRef GetBitmapContext(const SkCanvas& canvas) {
-  SkBaseDevice* device = GetTopDevice(canvas);
-  PlatformDevice* platform_device = GetPlatformDevice(device);
-  return platform_device ?  platform_device->GetBitmapContext() :
+  PlatformDevice* platform_device =
+      GetPlatformDevice(canvas.getTopDevice(true));
+  SkIRect clip_bounds;
+  canvas.getClipDeviceBounds(&clip_bounds);
+  return platform_device ?
+      platform_device->GetBitmapContext(
+          canvas.getTotalMatrix(), clip_bounds) :
       nullptr;
 }
 
 #endif
 
+ScopedPlatformPaint::ScopedPlatformPaint(SkCanvas* canvas) :
+    canvas_(canvas),
+    native_drawing_context_(nullptr) {
+  // TODO(tomhudson) we're assuming non-null canvas?
+  PlatformDevice* platform_device = GetPlatformDevice(canvas->getTopDevice(true));
+  if (platform_device) {
+    // Compensate for drawing to a layer rather than the entire canvas
+    SkMatrix ctm;
+    SkIRect clip_bounds;
+    canvas->temporary_internal_describeTopLayer(&ctm, &clip_bounds);
+    native_drawing_context_ = platform_device->BeginPlatformPaint(ctm, clip_bounds);
+  }
+}
 
 }  // namespace skia

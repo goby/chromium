@@ -125,6 +125,14 @@ class AmazonNicolasCageSmoothPage(
           selector='#search',
           distance_expr='document.body.scrollHeight - window.innerHeight')
 
+class CNNArticleSmoothPage(
+      key_mobile_sites_pages.CnnArticlePage):
+
+  def RunPageInteractions(self, action_runner):
+    with action_runner.CreateGestureInteraction('ScrollAction'):
+      # With default top_start_ratio=0.5 the corresponding element in this page
+      # will not be in the root scroller.
+      action_runner.ScrollPage(top_start_ratio=0.01)
 
 class KeyMobileSitesSmoothPageSet(story.StorySet):
 
@@ -140,7 +148,6 @@ class KeyMobileSitesSmoothPageSet(story.StorySet):
     predefined_page_classes = [
       key_mobile_sites_pages.CapitolVolkswagenPage,
       key_mobile_sites_pages.TheVergeArticlePage,
-      key_mobile_sites_pages.CnnArticlePage,
       key_mobile_sites_pages.FacebookPage,
       key_mobile_sites_pages.YoutubeMobilePage,
       key_mobile_sites_pages.YahooAnswersPage,
@@ -163,7 +170,11 @@ class KeyMobileSitesSmoothPageSet(story.StorySet):
     # See crbug.com/409086.
     # self.AddStory(GroupClonedListImagesSmoothPage(self))
     self.AddStory(GoogleNewsMobile2SmoothPage(self))
-    self.AddStory(AmazonNicolasCageSmoothPage(self))
+    # Amazon's Nicolas Cage search is currently failing. Reenable it once it's
+    # not anymore.
+    # crbug.com/667432
+    # self.AddStory(AmazonNicolasCageSmoothPage(self))
+    self.AddStory(CNNArticleSmoothPage(self))
 
     # Add pages with custom labels.
 
@@ -248,7 +259,7 @@ class KeyMobileSitesSmoothPageSet(story.StorySet):
       # Why: Top tech site
       'http://digg.com',
       # Why: Top Google property; a Google tab is often open
-      'https://www.google.com/#hl=en&q=barack+obama',
+      'https://www.google.co.uk/search?hl=en&q=barack+obama&cad=h',
       # Why: #1 news worldwide (Alexa global)
       'http://news.yahoo.com',
       # Why: #2 news worldwide

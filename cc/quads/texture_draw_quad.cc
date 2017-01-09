@@ -4,6 +4,8 @@
 
 #include "cc/quads/texture_draw_quad.h"
 
+#include <stddef.h>
+
 #include "base/logging.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
@@ -23,6 +25,8 @@ TextureDrawQuad::TextureDrawQuad()
   this->vertex_opacity[3] = 0.f;
 }
 
+TextureDrawQuad::TextureDrawQuad(const TextureDrawQuad& other) = default;
+
 void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                              const gfx::Rect& rect,
                              const gfx::Rect& opaque_rect,
@@ -34,7 +38,8 @@ void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
                              SkColor background_color,
                              const float vertex_opacity[4],
                              bool y_flipped,
-                             bool nearest_neighbor) {
+                             bool nearest_neighbor,
+                             bool secure_output_only) {
   bool needs_blending = vertex_opacity[0] != 1.0f || vertex_opacity[1] != 1.0f
       || vertex_opacity[2] != 1.0f || vertex_opacity[3] != 1.0f;
   DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
@@ -51,6 +56,7 @@ void TextureDrawQuad::SetNew(const SharedQuadState* shared_quad_state,
   this->vertex_opacity[3] = vertex_opacity[3];
   this->y_flipped = y_flipped;
   this->nearest_neighbor = nearest_neighbor;
+  this->secure_output_only = secure_output_only;
 }
 
 void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
@@ -66,7 +72,8 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
                              SkColor background_color,
                              const float vertex_opacity[4],
                              bool y_flipped,
-                             bool nearest_neighbor) {
+                             bool nearest_neighbor,
+                             bool secure_output_only) {
   DrawQuad::SetAll(shared_quad_state, DrawQuad::TEXTURE_CONTENT, rect,
                    opaque_rect, visible_rect, needs_blending);
   resources.ids[kResourceIdIndex] = resource_id;
@@ -82,6 +89,7 @@ void TextureDrawQuad::SetAll(const SharedQuadState* shared_quad_state,
   this->vertex_opacity[3] = vertex_opacity[3];
   this->y_flipped = y_flipped;
   this->nearest_neighbor = nearest_neighbor;
+  this->secure_output_only = secure_output_only;
 }
 
 const TextureDrawQuad* TextureDrawQuad::MaterialCast(const DrawQuad* quad) {

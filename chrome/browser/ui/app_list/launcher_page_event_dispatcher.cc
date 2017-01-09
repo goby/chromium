@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/app_list/launcher_page_event_dispatcher.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/launcher_page.h"
@@ -25,21 +28,21 @@ LauncherPageEventDispatcher::~LauncherPageEventDispatcher() {
 }
 
 void LauncherPageEventDispatcher::ProgressChanged(double progress) {
-  DispatchEvent(make_scoped_ptr(new extensions::Event(
+  DispatchEvent(base::MakeUnique<extensions::Event>(
       extensions::events::LAUNCHER_PAGE_ON_TRANSITION_CHANGED,
-      OnTransitionChanged::kEventName, OnTransitionChanged::Create(progress))));
+      OnTransitionChanged::kEventName, OnTransitionChanged::Create(progress)));
 }
 
 void LauncherPageEventDispatcher::PopSubpage() {
-  DispatchEvent(make_scoped_ptr(
-      new extensions::Event(extensions::events::LAUNCHER_PAGE_ON_POP_SUBPAGE,
-                            OnPopSubpage::kEventName, OnPopSubpage::Create())));
+  DispatchEvent(base::MakeUnique<extensions::Event>(
+      extensions::events::LAUNCHER_PAGE_ON_POP_SUBPAGE,
+      OnPopSubpage::kEventName, OnPopSubpage::Create()));
 }
 
 void LauncherPageEventDispatcher::DispatchEvent(
-    scoped_ptr<extensions::Event> event) {
+    std::unique_ptr<extensions::Event> event) {
   extensions::EventRouter::Get(profile_)
-      ->DispatchEventToExtension(extension_id_, event.Pass());
+      ->DispatchEventToExtension(extension_id_, std::move(event));
 }
 
 }  // namespace app_list

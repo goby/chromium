@@ -7,8 +7,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/has_weak_browser_pointer.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_controller_target.h"
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
@@ -48,6 +49,10 @@ class WebContents;
 // Stripped down version of TabStripModelObserverBridge:tabDetachedWithContents.
 - (void)onTabDetachedWithContents:(content::WebContents*)contents;
 
+// Stripped down version of
+// TabStripModelObserverBridge:onTabInsertedInForeground.
+- (void)onTabInsertedInForeground:(BOOL)inForeground;
+
 @end
 
 // A class that handles managing the tab strip in a browser window. It uses
@@ -72,7 +77,7 @@ class WebContents;
 
   // Tracks the newTabButton_ for rollovers.
   base::scoped_nsobject<CrTrackingArea> newTabTrackingArea_;
-  scoped_ptr<TabStripModelObserverBridge> bridge_;
+  std::unique_ptr<TabStripModelObserverBridge> bridge_;
   Browser* browser_;  // weak
   TabStripModel* tabStripModel_;  // weak
   // Delegate that is informed about tab state changes.
@@ -138,14 +143,14 @@ class WebContents;
 
   // The amount by which to indent the tabs on the sides (to make room for the
   // red/yellow/green and incognito/fullscreen buttons).
-  CGFloat leftIndentForControls_;
-  CGFloat rightIndentForControls_;
+  CGFloat leadingIndentForControls_;
+  CGFloat trailingIndentForControls_;
 
   // Is the mouse currently inside the strip;
   BOOL mouseInside_;
 
   // Helper for performing tab selection as a result of dragging over a tab.
-  scoped_ptr<HoverTabSelector> hoverTabSelector_;
+  std::unique_ptr<HoverTabSelector> hoverTabSelector_;
 
   // A container view for custom traffic light buttons, which must be manually
   // added in fullscreen in 10.10+.
@@ -153,8 +158,8 @@ class WebContents;
   base::scoped_nsobject<CrTrackingArea> customWindowControlsTrackingArea_;
 }
 
-@property(nonatomic) CGFloat leftIndentForControls;
-@property(nonatomic) CGFloat rightIndentForControls;
+@property(nonatomic) CGFloat leadingIndentForControls;
+@property(nonatomic) CGFloat trailingIndentForControls;
 
 @property(assign, nonatomic) TabView* hoveredTab;
 
@@ -260,8 +265,11 @@ class WebContents;
 // Default height for tabs.
 + (CGFloat)defaultTabHeight;
 
-// Default indentation for tabs (see |leftIndentForControls_|).
-+ (CGFloat)defaultLeftIndentForControls;
+// Default indentation for tabs (see |leadingIndentForControls_|).
++ (CGFloat)defaultLeadingIndentForControls;
+
+// Returns the amount by which tabs overlap.
++ (CGFloat)tabOverlap;
 
 // Returns the currently active TabContentsController.
 - (TabContentsController*)activeTabContentsController;
@@ -272,20 +280,23 @@ class WebContents;
 // Removes custom traffic light buttons from the tab strip. Idempotent.
 - (void)removeCustomWindowControls;
 
-// Gets the tab and the media state to check whether the window
-// media state should be updated or not. If the tab media state is
-// AUDIO_PLAYING, the window media state should be set to AUDIO_PLAYING.
-// If the tab media state is AUDIO_MUTING, this method would check if the
-// window has no other tab with state AUDIO_PLAYING, then the window
-// media state will be set to AUDIO_MUTING. If the tab media state is NONE,
+// Gets the tab and the alert state to check whether the window
+// alert state should be updated or not. If the tab alert state is
+// AUDIO_PLAYING, the window alert state should be set to AUDIO_PLAYING.
+// If the tab alert state is AUDIO_MUTING, this method will check if the
+// window has no other tabs with state AUDIO_PLAYING. If so the window
+// alert state will be set to AUDIO_MUTING. If the tab alert state is NONE,
 // this method checks if the window has no playing or muting tab, then window
-// media state will be set as NONE.
-- (void)updateWindowMediaState:(TabMediaState)mediaState
+// alert state will be set to NONE.
+- (void)updateWindowAlertState:(TabAlertState)alertState
                 forWebContents:(content::WebContents*)changed;
 
-// Returns the media state associated with the contents.
-- (TabMediaState)mediaStateForContents:(content::WebContents*)contents;
+// Returns the alert state associated with the contents.
+- (TabAlertState)alertStateForContents:(content::WebContents*)contents;
 
+// Leaving visual effects enabled when fullscreen results in higher power
+// consumption. This is used to disable effects when fullscreen.
+- (void)setVisualEffectsDisabledForFullscreen:(BOOL)disabled;
 @end
 
 @interface TabStripController(TestingAPI)

@@ -8,13 +8,16 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/site_instance.h"
 #include "content/public/common/content_client.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/cert/x509_certificate.h"
 #include "ppapi/c/private/ppb_net_address_private.h"
@@ -33,7 +36,7 @@ SocketPermissionRequest CreateSocketPermissionRequest(
     const PP_NetAddress_Private& net_addr) {
   std::string host =
       ppapi::NetAddressPrivateImpl::DescribeNetAddress(net_addr, false);
-  uint16 port = 0;
+  uint16_t port = 0;
   std::vector<unsigned char> address;
   ppapi::NetAddressPrivateImpl::NetAddressToIPEndPoint(
       net_addr, &address, &port);
@@ -77,47 +80,48 @@ bool GetCertificateFields(const net::X509Certificate& cert,
                           ppapi::PPB_X509Certificate_Fields* fields) {
   const net::CertPrincipal& issuer = cert.issuer();
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_COMMON_NAME,
-                   new base::StringValue(issuer.common_name));
+                   base::MakeUnique<base::StringValue>(issuer.common_name));
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_LOCALITY_NAME,
-                   new base::StringValue(issuer.locality_name));
-  fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_STATE_OR_PROVINCE_NAME,
-                   new base::StringValue(issuer.state_or_province_name));
+                   base::MakeUnique<base::StringValue>(issuer.locality_name));
+  fields->SetField(
+      PP_X509CERTIFICATE_PRIVATE_ISSUER_STATE_OR_PROVINCE_NAME,
+      base::MakeUnique<base::StringValue>(issuer.state_or_province_name));
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_COUNTRY_NAME,
-                   new base::StringValue(issuer.country_name));
-  fields->SetField(
-      PP_X509CERTIFICATE_PRIVATE_ISSUER_ORGANIZATION_NAME,
-      new base::StringValue(base::JoinString(issuer.organization_names, "\n")));
-  fields->SetField(
-      PP_X509CERTIFICATE_PRIVATE_ISSUER_ORGANIZATION_UNIT_NAME,
-      new base::StringValue(
-          base::JoinString(issuer.organization_unit_names, "\n")));
+                   base::MakeUnique<base::StringValue>(issuer.country_name));
+  fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_ORGANIZATION_NAME,
+                   base::MakeUnique<base::StringValue>(
+                       base::JoinString(issuer.organization_names, "\n")));
+  fields->SetField(PP_X509CERTIFICATE_PRIVATE_ISSUER_ORGANIZATION_UNIT_NAME,
+                   base::MakeUnique<base::StringValue>(
+                       base::JoinString(issuer.organization_unit_names, "\n")));
 
   const net::CertPrincipal& subject = cert.subject();
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_COMMON_NAME,
-                   new base::StringValue(subject.common_name));
+                   base::MakeUnique<base::StringValue>(subject.common_name));
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_LOCALITY_NAME,
-                   new base::StringValue(subject.locality_name));
-  fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_STATE_OR_PROVINCE_NAME,
-                   new base::StringValue(subject.state_or_province_name));
+                   base::MakeUnique<base::StringValue>(subject.locality_name));
+  fields->SetField(
+      PP_X509CERTIFICATE_PRIVATE_SUBJECT_STATE_OR_PROVINCE_NAME,
+      base::MakeUnique<base::StringValue>(subject.state_or_province_name));
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_COUNTRY_NAME,
-                   new base::StringValue(subject.country_name));
-  fields->SetField(
-      PP_X509CERTIFICATE_PRIVATE_SUBJECT_ORGANIZATION_NAME,
-      new base::StringValue(
-          base::JoinString(subject.organization_names, "\n")));
-  fields->SetField(
-      PP_X509CERTIFICATE_PRIVATE_SUBJECT_ORGANIZATION_UNIT_NAME,
-      new base::StringValue(
-          base::JoinString(subject.organization_unit_names, "\n")));
+                   base::MakeUnique<base::StringValue>(subject.country_name));
+  fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_ORGANIZATION_NAME,
+                   base::MakeUnique<base::StringValue>(
+                       base::JoinString(subject.organization_names, "\n")));
+  fields->SetField(PP_X509CERTIFICATE_PRIVATE_SUBJECT_ORGANIZATION_UNIT_NAME,
+                   base::MakeUnique<base::StringValue>(base::JoinString(
+                       subject.organization_unit_names, "\n")));
 
   const std::string& serial_number = cert.serial_number();
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_SERIAL_NUMBER,
                    base::BinaryValue::CreateWithCopiedBuffer(
                        serial_number.data(), serial_number.length()));
-  fields->SetField(PP_X509CERTIFICATE_PRIVATE_VALIDITY_NOT_BEFORE,
-                   new base::FundamentalValue(cert.valid_start().ToDoubleT()));
+  fields->SetField(
+      PP_X509CERTIFICATE_PRIVATE_VALIDITY_NOT_BEFORE,
+      base::MakeUnique<base::FundamentalValue>(cert.valid_start().ToDoubleT()));
   fields->SetField(PP_X509CERTIFICATE_PRIVATE_VALIDITY_NOT_AFTER,
-                   new base::FundamentalValue(cert.valid_expiry().ToDoubleT()));
+                   base::MakeUnique<base::FundamentalValue>(
+                       cert.valid_expiry().ToDoubleT()));
   std::string der;
   net::X509Certificate::GetDEREncoded(cert.os_cert_handle(), &der);
   fields->SetField(
@@ -139,40 +143,25 @@ bool GetCertificateFields(const char* der,
 #if defined(OS_CHROMEOS)
 namespace {
 
-const unsigned char kIPv4Empty[] = {0, 0, 0, 0};
-const unsigned char kIPv6Empty[] =
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-const unsigned char kIPv6Loopback[] =
-    {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1};
+// The entire IPv4 subnet 127.0.0.0/8 is for loopback. See RFC3330.
+const uint8_t kIPv4LocalhostPrefix[] = {127};
 
-bool isLoopbackAddress(const net::IPAddressNumber& address) {
-  if (address.size() == net::kIPv4AddressSize) {
-    // The entire IPv4 subnet 127.0.0.0/8 is for loopback. See RFC3330.
-    return address[0] == 0x7f;
-  } else if (address.size() == net::kIPv6AddressSize) {
+bool IsLoopbackAddress(const net::IPAddress& address) {
+  if (address.IsIPv4()) {
+    return net::IPAddressStartsWith(address, kIPv4LocalhostPrefix);
+  } else if (address.IsIPv6()) {
     // ::1 is the only loopback address in ipv6.
-    return std::equal(&kIPv6Loopback[0], &kIPv6Loopback[net::kIPv6AddressSize],
-                      address.begin());
+    return address == net::IPAddress::IPv6Localhost();
   }
   return false;
 }
 
-std::string addressToFirewallString(const net::IPAddressNumber& address) {
-  if (address.empty()) {
-    return std::string();
-  }
-  if (address.size() == net::kIPv4AddressSize &&
-      std::equal(&kIPv4Empty[0], &kIPv4Empty[net::kIPv4AddressSize],
-                 address.begin())) {
-    return std::string();
-  }
-  if (address.size() == net::kIPv6AddressSize &&
-      std::equal(&kIPv6Empty[0], &kIPv6Empty[net::kIPv6AddressSize],
-                 address.begin())) {
+std::string AddressToFirewallString(const net::IPAddress& address) {
+  if (address.IsZero() || address.empty()) {
     return std::string();
   }
 
-  return net::IPAddressToString(address);
+  return address.ToString();
 }
 
 }  // namespace
@@ -180,11 +169,11 @@ std::string addressToFirewallString(const net::IPAddressNumber& address) {
 void OpenFirewallHole(const net::IPEndPoint& address,
                       chromeos::FirewallHole::PortType type,
                       FirewallHoleOpenCallback callback) {
-  if (isLoopbackAddress(address.address())) {
+  if (IsLoopbackAddress(address.address())) {
     callback.Run(nullptr);
     return;
   }
-  std::string address_string = addressToFirewallString(address.address());
+  std::string address_string = AddressToFirewallString(address.address());
 
   chromeos::FirewallHole::Open(type, address.port(), address_string, callback);
 }

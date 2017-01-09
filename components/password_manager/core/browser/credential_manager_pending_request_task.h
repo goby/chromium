@@ -10,7 +10,8 @@
 #include <vector>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
+#include "components/password_manager/core/browser/password_store.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
 #include "url/gurl.h"
 
@@ -23,6 +24,9 @@ namespace password_manager {
 struct CredentialInfo;
 class PasswordManagerClient;
 
+typedef base::Callback<void(const CredentialInfo& credential)>
+    SendCredentialCallback;
+
 // Sends credentials retrieved from the PasswordStore to CredentialManager API
 // clients and retrieves embedder-dependent information.
 class CredentialManagerPendingRequestTaskDelegate {
@@ -33,14 +37,17 @@ class CredentialManagerPendingRequestTaskDelegate {
   // Retrieves the current page origin.
   virtual GURL GetOrigin() const = 0;
 
-  // Retrieves a synthetic PasswordForm for the current page origin.
-  virtual autofill::PasswordForm GetSynthesizedFormForOrigin() const = 0;
-
   // Returns the PasswordManagerClient.
   virtual PasswordManagerClient* client() const = 0;
 
   // Sends a credential to JavaScript.
-  virtual void SendCredential(int id, const CredentialInfo& credential) = 0;
+  virtual void SendCredential(const SendCredentialCallback& send_callback,
+                              const CredentialInfo& credential) = 0;
+
+  // Updates |skip_zero_click| for |form| in the PasswordStore if required.
+  // Sends a credential to JavaScript.
+  virtual void SendPasswordForm(const SendCredentialCallback& send_callback,
+                                const autofill::PasswordForm* form) = 0;
 };
 
 // Retrieves credentials from the PasswordStore.
@@ -48,27 +55,26 @@ class CredentialManagerPendingRequestTask : public PasswordStoreConsumer {
  public:
   CredentialManagerPendingRequestTask(
       CredentialManagerPendingRequestTaskDelegate* delegate,
-      int request_id,
+      const SendCredentialCallback& callback,
       bool request_zero_click_only,
-      const GURL& request_origin,
-      const std::vector<GURL>& request_federations,
-      const std::vector<std::string>& affiliated_realms);
+      bool include_passwords,
+      const std::vector<GURL>& request_federations);
   ~CredentialManagerPendingRequestTask() override;
 
-  int id() const { return id_; }
+  SendCredentialCallback send_callback() const { return send_callback_; }
   const GURL& origin() const { return origin_; }
 
   // PasswordStoreConsumer implementation.
   void OnGetPasswordStoreResults(
-      ScopedVector<autofill::PasswordForm> results) override;
+      std::vector<std::unique_ptr<autofill::PasswordForm>> results) override;
 
  private:
   CredentialManagerPendingRequestTaskDelegate* delegate_;  // Weak;
-  const int id_;
+  SendCredentialCallback send_callback_;
   const bool zero_click_only_;
   const GURL origin_;
+  const bool include_passwords_;
   std::set<std::string> federations_;
-  std::set<std::string> affiliated_realms_;
 
   DISALLOW_COPY_AND_ASSIGN(CredentialManagerPendingRequestTask);
 };

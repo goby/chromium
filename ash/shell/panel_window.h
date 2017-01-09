@@ -5,14 +5,12 @@
 #ifndef ASH_SHELL_PANEL_WINDOW_H_
 #define ASH_SHELL_PANEL_WINDOW_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/aura/aura_export.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/widget/widget_delegate.h"
 
 namespace ash {
-
-class PanelFrameView;
 
 // Example Class for panel windows (Widget::InitParams::TYPE_PANEL).
 // Instances of PanelWindow will get added to the PanelContainer top level
@@ -38,7 +36,6 @@ class PanelWindow : public views::WidgetDelegateView {
 
   // Overridden from views::WidgetDelegate:
   base::string16 GetWindowTitle() const override;
-  View* GetContentsView() override;
   bool CanResize() const override;
   bool CanMaximize() const override;
   bool CanMinimize() const override;

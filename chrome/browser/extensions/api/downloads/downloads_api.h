@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_DOWNLOADS_DOWNLOADS_API_H_
 #define CHROME_BROWSER_EXTENSIONS_API_DOWNLOADS_DOWNLOADS_API_H_
 
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/time/time.h"
 #include "chrome/browser/download/all_download_item_notifier.h"
@@ -22,12 +24,6 @@
 #include "extensions/browser/warning_set.h"
 
 class DownloadFileIconExtractor;
-class DownloadQuery;
-
-namespace content {
-class ResourceContext;
-class ResourceDispatcherHost;
-}
 
 namespace extensions {
 class ExtensionRegistry;
@@ -110,11 +106,11 @@ class DownloadsDownloadFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsDownloadFunction);
 };
 
-class DownloadsSearchFunction : public ChromeSyncExtensionFunction {
+class DownloadsSearchFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.search", DOWNLOADS_SEARCH)
   DownloadsSearchFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsSearchFunction() override;
@@ -123,11 +119,11 @@ class DownloadsSearchFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsSearchFunction);
 };
 
-class DownloadsPauseFunction : public ChromeSyncExtensionFunction {
+class DownloadsPauseFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.pause", DOWNLOADS_PAUSE)
   DownloadsPauseFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsPauseFunction() override;
@@ -136,11 +132,11 @@ class DownloadsPauseFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsPauseFunction);
 };
 
-class DownloadsResumeFunction : public ChromeSyncExtensionFunction {
+class DownloadsResumeFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.resume", DOWNLOADS_RESUME)
   DownloadsResumeFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsResumeFunction() override;
@@ -149,11 +145,11 @@ class DownloadsResumeFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsResumeFunction);
 };
 
-class DownloadsCancelFunction : public ChromeSyncExtensionFunction {
+class DownloadsCancelFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.cancel", DOWNLOADS_CANCEL)
   DownloadsCancelFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsCancelFunction() override;
@@ -162,11 +158,11 @@ class DownloadsCancelFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsCancelFunction);
 };
 
-class DownloadsEraseFunction : public ChromeSyncExtensionFunction {
+class DownloadsEraseFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.erase", DOWNLOADS_ERASE)
   DownloadsEraseFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsEraseFunction() override;
@@ -214,11 +210,11 @@ class DownloadsAcceptDangerFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsAcceptDangerFunction);
 };
 
-class DownloadsShowFunction : public ChromeAsyncExtensionFunction {
+class DownloadsShowFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.show", DOWNLOADS_SHOW)
   DownloadsShowFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsShowFunction() override;
@@ -227,12 +223,12 @@ class DownloadsShowFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsShowFunction);
 };
 
-class DownloadsShowDefaultFolderFunction : public ChromeAsyncExtensionFunction {
+class DownloadsShowDefaultFolderFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION(
       "downloads.showDefaultFolder", DOWNLOADS_SHOWDEFAULTFOLDER)
   DownloadsShowDefaultFolderFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsShowDefaultFolderFunction() override;
@@ -241,11 +237,11 @@ class DownloadsShowDefaultFolderFunction : public ChromeAsyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsShowDefaultFolderFunction);
 };
 
-class DownloadsOpenFunction : public ChromeSyncExtensionFunction {
+class DownloadsOpenFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.open", DOWNLOADS_OPEN)
   DownloadsOpenFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsOpenFunction() override;
@@ -254,12 +250,12 @@ class DownloadsOpenFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsOpenFunction);
 };
 
-class DownloadsSetShelfEnabledFunction : public ChromeSyncExtensionFunction {
+class DownloadsSetShelfEnabledFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.setShelfEnabled",
                              DOWNLOADS_SETSHELFENABLED)
   DownloadsSetShelfEnabledFunction();
-  bool RunSync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsSetShelfEnabledFunction() override;
@@ -268,11 +264,11 @@ class DownloadsSetShelfEnabledFunction : public ChromeSyncExtensionFunction {
   DISALLOW_COPY_AND_ASSIGN(DownloadsSetShelfEnabledFunction);
 };
 
-class DownloadsDragFunction : public ChromeAsyncExtensionFunction {
+class DownloadsDragFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("downloads.drag", DOWNLOADS_DRAG)
   DownloadsDragFunction();
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
  protected:
   ~DownloadsDragFunction() override;
@@ -294,7 +290,7 @@ class DownloadsGetFileIconFunction : public ChromeAsyncExtensionFunction {
  private:
   void OnIconURLExtracted(const std::string& url);
   base::FilePath path_;
-  scoped_ptr<DownloadFileIconExtractor> icon_extractor_;
+  std::unique_ptr<DownloadFileIconExtractor> icon_extractor_;
   DISALLOW_COPY_AND_ASSIGN(DownloadsGetFileIconFunction);
 };
 
@@ -387,7 +383,7 @@ class ExtensionDownloadsEventRouter
       const std::string& event_name,
       bool include_incognito,
       const extensions::Event::WillDispatchCallback& will_dispatch_callback,
-      base::Value* json_arg);
+      std::unique_ptr<base::Value> json_arg);
 
   // extensions::ExtensionRegistryObserver.
   void OnExtensionUnloaded(

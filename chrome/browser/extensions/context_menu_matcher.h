@@ -5,11 +5,14 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_CONTEXT_MENU_MATCHER_H_
 #define CHROME_BROWSER_EXTENSIONS_CONTEXT_MENU_MATCHER_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
+#include <vector>
 
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "chrome/browser/extensions/menu_manager.h"
 #include "ui/base/models/simple_menu_model.h"
 
@@ -17,6 +20,7 @@ class ExtensionContextMenuBrowserTest;
 
 namespace content {
 class BrowserContext;
+class RenderFrameHost;
 }
 
 namespace extensions {
@@ -63,6 +67,7 @@ class ContextMenuMatcher {
   bool IsCommandIdEnabled(int command_id) const;
   void ExecuteCommand(int command_id,
                       content::WebContents* web_contents,
+                      content::RenderFrameHost* render_frame_host,
                       const content::ContextMenuParams& params);
 
  private:
@@ -74,9 +79,8 @@ class ContextMenuMatcher {
       bool* can_cross_incognito,
       MenuItem::List* items);
 
-  MenuItem::List GetRelevantExtensionItems(
-      const MenuItem::List& items,
-      bool can_cross_incognito);
+  MenuItem::List GetRelevantExtensionItems(const MenuItem::OwnedList& items,
+                                           bool can_cross_incognito);
 
   // Used for recursively adding submenus of extension items.
   void RecursivelyAppendExtensionItems(const MenuItem::List& items,
@@ -102,7 +106,7 @@ class ContextMenuMatcher {
   std::map<int, extensions::MenuItem::Id> extension_item_map_;
 
   // Keep track of and clean up menu models for submenus.
-  ScopedVector<ui::SimpleMenuModel> extension_menu_models_;
+  std::vector<std::unique_ptr<ui::SimpleMenuModel>> extension_menu_models_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextMenuMatcher);
 };

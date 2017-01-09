@@ -4,13 +4,17 @@
 
 #include "chrome/browser/extensions/external_provider_impl.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_path_override.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_service_test_base.h"
@@ -32,10 +36,10 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/customization/customization_document.h"
+#include "chrome/browser/chromeos/login/users/fake_chrome_user_manager.h"
 #include "chrome/browser/chromeos/login/users/scoped_user_manager_enabler.h"
 #include "chromeos/system/fake_statistics_provider.h"
 #include "chromeos/system/statistics_provider.h"
-#include "components/user_manager/fake_user_manager.h"
 #endif
 
 using ::testing::NotNull;
@@ -59,7 +63,7 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
   void InitServiceWithExternalProviders() {
 #if defined(OS_CHROMEOS)
     chromeos::ScopedUserManagerEnabler scoped_user_manager(
-        new user_manager::FakeUserManager);
+        new chromeos::FakeChromeUserManager);
 #endif
     InitializeExtensionServiceWithUpdaterAndPrefs();
 
@@ -75,11 +79,8 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
     extensions::ExternalProviderImpl::CreateExternalProviders(
         service_, profile_.get(), &providers);
 
-    for (ProviderCollection::iterator i = providers.begin();
-         i != providers.end();
-         ++i) {
-      service_->AddProviderForTesting(i->release());
-    }
+    for (std::unique_ptr<ExternalProviderInterface>& provider : providers)
+      service_->AddProviderForTesting(std::move(provider));
   }
 
   void InitializeExtensionServiceWithUpdaterAndPrefs() {
@@ -98,10 +99,10 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
     ExtensionServiceTestBase::SetUp();
     test_server_.reset(new EmbeddedTestServer());
 
-    ASSERT_TRUE(test_server_->Start());
     test_server_->RegisterRequestHandler(
         base::Bind(&ExternalProviderImplTest::HandleRequest,
                    base::Unretained(this)));
+    ASSERT_TRUE(test_server_->Start());
 
     test_extension_cache_.reset(new ExtensionCacheFake());
 
@@ -111,10 +112,10 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
   }
 
  private:
-  scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
     GURL url = test_server_->GetURL(request.relative_url);
     if (url.path() == kManifestPath) {
-      scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+      std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
       response->set_code(net::HTTP_OK);
       response->set_content(base::StringPrintf(
           "<?xml version='1.0' encoding='UTF-8'?>\n"
@@ -127,7 +128,7 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
           extension_misc::kInAppPaymentsSupportAppId,
           test_server_->GetURL(kAppPath).spec().c_str()));
       response->set_content_type("text/xml");
-      return response.Pass();
+      return std::move(response);
     }
     if (url.path() == kAppPath) {
       base::FilePath test_data_dir;
@@ -136,17 +137,17 @@ class ExternalProviderImplTest : public ExtensionServiceTestBase {
       base::ReadFileToString(
           test_data_dir.AppendASCII("extensions/dummyiap.crx"),
           &contents);
-      scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+      std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
       response->set_code(net::HTTP_OK);
       response->set_content(contents);
-      return response.Pass();
+      return std::move(response);
     }
 
     return nullptr;
   }
 
-  scoped_ptr<EmbeddedTestServer> test_server_;
-  scoped_ptr<ExtensionCacheFake> test_extension_cache_;
+  std::unique_ptr<EmbeddedTestServer> test_server_;
+  std::unique_ptr<ExtensionCacheFake> test_extension_cache_;
 
 #if defined(OS_CHROMEOS)
   // chromeos::ServicesCustomizationExternalLoader is hooked up as an

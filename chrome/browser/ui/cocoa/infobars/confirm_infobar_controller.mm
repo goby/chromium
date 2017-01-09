@@ -4,10 +4,12 @@
 
 #include "chrome/browser/ui/cocoa/infobars/confirm_infobar_controller.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/ui/chrome_style.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
 #include "chrome/browser/ui/cocoa/infobars/infobar_cocoa.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "skia/ext/skia_utils_mac.h"
@@ -124,7 +126,7 @@
   [view setMessage:message withFont:font messageColor:[NSColor blackColor]];
   if (linkLength != 0) {
     NSColor* linkColor =
-        gfx::SkColorToCalibratedNSColor(chrome_style::GetLinkColor());
+        skia::SkColorToCalibratedNSColor(chrome_style::GetLinkColor());
     [view addLinkRange:NSMakeRange(linkOffset, linkLength)
                withURL:base::SysUTF8ToNSString(delegate->GetLinkURL().spec())
              linkColor:linkColor];
@@ -145,11 +147,11 @@
 
 @end
 
-scoped_ptr<infobars::InfoBar> InfoBarService::CreateConfirmInfoBar(
-    scoped_ptr<ConfirmInfoBarDelegate> delegate) {
-  scoped_ptr<InfoBarCocoa> infobar(new InfoBarCocoa(delegate.Pass()));
+std::unique_ptr<infobars::InfoBar> InfoBarService::CreateConfirmInfoBar(
+    std::unique_ptr<ConfirmInfoBarDelegate> delegate) {
+  std::unique_ptr<InfoBarCocoa> infobar(new InfoBarCocoa(std::move(delegate)));
   base::scoped_nsobject<ConfirmInfoBarController> controller(
       [[ConfirmInfoBarController alloc] initWithInfoBar:infobar.get()]);
   infobar->set_controller(controller);
-  return infobar.Pass();
+  return std::move(infobar);
 }

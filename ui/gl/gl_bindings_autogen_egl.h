@@ -1,4 +1,4 @@
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -8,10 +8,10 @@
 //    clang-format -i -style=chromium filename
 // DO NOT EDIT!
 
-#ifndef UI_GFX_GL_GL_BINDINGS_AUTOGEN_EGL_H_
-#define UI_GFX_GL_GL_BINDINGS_AUTOGEN_EGL_H_
+#ifndef UI_GL_GL_BINDINGS_AUTOGEN_EGL_H_
+#define UI_GL_GL_BINDINGS_AUTOGEN_EGL_H_
 
-namespace gfx {
+namespace gl {
 
 class GLContext;
 
@@ -59,6 +59,14 @@ typedef EGLSurface(GL_BINDING_CALL* eglCreatePixmapSurfaceProc)(
     EGLConfig config,
     EGLNativePixmapType pixmap,
     const EGLint* attrib_list);
+typedef EGLStreamKHR(GL_BINDING_CALL* eglCreateStreamKHRProc)(
+    EGLDisplay dpy,
+    const EGLint* attrib_list);
+typedef EGLBoolean(
+    GL_BINDING_CALL* eglCreateStreamProducerD3DTextureNV12ANGLEProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream,
+    EGLAttrib* attrib_list);
 typedef EGLSyncKHR(GL_BINDING_CALL* eglCreateSyncKHRProc)(
     EGLDisplay dpy,
     EGLenum type,
@@ -72,6 +80,9 @@ typedef EGLBoolean(GL_BINDING_CALL* eglDestroyContextProc)(EGLDisplay dpy,
                                                            EGLContext ctx);
 typedef EGLBoolean(GL_BINDING_CALL* eglDestroyImageKHRProc)(EGLDisplay dpy,
                                                             EGLImageKHR image);
+typedef EGLBoolean(GL_BINDING_CALL* eglDestroyStreamKHRProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream);
 typedef EGLBoolean(GL_BINDING_CALL* eglDestroySurfaceProc)(EGLDisplay dpy,
                                                            EGLSurface surface);
 typedef EGLBoolean(GL_BINDING_CALL* eglDestroySyncKHRProc)(EGLDisplay dpy,
@@ -106,6 +117,10 @@ typedef EGLBoolean(GL_BINDING_CALL* eglGetSyncValuesCHROMIUMProc)(
     EGLuint64CHROMIUM* ust,
     EGLuint64CHROMIUM* msc,
     EGLuint64CHROMIUM* sbc);
+typedef EGLBoolean(GL_BINDING_CALL* eglImageFlushExternalEXTProc)(
+    EGLDisplay dpy,
+    EGLImageKHR image,
+    const EGLAttrib* attrib_list);
 typedef EGLBoolean(GL_BINDING_CALL* eglInitializeProc)(EGLDisplay dpy,
                                                        EGLint* major,
                                                        EGLint* minor);
@@ -124,6 +139,15 @@ typedef EGLBoolean(GL_BINDING_CALL* eglQueryContextProc)(EGLDisplay dpy,
                                                          EGLContext ctx,
                                                          EGLint attribute,
                                                          EGLint* value);
+typedef EGLBoolean(GL_BINDING_CALL* eglQueryStreamKHRProc)(EGLDisplay dpy,
+                                                           EGLStreamKHR stream,
+                                                           EGLenum attribute,
+                                                           EGLint* value);
+typedef EGLBoolean(GL_BINDING_CALL* eglQueryStreamu64KHRProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream,
+    EGLenum attribute,
+    EGLuint64KHR* value);
 typedef const char*(GL_BINDING_CALL* eglQueryStringProc)(EGLDisplay dpy,
                                                          EGLint name);
 typedef EGLBoolean(GL_BINDING_CALL* eglQuerySurfaceProc)(EGLDisplay dpy,
@@ -139,12 +163,40 @@ typedef EGLBoolean(GL_BINDING_CALL* eglReleaseTexImageProc)(EGLDisplay dpy,
                                                             EGLSurface surface,
                                                             EGLint buffer);
 typedef EGLBoolean(GL_BINDING_CALL* eglReleaseThreadProc)(void);
+typedef EGLBoolean(GL_BINDING_CALL* eglStreamAttribKHRProc)(EGLDisplay dpy,
+                                                            EGLStreamKHR stream,
+                                                            EGLenum attribute,
+                                                            EGLint value);
+typedef EGLBoolean(GL_BINDING_CALL* eglStreamConsumerAcquireKHRProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream);
+typedef EGLBoolean(
+    GL_BINDING_CALL* eglStreamConsumerGLTextureExternalAttribsNVProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream,
+    EGLAttrib* attrib_list);
+typedef EGLBoolean(GL_BINDING_CALL* eglStreamConsumerGLTextureExternalKHRProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream);
+typedef EGLBoolean(GL_BINDING_CALL* eglStreamConsumerReleaseKHRProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream);
+typedef EGLBoolean(GL_BINDING_CALL* eglStreamPostD3DTextureNV12ANGLEProc)(
+    EGLDisplay dpy,
+    EGLStreamKHR stream,
+    void* texture,
+    const EGLAttrib* attrib_list);
 typedef EGLBoolean(GL_BINDING_CALL* eglSurfaceAttribProc)(EGLDisplay dpy,
                                                           EGLSurface surface,
                                                           EGLint attribute,
                                                           EGLint value);
 typedef EGLBoolean(GL_BINDING_CALL* eglSwapBuffersProc)(EGLDisplay dpy,
                                                         EGLSurface surface);
+typedef EGLBoolean(GL_BINDING_CALL* eglSwapBuffersWithDamageKHRProc)(
+    EGLDisplay dpy,
+    EGLSurface surface,
+    EGLint* rects,
+    EGLint n_rects);
 typedef EGLBoolean(GL_BINDING_CALL* eglSwapIntervalProc)(EGLDisplay dpy,
                                                          EGLint interval);
 typedef EGLBoolean(GL_BINDING_CALL* eglTerminateProc)(EGLDisplay dpy);
@@ -159,15 +211,21 @@ struct ExtensionsEGL {
   bool b_EGL_EXT_platform_base;
   bool b_EGL_ANGLE_d3d_share_handle_client_buffer;
   bool b_EGL_ANGLE_query_surface_pointer;
+  bool b_EGL_ANGLE_stream_producer_d3d_texture_nv12;
   bool b_EGL_ANGLE_surface_d3d_texture_2d_share_handle;
   bool b_EGL_CHROMIUM_sync_control;
+  bool b_EGL_EXT_image_flush_external;
   bool b_EGL_KHR_fence_sync;
   bool b_EGL_KHR_gl_texture_2D_image;
   bool b_EGL_KHR_image;
   bool b_EGL_KHR_image_base;
   bool b_EGL_KHR_reusable_sync;
+  bool b_EGL_KHR_stream;
+  bool b_EGL_KHR_stream_consumer_gltexture;
+  bool b_EGL_KHR_swap_buffers_with_damage;
   bool b_EGL_KHR_wait_sync;
   bool b_EGL_NV_post_sub_buffer;
+  bool b_EGL_NV_stream_consumer_gltexture_yuv;
   bool b_GL_CHROMIUM_egl_khr_fence_sync_hack;
 };
 
@@ -182,10 +240,14 @@ struct ProcsEGL {
   eglCreatePbufferFromClientBufferProc eglCreatePbufferFromClientBufferFn;
   eglCreatePbufferSurfaceProc eglCreatePbufferSurfaceFn;
   eglCreatePixmapSurfaceProc eglCreatePixmapSurfaceFn;
+  eglCreateStreamKHRProc eglCreateStreamKHRFn;
+  eglCreateStreamProducerD3DTextureNV12ANGLEProc
+      eglCreateStreamProducerD3DTextureNV12ANGLEFn;
   eglCreateSyncKHRProc eglCreateSyncKHRFn;
   eglCreateWindowSurfaceProc eglCreateWindowSurfaceFn;
   eglDestroyContextProc eglDestroyContextFn;
   eglDestroyImageKHRProc eglDestroyImageKHRFn;
+  eglDestroyStreamKHRProc eglDestroyStreamKHRFn;
   eglDestroySurfaceProc eglDestroySurfaceFn;
   eglDestroySyncKHRProc eglDestroySyncKHRFn;
   eglGetConfigAttribProc eglGetConfigAttribFn;
@@ -199,18 +261,30 @@ struct ProcsEGL {
   eglGetProcAddressProc eglGetProcAddressFn;
   eglGetSyncAttribKHRProc eglGetSyncAttribKHRFn;
   eglGetSyncValuesCHROMIUMProc eglGetSyncValuesCHROMIUMFn;
+  eglImageFlushExternalEXTProc eglImageFlushExternalEXTFn;
   eglInitializeProc eglInitializeFn;
   eglMakeCurrentProc eglMakeCurrentFn;
   eglPostSubBufferNVProc eglPostSubBufferNVFn;
   eglQueryAPIProc eglQueryAPIFn;
   eglQueryContextProc eglQueryContextFn;
+  eglQueryStreamKHRProc eglQueryStreamKHRFn;
+  eglQueryStreamu64KHRProc eglQueryStreamu64KHRFn;
   eglQueryStringProc eglQueryStringFn;
   eglQuerySurfaceProc eglQuerySurfaceFn;
   eglQuerySurfacePointerANGLEProc eglQuerySurfacePointerANGLEFn;
   eglReleaseTexImageProc eglReleaseTexImageFn;
   eglReleaseThreadProc eglReleaseThreadFn;
+  eglStreamAttribKHRProc eglStreamAttribKHRFn;
+  eglStreamConsumerAcquireKHRProc eglStreamConsumerAcquireKHRFn;
+  eglStreamConsumerGLTextureExternalAttribsNVProc
+      eglStreamConsumerGLTextureExternalAttribsNVFn;
+  eglStreamConsumerGLTextureExternalKHRProc
+      eglStreamConsumerGLTextureExternalKHRFn;
+  eglStreamConsumerReleaseKHRProc eglStreamConsumerReleaseKHRFn;
+  eglStreamPostD3DTextureNV12ANGLEProc eglStreamPostD3DTextureNV12ANGLEFn;
   eglSurfaceAttribProc eglSurfaceAttribFn;
   eglSwapBuffersProc eglSwapBuffersFn;
+  eglSwapBuffersWithDamageKHRProc eglSwapBuffersWithDamageKHRFn;
   eglSwapIntervalProc eglSwapIntervalFn;
   eglTerminateProc eglTerminateFn;
   eglWaitClientProc eglWaitClientFn;
@@ -262,6 +336,12 @@ class GL_EXPORT EGLApi {
                                               EGLConfig config,
                                               EGLNativePixmapType pixmap,
                                               const EGLint* attrib_list) = 0;
+  virtual EGLStreamKHR eglCreateStreamKHRFn(EGLDisplay dpy,
+                                            const EGLint* attrib_list) = 0;
+  virtual EGLBoolean eglCreateStreamProducerD3DTextureNV12ANGLEFn(
+      EGLDisplay dpy,
+      EGLStreamKHR stream,
+      EGLAttrib* attrib_list) = 0;
   virtual EGLSyncKHR eglCreateSyncKHRFn(EGLDisplay dpy,
                                         EGLenum type,
                                         const EGLint* attrib_list) = 0;
@@ -272,6 +352,8 @@ class GL_EXPORT EGLApi {
   virtual EGLBoolean eglDestroyContextFn(EGLDisplay dpy, EGLContext ctx) = 0;
   virtual EGLBoolean eglDestroyImageKHRFn(EGLDisplay dpy,
                                           EGLImageKHR image) = 0;
+  virtual EGLBoolean eglDestroyStreamKHRFn(EGLDisplay dpy,
+                                           EGLStreamKHR stream) = 0;
   virtual EGLBoolean eglDestroySurfaceFn(EGLDisplay dpy,
                                          EGLSurface surface) = 0;
   virtual EGLBoolean eglDestroySyncKHRFn(EGLDisplay dpy, EGLSyncKHR sync) = 0;
@@ -302,6 +384,10 @@ class GL_EXPORT EGLApi {
                                                 EGLuint64CHROMIUM* ust,
                                                 EGLuint64CHROMIUM* msc,
                                                 EGLuint64CHROMIUM* sbc) = 0;
+  virtual EGLBoolean eglImageFlushExternalEXTFn(
+      EGLDisplay dpy,
+      EGLImageKHR image,
+      const EGLAttrib* attrib_list) = 0;
   virtual EGLBoolean eglInitializeFn(EGLDisplay dpy,
                                      EGLint* major,
                                      EGLint* minor) = 0;
@@ -320,6 +406,14 @@ class GL_EXPORT EGLApi {
                                        EGLContext ctx,
                                        EGLint attribute,
                                        EGLint* value) = 0;
+  virtual EGLBoolean eglQueryStreamKHRFn(EGLDisplay dpy,
+                                         EGLStreamKHR stream,
+                                         EGLenum attribute,
+                                         EGLint* value) = 0;
+  virtual EGLBoolean eglQueryStreamu64KHRFn(EGLDisplay dpy,
+                                            EGLStreamKHR stream,
+                                            EGLenum attribute,
+                                            EGLuint64KHR* value) = 0;
   virtual const char* eglQueryStringFn(EGLDisplay dpy, EGLint name) = 0;
   virtual EGLBoolean eglQuerySurfaceFn(EGLDisplay dpy,
                                        EGLSurface surface,
@@ -333,11 +427,35 @@ class GL_EXPORT EGLApi {
                                           EGLSurface surface,
                                           EGLint buffer) = 0;
   virtual EGLBoolean eglReleaseThreadFn(void) = 0;
+  virtual EGLBoolean eglStreamAttribKHRFn(EGLDisplay dpy,
+                                          EGLStreamKHR stream,
+                                          EGLenum attribute,
+                                          EGLint value) = 0;
+  virtual EGLBoolean eglStreamConsumerAcquireKHRFn(EGLDisplay dpy,
+                                                   EGLStreamKHR stream) = 0;
+  virtual EGLBoolean eglStreamConsumerGLTextureExternalAttribsNVFn(
+      EGLDisplay dpy,
+      EGLStreamKHR stream,
+      EGLAttrib* attrib_list) = 0;
+  virtual EGLBoolean eglStreamConsumerGLTextureExternalKHRFn(
+      EGLDisplay dpy,
+      EGLStreamKHR stream) = 0;
+  virtual EGLBoolean eglStreamConsumerReleaseKHRFn(EGLDisplay dpy,
+                                                   EGLStreamKHR stream) = 0;
+  virtual EGLBoolean eglStreamPostD3DTextureNV12ANGLEFn(
+      EGLDisplay dpy,
+      EGLStreamKHR stream,
+      void* texture,
+      const EGLAttrib* attrib_list) = 0;
   virtual EGLBoolean eglSurfaceAttribFn(EGLDisplay dpy,
                                         EGLSurface surface,
                                         EGLint attribute,
                                         EGLint value) = 0;
   virtual EGLBoolean eglSwapBuffersFn(EGLDisplay dpy, EGLSurface surface) = 0;
+  virtual EGLBoolean eglSwapBuffersWithDamageKHRFn(EGLDisplay dpy,
+                                                   EGLSurface surface,
+                                                   EGLint* rects,
+                                                   EGLint n_rects) = 0;
   virtual EGLBoolean eglSwapIntervalFn(EGLDisplay dpy, EGLint interval) = 0;
   virtual EGLBoolean eglTerminateFn(EGLDisplay dpy) = 0;
   virtual EGLBoolean eglWaitClientFn(void) = 0;
@@ -348,63 +466,80 @@ class GL_EXPORT EGLApi {
                                   EGLint flags) = 0;
 };
 
-}  // namespace gfx
+}  // namespace gl
 
-#define eglBindAPI ::gfx::g_current_egl_context->eglBindAPIFn
-#define eglBindTexImage ::gfx::g_current_egl_context->eglBindTexImageFn
-#define eglChooseConfig ::gfx::g_current_egl_context->eglChooseConfigFn
-#define eglClientWaitSyncKHR \
-  ::gfx::g_current_egl_context->eglClientWaitSyncKHRFn
-#define eglCopyBuffers ::gfx::g_current_egl_context->eglCopyBuffersFn
-#define eglCreateContext ::gfx::g_current_egl_context->eglCreateContextFn
-#define eglCreateImageKHR ::gfx::g_current_egl_context->eglCreateImageKHRFn
+#define eglBindAPI ::gl::g_current_egl_context->eglBindAPIFn
+#define eglBindTexImage ::gl::g_current_egl_context->eglBindTexImageFn
+#define eglChooseConfig ::gl::g_current_egl_context->eglChooseConfigFn
+#define eglClientWaitSyncKHR ::gl::g_current_egl_context->eglClientWaitSyncKHRFn
+#define eglCopyBuffers ::gl::g_current_egl_context->eglCopyBuffersFn
+#define eglCreateContext ::gl::g_current_egl_context->eglCreateContextFn
+#define eglCreateImageKHR ::gl::g_current_egl_context->eglCreateImageKHRFn
 #define eglCreatePbufferFromClientBuffer \
-  ::gfx::g_current_egl_context->eglCreatePbufferFromClientBufferFn
+  ::gl::g_current_egl_context->eglCreatePbufferFromClientBufferFn
 #define eglCreatePbufferSurface \
-  ::gfx::g_current_egl_context->eglCreatePbufferSurfaceFn
+  ::gl::g_current_egl_context->eglCreatePbufferSurfaceFn
 #define eglCreatePixmapSurface \
-  ::gfx::g_current_egl_context->eglCreatePixmapSurfaceFn
-#define eglCreateSyncKHR ::gfx::g_current_egl_context->eglCreateSyncKHRFn
+  ::gl::g_current_egl_context->eglCreatePixmapSurfaceFn
+#define eglCreateStreamKHR ::gl::g_current_egl_context->eglCreateStreamKHRFn
+#define eglCreateStreamProducerD3DTextureNV12ANGLE \
+  ::gl::g_current_egl_context->eglCreateStreamProducerD3DTextureNV12ANGLEFn
+#define eglCreateSyncKHR ::gl::g_current_egl_context->eglCreateSyncKHRFn
 #define eglCreateWindowSurface \
-  ::gfx::g_current_egl_context->eglCreateWindowSurfaceFn
-#define eglDestroyContext ::gfx::g_current_egl_context->eglDestroyContextFn
-#define eglDestroyImageKHR ::gfx::g_current_egl_context->eglDestroyImageKHRFn
-#define eglDestroySurface ::gfx::g_current_egl_context->eglDestroySurfaceFn
-#define eglDestroySyncKHR ::gfx::g_current_egl_context->eglDestroySyncKHRFn
-#define eglGetConfigAttrib ::gfx::g_current_egl_context->eglGetConfigAttribFn
-#define eglGetConfigs ::gfx::g_current_egl_context->eglGetConfigsFn
-#define eglGetCurrentContext \
-  ::gfx::g_current_egl_context->eglGetCurrentContextFn
-#define eglGetCurrentDisplay \
-  ::gfx::g_current_egl_context->eglGetCurrentDisplayFn
-#define eglGetCurrentSurface \
-  ::gfx::g_current_egl_context->eglGetCurrentSurfaceFn
-#define eglGetDisplay ::gfx::g_current_egl_context->eglGetDisplayFn
-#define eglGetError ::gfx::g_current_egl_context->eglGetErrorFn
+  ::gl::g_current_egl_context->eglCreateWindowSurfaceFn
+#define eglDestroyContext ::gl::g_current_egl_context->eglDestroyContextFn
+#define eglDestroyImageKHR ::gl::g_current_egl_context->eglDestroyImageKHRFn
+#define eglDestroyStreamKHR ::gl::g_current_egl_context->eglDestroyStreamKHRFn
+#define eglDestroySurface ::gl::g_current_egl_context->eglDestroySurfaceFn
+#define eglDestroySyncKHR ::gl::g_current_egl_context->eglDestroySyncKHRFn
+#define eglGetConfigAttrib ::gl::g_current_egl_context->eglGetConfigAttribFn
+#define eglGetConfigs ::gl::g_current_egl_context->eglGetConfigsFn
+#define eglGetCurrentContext ::gl::g_current_egl_context->eglGetCurrentContextFn
+#define eglGetCurrentDisplay ::gl::g_current_egl_context->eglGetCurrentDisplayFn
+#define eglGetCurrentSurface ::gl::g_current_egl_context->eglGetCurrentSurfaceFn
+#define eglGetDisplay ::gl::g_current_egl_context->eglGetDisplayFn
+#define eglGetError ::gl::g_current_egl_context->eglGetErrorFn
 #define eglGetPlatformDisplayEXT \
-  ::gfx::g_current_egl_context->eglGetPlatformDisplayEXTFn
-#define eglGetProcAddress ::gfx::g_current_egl_context->eglGetProcAddressFn
-#define eglGetSyncAttribKHR ::gfx::g_current_egl_context->eglGetSyncAttribKHRFn
+  ::gl::g_current_egl_context->eglGetPlatformDisplayEXTFn
+#define eglGetProcAddress ::gl::g_current_egl_context->eglGetProcAddressFn
+#define eglGetSyncAttribKHR ::gl::g_current_egl_context->eglGetSyncAttribKHRFn
 #define eglGetSyncValuesCHROMIUM \
-  ::gfx::g_current_egl_context->eglGetSyncValuesCHROMIUMFn
-#define eglInitialize ::gfx::g_current_egl_context->eglInitializeFn
-#define eglMakeCurrent ::gfx::g_current_egl_context->eglMakeCurrentFn
-#define eglPostSubBufferNV ::gfx::g_current_egl_context->eglPostSubBufferNVFn
-#define eglQueryAPI ::gfx::g_current_egl_context->eglQueryAPIFn
-#define eglQueryContext ::gfx::g_current_egl_context->eglQueryContextFn
-#define eglQueryString ::gfx::g_current_egl_context->eglQueryStringFn
-#define eglQuerySurface ::gfx::g_current_egl_context->eglQuerySurfaceFn
+  ::gl::g_current_egl_context->eglGetSyncValuesCHROMIUMFn
+#define eglImageFlushExternalEXT \
+  ::gl::g_current_egl_context->eglImageFlushExternalEXTFn
+#define eglInitialize ::gl::g_current_egl_context->eglInitializeFn
+#define eglMakeCurrent ::gl::g_current_egl_context->eglMakeCurrentFn
+#define eglPostSubBufferNV ::gl::g_current_egl_context->eglPostSubBufferNVFn
+#define eglQueryAPI ::gl::g_current_egl_context->eglQueryAPIFn
+#define eglQueryContext ::gl::g_current_egl_context->eglQueryContextFn
+#define eglQueryStreamKHR ::gl::g_current_egl_context->eglQueryStreamKHRFn
+#define eglQueryStreamu64KHR ::gl::g_current_egl_context->eglQueryStreamu64KHRFn
+#define eglQueryString ::gl::g_current_egl_context->eglQueryStringFn
+#define eglQuerySurface ::gl::g_current_egl_context->eglQuerySurfaceFn
 #define eglQuerySurfacePointerANGLE \
-  ::gfx::g_current_egl_context->eglQuerySurfacePointerANGLEFn
-#define eglReleaseTexImage ::gfx::g_current_egl_context->eglReleaseTexImageFn
-#define eglReleaseThread ::gfx::g_current_egl_context->eglReleaseThreadFn
-#define eglSurfaceAttrib ::gfx::g_current_egl_context->eglSurfaceAttribFn
-#define eglSwapBuffers ::gfx::g_current_egl_context->eglSwapBuffersFn
-#define eglSwapInterval ::gfx::g_current_egl_context->eglSwapIntervalFn
-#define eglTerminate ::gfx::g_current_egl_context->eglTerminateFn
-#define eglWaitClient ::gfx::g_current_egl_context->eglWaitClientFn
-#define eglWaitGL ::gfx::g_current_egl_context->eglWaitGLFn
-#define eglWaitNative ::gfx::g_current_egl_context->eglWaitNativeFn
-#define eglWaitSyncKHR ::gfx::g_current_egl_context->eglWaitSyncKHRFn
+  ::gl::g_current_egl_context->eglQuerySurfacePointerANGLEFn
+#define eglReleaseTexImage ::gl::g_current_egl_context->eglReleaseTexImageFn
+#define eglReleaseThread ::gl::g_current_egl_context->eglReleaseThreadFn
+#define eglStreamAttribKHR ::gl::g_current_egl_context->eglStreamAttribKHRFn
+#define eglStreamConsumerAcquireKHR \
+  ::gl::g_current_egl_context->eglStreamConsumerAcquireKHRFn
+#define eglStreamConsumerGLTextureExternalAttribsNV \
+  ::gl::g_current_egl_context->eglStreamConsumerGLTextureExternalAttribsNVFn
+#define eglStreamConsumerGLTextureExternalKHR \
+  ::gl::g_current_egl_context->eglStreamConsumerGLTextureExternalKHRFn
+#define eglStreamConsumerReleaseKHR \
+  ::gl::g_current_egl_context->eglStreamConsumerReleaseKHRFn
+#define eglStreamPostD3DTextureNV12ANGLE \
+  ::gl::g_current_egl_context->eglStreamPostD3DTextureNV12ANGLEFn
+#define eglSurfaceAttrib ::gl::g_current_egl_context->eglSurfaceAttribFn
+#define eglSwapBuffers ::gl::g_current_egl_context->eglSwapBuffersFn
+#define eglSwapBuffersWithDamageKHR \
+  ::gl::g_current_egl_context->eglSwapBuffersWithDamageKHRFn
+#define eglSwapInterval ::gl::g_current_egl_context->eglSwapIntervalFn
+#define eglTerminate ::gl::g_current_egl_context->eglTerminateFn
+#define eglWaitClient ::gl::g_current_egl_context->eglWaitClientFn
+#define eglWaitGL ::gl::g_current_egl_context->eglWaitGLFn
+#define eglWaitNative ::gl::g_current_egl_context->eglWaitNativeFn
+#define eglWaitSyncKHR ::gl::g_current_egl_context->eglWaitSyncKHRFn
 
-#endif  //  UI_GFX_GL_GL_BINDINGS_AUTOGEN_EGL_H_
+#endif  //  UI_GL_GL_BINDINGS_AUTOGEN_EGL_H_

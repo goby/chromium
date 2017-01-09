@@ -23,39 +23,29 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/webgl/WebGLDebugRendererInfo.h"
 
 namespace blink {
 
-WebGLDebugRendererInfo::WebGLDebugRendererInfo(WebGLRenderingContextBase* context)
-    : WebGLExtension(context)
-{
+WebGLDebugRendererInfo::WebGLDebugRendererInfo(
+    WebGLRenderingContextBase* context)
+    : WebGLExtension(context) {}
+
+WebGLExtensionName WebGLDebugRendererInfo::name() const {
+  return WebGLDebugRendererInfoName;
 }
 
-WebGLDebugRendererInfo::~WebGLDebugRendererInfo()
-{
+WebGLDebugRendererInfo* WebGLDebugRendererInfo::create(
+    WebGLRenderingContextBase* context) {
+  return new WebGLDebugRendererInfo(context);
 }
 
-WebGLExtensionName WebGLDebugRendererInfo::name() const
-{
-    return WebGLDebugRendererInfoName;
+bool WebGLDebugRendererInfo::supported(WebGLRenderingContextBase*) {
+  return true;
 }
 
-WebGLDebugRendererInfo* WebGLDebugRendererInfo::create(WebGLRenderingContextBase* context)
-{
-    return new WebGLDebugRendererInfo(context);
+const char* WebGLDebugRendererInfo::extensionName() {
+  return "WEBGL_debug_renderer_info";
 }
 
-bool WebGLDebugRendererInfo::supported(WebGLRenderingContextBase*)
-{
-    return true;
-}
-
-const char* WebGLDebugRendererInfo::extensionName()
-{
-    return "WEBGL_debug_renderer_info";
-}
-
-} // namespace blink
+}  // namespace blink

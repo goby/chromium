@@ -4,6 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/confirm_bubble_controller.h"
 
+#include <utility>
+
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/confirm_bubble_cocoa.h"
@@ -15,11 +17,11 @@
 
 - (id)initWithParent:(NSView*)parent
               origin:(CGPoint)origin
-               model:(scoped_ptr<ConfirmBubbleModel>)model {
+               model:(std::unique_ptr<ConfirmBubbleModel>)model {
   if ((self = [super initWithNibName:nil bundle:nil])) {
     parent_ = parent;
     origin_ = origin;
-    model_ = model.Pass();
+    model_ = std::move(model);
   }
   return self;
 }

@@ -5,14 +5,19 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_CAPTURE_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_CAPTURE_HOST_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/media/video_capture.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/pepper/pepper_device_enumeration_host_helper.h"
 #include "content/renderer/pepper/ppb_buffer_impl.h"
-#include "media/base/video_capture_types.h"
+#include "media/capture/video_capture_types.h"
 #include "ppapi/c/dev/ppp_video_capture_dev.h"
 #include "ppapi/host/host_message_context.h"
 #include "ppapi/host/resource_host.h"
@@ -86,11 +91,12 @@ class PepperVideoCaptureHost : public ppapi::host::ResourceHost {
 
   bool SetStatus(PP_VideoCaptureStatus_Dev status, bool forced);
 
-  scoped_ptr<PepperPlatformVideoCapture> platform_video_capture_;
+  std::unique_ptr<PepperPlatformVideoCapture> platform_video_capture_;
 
   // Buffers of video frame.
   struct BufferInfo {
     BufferInfo();
+    BufferInfo(const BufferInfo& other);
     ~BufferInfo();
 
     bool in_use;

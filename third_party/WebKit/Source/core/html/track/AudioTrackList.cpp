@@ -2,38 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/html/track/AudioTrackList.h"
 
 namespace blink {
 
-AudioTrackList* AudioTrackList::create(HTMLMediaElement& mediaElement)
-{
-    return new AudioTrackList(mediaElement);
+AudioTrackList* AudioTrackList::create(HTMLMediaElement& mediaElement) {
+  return new AudioTrackList(mediaElement);
 }
 
-AudioTrackList::~AudioTrackList()
-{
-}
+AudioTrackList::~AudioTrackList() {}
 
 AudioTrackList::AudioTrackList(HTMLMediaElement& mediaElement)
-    : TrackListBase<AudioTrack>(&mediaElement)
-{
+    : TrackListBase<AudioTrack>(&mediaElement) {}
+
+bool AudioTrackList::hasEnabledTrack() const {
+  for (unsigned i = 0; i < length(); ++i) {
+    if (anonymousIndexedGetter(i)->enabled())
+      return true;
+  }
+
+  return false;
 }
 
-bool AudioTrackList::hasEnabledTrack() const
-{
-    for (unsigned i = 0; i < length(); ++i) {
-        if (anonymousIndexedGetter(i)->enabled())
-            return true;
-    }
-
-    return false;
+const AtomicString& AudioTrackList::interfaceName() const {
+  return EventTargetNames::AudioTrackList;
 }
 
-const AtomicString& AudioTrackList::interfaceName() const
-{
-    return EventTargetNames::AudioTrackList;
-}
-
-}
+}  // namespace blink

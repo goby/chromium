@@ -4,11 +4,14 @@
 
 #include "net/base/hash_value.h"
 
+#include <stdlib.h>
+
 #include "base/base64.h"
 #include "base/logging.h"
 #include "base/sha1.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "crypto/sha2.h"
 
 namespace net {
 
@@ -23,14 +26,6 @@ int CompareSHA1Hashes(const void* a, const void* b) {
 }  // namespace
 
 
-bool SHA1HashValue::Equals(const SHA1HashValue& other) const {
-  return memcmp(data, other.data, sizeof(data)) == 0;
-}
-
-bool SHA256HashValue::Equals(const SHA256HashValue& other) const {
-  return memcmp(data, other.data, sizeof(data)) == 0;
-}
-
 HashValue::HashValue(const SHA1HashValue& hash) : HashValue(HASH_VALUE_SHA1) {
   fingerprint.sha1 = hash;
 }
@@ -38,20 +33,6 @@ HashValue::HashValue(const SHA1HashValue& hash) : HashValue(HASH_VALUE_SHA1) {
 HashValue::HashValue(const SHA256HashValue& hash)
     : HashValue(HASH_VALUE_SHA256) {
   fingerprint.sha256 = hash;
-}
-
-bool HashValue::Equals(const HashValue& other) const {
-  if (tag != other.tag)
-    return false;
-  switch (tag) {
-    case HASH_VALUE_SHA1:
-      return fingerprint.sha1.Equals(other.fingerprint.sha1);
-    case HASH_VALUE_SHA256:
-      return fingerprint.sha256.Equals(other.fingerprint.sha256);
-    default:
-      NOTREACHED() << "Unknown HashValueTag " << tag;
-      return false;
-  }
 }
 
 bool HashValue::FromString(const base::StringPiece value) {
@@ -120,12 +101,12 @@ const unsigned char* HashValue::data() const {
   }
 }
 
-bool IsSHA1HashInSortedArray(const SHA1HashValue& hash,
-                             const uint8_t* array,
-                             size_t array_byte_len) {
-  DCHECK_EQ(0u, array_byte_len % base::kSHA1Length);
-  const size_t arraylen = array_byte_len / base::kSHA1Length;
-  return NULL != bsearch(hash.data, array, arraylen, base::kSHA1Length,
+bool IsSHA256HashInSortedArray(const SHA256HashValue& hash,
+                               const uint8_t* array,
+                               size_t array_byte_len) {
+  DCHECK_EQ(0u, array_byte_len % crypto::kSHA256Length);
+  const size_t arraylen = array_byte_len / crypto::kSHA256Length;
+  return NULL != bsearch(hash.data, array, arraylen, crypto::kSHA256Length,
                          CompareSHA1Hashes);
 }
 

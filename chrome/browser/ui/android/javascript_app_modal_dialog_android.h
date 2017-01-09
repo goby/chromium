@@ -5,12 +5,16 @@
 #ifndef CHROME_BROWSER_UI_ANDROID_JAVASCRIPT_APP_MODAL_DIALOG_ANDROID_H_
 #define CHROME_BROWSER_UI_ANDROID_JAVASCRIPT_APP_MODAL_DIALOG_ANDROID_H_
 
+#include <memory>
+
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/app_modal/native_app_modal_dialog.h"
 
+namespace app_modal {
 class JavaScriptAppModalDialog;
+}
 
 class JavascriptAppModalDialogAndroid
     : public app_modal::NativeAppModalDialog {
@@ -47,7 +51,7 @@ class JavascriptAppModalDialogAndroid
   // The object deletes itself.
   ~JavascriptAppModalDialogAndroid() override;
 
-  scoped_ptr<app_modal::JavaScriptAppModalDialog> dialog_;
+  std::unique_ptr<app_modal::JavaScriptAppModalDialog> dialog_;
   base::android::ScopedJavaGlobalRef<jobject> dialog_jobject_;
   JavaObjectWeakGlobalRef parent_jobject_weak_ref_;
 

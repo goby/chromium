@@ -5,9 +5,10 @@
 #include "chromeos/network/host_resolver_impl_chromeos.h"
 
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chromeos/network/device_state.h"
 #include "chromeos/network/network_handler.h"
@@ -15,8 +16,8 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/network/network_state_handler_observer.h"
 #include "net/base/address_list.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace chromeos {
@@ -25,7 +26,7 @@ namespace chromeos {
 //
 // An instance of this class is created on the NetworkHandler (UI) thread and
 // manages its own lifetime, destroying itself when NetworkStateHandlerObserver
-// ::IsShuttingDown() gets called.
+// ::OnShuttingDown() gets called.
 
 class HostResolverImplChromeOS::NetworkObserver
     : public chromeos::NetworkStateHandlerObserver {
@@ -95,7 +96,7 @@ class HostResolverImplChromeOS::NetworkObserver
     CallResolverSetIpAddress(ipv4_address, ipv6_address);
   }
 
-  void IsShuttingDown() override { delete this; }
+  void OnShuttingDown() override { delete this; }
 
   void CallResolverSetIpAddress(const std::string& ipv4_address,
                                 const std::string& ipv6_address) {
@@ -138,12 +139,13 @@ HostResolverImplChromeOS::HostResolverImplChromeOS(
 HostResolverImplChromeOS::~HostResolverImplChromeOS() {
 }
 
-int HostResolverImplChromeOS::Resolve(const RequestInfo& info,
-                                      net::RequestPriority priority,
-                                      net::AddressList* addresses,
-                                      const net::CompletionCallback& callback,
-                                      RequestHandle* out_req,
-                                      const net::BoundNetLog& source_net_log) {
+int HostResolverImplChromeOS::Resolve(
+    const RequestInfo& info,
+    net::RequestPriority priority,
+    net::AddressList* addresses,
+    const net::CompletionCallback& callback,
+    std::unique_ptr<Request>* out_req,
+    const net::NetLogWithSource& source_net_log) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (ResolveLocalIPAddress(info, addresses))
     return net::OK;
@@ -170,13 +172,13 @@ bool HostResolverImplChromeOS::ResolveLocalIPAddress(
 
   if (info.address_family() != net::ADDRESS_FAMILY_IPV4 &&
       !ipv6_address_.empty()) {
-    net::IPAddressNumber ipv6;
-    if (net::ParseIPLiteralToNumber(ipv6_address_, &ipv6))
+    net::IPAddress ipv6;
+    if (ipv6.AssignFromIPLiteral(ipv6_address_))
       addresses->push_back(net::IPEndPoint(ipv6, 0));
   }
 
-  net::IPAddressNumber ipv4;
-  if (net::ParseIPLiteralToNumber(ipv4_address_, &ipv4))
+  net::IPAddress ipv4;
+  if (ipv4.AssignFromIPLiteral(ipv4_address_))
     addresses->push_back(net::IPEndPoint(ipv4, 0));
 
   DVLOG(2) << "ResolveLocalIPAddress("
@@ -188,21 +190,21 @@ bool HostResolverImplChromeOS::ResolveLocalIPAddress(
 }
 
 // static
-scoped_ptr<net::HostResolver> HostResolverImplChromeOS::CreateSystemResolver(
-    const Options& options,
-    net::NetLog* net_log) {
-  return scoped_ptr<net::HostResolver>(new HostResolverImplChromeOS(
+std::unique_ptr<net::HostResolver>
+HostResolverImplChromeOS::CreateSystemResolver(const Options& options,
+                                               net::NetLog* net_log) {
+  return std::unique_ptr<net::HostResolver>(new HostResolverImplChromeOS(
       NetworkHandler::Get()->task_runner(),
       NetworkHandler::Get()->network_state_handler(), options, net_log));
 }
 
 // static
-scoped_ptr<net::HostResolver>
+std::unique_ptr<net::HostResolver>
 HostResolverImplChromeOS::CreateHostResolverForTest(
     scoped_refptr<base::SingleThreadTaskRunner> network_handler_task_runner,
     NetworkStateHandler* network_state_handler) {
   Options options;
-  return scoped_ptr<net::HostResolver>(new HostResolverImplChromeOS(
+  return std::unique_ptr<net::HostResolver>(new HostResolverImplChromeOS(
       network_handler_task_runner, network_state_handler, options, NULL));
 }
 

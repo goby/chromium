@@ -4,6 +4,8 @@
 
 #include "tools/gn/parse_tree.h"
 
+#include <stdint.h>
+
 #include <string>
 #include <tuple>
 
@@ -170,12 +172,6 @@ void AccessorNode::Print(std::ostream& out, int indent) const {
 }
 
 Value AccessorNode::ExecuteArrayAccess(Scope* scope, Err* err) const {
-  Value index_value = index_->Execute(scope, err);
-  if (err->has_error())
-    return Value();
-  if (!index_value.VerifyTypeIs(Value::INTEGER, err))
-    return Value();
-
   const Value* base_value = scope->GetValue(base_.value(), true);
   if (!base_value) {
     *err = MakeErrorDescribing("Undefined identifier.");
@@ -184,28 +180,11 @@ Value AccessorNode::ExecuteArrayAccess(Scope* scope, Err* err) const {
   if (!base_value->VerifyTypeIs(Value::LIST, err))
     return Value();
 
-  int64 index_int = index_value.int_value();
-  if (index_int < 0) {
-    *err = Err(index_->GetRange(), "Negative array subscript.",
-        "You gave me " + base::Int64ToString(index_int) + ".");
+  size_t index = 0;
+  if (!ComputeAndValidateListIndex(scope, base_value->list_value().size(),
+                                   &index, err))
     return Value();
-  }
-  size_t index_sizet = static_cast<size_t>(index_int);
-  if (index_sizet >= base_value->list_value().size()) {
-    *err = Err(index_->GetRange(), "Array subscript out of range.",
-        "You gave me " + base::Int64ToString(index_int) +
-        " but I was expecting something from 0 to " +
-        base::Int64ToString(
-            static_cast<int64>(base_value->list_value().size()) - 1) +
-        ", inclusive.");
-    return Value();
-  }
-
-  // Doing this assumes that there's no way in the language to do anything
-  // between the time the reference is created and the time that the reference
-  // is used. If there is, this will crash! Currently, this is just used for
-  // array accesses where this "shouldn't" happen.
-  return base_value->list_value()[index_sizet];
+  return base_value->list_value()[index];
 }
 
 Value AccessorNode::ExecuteScopeAccess(Scope* scope, Err* err) const {
@@ -219,7 +198,8 @@ Value AccessorNode::ExecuteScopeAccess(Scope* scope, Err* err) const {
   const Value* result = nullptr;
 
   // Look up the value in the scope named by "base_".
-  Value* mutable_base_value = scope->GetMutableValue(base_.value(), true);
+  Value* mutable_base_value = scope->GetMutableValue(
+      base_.value(), Scope::SEARCH_NESTED, true);
   if (mutable_base_value) {
     // Common case: base value is mutable so we can track variable accesses
     // for unused value warnings.
@@ -253,7 +233,36 @@ Value AccessorNode::ExecuteScopeAccess(Scope* scope, Err* err) const {
 void AccessorNode::SetNewLocation(int line_number) {
   Location old = base_.location();
   base_.set_location(
-      Location(old.file(), line_number, old.char_offset(), old.byte()));
+      Location(old.file(), line_number, old.column_number(), old.byte()));
+}
+
+bool AccessorNode::ComputeAndValidateListIndex(Scope* scope,
+                                               size_t max_len,
+                                               size_t* computed_index,
+                                               Err* err) const {
+  Value index_value = index_->Execute(scope, err);
+  if (err->has_error())
+    return false;
+  if (!index_value.VerifyTypeIs(Value::INTEGER, err))
+    return false;
+
+  int64_t index_int = index_value.int_value();
+  if (index_int < 0) {
+    *err = Err(index_->GetRange(), "Negative array subscript.",
+        "You gave me " + base::Int64ToString(index_int) + ".");
+    return false;
+  }
+  size_t index_sizet = static_cast<size_t>(index_int);
+  if (index_sizet >= max_len) {
+    *err = Err(index_->GetRange(), "Array subscript out of range.",
+        "You gave me " + base::Int64ToString(index_int) +
+        " but I was expecting something from 0 to " +
+        base::SizeTToString(max_len) + ", inclusive.");
+    return false;
+  }
+
+  *computed_index = index_sizet;
+  return true;
 }
 
 // BinaryOpNode ---------------------------------------------------------------
@@ -290,29 +299,56 @@ void BinaryOpNode::Print(std::ostream& out, int indent) const {
 
 // BlockNode ------------------------------------------------------------------
 
-BlockNode::BlockNode() {
+BlockNode::BlockNode(ResultMode result_mode) : result_mode_(result_mode) {
 }
 
 BlockNode::~BlockNode() {
-  STLDeleteContainerPointers(statements_.begin(), statements_.end());
 }
 
 const BlockNode* BlockNode::AsBlock() const {
   return this;
 }
 
-Value BlockNode::Execute(Scope* scope, Err* err) const {
+Value BlockNode::Execute(Scope* enclosing_scope, Err* err) const {
+  std::unique_ptr<Scope> nested_scope;  // May be null.
+
+  Scope* execution_scope;  // Either the enclosing_scope or nested_scope.
+  if (result_mode_ == RETURNS_SCOPE) {
+    // Create a nested scope to save the values for returning.
+    nested_scope.reset(new Scope(enclosing_scope));
+    execution_scope = nested_scope.get();
+  } else {
+    // Use the enclosing scope. Modifications will go into this also (for
+    // example, if conditions and loops).
+    execution_scope = enclosing_scope;
+  }
+
   for (size_t i = 0; i < statements_.size() && !err->has_error(); i++) {
     // Check for trying to execute things with no side effects in a block.
-    const ParseNode* cur = statements_[i];
+    //
+    // A BlockNode here means that somebody has a free-floating { }.
+    // Technically this can have side effects since it could generated targets,
+    // but we don't want to allow this since it creates ambiguity when
+    // immediately following a function call that takes no block. By not
+    // allowing free-floating blocks that aren't passed anywhere or assigned to
+    // anything, this ambiguity is resolved.
+    const ParseNode* cur = statements_[i].get();
     if (cur->AsList() || cur->AsLiteral() || cur->AsUnaryOp() ||
-        cur->AsIdentifier()) {
+        cur->AsIdentifier() || cur->AsBlock()) {
       *err = cur->MakeErrorDescribing(
           "This statement has no effect.",
           "Either delete it or do something with the result.");
       return Value();
     }
-    cur->Execute(scope, err);
+    cur->Execute(execution_scope, err);
+  }
+
+  if (result_mode_ == RETURNS_SCOPE) {
+    // Clear the reference to the containing scope. This will be passed in
+    // a value whose lifetime will not be related to the enclosing_scope passed
+    // to this function.
+    nested_scope->DetachFromContaining();
+    return Value(this, std::move(nested_scope));
   }
   return Value();
 }
@@ -451,12 +487,17 @@ const IdentifierNode* IdentifierNode::AsIdentifier() const {
 }
 
 Value IdentifierNode::Execute(Scope* scope, Err* err) const {
-  const Value* value = scope->GetValue(value_.value(), true);
+  const Scope* found_in_scope = nullptr;
+  const Value* value = scope->GetValueWithScope(value_.value(), true,
+                                                &found_in_scope);
   Value result;
   if (!value) {
     *err = MakeErrorDescribing("Undefined identifier");
     return result;
   }
+
+  if (!EnsureNotReadingFromSameDeclareArgs(this, scope, found_in_scope, err))
+    return result;
 
   result = *value;
   result.set_origin(this);
@@ -480,7 +521,7 @@ void IdentifierNode::Print(std::ostream& out, int indent) const {
 void IdentifierNode::SetNewLocation(int line_number) {
   Location old = value_.location();
   value_.set_location(
-      Location(old.file(), line_number, old.char_offset(), old.byte()));
+      Location(old.file(), line_number, old.column_number(), old.byte()));
 }
 
 // ListNode -------------------------------------------------------------------
@@ -489,7 +530,6 @@ ListNode::ListNode() : prefer_multiline_(false) {
 }
 
 ListNode::~ListNode() {
-  STLDeleteContainerPointers(contents_.begin(), contents_.end());
 }
 
 const ListNode* ListNode::AsList() const {
@@ -544,7 +584,7 @@ void ListNode::SortList(Comparator comparator) {
     bool skip = false;
     for (size_t i = sr.begin; i != sr.end; ++i) {
       // Bails out if any of the nodes are unsupported.
-      const ParseNode* node = contents_[i];
+      const ParseNode* node = contents_[i].get();
       if (!node->AsLiteral() && !node->AsIdentifier() && !node->AsAccessor()) {
         skip = true;
         continue;
@@ -558,15 +598,19 @@ void ListNode::SortList(Comparator comparator) {
     // to determine whether two nodes were initially separated by a blank line
     // or not.
     int start_line = contents_[sr.begin]->GetRange().begin().line_number();
-    const ParseNode* original_first = contents_[sr.begin];
+    const ParseNode* original_first = contents_[sr.begin].get();
     std::sort(contents_.begin() + sr.begin, contents_.begin() + sr.end,
-              comparator);
+              [&comparator](const std::unique_ptr<const ParseNode>& a,
+                            const std::unique_ptr<const ParseNode>& b) {
+                return comparator(a.get(), b.get());
+              });
     // If the beginning of the range had before comments, and the first node
     // moved during the sort, then move its comments to the new head of the
     // range.
-    if (original_first->comments() && contents_[sr.begin] != original_first) {
+    if (original_first->comments() &&
+        contents_[sr.begin].get() != original_first) {
       for (const auto& hc : original_first->comments()->before()) {
-        const_cast<ParseNode*>(contents_[sr.begin])
+        const_cast<ParseNode*>(contents_[sr.begin].get())
             ->comments_mutable()
             ->append_before(hc);
       }
@@ -576,7 +620,7 @@ void ListNode::SortList(Comparator comparator) {
     }
     const ParseNode* prev = nullptr;
     for (size_t i = sr.begin; i != sr.end; ++i) {
-      const ParseNode* node = contents_[i];
+      const ParseNode* node = contents_[i].get();
       DCHECK(node->AsLiteral() || node->AsIdentifier() || node->AsAccessor());
       int line_number =
           prev ? prev->GetRange().end().line_number() + 1 : start_line;
@@ -624,8 +668,8 @@ std::vector<ListNode::SortRange> ListNode::GetSortRanges() const {
   std::vector<SortRange> ranges;
   const ParseNode* prev = nullptr;
   size_t begin = 0;
-  for (size_t i = begin; i < contents_.size(); prev = contents_[i++]) {
-    if (IsSortRangeSeparator(contents_[i], prev)) {
+  for (size_t i = begin; i < contents_.size(); prev = contents_[i++].get()) {
+    if (IsSortRangeSeparator(contents_[i].get(), prev)) {
       if (i > begin) {
         ranges.push_back(SortRange(begin, i));
         // If |i| is an item with an attached comment, then we start the next
@@ -704,7 +748,7 @@ Value LiteralNode::Execute(Scope* scope, Err* err) const {
           *err = MakeErrorDescribing("Leading zeros not allowed");
         return Value();
       }
-      int64 result_int;
+      int64_t result_int;
       if (!base::StringToInt64(s, &result_int)) {
         *err = MakeErrorDescribing("This does not look like an integer");
         return Value();
@@ -739,7 +783,7 @@ void LiteralNode::Print(std::ostream& out, int indent) const {
 void LiteralNode::SetNewLocation(int line_number) {
   Location old = value_.location();
   value_.set_location(
-      Location(old.file(), line_number, old.char_offset(), old.byte()));
+      Location(old.file(), line_number, old.column_number(), old.byte()));
 }
 
 // UnaryOpNode ----------------------------------------------------------------

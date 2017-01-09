@@ -64,6 +64,12 @@ class TranslateBubbleModel {
   // Updates the target language index.
   virtual void UpdateTargetLanguageIndex(int index) = 0;
 
+  // Invoked when the user actively declines to translate the page - e.g.
+  // selects 'nope', 'never translate this language', etc.
+  // Should not be invoked on a passive decline - i.e. if the translate bubble
+  // is closed due to focus loss.
+  virtual void DeclineTranslation() = 0;
+
   // Sets the value if the user doesn't want to have the page translated in the
   // current page's language.
   virtual void SetNeverTranslateLanguage(bool value) = 0;
@@ -76,6 +82,9 @@ class TranslateBubbleModel {
   // translated into the current target language automatically.
   virtual bool ShouldAlwaysTranslate() const = 0;
 
+  // Returns true if the Always Translate checkbox should be checked by default.
+  virtual bool ShouldAlwaysTranslateBeCheckedByDefault() const = 0;
+
   // Sets the value if the webpage in the current original language should be
   // translated into the current target language automatically.
   virtual void SetAlwaysTranslate(bool value) = 0;
@@ -86,10 +95,9 @@ class TranslateBubbleModel {
   // Reverts translation.
   virtual void RevertTranslation() = 0;
 
-  // Processes when the user dismiss the bubble without translating.
-  // |explicitly_closed| is true if the user explicitly closed the UI, for
-  // example, clicking 'Nope' button.
-  virtual void TranslationDeclined(bool explicitly_closed) = 0;
+  // Called when the translate bubble is closed. Allows final cleanup and
+  // notification of delegates.
+  virtual void OnBubbleClosing() = 0;
 
   // Returns true if the page is translated in the currently selected source
   // and target language.

@@ -4,12 +4,16 @@
 
 #include "components/nacl/renderer/manifest_service_channel.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/callback_helpers.h"
+#include "build/build_config.h"
 #include "content/public/common/sandbox_init.h"
 #include "content/public/renderer/render_thread.h"
 #include "ipc/ipc_channel.h"
+#include "ipc/ipc_platform_file.h"
 #include "ipc/ipc_sync_channel.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/ppb_file_io.h"
@@ -20,20 +24,19 @@ namespace nacl {
 ManifestServiceChannel::ManifestServiceChannel(
     const IPC::ChannelHandle& handle,
     const base::Callback<void(int32_t)>& connected_callback,
-    scoped_ptr<Delegate> delegate,
+    std::unique_ptr<Delegate> delegate,
     base::WaitableEvent* waitable_event)
     : connected_callback_(connected_callback),
-      delegate_(delegate.Pass()),
+      delegate_(std::move(delegate)),
       channel_(IPC::SyncChannel::Create(
           handle,
           IPC::Channel::MODE_CLIENT,
           this,
-          content::RenderThread::Get()->GetIOMessageLoopProxy(),
+          content::RenderThread::Get()->GetIOTaskRunner(),
           true,
           waitable_event)),
       peer_pid_(base::kNullProcessId),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 ManifestServiceChannel::~ManifestServiceChannel() {
   if (!connected_callback_.is_null())
@@ -56,7 +59,7 @@ bool ManifestServiceChannel::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void ManifestServiceChannel::OnChannelConnected(int32 peer_pid) {
+void ManifestServiceChannel::OnChannelConnected(int32_t peer_pid) {
   peer_pid_ = peer_pid;
   if (!connected_callback_.is_null())
     base::ResetAndReturn(&connected_callback_).Run(PP_OK);
@@ -85,25 +88,12 @@ void ManifestServiceChannel::DidOpenResource(IPC::Message* reply,
                                              uint64_t token_hi) {
   ppapi::proxy::SerializedHandle handle;
   if (file.IsValid()) {
-    IPC::PlatformFileForTransit file_for_transit;
-#if defined(OS_WIN)
-    bool ok = content::BrokerDuplicateHandle(
-        file.TakePlatformFile(),
-        peer_pid_,
-        &file_for_transit,
-        0,  // desired_access is 0 since we're using DUPLICATE_SAME_ACCESS.
-        DUPLICATE_SAME_ACCESS | DUPLICATE_CLOSE_SOURCE);
-    if (ok)
-      handle.set_file_handle(file_for_transit, PP_FILEOPENFLAG_READ, 0);
-#else
-    file_for_transit = base::FileDescriptor(file.Pass());
+    IPC::PlatformFileForTransit file_for_transit =
+        IPC::TakePlatformFileForTransit(std::move(file));
     handle.set_file_handle(file_for_transit, PP_FILEOPENFLAG_READ, 0);
-#endif
   }
-  PpapiHostMsg_OpenResource::WriteReplyParams(reply,
-                                              handle,
-                                              token_lo,
-                                              token_hi);
+  PpapiHostMsg_OpenResource::WriteReplyParams(reply, token_lo, token_hi,
+                                              handle);
   Send(reply);
 }
 

@@ -6,21 +6,24 @@
 #define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_DRAG_DROP_CLIENT_AURAX11_H_
 
 #include <X11/Xlib.h>
+
+#include <memory>
 #include <set>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/timer/timer.h"
+#include "ui/aura/client/drag_drop_client.h"
 #include "ui/aura/window_observer.h"
 #include "ui/base/cursor/cursor.h"
 #include "ui/base/dragdrop/drag_drop_types.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/geometry/size.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 #include "ui/views/views_export.h"
 #include "ui/views/widget/desktop_aura/x11_move_loop_delegate.h"
-#include "ui/wm/public/drag_drop_client.h"
 
 namespace aura {
 namespace client {
@@ -34,7 +37,6 @@ class Point;
 }
 
 namespace ui {
-class DragSource;
 class DropTargetEvent;
 class OSExchangeData;
 class OSExchangeDataProviderAuraX11;
@@ -86,8 +88,6 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
                        const gfx::Point& screen_location,
                        int operation,
                        ui::DragDropTypes::DragEventSource source) override;
-  void DragUpdate(aura::Window* target, const ui::LocatedEvent& event) override;
-  void Drop(aura::Window* target, const ui::LocatedEvent& event) override;
   void DragCancel() override;
   bool IsDragDropInProgress() override;
 
@@ -97,7 +97,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // Overridden from X11WholeScreenMoveLoopDelegate:
   void OnMouseMovement(const gfx::Point& screen_point,
                        int flags,
-                       base::TimeDelta event_time) override;
+                       base::TimeTicks event_time) override;
   void OnMouseReleased() override;
   void OnMoveLoopEnded() override;
 
@@ -105,7 +105,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // The following methods are virtual for the sake of testing.
 
   // Creates a move loop.
-  virtual scoped_ptr<X11MoveLoop> CreateMoveLoop(
+  virtual std::unique_ptr<X11MoveLoop> CreateMoveLoop(
       X11MoveLoopDelegate* delegate);
 
   // Finds the topmost X11 window at |screen_point| and returns it if it is
@@ -115,6 +115,9 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // Sends |xev| to |xid|, optionally short circuiting the round trip to the X
   // server.
   virtual void SendXClientEvent(::Window xid, XEvent* xev);
+
+ protected:
+  Widget* drag_widget() { return drag_widget_.get(); }
 
  private:
   enum SourceState {
@@ -147,8 +150,8 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   // the underlying aura::Window representation, as moves internal to the X11
   // window can cause internal drag leave and enter messages.
   void DragTranslate(const gfx::Point& root_window_location,
-                     scoped_ptr<ui::OSExchangeData>* data,
-                     scoped_ptr<ui::DropTargetEvent>* event,
+                     std::unique_ptr<ui::OSExchangeData>* data,
+                     std::unique_ptr<ui::DropTargetEvent>* event,
                      aura::client::DragDropDelegate** delegate);
 
   // Called when we need to notify the current aura::Window that we're no
@@ -200,7 +203,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
 
   // A nested message loop that notifies this object of events through the
   // X11MoveLoopDelegate interface.
-  scoped_ptr<X11MoveLoop> move_loop_;
+  std::unique_ptr<X11MoveLoop> move_loop_;
 
   aura::Window* root_window_;
 
@@ -213,7 +216,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
 
   // Target side information.
   class X11DragContext;
-  scoped_ptr<X11DragContext> target_current_context_;
+  std::unique_ptr<X11DragContext> target_current_context_;
 
   // The modifier state for the most recent mouse move.
   int current_modifier_state_;
@@ -237,7 +240,7 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
 
   // If we would send an XdndPosition message while we're waiting for an
   // XdndStatus response, we need to cache the latest details we'd send.
-  scoped_ptr<std::pair<gfx::Point, unsigned long> > next_position_message_;
+  std::unique_ptr<std::pair<gfx::Point, unsigned long>> next_position_message_;
 
   // Reprocesses the most recent mouse move event if the mouse has not moved
   // in a while in case the window stacking order has changed and
@@ -274,7 +277,10 @@ class VIEWS_EXPORT DesktopDragDropClientAuraX11
   base::OneShotTimer end_move_loop_timer_;
 
   // Widget that the user drags around. May be NULL.
-  scoped_ptr<Widget> drag_widget_;
+  std::unique_ptr<Widget> drag_widget_;
+
+  // The size of drag image.
+  gfx::Size drag_image_size_;
 
   // The offset of |drag_widget_| relative to the mouse position.
   gfx::Vector2d drag_widget_offset_;

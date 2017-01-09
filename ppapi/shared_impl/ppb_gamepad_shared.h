@@ -5,6 +5,8 @@
 #ifndef PPAPI_SHARED_IMPL_PPB_GAMEPAD_SHARED_H_
 #define PPAPI_SHARED_IMPL_PPB_GAMEPAD_SHARED_H_
 
+#include <stddef.h>
+
 #include "base/atomicops.h"
 #include "base/strings/string16.h"
 #include "ppapi/c/ppb_gamepad.h"
@@ -19,7 +21,38 @@ namespace ppapi {
 
 struct WebKitGamepadButton {
   bool pressed;
+  bool touched;
   double value;
+};
+
+struct WebKitGamepadVector {
+  bool notNull;
+  float x, y, z;
+};
+
+struct WebKitGamepadQuaternion {
+  bool notNull;
+  float x, y, z, w;
+};
+
+struct WebKitGamepadPose {
+  bool notNull;
+
+  bool hasOrientation;
+  bool hasPosition;
+
+  WebKitGamepadQuaternion orientation;
+  WebKitGamepadVector position;
+  WebKitGamepadVector angularVelocity;
+  WebKitGamepadVector linearVelocity;
+  WebKitGamepadVector angularAcceleration;
+  WebKitGamepadVector linearAcceleration;
+};
+
+enum WebKitGamepadHand {
+  WEBKIT_GAMEPAD_HAND_NONE = 0,
+  WEBKIT_GAMEPAD_HAND_LEFT = 1,
+  WEBKIT_GAMEPAD_HAND_RIGHT = 2
 };
 
 // This must match the definition of blink::Gamepad. The GamepadHost unit test
@@ -54,6 +87,13 @@ struct WebKitGamepad {
 
   // Mapping type (for example "standard")
   base::char16 mapping[kMappingLengthCap];
+
+  WebKitGamepadPose pose;
+
+  WebKitGamepadHand hand;
+
+  // ID of the VRDisplay this gamepad is associated with, if any.
+  unsigned display_id;
 };
 
 // This must match the definition of blink::Gamepads. The GamepadHost unit
@@ -69,7 +109,7 @@ struct WebKitGamepads {
 };
 
 // This is the structure store in shared memory. It must match
-// content/common/gamepad_hardware_buffer.h. The GamepadHost unit test has
+// device::GamepadHardwareBuffer. The GamepadHost unit test has
 // some compile asserts to validate this.
 struct ContentGamepadHardwareBuffer {
   base::subtle::Atomic32 sequence;

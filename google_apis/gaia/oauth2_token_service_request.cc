@@ -4,12 +4,14 @@
 
 #include "google_apis/gaia/oauth2_token_service_request.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "google_apis/gaia/oauth2_access_token_consumer.h"
 
@@ -191,7 +193,7 @@ class RequestCore : public OAuth2TokenServiceRequest::Core,
 
   // OAuth2TokenService request for fetching OAuth2 access token; it should be
   // created, reset and accessed only on the token service thread.
-  scoped_ptr<OAuth2TokenService::Request> request_;
+  std::unique_ptr<OAuth2TokenService::Request> request_;
 
   DISALLOW_COPY_AND_ASSIGN(RequestCore);
 };
@@ -219,7 +221,7 @@ RequestCore::~RequestCore() {
 
 void RequestCore::StartOnTokenServiceThread() {
   DCHECK(token_service_task_runner()->BelongsToCurrentThread());
-  request_ = token_service()->StartRequest(account_id_, scopes_, this).Pass();
+  request_ = token_service()->StartRequest(account_id_, scopes_, this);
 }
 
 void RequestCore::StopOnTokenServiceThread() {
@@ -325,17 +327,18 @@ void InvalidateCore::StopOnTokenServiceThread() {
 }  // namespace
 
 // static
-scoped_ptr<OAuth2TokenServiceRequest> OAuth2TokenServiceRequest::CreateAndStart(
+std::unique_ptr<OAuth2TokenServiceRequest>
+OAuth2TokenServiceRequest::CreateAndStart(
     const scoped_refptr<TokenServiceProvider>& provider,
     const std::string& account_id,
     const OAuth2TokenService::ScopeSet& scopes,
     OAuth2TokenService::Consumer* consumer) {
-  scoped_ptr<OAuth2TokenServiceRequest> request(
+  std::unique_ptr<OAuth2TokenServiceRequest> request(
       new OAuth2TokenServiceRequest(account_id));
   scoped_refptr<Core> core(
       new RequestCore(request.get(), provider, consumer, account_id, scopes));
   request->StartWithCore(core);
-  return request.Pass();
+  return request;
 }
 
 // static
@@ -344,7 +347,7 @@ void OAuth2TokenServiceRequest::InvalidateToken(
     const std::string& account_id,
     const OAuth2TokenService::ScopeSet& scopes,
     const std::string& access_token) {
-  scoped_ptr<OAuth2TokenServiceRequest> request(
+  std::unique_ptr<OAuth2TokenServiceRequest> request(
       new OAuth2TokenServiceRequest(account_id));
   scoped_refptr<Core> core(new InvalidateCore(
       request.get(), provider, access_token, account_id, scopes));

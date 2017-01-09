@@ -10,6 +10,7 @@
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "printing/printing_context.h"
 
 namespace printing {
@@ -45,14 +46,13 @@ class PRINTING_EXPORT PrintingContextAndroid : public PrintingContext {
   Result UpdatePrinterSettings(bool external_preview,
                                bool show_system_dialog,
                                int page_count) override;
-  Result InitWithSettings(const PrintSettings& settings) override;
   Result NewDocument(const base::string16& document_name) override;
   Result NewPage() override;
   Result PageDone() override;
   Result DocumentDone() override;
   void Cancel() override;
   void ReleaseContext() override;
-  gfx::NativeDrawingContext context() const override;
+  skia::NativeDrawingContext context() const override;
 
   // Registers JNI bindings for RegisterContext.
   static bool RegisterPrintingContext(JNIEnv* env);

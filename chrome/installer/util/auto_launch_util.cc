@@ -58,6 +58,7 @@ void EnableBackgroundStartAtLogin() {
 
   base::CommandLine cmd_line(application_dir.Append(installer::kChromeExe));
   cmd_line.AppendSwitch(switches::kNoStartupWindow);
+  cmd_line.AppendArg(switches::kPrefetchArgumentBrowserBackground);
 
   base::win::AddCommandToAutoRun(HKEY_CURRENT_USER, GetAutoLaunchKeyName(),
                                  cmd_line.GetCommandLineString());

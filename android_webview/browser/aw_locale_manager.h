@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace android_webview {
 
@@ -18,6 +18,8 @@ class AwLocaleManager {
   virtual ~AwLocaleManager() {}
 
   virtual std::string GetLocale() = 0;
+
+  virtual std::string GetLocaleList() = 0;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AwLocaleManager);

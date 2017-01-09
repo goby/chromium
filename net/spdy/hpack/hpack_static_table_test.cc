@@ -4,9 +4,9 @@
 
 #include "net/spdy/hpack/hpack_static_table.h"
 
+#include <set>
 #include <vector>
 
-#include "net/base/net_export.h"
 #include "net/spdy/hpack/hpack_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -33,8 +33,16 @@ TEST_F(HpackStaticTableTest, Initialize) {
   HpackHeaderTable::EntryTable static_entries = table_.GetStaticEntries();
   EXPECT_EQ(static_table.size(), static_entries.size());
 
-  HpackHeaderTable::OrderedEntrySet static_index = table_.GetStaticIndex();
+  HpackHeaderTable::UnorderedEntrySet static_index = table_.GetStaticIndex();
   EXPECT_EQ(static_table.size(), static_index.size());
+
+  HpackHeaderTable::NameToEntryMap static_name_index =
+      table_.GetStaticNameIndex();
+  std::set<base::StringPiece> names;
+  for (auto* entry : static_index) {
+    names.insert(entry->name());
+  }
+  EXPECT_EQ(names.size(), static_name_index.size());
 }
 
 // Test that ObtainHpackStaticTable returns the same instance every time.

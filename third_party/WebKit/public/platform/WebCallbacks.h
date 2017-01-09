@@ -31,50 +31,48 @@
 #ifndef WebCallbacks_h
 #define WebCallbacks_h
 
-#include "public/platform/WebPassOwnPtr.h"
-
 namespace blink {
 
 // A WebCallbacks<S, T> represents a callback object. Typically it is created
 // in Blink and passed to Chromium, and onSuccess or onError will be called
 // from Chromium.
-// When transferring ownership, use |WebPrivatePassOwnPtr<X>| as a type
+// When transferring ownership, use |std::unique_ptr<X>| as a type
 // parameter. Otherwise, |const X&| or |X| for a type parameter. It is
 // generally not preferred to use |X*| because the object ownership is not well
 // specified.
 
-template<typename S, typename T>
+template <typename S, typename T>
 class WebCallbacks {
-public:
-    virtual ~WebCallbacks() {}
-    virtual void onSuccess(S) {}
-    virtual void onError(T) {}
+ public:
+  virtual ~WebCallbacks() {}
+  virtual void onSuccess(S) {}
+  virtual void onError(T) {}
 };
 
-template<typename T>
+template <typename T>
 class WebCallbacks<void, T> {
-public:
-    virtual ~WebCallbacks() {}
-    virtual void onSuccess() {}
-    virtual void onError(T) {}
+ public:
+  virtual ~WebCallbacks() {}
+  virtual void onSuccess() {}
+  virtual void onError(T) {}
 };
 
-template<typename S>
+template <typename S>
 class WebCallbacks<S, void> {
-public:
-    virtual ~WebCallbacks() {}
-    virtual void onSuccess(S) {}
-    virtual void onError() {}
+ public:
+  virtual ~WebCallbacks() {}
+  virtual void onSuccess(S) {}
+  virtual void onError() {}
 };
 
-template<>
+template <>
 class WebCallbacks<void, void> {
-public:
-    virtual ~WebCallbacks() {}
-    virtual void onSuccess() {}
-    virtual void onError() {}
+ public:
+  virtual ~WebCallbacks() {}
+  virtual void onSuccess() {}
+  virtual void onError() {}
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

@@ -5,7 +5,10 @@
 #ifndef NET_DNS_MDNS_CLIENT_IMPL_H_
 #define NET_DNS_MDNS_CLIENT_IMPL_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <queue>
 #include <string>
 #include <utility>
@@ -13,15 +16,16 @@
 
 #include "base/cancelable_callback.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "net/base/io_buffer.h"
 #include "net/base/ip_endpoint.h"
+#include "net/base/net_export.h"
 #include "net/dns/mdns_cache.h"
 #include "net/dns/mdns_client.h"
-#include "net/udp/datagram_server_socket.h"
-#include "net/udp/udp_server_socket.h"
-#include "net/udp/udp_socket.h"
+#include "net/socket/datagram_server_socket.h"
+#include "net/socket/udp_server_socket.h"
+#include "net/socket/udp_socket.h"
 
 namespace base {
 class Clock;
@@ -36,7 +40,7 @@ class MDnsSocketFactoryImpl : public MDnsSocketFactory {
   ~MDnsSocketFactoryImpl() override{};
 
   void CreateSockets(
-      std::vector<scoped_ptr<DatagramServerSocket>>* sockets) override;
+      std::vector<std::unique_ptr<DatagramServerSocket>>* sockets) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(MDnsSocketFactoryImpl);
@@ -64,7 +68,7 @@ class NET_EXPORT_PRIVATE MDnsConnection {
  private:
   class SocketHandler {
    public:
-    SocketHandler(scoped_ptr<DatagramServerSocket> socket,
+    SocketHandler(std::unique_ptr<DatagramServerSocket> socket,
                   MDnsConnection* connection);
     ~SocketHandler();
 
@@ -78,7 +82,7 @@ class NET_EXPORT_PRIVATE MDnsConnection {
     // Callback for when sending a query has finished.
     void SendDone(int rv);
 
-    scoped_ptr<DatagramServerSocket> socket_;
+    std::unique_ptr<DatagramServerSocket> socket_;
     MDnsConnection* connection_;
     IPEndPoint recv_addr_;
     DnsResponse response_;
@@ -98,7 +102,7 @@ class NET_EXPORT_PRIVATE MDnsConnection {
   void OnError(int rv);
 
   // Only socket handlers which successfully bound and started are kept.
-  std::vector<scoped_ptr<SocketHandler>> socket_handlers_;
+  std::vector<std::unique_ptr<SocketHandler>> socket_handlers_;
 
   Delegate* delegate_;
 
@@ -124,14 +128,15 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
     bool Init(MDnsSocketFactory* socket_factory);
 
     // Send a query with a specific rrtype and name. Returns true on success.
-    bool SendQuery(uint16 rrtype, const std::string& name);
+    bool SendQuery(uint16_t rrtype, const std::string& name);
 
     // Add/remove a listener to the list of listeners.
     void AddListener(MDnsListenerImpl* listener);
     void RemoveListener(MDnsListenerImpl* listener);
 
     // Query the cache for records of a specific type and name.
-    void QueryCache(uint16 rrtype, const std::string& name,
+    void QueryCache(uint16_t rrtype,
+                    const std::string& name,
                     std::vector<const RecordParsed*>* records) const;
 
     // Parse the response and alert relevant listeners.
@@ -142,8 +147,9 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
    private:
     FRIEND_TEST_ALL_PREFIXES(MDnsTest, CacheCleanupWithShortTTL);
 
-    typedef std::pair<std::string, uint16> ListenerKey;
-    typedef std::map<ListenerKey, base::ObserverList<MDnsListenerImpl>*>
+    typedef std::pair<std::string, uint16_t> ListenerKey;
+    typedef std::map<ListenerKey,
+                     std::unique_ptr<base::ObserverList<MDnsListenerImpl>>>
         ListenerMap;
 
     // Alert listeners of an update to the cache.
@@ -173,7 +179,7 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
     base::Timer* cleanup_timer_;
     base::Time scheduled_cleanup_;
 
-    scoped_ptr<MDnsConnection> connection_;
+    std::unique_ptr<MDnsConnection> connection_;
 
     DISALLOW_COPY_AND_ASSIGN(Core);
   };
@@ -182,13 +188,13 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
   ~MDnsClientImpl() override;
 
   // MDnsClient implementation:
-  scoped_ptr<MDnsListener> CreateListener(
-      uint16 rrtype,
+  std::unique_ptr<MDnsListener> CreateListener(
+      uint16_t rrtype,
       const std::string& name,
       MDnsListener::Delegate* delegate) override;
 
-  scoped_ptr<MDnsTransaction> CreateTransaction(
-      uint16 rrtype,
+  std::unique_ptr<MDnsTransaction> CreateTransaction(
+      uint16_t rrtype,
       const std::string& name,
       int flags,
       const MDnsTransaction::ResultCallback& callback) override;
@@ -203,12 +209,12 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
   FRIEND_TEST_ALL_PREFIXES(MDnsTest, CacheCleanupWithShortTTL);
 
   // Test constructor, takes a mock clock and mock timer.
-  MDnsClientImpl(scoped_ptr<base::Clock> clock,
-                 scoped_ptr<base::Timer> cleanup_timer);
+  MDnsClientImpl(std::unique_ptr<base::Clock> clock,
+                 std::unique_ptr<base::Timer> cleanup_timer);
 
-  scoped_ptr<Core> core_;
-  scoped_ptr<base::Clock> clock_;
-  scoped_ptr<base::Timer> cleanup_timer_;
+  std::unique_ptr<Core> core_;
+  std::unique_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Timer> cleanup_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(MDnsClientImpl);
 };
@@ -216,7 +222,7 @@ class NET_EXPORT_PRIVATE MDnsClientImpl : public MDnsClient {
 class MDnsListenerImpl : public MDnsListener,
                          public base::SupportsWeakPtr<MDnsListenerImpl> {
  public:
-  MDnsListenerImpl(uint16 rrtype,
+  MDnsListenerImpl(uint16_t rrtype,
                    const std::string& name,
                    base::Clock* clock,
                    MDnsListener::Delegate* delegate,
@@ -232,7 +238,7 @@ class MDnsListenerImpl : public MDnsListener,
 
   const std::string& GetName() const override;
 
-  uint16 GetType() const override;
+  uint16_t GetType() const override;
 
   MDnsListener::Delegate* delegate() { return delegate_; }
 
@@ -247,14 +253,14 @@ class MDnsListenerImpl : public MDnsListener,
   void ScheduleNextRefresh();
   void DoRefresh();
 
-  uint16 rrtype_;
+  uint16_t rrtype_;
   std::string name_;
   base::Clock* clock_;
   MDnsClientImpl* client_;
   MDnsListener::Delegate* delegate_;
 
   base::Time last_update_;
-  uint32 ttl_;
+  uint32_t ttl_;
   bool started_;
   bool active_refresh_;
 
@@ -266,7 +272,7 @@ class MDnsTransactionImpl : public base::SupportsWeakPtr<MDnsTransactionImpl>,
                             public MDnsTransaction,
                             public MDnsListener::Delegate {
  public:
-  MDnsTransactionImpl(uint16 rrtype,
+  MDnsTransactionImpl(uint16_t rrtype,
                       const std::string& name,
                       int flags,
                       const MDnsTransaction::ResultCallback& callback,
@@ -277,7 +283,7 @@ class MDnsTransactionImpl : public base::SupportsWeakPtr<MDnsTransactionImpl>,
   bool Start() override;
 
   const std::string& GetName() const override;
-  uint16 GetType() const override;
+  uint16_t GetType() const override;
 
   // MDnsListener::Delegate implementation:
   void OnRecordUpdate(MDnsListener::UpdateType update,
@@ -310,11 +316,11 @@ class MDnsTransactionImpl : public base::SupportsWeakPtr<MDnsTransactionImpl>,
   // or if it fails to send a query.
   bool QueryAndListen();
 
-  uint16 rrtype_;
+  uint16_t rrtype_;
   std::string name_;
   MDnsTransaction::ResultCallback callback_;
 
-  scoped_ptr<MDnsListener> listener_;
+  std::unique_ptr<MDnsListener> listener_;
   base::CancelableCallback<void()> timeout_;
 
   MDnsClientImpl* client_;

@@ -4,11 +4,13 @@
 
 #include "components/proximity_auth/bluetooth_connection_finder.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "components/proximity_auth/bluetooth_connection.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
@@ -18,15 +20,14 @@ using device::BluetoothAdapter;
 namespace proximity_auth {
 
 BluetoothConnectionFinder::BluetoothConnectionFinder(
-    const RemoteDevice& remote_device,
+    const cryptauth::RemoteDevice& remote_device,
     const device::BluetoothUUID& uuid,
     const base::TimeDelta& polling_interval)
     : remote_device_(remote_device),
       uuid_(uuid),
       polling_interval_(polling_interval),
       has_delayed_poll_scheduled_(false),
-      weak_ptr_factory_(this) {
-}
+      weak_ptr_factory_(this) {}
 
 BluetoothConnectionFinder::~BluetoothConnectionFinder() {
   UnregisterAsObserver();
@@ -49,8 +50,9 @@ void BluetoothConnectionFinder::Find(
                  weak_ptr_factory_.GetWeakPtr()));
 }
 
-scoped_ptr<Connection> BluetoothConnectionFinder::CreateConnection() {
-  return scoped_ptr<Connection>(new BluetoothConnection(remote_device_, uuid_));
+std::unique_ptr<Connection> BluetoothConnectionFinder::CreateConnection() {
+  return std::unique_ptr<Connection>(
+      new BluetoothConnection(remote_device_, uuid_));
 }
 
 void BluetoothConnectionFinder::SeekDeviceByAddress(
@@ -198,7 +200,7 @@ void BluetoothConnectionFinder::OnConnectionStatusChanged(
 }
 
 void BluetoothConnectionFinder::InvokeCallbackAsync() {
-  connection_callback_.Run(connection_.Pass());
+  connection_callback_.Run(std::move(connection_));
 }
 
 }  // namespace proximity_auth

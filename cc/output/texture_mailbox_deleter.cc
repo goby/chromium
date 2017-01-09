@@ -4,6 +4,8 @@
 
 #include "cc/output/texture_mailbox_deleter.h"
 
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/weak_ptr.h"
@@ -38,24 +40,24 @@ static void PostTaskFromMainToImplThread(
 }
 
 TextureMailboxDeleter::TextureMailboxDeleter(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner)
-    : impl_task_runner_(task_runner), weak_ptr_factory_(this) {}
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    : impl_task_runner_(std::move(task_runner)), weak_ptr_factory_(this) {}
 
 TextureMailboxDeleter::~TextureMailboxDeleter() {
   for (size_t i = 0; i < impl_callbacks_.size(); ++i)
     impl_callbacks_.at(i)->Run(gpu::SyncToken(), true);
 }
 
-scoped_ptr<SingleReleaseCallback> TextureMailboxDeleter::GetReleaseCallback(
-    const scoped_refptr<ContextProvider>& context_provider,
+std::unique_ptr<SingleReleaseCallback>
+TextureMailboxDeleter::GetReleaseCallback(
+    scoped_refptr<ContextProvider> context_provider,
     unsigned texture_id) {
-  // This callback owns a reference on the |context_provider|. It must be
-  // destroyed on the impl thread. Upon destruction of this class, the
-  // callback must immediately be destroyed.
-  scoped_ptr<SingleReleaseCallback> impl_callback =
-      SingleReleaseCallback::Create(base::Bind(&DeleteTextureOnImplThread,
-                                               context_provider,
-                                               texture_id));
+  // This callback owns the |context_provider|. It must be destroyed on the impl
+  // thread. Upon destruction of this class, the callback must immediately be
+  // destroyed.
+  std::unique_ptr<SingleReleaseCallback> impl_callback =
+      SingleReleaseCallback::Create(base::Bind(
+          &DeleteTextureOnImplThread, std::move(context_provider), texture_id));
 
   impl_callbacks_.push_back(std::move(impl_callback));
 
@@ -67,7 +69,7 @@ scoped_ptr<SingleReleaseCallback> TextureMailboxDeleter::GetReleaseCallback(
 
   // Provide a callback for the main thread that posts back to the impl
   // thread.
-  scoped_ptr<SingleReleaseCallback> main_callback;
+  std::unique_ptr<SingleReleaseCallback> main_callback;
   if (impl_task_runner_) {
     main_callback = SingleReleaseCallback::Create(base::Bind(
         &PostTaskFromMainToImplThread, impl_task_runner_, run_impl_callback));

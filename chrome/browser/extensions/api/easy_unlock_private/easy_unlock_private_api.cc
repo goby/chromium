@@ -4,20 +4,22 @@
 
 #include "chrome/browser/extensions/api/easy_unlock_private/easy_unlock_private_api.h"
 
+#include <utility>
 #include <vector>
 
 #include "base/base64url.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
-#include "base/memory/linked_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/easy_unlock_private/easy_unlock_private_connection_manager.h"
 #include "chrome/browser/extensions/api/easy_unlock_private/easy_unlock_private_crypto_delegate.h"
 #include "chrome/browser/profiles/profile.h"
@@ -27,21 +29,22 @@
 #include "chrome/browser/ui/proximity_auth/proximity_auth_error_bubble.h"
 #include "chrome/common/extensions/api/easy_unlock_private.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/cryptauth/cryptauth_device_manager.h"
+#include "components/cryptauth/cryptauth_enrollment_manager.h"
+#include "components/cryptauth/cryptauth_enrollment_utils.h"
+#include "components/cryptauth/proto/cryptauth_api.pb.h"
+#include "components/cryptauth/remote_device.h"
+#include "components/cryptauth/secure_message_delegate.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection_finder.h"
 #include "components/proximity_auth/bluetooth_throttler_impl.h"
 #include "components/proximity_auth/bluetooth_util.h"
-#include "components/proximity_auth/cryptauth/cryptauth_device_manager.h"
-#include "components/proximity_auth/cryptauth/cryptauth_enrollment_manager.h"
-#include "components/proximity_auth/cryptauth/cryptauth_enrollment_utils.h"
-#include "components/proximity_auth/cryptauth/proto/cryptauth_api.pb.h"
-#include "components/proximity_auth/cryptauth/secure_message_delegate.h"
 #include "components/proximity_auth/logging/logging.h"
 #include "components/proximity_auth/proximity_auth_client.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/screenlock_bridge.h"
 #include "components/proximity_auth/screenlock_state.h"
 #include "components/proximity_auth/switches.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
@@ -50,7 +53,7 @@
 #include "ui/gfx/range/range.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/system/chromeos/devicetype_utils.h"
+#include "ash/common/system/chromeos/devicetype_utils.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager.h"
 #include "chrome/browser/chromeos/login/easy_unlock/easy_unlock_tpm_key_manager_factory.h"
 #include "components/user_manager/user.h"
@@ -134,8 +137,8 @@ EasyUnlockPrivateGetStringsFunction::EasyUnlockPrivateGetStringsFunction() {
 EasyUnlockPrivateGetStringsFunction::~EasyUnlockPrivateGetStringsFunction() {
 }
 
-bool EasyUnlockPrivateGetStringsFunction::RunSync() {
-  scoped_ptr<base::DictionaryValue> strings(new base::DictionaryValue);
+ExtensionFunction::ResponseAction EasyUnlockPrivateGetStringsFunction::Run() {
+  std::unique_ptr<base::DictionaryValue> strings(new base::DictionaryValue);
 
 #if defined(OS_CHROMEOS)
   const base::string16 device_type = ash::GetChromeOSDeviceName();
@@ -349,17 +352,14 @@ bool EasyUnlockPrivateGetStringsFunction::RunSync() {
   strings->SetString(
       "setupErrorFindingPhone",
       l10n_util::GetStringUTF16(IDS_EASY_UNLOCK_SETUP_ERROR_FINDING_PHONE));
-  strings->SetString(
-      "setupErrorSyncPhoneState",
-       l10n_util::GetStringUTF16(
-           IDS_EASY_UNLOCK_SETUP_ERROR_SYNC_PHONE_STATE_FAILED));
-  strings->SetString(
-      "setupErrorConnectingToPhone",
-      l10n_util::GetStringFUTF16(
-          IDS_EASY_UNLOCK_SETUP_ERROR_CONNECTING_TO_PHONE, device_type));
+  strings->SetString("setupErrorSyncPhoneState",
+                     l10n_util::GetStringUTF16(
+                         IDS_EASY_UNLOCK_SETUP_ERROR_SYNC_PHONE_STATE_FAILED));
+  strings->SetString("setupErrorConnectingToPhone",
+                     l10n_util::GetStringUTF16(
+                         IDS_EASY_UNLOCK_SETUP_ERROR_CONNECTING_TO_PHONE));
 
-  SetResult(strings.release());
-  return true;
+  return RespondNow(OneArgument(std::move(strings)));
 }
 
 EasyUnlockPrivatePerformECDHKeyAgreementFunction::
@@ -369,7 +369,7 @@ EasyUnlockPrivatePerformECDHKeyAgreementFunction::
 ~EasyUnlockPrivatePerformECDHKeyAgreementFunction() {}
 
 bool EasyUnlockPrivatePerformECDHKeyAgreementFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::PerformECDHKeyAgreement::Params> params =
+  std::unique_ptr<easy_unlock_private::PerformECDHKeyAgreement::Params> params =
       easy_unlock_private::PerformECDHKeyAgreement::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -422,7 +422,7 @@ EasyUnlockPrivateCreateSecureMessageFunction::
 ~EasyUnlockPrivateCreateSecureMessageFunction() {}
 
 bool EasyUnlockPrivateCreateSecureMessageFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::CreateSecureMessage::Params> params =
+  std::unique_ptr<easy_unlock_private::CreateSecureMessage::Params> params =
       easy_unlock_private::CreateSecureMessage::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -450,7 +450,7 @@ EasyUnlockPrivateUnwrapSecureMessageFunction::
 ~EasyUnlockPrivateUnwrapSecureMessageFunction() {}
 
 bool EasyUnlockPrivateUnwrapSecureMessageFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::UnwrapSecureMessage::Params> params =
+  std::unique_ptr<easy_unlock_private::UnwrapSecureMessage::Params> params =
       easy_unlock_private::UnwrapSecureMessage::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -478,8 +478,8 @@ EasyUnlockPrivateSeekBluetoothDeviceByAddressFunction::
     ~EasyUnlockPrivateSeekBluetoothDeviceByAddressFunction() {}
 
 bool EasyUnlockPrivateSeekBluetoothDeviceByAddressFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::SeekBluetoothDeviceByAddress::Params> params(
-      easy_unlock_private::SeekBluetoothDeviceByAddress::Params::Create(
+  std::unique_ptr<easy_unlock_private::SeekBluetoothDeviceByAddress::Params>
+      params(easy_unlock_private::SeekBluetoothDeviceByAddress::Params::Create(
           *args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -533,18 +533,18 @@ EasyUnlockPrivateUpdateScreenlockStateFunction::
 EasyUnlockPrivateUpdateScreenlockStateFunction::
     ~EasyUnlockPrivateUpdateScreenlockStateFunction() {}
 
-bool EasyUnlockPrivateUpdateScreenlockStateFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::UpdateScreenlockState::Params> params(
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateUpdateScreenlockStateFunction::Run() {
+  std::unique_ptr<easy_unlock_private::UpdateScreenlockState::Params> params(
       easy_unlock_private::UpdateScreenlockState::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   if (EasyUnlockService::Get(profile)->UpdateScreenlockState(
-          ToScreenlockState(params->state)))
-    return true;
-
-  SetError("Not allowed");
-  return false;
+          ToScreenlockState(params->state))) {
+    return RespondNow(NoArguments());
+  }
+  return RespondNow(Error("Not allowed"));
 }
 
 EasyUnlockPrivateSetPermitAccessFunction::
@@ -555,16 +555,16 @@ EasyUnlockPrivateSetPermitAccessFunction::
     ~EasyUnlockPrivateSetPermitAccessFunction() {
 }
 
-bool EasyUnlockPrivateSetPermitAccessFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetPermitAccess::Params> params(
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetPermitAccessFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetPermitAccess::Params> params(
       easy_unlock_private::SetPermitAccess::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   EasyUnlockService::Get(profile)
       ->SetPermitAccess(*params->permit_access.ToValue());
-
-  return true;
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateGetPermitAccessFunction::
@@ -575,30 +575,32 @@ EasyUnlockPrivateGetPermitAccessFunction::
     ~EasyUnlockPrivateGetPermitAccessFunction() {
 }
 
-bool EasyUnlockPrivateGetPermitAccessFunction::RunSync() {
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateGetPermitAccessFunction::Run() {
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           proximity_auth::switches::kEnableBluetoothLowEnergyDiscovery)) {
-    ReturnPermitAccessForExperiment();
-    return true;
+    return GetPermitAccessForExperiment();
   }
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   const base::DictionaryValue* permit_value =
       EasyUnlockService::Get(profile)->GetPermitAccess();
+
   if (permit_value) {
-    scoped_ptr<easy_unlock_private::PermitRecord> permit =
+    std::unique_ptr<easy_unlock_private::PermitRecord> permit =
         easy_unlock_private::PermitRecord::FromValue(*permit_value);
-    results_ = easy_unlock_private::GetPermitAccess::Results::Create(*permit);
+    return RespondNow(ArgumentList(
+        easy_unlock_private::GetPermitAccess::Results::Create(*permit)));
   }
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 void EasyUnlockPrivateGetPermitAccessFunction::GetKeyPairForExperiment(
     std::string* user_public_key,
     std::string* user_private_key) {
   Profile* profile = Profile::FromBrowserContext(browser_context());
-  proximity_auth::CryptAuthEnrollmentManager* enrollment_manager =
+  cryptauth::CryptAuthEnrollmentManager* enrollment_manager =
       EasyUnlockService::Get(profile)
           ->proximity_auth_client()
           ->GetCryptAuthEnrollmentManager();
@@ -610,15 +612,14 @@ void EasyUnlockPrivateGetPermitAccessFunction::GetKeyPairForExperiment(
                         user_private_key);
 }
 
-void EasyUnlockPrivateGetPermitAccessFunction::
-    ReturnPermitAccessForExperiment() {
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateGetPermitAccessFunction::GetPermitAccessForExperiment() {
   // Check that we are inside a user session.
   Profile* profile = Profile::FromBrowserContext(browser_context());
   EasyUnlockService* easy_unlock_service = EasyUnlockService::Get(profile);
   if (easy_unlock_service->GetType() != EasyUnlockService::TYPE_REGULAR) {
-    SetError("This function must be called inside a user session.");
-    SendResponse(true);
-    return;
+    return RespondNow(
+        Error("This function must be called inside a user session."));
   }
 
   std::string b64_public_key, b64_private_key;
@@ -627,7 +628,8 @@ void EasyUnlockPrivateGetPermitAccessFunction::
   // Fill in the permit access JSON dictionary.
   proximity_auth::ProximityAuthClient* client =
       easy_unlock_service->proximity_auth_client();
-  scoped_ptr<base::DictionaryValue> permit_access(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> permit_access(
+      new base::DictionaryValue());
   permit_access->SetString("permitId",
                            "permit://google.com/" + client->GetAccountId());
   permit_access->SetString("id", b64_public_key);
@@ -638,9 +640,7 @@ void EasyUnlockPrivateGetPermitAccessFunction::
                << "chrome.easyUnlockPrivate.getPermitAccess:\n"
                << "  id: " << b64_public_key;
 
-  scoped_ptr<easy_unlock_private::PermitRecord> result =
-      easy_unlock_private::PermitRecord::FromValue(*permit_access);
-  results_ = easy_unlock_private::GetPermitAccess::Results::Create(*result);
+  return RespondNow(OneArgument(std::move(permit_access)));
 }
 
 EasyUnlockPrivateClearPermitAccessFunction::
@@ -651,10 +651,11 @@ EasyUnlockPrivateClearPermitAccessFunction::
     ~EasyUnlockPrivateClearPermitAccessFunction() {
 }
 
-bool EasyUnlockPrivateClearPermitAccessFunction::RunSync() {
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateClearPermitAccessFunction::Run() {
   Profile* profile = Profile::FromBrowserContext(browser_context());
   EasyUnlockService::Get(profile)->ClearPermitAccess();
-  return true;
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateSetRemoteDevicesFunction::
@@ -665,16 +666,17 @@ EasyUnlockPrivateSetRemoteDevicesFunction::
     ~EasyUnlockPrivateSetRemoteDevicesFunction() {
 }
 
-bool EasyUnlockPrivateSetRemoteDevicesFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetRemoteDevices::Params> params(
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetRemoteDevicesFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetRemoteDevices::Params> params(
       easy_unlock_private::SetRemoteDevices::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   base::ListValue devices;
-  for (size_t i = 0; i < params->devices.size(); ++i) {
-    devices.Append(params->devices[i]->ToValue().release());
-  }
+  for (const easy_unlock_private::Device& device : params->devices)
+    devices.Append(device.ToValue());
+
   // Store the BLE device if we are trying out the BLE experiment.
   if (base::CommandLine::ForCurrentProcess()->HasSwitch(
           proximity_auth::switches::kEnableBluetoothLowEnergyDiscovery)) {
@@ -683,7 +685,7 @@ bool EasyUnlockPrivateSetRemoteDevicesFunction::RunSync() {
     EasyUnlockService::Get(profile)->SetRemoteDevices(devices);
   }
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateGetRemoteDevicesFunction::
@@ -704,7 +706,8 @@ bool EasyUnlockPrivateGetRemoteDevicesFunction::RunAsync() {
     Profile* profile = Profile::FromBrowserContext(browser_context());
     const base::ListValue* devices =
         EasyUnlockService::Get(profile)->GetRemoteDevices();
-    SetResult(devices ? devices->DeepCopy() : new base::ListValue());
+    SetResult(devices ? devices->CreateDeepCopy()
+                      : base::MakeUnique<base::ListValue>());
     SendResponse(true);
   }
 
@@ -715,7 +718,7 @@ std::string EasyUnlockPrivateGetRemoteDevicesFunction::GetUserPrivateKey() {
   Profile* profile = Profile::FromBrowserContext(browser_context());
   proximity_auth::ProximityAuthClient* client =
       EasyUnlockService::Get(profile)->proximity_auth_client();
-  proximity_auth::CryptAuthEnrollmentManager* enrollment_manager =
+  cryptauth::CryptAuthEnrollmentManager* enrollment_manager =
       client->GetCryptAuthEnrollmentManager();
   return enrollment_manager->GetUserPrivateKey();
 }
@@ -725,7 +728,7 @@ EasyUnlockPrivateGetRemoteDevicesFunction::GetUnlockKeys() {
   Profile* profile = Profile::FromBrowserContext(browser_context());
   proximity_auth::ProximityAuthClient* client =
       EasyUnlockService::Get(profile)->proximity_auth_client();
-  proximity_auth::CryptAuthDeviceManager* device_manager =
+  cryptauth::CryptAuthDeviceManager* device_manager =
       client->GetCryptAuthDeviceManager();
   return device_manager->unlock_keys();
 }
@@ -751,7 +754,7 @@ void EasyUnlockPrivateGetRemoteDevicesFunction::ReturnDevicesForExperiment() {
 
   remote_devices_.reset(new base::ListValue());
   if (expected_devices_count_ == 0) {
-    SetResult(remote_devices_.Pass());
+    SetResult(std::move(remote_devices_));
     SendResponse(true);
     return;
   }
@@ -760,7 +763,7 @@ void EasyUnlockPrivateGetRemoteDevicesFunction::ReturnDevicesForExperiment() {
   // not try the classic Bluetooth protocol.
   for (const auto& unlock_key : unlock_keys) {
     if (unlock_key.bluetooth_address().empty()) {
-      SetResult(remote_devices_.Pass());
+      SetResult(std::move(remote_devices_));
       SendResponse(true);
       return;
     }
@@ -791,27 +794,28 @@ void EasyUnlockPrivateGetRemoteDevicesFunction::OnPSKDerivedForDevice(
                         &b64_psk);
 
   // Fill in the JSON dictionary containing a single unlock key's data.
-  scoped_ptr<base::DictionaryValue> device_dictionary(
+  std::unique_ptr<base::DictionaryValue> device_dictionary(
       new base::DictionaryValue());
   device_dictionary->SetString("name", device.friendly_device_name());
   device_dictionary->SetString("bluetoothAddress", device.bluetooth_address());
   device_dictionary->SetString("psk", b64_psk);
 
   // Fill in the permit license for the unlock key.
-  scoped_ptr<base::DictionaryValue> permit_license(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> permit_license(
+      new base::DictionaryValue());
   permit_license->SetString("permitId", permit_id_);
   permit_license->SetString("id", b64_public_key);
   permit_license->SetString("type", "license");
   permit_license->SetString("data", b64_public_key);
-  device_dictionary->Set("permitRecord", permit_license.Pass());
+  device_dictionary->Set("permitRecord", std::move(permit_license));
 
-  remote_devices_->Append(device_dictionary.Pass());
+  remote_devices_->Append(std::move(device_dictionary));
 
   // If all PSKs are derived, then return from the API call.
   PA_LOG(INFO) << "Derived PSK for " << b64_public_key << ": "
                << remote_devices_->GetSize() << "/" << expected_devices_count_;
   if (remote_devices_->GetSize() == expected_devices_count_) {
-    SetResult(remote_devices_.Pass());
+    SetResult(std::move(remote_devices_));
     SendResponse(true);
   }
 }
@@ -825,7 +829,7 @@ EasyUnlockPrivateGetSignInChallengeFunction::
 }
 
 bool EasyUnlockPrivateGetSignInChallengeFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::GetSignInChallenge::Params> params(
+  std::unique_ptr<easy_unlock_private::GetSignInChallenge::Params> params(
       easy_unlock_private::GetSignInChallenge::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -841,7 +845,7 @@ bool EasyUnlockPrivateGetSignInChallengeFunction::RunAsync() {
       return false;
     }
     key_manager->SignUsingTpmKey(
-        EasyUnlockService::Get(profile)->GetUserEmail(),
+        EasyUnlockService::Get(profile)->GetAccountId(),
         std::string(params->nonce.begin(), params->nonce.end()),
         base::Bind(&EasyUnlockPrivateGetSignInChallengeFunction::OnDone, this,
                    challenge));
@@ -872,15 +876,16 @@ EasyUnlockPrivateTrySignInSecretFunction::
     ~EasyUnlockPrivateTrySignInSecretFunction() {
 }
 
-bool EasyUnlockPrivateTrySignInSecretFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::TrySignInSecret::Params> params(
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateTrySignInSecretFunction::Run() {
+  std::unique_ptr<easy_unlock_private::TrySignInSecret::Params> params(
       easy_unlock_private::TrySignInSecret::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   Profile* profile = Profile::FromBrowserContext(browser_context());
   EasyUnlockService::Get(profile)->FinalizeSignin(std::string(
       params->sign_in_secret.begin(), params->sign_in_secret.end()));
-  return true;
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateGetUserInfoFunction::EasyUnlockPrivateGetUserInfoFunction() {
@@ -889,33 +894,31 @@ EasyUnlockPrivateGetUserInfoFunction::EasyUnlockPrivateGetUserInfoFunction() {
 EasyUnlockPrivateGetUserInfoFunction::~EasyUnlockPrivateGetUserInfoFunction() {
 }
 
-bool EasyUnlockPrivateGetUserInfoFunction::RunSync() {
+ExtensionFunction::ResponseAction EasyUnlockPrivateGetUserInfoFunction::Run() {
   EasyUnlockService* service =
       EasyUnlockService::Get(Profile::FromBrowserContext(browser_context()));
-  std::vector<linked_ptr<easy_unlock_private::UserInfo> > users;
-  std::string user_id = service->GetUserEmail();
-  if (!user_id.empty()) {
-    users.push_back(
-        linked_ptr<easy_unlock_private::UserInfo>(
-            new easy_unlock_private::UserInfo()));
-    users[0]->user_id = user_id;
-    users[0]->logged_in = service->GetType() == EasyUnlockService::TYPE_REGULAR;
-    users[0]->data_ready = users[0]->logged_in ||
-                           service->GetRemoteDevices() != NULL;
+  std::vector<easy_unlock_private::UserInfo> users;
+  const AccountId& account_id = service->GetAccountId();
+  if (account_id.is_valid()) {
+    easy_unlock_private::UserInfo user;
+    user.user_id = account_id.GetUserEmail();
+    user.logged_in = service->GetType() == EasyUnlockService::TYPE_REGULAR;
+    user.data_ready = user.logged_in || service->GetRemoteDevices() != NULL;
 
     EasyUnlockService::UserSettings user_settings =
-        EasyUnlockService::GetUserSettings(user_id);
-    users[0]->require_close_proximity = user_settings.require_close_proximity;
+        EasyUnlockService::GetUserSettings(account_id);
+    user.require_close_proximity = user_settings.require_close_proximity;
 
-    users[0]->device_user_id = proximity_auth::CalculateDeviceUserId(
-        EasyUnlockService::GetDeviceId(), user_id);
+    user.device_user_id = cryptauth::CalculateDeviceUserId(
+        EasyUnlockService::GetDeviceId(), account_id.GetUserEmail());
 
-    users[0]->ble_discovery_enabled =
+    user.ble_discovery_enabled =
         base::CommandLine::ForCurrentProcess()->HasSwitch(
             proximity_auth::switches::kEnableBluetoothLowEnergyDiscovery);
+    users.push_back(std::move(user));
   }
-  results_ = easy_unlock_private::GetUserInfo::Results::Create(users);
-  return true;
+  return RespondNow(
+      ArgumentList(easy_unlock_private::GetUserInfo::Results::Create(users)));
 }
 
 EasyUnlockPrivateGetConnectionInfoFunction::
@@ -928,7 +931,7 @@ EasyUnlockPrivateGetConnectionInfoFunction::
 
 bool EasyUnlockPrivateGetConnectionInfoFunction::DoWork(
     scoped_refptr<device::BluetoothAdapter> adapter) {
-  scoped_ptr<easy_unlock_private::GetConnectionInfo::Params> params =
+  std::unique_ptr<easy_unlock_private::GetConnectionInfo::Params> params =
       easy_unlock_private::GetConnectionInfo::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -953,11 +956,11 @@ bool EasyUnlockPrivateGetConnectionInfoFunction::DoWork(
 
 void EasyUnlockPrivateGetConnectionInfoFunction::OnConnectionInfo(
     const device::BluetoothDevice::ConnectionInfo& connection_info) {
-  scoped_ptr<base::ListValue> results(new base::ListValue());
+  std::unique_ptr<base::ListValue> results(new base::ListValue());
   results->AppendInteger(connection_info.rssi);
   results->AppendInteger(connection_info.transmit_power);
   results->AppendInteger(connection_info.max_transmit_power);
-  SetResultList(results.Pass());
+  SetResultList(std::move(results));
   SendResponse(true);
 }
 
@@ -969,14 +972,13 @@ EasyUnlockPrivateShowErrorBubbleFunction::
     ~EasyUnlockPrivateShowErrorBubbleFunction() {
 }
 
-bool EasyUnlockPrivateShowErrorBubbleFunction::RunSync() {
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateShowErrorBubbleFunction::Run() {
   content::WebContents* web_contents = GetAssociatedWebContents();
-  if (!web_contents) {
-    SetError("A foreground app window is required.");
-    return true;
-  }
+  if (!web_contents)
+    return RespondNow(Error("A foreground app window is required."));
 
-  scoped_ptr<easy_unlock_private::ShowErrorBubble::Params> params(
+  std::unique_ptr<easy_unlock_private::ShowErrorBubble::Params> params(
       easy_unlock_private::ShowErrorBubble::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -984,8 +986,7 @@ bool EasyUnlockPrivateShowErrorBubbleFunction::RunSync() {
       params->link_range.end < 0 ||
       base::saturated_cast<size_t>(params->link_range.end) >
           params->message.size()) {
-    SetError("Invalid link range.");
-    return true;
+    return RespondNow(Error("Invalid link range."));
   }
 
 #if defined(TOOLKIT_VIEWS)
@@ -998,10 +999,10 @@ bool EasyUnlockPrivateShowErrorBubbleFunction::RunSync() {
       base::UTF8ToUTF16(params->message),
       gfx::Range(params->link_range.start, params->link_range.end),
       GURL(params->link_target), anchor_rect, web_contents);
+  return RespondNow(NoArguments());
 #else
-  SetError("Not supported on non-Views platforms.");
+  return RespondNow(Error("Not supported on non-Views platforms."));
 #endif
-  return true;
 }
 
 EasyUnlockPrivateHideErrorBubbleFunction::
@@ -1012,13 +1013,14 @@ EasyUnlockPrivateHideErrorBubbleFunction::
     ~EasyUnlockPrivateHideErrorBubbleFunction() {
 }
 
-bool EasyUnlockPrivateHideErrorBubbleFunction::RunSync() {
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateHideErrorBubbleFunction::Run() {
 #if defined(TOOLKIT_VIEWS)
   HideProximityAuthErrorBubble();
+  return RespondNow(NoArguments());
 #else
-  SetError("Not supported on non-Views platforms.");
+  return RespondNow(Error("Not supported on non-Views platforms."));
 #endif
-  return true;
 }
 
 EasyUnlockPrivateSetAutoPairingResultFunction::
@@ -1029,8 +1031,9 @@ EasyUnlockPrivateSetAutoPairingResultFunction::
     ~EasyUnlockPrivateSetAutoPairingResultFunction() {
 }
 
-bool EasyUnlockPrivateSetAutoPairingResultFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetAutoPairingResult::Params> params =
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetAutoPairingResultFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetAutoPairingResult::Params> params =
       easy_unlock_private::SetAutoPairingResult::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -1042,13 +1045,13 @@ bool EasyUnlockPrivateSetAutoPairingResultFunction::RunSync() {
   EasyUnlockService::Get(profile)
       ->SetAutoPairingResult(params->result.success, error_message);
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateFindSetupConnectionFunction::
     EasyUnlockPrivateFindSetupConnectionFunction()
     : bluetooth_throttler_(new proximity_auth::BluetoothThrottlerImpl(
-          make_scoped_ptr(new base::DefaultTickClock()))) {}
+          base::MakeUnique<base::DefaultTickClock>())) {}
 
 EasyUnlockPrivateFindSetupConnectionFunction::
     ~EasyUnlockPrivateFindSetupConnectionFunction() {
@@ -1066,20 +1069,20 @@ void EasyUnlockPrivateFindSetupConnectionFunction::
 }
 
 void EasyUnlockPrivateFindSetupConnectionFunction::OnConnectionFound(
-    scoped_ptr<proximity_auth::Connection> connection) {
+    std::unique_ptr<proximity_auth::Connection> connection) {
   // Connection are not persistent by default.
   std::string device_address = connection->remote_device().bluetooth_address;
   bool persistent = false;
   int connection_id =
       GetConnectionManager(browser_context())
-          ->AddConnection(extension(), connection.Pass(), persistent);
+          ->AddConnection(extension(), std::move(connection), persistent);
   results_ = easy_unlock_private::FindSetupConnection::Results::Create(
       connection_id, device_address);
   SendResponse(true);
 }
 
 bool EasyUnlockPrivateFindSetupConnectionFunction::RunAsync() {
-  scoped_ptr<easy_unlock_private::FindSetupConnection::Params> params =
+  std::unique_ptr<easy_unlock_private::FindSetupConnection::Params> params =
       easy_unlock_private::FindSetupConnection::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
 
@@ -1087,7 +1090,7 @@ bool EasyUnlockPrivateFindSetupConnectionFunction::RunAsync() {
   // |params->setup_service_uuid|.
   connection_finder_.reset(
       new proximity_auth::BluetoothLowEnergyConnectionFinder(
-          proximity_auth::RemoteDevice(), params->setup_service_uuid,
+          cryptauth::RemoteDevice(), params->setup_service_uuid,
           proximity_auth::BluetoothLowEnergyConnectionFinder::FIND_ANY_DEVICE,
           nullptr, bluetooth_throttler_.get(), 3));
 
@@ -1109,18 +1112,18 @@ EasyUnlockPrivateSetupConnectionStatusFunction::
 EasyUnlockPrivateSetupConnectionStatusFunction::
     ~EasyUnlockPrivateSetupConnectionStatusFunction() {}
 
-bool EasyUnlockPrivateSetupConnectionStatusFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetupConnectionStatus::Params> params =
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetupConnectionStatusFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetupConnectionStatus::Params> params =
       easy_unlock_private::SetupConnectionStatus::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
   api::easy_unlock_private::ConnectionStatus status =
       GetConnectionManager(browser_context())
           ->ConnectionStatus(extension(), params->connection_id);
-  results_ =
-      easy_unlock_private::SetupConnectionStatus::Results::Create(status);
   if (status == api::easy_unlock_private::CONNECTION_STATUS_NONE)
-    SetError("Invalid connectionId");
-  return true;
+    return RespondNow(Error("Invalid connectionId"));
+  return RespondNow(ArgumentList(
+      easy_unlock_private::SetupConnectionStatus::Results::Create(status)));
 }
 
 EasyUnlockPrivateSetupConnectionDisconnectFunction::
@@ -1129,15 +1132,17 @@ EasyUnlockPrivateSetupConnectionDisconnectFunction::
 EasyUnlockPrivateSetupConnectionDisconnectFunction::
     ~EasyUnlockPrivateSetupConnectionDisconnectFunction() {}
 
-bool EasyUnlockPrivateSetupConnectionDisconnectFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetupConnectionDisconnect::Params> params =
-      easy_unlock_private::SetupConnectionDisconnect::Params::Create(*args_);
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetupConnectionDisconnectFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetupConnectionDisconnect::Params>
+      params = easy_unlock_private::SetupConnectionDisconnect::Params::Create(
+          *args_);
   EXTENSION_FUNCTION_VALIDATE(params);
-  bool success = GetConnectionManager(browser_context())
-                     ->Disconnect(extension(), params->connection_id);
-  if (!success)
-    SetError("Invalid connectionId.");
-  return true;
+  if (!GetConnectionManager(browser_context())
+           ->Disconnect(extension(), params->connection_id)) {
+    return RespondNow(Error("Invalid connectionId."));
+  }
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateSetupConnectionSendFunction::
@@ -1146,16 +1151,17 @@ EasyUnlockPrivateSetupConnectionSendFunction::
 EasyUnlockPrivateSetupConnectionSendFunction::
     ~EasyUnlockPrivateSetupConnectionSendFunction() {}
 
-bool EasyUnlockPrivateSetupConnectionSendFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetupConnectionSend::Params> params =
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetupConnectionSendFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetupConnectionSend::Params> params =
       easy_unlock_private::SetupConnectionSend::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params);
   std::string payload(params->data.begin(), params->data.end());
-  bool success = GetConnectionManager(browser_context())
-                     ->SendMessage(extension(), params->connection_id, payload);
-  if (!success)
-    SetError("Invalid connectionId.");
-  return true;
+  if (!GetConnectionManager(browser_context())
+           ->SendMessage(extension(), params->connection_id, payload)) {
+    return RespondNow(Error("Invalid connectionId."));
+  }
+  return RespondNow(NoArguments());
 }
 
 EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::
@@ -1164,8 +1170,9 @@ EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::
 EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::
     ~EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction() {}
 
-bool EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::RunSync() {
-  scoped_ptr<easy_unlock_private::SetupConnectionGetDeviceAddress::Params>
+ExtensionFunction::ResponseAction
+EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::Run() {
+  std::unique_ptr<easy_unlock_private::SetupConnectionGetDeviceAddress::Params>
       params =
           easy_unlock_private::SetupConnectionGetDeviceAddress::Params::Create(
               *args_);
@@ -1173,12 +1180,11 @@ bool EasyUnlockPrivateSetupConnectionGetDeviceAddressFunction::RunSync() {
   std::string device_address =
       GetConnectionManager(browser_context())
           ->GetDeviceAddress(extension(), params->connection_id);
-  results_ =
-      easy_unlock_private::SetupConnectionGetDeviceAddress::Results::Create(
-          device_address);
   if (device_address.empty())
-    SetError("Invalid connectionId.");
-  return true;
+    return RespondNow(Error("Invalid connectionId."));
+  return RespondNow(ArgumentList(
+      easy_unlock_private::SetupConnectionGetDeviceAddress::Results::Create(
+          device_address)));
 }
 
 }  // namespace extensions

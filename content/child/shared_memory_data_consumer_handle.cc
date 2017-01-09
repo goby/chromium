@@ -6,12 +6,15 @@
 
 #include <algorithm>
 #include <deque>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/child/fixed_received_data.h"
 
 namespace content {
@@ -22,8 +25,9 @@ class DelegateThreadSafeReceivedData final
     : public RequestPeer::ThreadSafeReceivedData {
  public:
   explicit DelegateThreadSafeReceivedData(
-      scoped_ptr<RequestPeer::ReceivedData> data)
-      : data_(data.Pass()), task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
+      std::unique_ptr<RequestPeer::ReceivedData> data)
+      : data_(std::move(data)),
+        task_runner_(base::ThreadTaskRunnerHandle::Get()) {}
   ~DelegateThreadSafeReceivedData() override {
     if (!task_runner_->BelongsToCurrentThread()) {
       // Delete the data on the original thread.
@@ -33,10 +37,9 @@ class DelegateThreadSafeReceivedData final
 
   const char* payload() const override { return data_->payload(); }
   int length() const override { return data_->length(); }
-  int encoded_length() const override { return data_->encoded_length(); }
 
  private:
-  scoped_ptr<RequestPeer::ReceivedData> data_;
+  std::unique_ptr<RequestPeer::ReceivedData> data_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(DelegateThreadSafeReceivedData);
@@ -80,19 +83,16 @@ class SharedMemoryDataConsumerHandle::Context final
   }
   void ClearQueue() {
     lock_.AssertAcquired();
-    for (auto& data : queue_) {
-      delete data;
-    }
     queue_.clear();
     first_offset_ = 0;
   }
   RequestPeer::ThreadSafeReceivedData* Top() {
     lock_.AssertAcquired();
-    return queue_.front();
+    return queue_.front().get();
   }
-  void Push(scoped_ptr<RequestPeer::ThreadSafeReceivedData> data) {
+  void Push(std::unique_ptr<RequestPeer::ThreadSafeReceivedData> data) {
     lock_.AssertAcquired();
-    queue_.push_back(data.release());
+    queue_.push_back(std::move(data));
   }
   size_t first_offset() const {
     lock_.AssertAcquired();
@@ -159,7 +159,7 @@ class SharedMemoryDataConsumerHandle::Context final
   }
   bool is_handle_locked() const {
     lock_.AssertAcquired();
-    return notification_task_runner_;
+    return static_cast<bool>(notification_task_runner_);
   }
   bool IsReaderBoundToCurrentThread() const {
     lock_.AssertAcquired();
@@ -177,9 +177,8 @@ class SharedMemoryDataConsumerHandle::Context final
   void Consume(size_t s) {
     lock_.AssertAcquired();
     first_offset_ += s;
-    auto top = Top();
+    auto* top = Top();
     if (static_cast<size_t>(top->length()) <= first_offset_) {
-      delete top;
       queue_.pop_front();
       first_offset_ = 0;
     }
@@ -223,14 +222,8 @@ class SharedMemoryDataConsumerHandle::Context final
   }
   void Clear() {
     lock_.AssertAcquired();
-    for (auto& data : queue_) {
-      delete data;
-    }
-    queue_.clear();
-    first_offset_ = 0;
+    ClearQueue();
     client_ = nullptr;
-    // Note this doesn't work in the destructor if |on_reader_detached_| is not
-    // null. We have an assert in the destructor.
     ResetOnReaderDetached();
   }
   // Must be called with |lock_| not aquired.
@@ -240,21 +233,13 @@ class SharedMemoryDataConsumerHandle::Context final
   }
 
   friend class base::RefCountedThreadSafe<Context>;
-  ~Context() {
-    base::AutoLock lock(lock_);
-    DCHECK(on_reader_detached_.is_null());
-
-    // This is necessary because the queue stores raw pointers.
-    Clear();
-  }
+  ~Context() = default;
 
   base::Lock lock_;
   // |result_| stores the ultimate state of this handle if it has. Otherwise,
   // |Ok| is set.
   Result result_;
-  // TODO(yhirano): Use std::deque<scoped_ptr<ThreadSafeReceivedData>>
-  // once it is allowed.
-  std::deque<RequestPeer::ThreadSafeReceivedData*> queue_;
+  std::deque<std::unique_ptr<RequestPeer::ThreadSafeReceivedData>> queue_;
   size_t first_offset_;
   Client* client_;
   scoped_refptr<base::SingleThreadTaskRunner> notification_task_runner_;
@@ -284,7 +269,7 @@ SharedMemoryDataConsumerHandle::Writer::~Writer() {
 }
 
 void SharedMemoryDataConsumerHandle::Writer::AddData(
-    scoped_ptr<RequestPeer::ReceivedData> data) {
+    std::unique_ptr<RequestPeer::ReceivedData> data) {
   if (!data->length()) {
     // We omit empty data.
     return;
@@ -299,14 +284,14 @@ void SharedMemoryDataConsumerHandle::Writer::AddData(
     }
 
     needs_notification = context_->IsEmpty();
-    scoped_ptr<RequestPeer::ThreadSafeReceivedData> data_to_pass;
+    std::unique_ptr<RequestPeer::ThreadSafeReceivedData> data_to_pass;
     if (mode_ == kApplyBackpressure) {
       data_to_pass =
-          make_scoped_ptr(new DelegateThreadSafeReceivedData(data.Pass()));
+          base::MakeUnique<DelegateThreadSafeReceivedData>(std::move(data));
     } else {
-      data_to_pass = make_scoped_ptr(new FixedReceivedData(data.get()));
+      data_to_pass = base::MakeUnique<FixedReceivedData>(data.get());
     }
-    context_->Push(data_to_pass.Pass());
+    context_->Push(std::move(data_to_pass));
   }
 
   if (needs_notification) {
@@ -383,7 +368,7 @@ Result SharedMemoryDataConsumerHandle::ReaderImpl::read(
     return context_->result();
 
   while (!context_->IsEmpty() && total_read_size < size) {
-    const auto& top = context_->Top();
+    auto* top = context_->Top();
     size_t readable = top->length() - context_->first_offset();
     size_t writable = size - total_read_size;
     size_t read_size = std::min(readable, writable);
@@ -420,7 +405,7 @@ Result SharedMemoryDataConsumerHandle::ReaderImpl::beginRead(
     return context_->result() == Done ? Done : ShouldWait;
 
   context_->set_is_two_phase_read_in_progress(true);
-  const auto& top = context_->Top();
+  auto* top = context_->Top();
   *buffer = top->payload() + context_->first_offset();
   *available = top->length() - context_->first_offset();
 
@@ -446,14 +431,13 @@ Result SharedMemoryDataConsumerHandle::ReaderImpl::endRead(size_t read_size) {
 
 SharedMemoryDataConsumerHandle::SharedMemoryDataConsumerHandle(
     BackpressureMode mode,
-    scoped_ptr<Writer>* writer)
-    : SharedMemoryDataConsumerHandle(mode, base::Closure(), writer) {
-}
+    std::unique_ptr<Writer>* writer)
+    : SharedMemoryDataConsumerHandle(mode, base::Closure(), writer) {}
 
 SharedMemoryDataConsumerHandle::SharedMemoryDataConsumerHandle(
     BackpressureMode mode,
     const base::Closure& on_reader_detached,
-    scoped_ptr<Writer>* writer)
+    std::unique_ptr<Writer>* writer)
     : context_(new Context(on_reader_detached)) {
   writer->reset(new Writer(context_, mode));
 }
@@ -464,14 +448,9 @@ SharedMemoryDataConsumerHandle::~SharedMemoryDataConsumerHandle() {
   context_->ClearIfNecessary();
 }
 
-scoped_ptr<blink::WebDataConsumerHandle::Reader>
-SharedMemoryDataConsumerHandle::ObtainReader(Client* client) {
-  return make_scoped_ptr(obtainReaderInternal(client));
-}
-
-SharedMemoryDataConsumerHandle::ReaderImpl*
-SharedMemoryDataConsumerHandle::obtainReaderInternal(Client* client) {
-  return new ReaderImpl(context_, client);
+std::unique_ptr<blink::WebDataConsumerHandle::Reader>
+SharedMemoryDataConsumerHandle::obtainReader(Client* client) {
+  return base::WrapUnique(new ReaderImpl(context_, client));
 }
 
 const char* SharedMemoryDataConsumerHandle::debugName() const {

@@ -36,19 +36,19 @@
 
 namespace blink {
 
-class XMLHttpRequestEventTarget : public RefCountedGarbageCollectedEventTargetWithInlineData<XMLHttpRequestEventTarget> {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(XMLHttpRequestEventTarget);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(abort);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(load);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(loadend);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(loadstart);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(progress);
-    DEFINE_ATTRIBUTE_EVENT_LISTENER(timeout);
+class XMLHttpRequestEventTarget : public EventTargetWithInlineData {
+  DEFINE_WRAPPERTYPEINFO();
+
+ public:
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(abort);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(load);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(loadend);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(loadstart);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(progress);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(timeout);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // XMLHttpRequestEventTarget_h
+#endif  // XMLHttpRequestEventTarget_h

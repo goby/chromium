@@ -29,73 +29,88 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/mediastream/MediaStreamComponent.h"
 
 #include "platform/UUID.h"
 #include "platform/audio/AudioBus.h"
 #include "platform/mediastream/MediaStreamSource.h"
 #include "public/platform/WebAudioSourceProvider.h"
+#include "public/platform/WebMediaStreamTrack.h"
 
 namespace blink {
 
-MediaStreamComponent* MediaStreamComponent::create(MediaStreamSource* source)
-{
-    return new MediaStreamComponent(createCanonicalUUIDString(), source);
+MediaStreamComponent* MediaStreamComponent::create(MediaStreamSource* source) {
+  return new MediaStreamComponent(createCanonicalUUIDString(), source);
 }
 
-MediaStreamComponent* MediaStreamComponent::create(const String& id, MediaStreamSource* source)
-{
-    return new MediaStreamComponent(id, source);
+MediaStreamComponent* MediaStreamComponent::create(const String& id,
+                                                   MediaStreamSource* source) {
+  return new MediaStreamComponent(id, source);
 }
 
-MediaStreamComponent::MediaStreamComponent(const String& id, MediaStreamSource* source)
-    : m_source(source)
-    , m_id(id)
-    , m_enabled(true)
-    , m_muted(false)
-{
-    ASSERT(m_id.length());
-    ThreadState::current()->registerPreFinalizer(this);
+MediaStreamComponent::MediaStreamComponent(const String& id,
+                                           MediaStreamSource* source)
+    : MediaStreamComponent(id, source, true, false) {}
+
+MediaStreamComponent::MediaStreamComponent(const String& id,
+                                           MediaStreamSource* source,
+                                           bool enabled,
+                                           bool muted)
+    : m_source(source), m_id(id), m_enabled(enabled), m_muted(muted) {
+  DCHECK(m_id.length());
+  ThreadState::current()->registerPreFinalizer(this);
 }
 
-void MediaStreamComponent::dispose()
-{
-    m_extraData.clear();
+MediaStreamComponent* MediaStreamComponent::clone() const {
+  MediaStreamComponent* clonedComponent = new MediaStreamComponent(
+      createCanonicalUUIDString(), source(), m_enabled, m_muted);
+  // TODO(pbos): Clone |m_trackData| as well.
+  // TODO(pbos): Move properties from MediaStreamTrack here so that they are
+  // also cloned. Part of crbug:669212 since stopped is currently not carried
+  // over, nor is ended().
+  return clonedComponent;
 }
 
-#if ENABLE(WEB_AUDIO)
-void MediaStreamComponent::AudioSourceProviderImpl::wrap(WebAudioSourceProvider* provider)
-{
-    MutexLocker locker(m_provideInputLock);
-    m_webAudioSourceProvider = provider;
+void MediaStreamComponent::dispose() {
+  m_trackData.reset();
 }
 
-void MediaStreamComponent::AudioSourceProviderImpl::provideInput(AudioBus* bus, size_t framesToProcess)
-{
-    ASSERT(bus);
-    if (!bus)
-        return;
-
-    MutexTryLocker tryLocker(m_provideInputLock);
-    if (!tryLocker.locked() || !m_webAudioSourceProvider) {
-        bus->zero();
-        return;
-    }
-
-    // Wrap the AudioBus channel data using WebVector.
-    size_t n = bus->numberOfChannels();
-    WebVector<float*> webAudioData(n);
-    for (size_t i = 0; i < n; ++i)
-        webAudioData[i] = bus->channel(i)->mutableData();
-
-    m_webAudioSourceProvider->provideInput(webAudioData, framesToProcess);
-}
-#endif // #if ENABLE(WEB_AUDIO)
-
-DEFINE_TRACE(MediaStreamComponent)
-{
-    visitor->trace(m_source);
+void MediaStreamComponent::AudioSourceProviderImpl::wrap(
+    WebAudioSourceProvider* provider) {
+  MutexLocker locker(m_provideInputLock);
+  m_webAudioSourceProvider = provider;
 }
 
-} // namespace blink
+void MediaStreamComponent::getSettings(
+    WebMediaStreamTrack::Settings& settings) {
+  DCHECK(m_trackData);
+  m_trackData->getSettings(settings);
+}
+
+void MediaStreamComponent::AudioSourceProviderImpl::provideInput(
+    AudioBus* bus,
+    size_t framesToProcess) {
+  DCHECK(bus);
+  if (!bus)
+    return;
+
+  MutexTryLocker tryLocker(m_provideInputLock);
+  if (!tryLocker.locked() || !m_webAudioSourceProvider) {
+    bus->zero();
+    return;
+  }
+
+  // Wrap the AudioBus channel data using WebVector.
+  size_t n = bus->numberOfChannels();
+  WebVector<float*> webAudioData(n);
+  for (size_t i = 0; i < n; ++i)
+    webAudioData[i] = bus->channel(i)->mutableData();
+
+  m_webAudioSourceProvider->provideInput(webAudioData, framesToProcess);
+}
+
+DEFINE_TRACE(MediaStreamComponent) {
+  visitor->trace(m_source);
+}
+
+}  // namespace blink

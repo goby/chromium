@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "chrome/browser/apps/app_browsertest_util.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/fake_speech_recognition_manager.h"
@@ -38,7 +39,7 @@ class SpeechRecognitionTest : public extensions::PlatformAppBrowserTest {
   }
 
  private:
-  scoped_ptr<content::FakeSpeechRecognitionManager>
+  std::unique_ptr<content::FakeSpeechRecognitionManager>
       fake_speech_recognition_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(SpeechRecognitionTest);

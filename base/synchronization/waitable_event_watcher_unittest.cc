@@ -6,10 +6,12 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -46,26 +48,23 @@ void RunTest_BasicSignal(MessageLoop::Type message_loop_type) {
   MessageLoop message_loop(message_loop_type);
 
   // A manual-reset event that is not yet signaled.
-  WaitableEvent event(true, false);
+  WaitableEvent event(WaitableEvent::ResetPolicy::MANUAL,
+                      WaitableEvent::InitialState::NOT_SIGNALED);
 
   WaitableEventWatcher watcher;
-  EXPECT_TRUE(watcher.GetWatchedEvent() == NULL);
-
   watcher.StartWatching(&event, Bind(&QuitWhenSignaled));
-  EXPECT_EQ(&event, watcher.GetWatchedEvent());
 
   event.Signal();
 
-  MessageLoop::current()->Run();
-
-  EXPECT_TRUE(watcher.GetWatchedEvent() == NULL);
+  RunLoop().Run();
 }
 
 void RunTest_BasicCancel(MessageLoop::Type message_loop_type) {
   MessageLoop message_loop(message_loop_type);
 
   // A manual-reset event that is not yet signaled.
-  WaitableEvent event(true, false);
+  WaitableEvent event(WaitableEvent::ResetPolicy::MANUAL,
+                      WaitableEvent::InitialState::NOT_SIGNALED);
 
   WaitableEventWatcher watcher;
 
@@ -78,7 +77,8 @@ void RunTest_CancelAfterSet(MessageLoop::Type message_loop_type) {
   MessageLoop message_loop(message_loop_type);
 
   // A manual-reset event that is not yet signaled.
-  WaitableEvent event(true, false);
+  WaitableEvent event(WaitableEvent::ResetPolicy::MANUAL,
+                      WaitableEvent::InitialState::NOT_SIGNALED);
 
   WaitableEventWatcher watcher;
 
@@ -106,7 +106,8 @@ void RunTest_OutlivesMessageLoop(MessageLoop::Type message_loop_type) {
   // Simulate a MessageLoop that dies before an WaitableEventWatcher.  This
   // ordinarily doesn't happen when people use the Thread class, but it can
   // happen when people use the Singleton pattern or atexit.
-  WaitableEvent event(true, false);
+  WaitableEvent event(WaitableEvent::ResetPolicy::MANUAL,
+                      WaitableEvent::InitialState::NOT_SIGNALED);
   {
     WaitableEventWatcher watcher;
     {
@@ -126,7 +127,9 @@ void RunTest_DeleteUnder(MessageLoop::Type message_loop_type) {
   {
     WaitableEventWatcher watcher;
 
-    WaitableEvent* event = new WaitableEvent(false, false);
+    WaitableEvent* event =
+        new WaitableEvent(WaitableEvent::ResetPolicy::AUTOMATIC,
+                          WaitableEvent::InitialState::NOT_SIGNALED);
 
     watcher.StartWatching(event, Bind(&QuitWhenSignaled));
     delete event;
@@ -161,13 +164,7 @@ TEST(WaitableEventWatcherTest, OutlivesMessageLoop) {
   }
 }
 
-#if defined(OS_WIN)
-// Crashes sometimes on vista.  http://crbug.com/62119
-#define MAYBE_DeleteUnder DISABLED_DeleteUnder
-#else
-#define MAYBE_DeleteUnder DeleteUnder
-#endif
-TEST(WaitableEventWatcherTest, MAYBE_DeleteUnder) {
+TEST(WaitableEventWatcherTest, DeleteUnder) {
   for (int i = 0; i < kNumTestingMessageLoops; i++) {
     RunTest_DeleteUnder(testing_message_loops[i]);
   }

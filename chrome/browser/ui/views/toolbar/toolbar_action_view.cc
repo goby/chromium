@@ -7,32 +7,28 @@
 #include <string>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "chrome/browser/chrome_notification_types.h"
-#include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sessions/session_tab_helper.h"
-#include "chrome/browser/themes/theme_service.h"
-#include "chrome/browser/themes/theme_service_factory.h"
+#include "chrome/browser/themes/theme_properties.h"
 #include "chrome/browser/ui/toolbar/toolbar_action_view_controller.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_bar.h"
 #include "chrome/browser/ui/view_ids.h"
-#include "chrome/grit/generated_resources.h"
 #include "content/public/browser/notification_source.h"
-#include "grit/theme_resources.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/theme_provider.h"
 #include "ui/compositor/paint_recorder.h"
 #include "ui/events/event.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_operations.h"
 #include "ui/gfx/image/image_skia_source.h"
-#include "ui/resources/grit/ui_resources.h"
-#include "ui/views/animation/button_ink_drop_delegate.h"
+#include "ui/views/animation/ink_drop_impl.h"
 #include "ui/views/controls/button/label_button_border.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/controls/menu/menu_model_adapter.h"
 #include "ui/views/controls/menu/menu_runner.h"
 #include "ui/views/mouse_constants.h"
-#include "ui/views/resources/grit/views_resources.h"
 
 using views::LabelButtonBorder;
 
@@ -43,14 +39,6 @@ namespace {
 // handled directly by the Image.
 const int kBorderInset = 0;
 
-// The ToolbarActionView which is currently showing its context menu, if any.
-// Since only one context menu can be shown (even across browser windows), it's
-// safe to have this be a global singleton.
-ToolbarActionView* context_menu_owner = nullptr;
-
-// The callback to call directly before showing the context menu.
-ToolbarActionView::ContextMenuCallback* context_menu_callback = nullptr;
-
 }  // namespace
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -58,19 +46,17 @@ ToolbarActionView::ContextMenuCallback* context_menu_callback = nullptr;
 
 ToolbarActionView::ToolbarActionView(
     ToolbarActionViewController* view_controller,
-    Profile* profile,
     ToolbarActionView::Delegate* delegate)
-    : MenuButton(nullptr, base::string16(), this, false),
+    : MenuButton(base::string16(), this, false),
       view_controller_(view_controller),
-      profile_(profile),
       delegate_(delegate),
       called_register_command_(false),
       wants_to_run_(false),
       menu_(nullptr),
       weak_factory_(this) {
-  scoped_ptr<views::InkDropDelegate> new_ink_drop_delegate(
-      new views::ButtonInkDropDelegate(this, this));
-  SetInkDropDelegate(new_ink_drop_delegate.Pass());
+  SetInkDropMode(InkDropMode::ON);
+  SetFocusPainter(nullptr);
+  set_has_ink_drop_action_on_click(true);
   set_id(VIEW_ID_BROWSER_ACTION);
   view_controller_->SetDelegate(this);
   SetHorizontalAlignment(gfx::ALIGN_CENTER);
@@ -78,60 +64,54 @@ ToolbarActionView::ToolbarActionView(
 
   set_context_menu_controller(this);
 
-  const int kInkDropLargeSize = 32;
-  const int kInkDropLargeCornerRadius = 5;
-  const int kInkDropSmallSize = 24;
-  const int kInkDropSmallCornerRadius = 2;
-  ink_drop_delegate()->SetInkDropSize(
-      kInkDropLargeSize, kInkDropLargeCornerRadius, kInkDropSmallSize,
-      kInkDropSmallCornerRadius);
-
-  // We also listen for browser theme changes on linux because a switch from or
-  // to GTK requires that we regrab our browser action images.
-  registrar_.Add(
-      this,
-      chrome::NOTIFICATION_BROWSER_THEME_CHANGED,
-      content::Source<ThemeService>(
-          ThemeServiceFactory::GetForProfile(profile_)));
-
   // If the button is within a menu, we need to make it focusable in order to
-  // have it accessible via keyboard navigation, but it shouldn't request focus
-  // (because that would close the menu).
-  if (delegate_->ShownInsideMenu()) {
-    set_request_focus_on_press(false);
-    SetFocusable(true);
-  }
+  // have it accessible via keyboard navigation.
+  if (delegate_->ShownInsideMenu())
+    SetFocusBehavior(FocusBehavior::ALWAYS);
 
   UpdateState();
 }
 
 ToolbarActionView::~ToolbarActionView() {
-  if (context_menu_owner == this)
-    context_menu_owner = nullptr;
   view_controller_->SetDelegate(nullptr);
 }
 
-void ToolbarActionView::GetAccessibleState(ui::AXViewState* state) {
-  views::MenuButton::GetAccessibleState(state);
-  state->role = ui::AX_ROLE_BUTTON;
+void ToolbarActionView::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  views::MenuButton::GetAccessibleNodeData(node_data);
+  node_data->role = ui::AX_ROLE_BUTTON;
 }
 
-scoped_ptr<LabelButtonBorder> ToolbarActionView::CreateDefaultBorder() const {
-  scoped_ptr<LabelButtonBorder> border = LabelButton::CreateDefaultBorder();
+std::unique_ptr<LabelButtonBorder> ToolbarActionView::CreateDefaultBorder()
+    const {
+  std::unique_ptr<LabelButtonBorder> border =
+      LabelButton::CreateDefaultBorder();
   border->set_insets(gfx::Insets(kBorderInset, kBorderInset,
                                  kBorderInset, kBorderInset));
-  return border.Pass();
+  return border;
 }
 
-void ToolbarActionView::OnMouseEntered(const ui::MouseEvent& event) {
-  delegate_->OnMouseEnteredToolbarActionView();
-  views::MenuButton::OnMouseEntered(event);
-}
-
-bool ToolbarActionView::ShouldEnterPushedState(const ui::Event& event) {
-  return views::MenuButton::ShouldEnterPushedState(event) &&
+bool ToolbarActionView::IsTriggerableEvent(const ui::Event& event) {
+  return views::MenuButton::IsTriggerableEvent(event) &&
          (base::TimeTicks::Now() - popup_closed_time_).InMilliseconds() >
              views::kMinimumMsBetweenButtonClicks;
+}
+
+SkColor ToolbarActionView::GetInkDropBaseColor() const {
+  if (delegate_->ShownInsideMenu()) {
+    return GetNativeTheme()->GetSystemColor(
+        ui::NativeTheme::kColorId_FocusedMenuItemBackgroundColor);
+  }
+
+  return GetThemeProvider()->GetColor(
+      ThemeProperties::COLOR_TOOLBAR_BUTTON_ICON);
+}
+
+std::unique_ptr<views::InkDrop> ToolbarActionView::CreateInkDrop() {
+  std::unique_ptr<views::InkDropImpl> ink_drop =
+      CustomButton::CreateDefaultInkDropImpl();
+  ink_drop->SetShowHighlightOnHover(!delegate_->ShownInsideMenu());
+  ink_drop->SetShowHighlightOnFocus(true);
+  return std::move(ink_drop);
 }
 
 content::WebContents* ToolbarActionView::GetCurrentWebContents() const {
@@ -156,13 +136,8 @@ void ToolbarActionView::UpdateState() {
       view_controller_->GetIcon(web_contents,
                                 GetPreferredSize()).AsImageSkia());
 
-  if (!icon.isNull()) {
-    ThemeService* theme = ThemeServiceFactory::GetForProfile(profile_);
-
-    gfx::ImageSkia bg = *theme->GetImageSkiaNamed(IDR_BROWSER_ACTION);
-    SetImage(views::Button::STATE_NORMAL,
-             gfx::ImageSkiaOperations::CreateSuperimposedImage(bg, icon));
-  }
+  if (!icon.isNull())
+    SetImage(views::Button::STATE_NORMAL, icon);
 
   SetTooltipText(view_controller_->GetTooltip(web_contents));
   SetAccessibleName(view_controller_->GetAccessibleName(web_contents));
@@ -171,8 +146,9 @@ void ToolbarActionView::UpdateState() {
   SchedulePaint();
 }
 
-void ToolbarActionView::OnMenuButtonClicked(views::View* sender,
-                                            const gfx::Point& point) {
+void ToolbarActionView::OnMenuButtonClicked(views::MenuButton* sender,
+                                            const gfx::Point& point,
+                                            const ui::Event* event) {
   if (!view_controller_->IsEnabled(GetCurrentWebContents())) {
     // We should only get a button pressed event with a non-enabled action if
     // the left-click behavior should open the menu.
@@ -184,38 +160,19 @@ void ToolbarActionView::OnMenuButtonClicked(views::View* sender,
   }
 }
 
-void ToolbarActionView::Observe(int type,
-                                const content::NotificationSource& source,
-                                const content::NotificationDetails& details) {
-  DCHECK_EQ(chrome::NOTIFICATION_BROWSER_THEME_CHANGED, type);
-  UpdateState();
+bool ToolbarActionView::IsMenuRunningForTesting() const {
+  return IsMenuRunning();
 }
 
-void ToolbarActionView::AddInkDropLayer(ui::Layer* ink_drop_layer) {
-  SetPaintToLayer(true);
-  SetFillsBoundsOpaquely(false);
-  image()->SetPaintToLayer(true);
-  image()->SetFillsBoundsOpaquely(false);
-
-  layer()->Add(ink_drop_layer);
-  layer()->StackAtBottom(ink_drop_layer);
-}
-
-void ToolbarActionView::RemoveInkDropLayer(ui::Layer* ink_drop_layer) {
-  layer()->Remove(ink_drop_layer);
-
-  image()->SetFillsBoundsOpaquely(true);
-  image()->SetPaintToLayer(false);
-  SetPaintToLayer(false);
+void ToolbarActionView::OnMenuClosed() {
+  menu_runner_.reset();
+  menu_ = nullptr;
+  view_controller_->OnContextMenuClosed();
+  menu_adapter_.reset();
 }
 
 gfx::ImageSkia ToolbarActionView::GetIconForTest() {
   return GetImage(views::Button::STATE_NORMAL);
-}
-
-void ToolbarActionView::set_context_menu_callback_for_testing(
-    base::Callback<void(ToolbarActionView*)>* callback) {
-  context_menu_callback = callback;
 }
 
 gfx::Size ToolbarActionView::GetPreferredSize() const {
@@ -225,8 +182,12 @@ gfx::Size ToolbarActionView::GetPreferredSize() const {
 
 bool ToolbarActionView::OnMousePressed(const ui::MouseEvent& event) {
   // views::MenuButton actions are only triggered by left mouse clicks.
-  if (event.IsOnlyLeftMouseButton())
-    ink_drop_delegate()->OnAction(views::InkDropState::ACTION_PENDING);
+  if (event.IsOnlyLeftMouseButton() && !pressed_lock_) {
+    // TODO(bruthig): The ACTION_PENDING triggering logic should be in
+    // MenuButton::OnPressed() however there is a bug with the pressed state
+    // logic in MenuButton. See http://crbug.com/567252.
+    AnimateInkDrop(views::InkDropState::ACTION_PENDING, &event);
+  }
   return MenuButton::OnMousePressed(event);
 }
 
@@ -294,30 +255,11 @@ void ToolbarActionView::ShowContextMenuForView(
     views::View* source,
     const gfx::Point& point,
     ui::MenuSourceType source_type) {
-  // If there's another active menu that won't be dismissed by opening this one,
-  // then we can't show this one right away, since we can only show one nested
-  // menu at a time.
-  // If the other menu is an extension action's context menu, then we'll run
-  // this one after that one closes. If it's a different type of menu, then we
-  // close it and give up, for want of a better solution. (Luckily, this is
-  // rare).
-  // TODO(devlin): Update this when views code no longer runs menus in a nested
-  // loop.
-  if (context_menu_owner) {
-    context_menu_owner->followup_context_menu_task_ =
-        base::Bind(&ToolbarActionView::DoShowContextMenu,
-                   weak_factory_.GetWeakPtr(),
-                   source_type);
-  }
   if (CloseActiveMenuIfNeeded())
     return;
 
   // Otherwise, no other menu is showing, and we can proceed normally.
   DoShowContextMenu(source_type);
-}
-
-gfx::Point ToolbarActionView::CalculateInkDropCenter() const {
-  return GetLocalBounds().CenterPoint();
 }
 
 void ToolbarActionView::DoShowContextMenu(
@@ -328,13 +270,12 @@ void ToolbarActionView::DoShowContextMenu(
     return;
 
   DCHECK(visible());  // We should never show a context menu for a hidden item.
-  DCHECK(!context_menu_owner);
 
   gfx::Point screen_loc;
   ConvertPointToScreen(this, &screen_loc);
 
-  int run_types =
-      views::MenuRunner::HAS_MNEMONICS | views::MenuRunner::CONTEXT_MENU;
+  int run_types = views::MenuRunner::HAS_MNEMONICS |
+                  views::MenuRunner::CONTEXT_MENU | views::MenuRunner::ASYNC;
   if (delegate_->ShownInsideMenu())
     run_types |= views::MenuRunner::IS_NESTED;
 
@@ -344,32 +285,18 @@ void ToolbarActionView::DoShowContextMenu(
       delegate_->GetOverflowReferenceView()->GetWidget() :
       GetWidget();
 
-  ink_drop_delegate()->OnAction(views::InkDropState::ACTIVATED);
-
-  views::MenuModelAdapter adapter(context_menu_model);
-  menu_ = adapter.CreateMenu();
+  // Unretained() is safe here as ToolbarActionView will always outlive the
+  // menu. Any action that would lead to the deletion of |this| first triggers
+  // the closing of the menu through lost capture.
+  menu_adapter_.reset(new views::MenuModelAdapter(
+      context_menu_model,
+      base::Bind(&ToolbarActionView::OnMenuClosed, base::Unretained(this))));
+  menu_ = menu_adapter_->CreateMenu();
   menu_runner_.reset(new views::MenuRunner(menu_, run_types));
 
-  if (context_menu_callback)
-    context_menu_callback->Run(this);
-  if (menu_runner_->RunMenuAt(parent, this, gfx::Rect(screen_loc, size()),
-                              views::MENU_ANCHOR_TOPLEFT,
-                              source_type) == views::MenuRunner::MENU_DELETED) {
-    return;
-  }
-  ink_drop_delegate()->OnAction(views::InkDropState::DEACTIVATED);
-
-  menu_runner_.reset();
-  menu_ = nullptr;
-  context_menu_owner = nullptr;
-  view_controller_->OnContextMenuClosed();
-
-  // If another extension action wants to show its context menu, allow it to.
-  if (!followup_context_menu_task_.is_null()) {
-    base::Closure task = followup_context_menu_task_;
-    followup_context_menu_task_ = base::Closure();
-    task.Run();
-  }
+  ignore_result(
+      menu_runner_->RunMenuAt(parent, this, gfx::Rect(screen_loc, size()),
+                              views::MENU_ANCHOR_TOPLEFT, source_type));
 }
 
 bool ToolbarActionView::CloseActiveMenuIfNeeded() {

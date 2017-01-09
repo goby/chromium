@@ -5,62 +5,48 @@
 #ifndef CC_BLINK_WEB_LAYER_IMPL_H_
 #define CC_BLINK_WEB_LAYER_IMPL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/blink/cc_blink_export.h"
 #include "cc/layers/layer_client.h"
-#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebColor.h"
-#include "third_party/WebKit/public/platform/WebCompositorAnimation.h"
 #include "third_party/WebKit/public/platform/WebDoublePoint.h"
 #include "third_party/WebKit/public/platform/WebFloatPoint.h"
+#include "third_party/WebKit/public/platform/WebFloatSize.h"
 #include "third_party/WebKit/public/platform/WebLayer.h"
 #include "third_party/WebKit/public/platform/WebPoint.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
 #include "third_party/WebKit/public/platform/WebSize.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/skia/include/utils/SkMatrix44.h"
-
-namespace blink {
-class WebFilterOperations;
-struct WebFloatRect;
-}
-
-namespace base {
-namespace trace_event {
-class ConvertableToTraceFormat;
-}
-}
+#include "third_party/skia/include/core/SkMatrix44.h"
 
 namespace cc {
+class FilterOperations;
 class Layer;
-class LayerSettings;
 }
 
 namespace cc_blink {
 
-class WebToCCAnimationDelegateAdapter;
-
-class WebLayerImpl : public blink::WebLayer {
+class CC_BLINK_EXPORT WebLayerImpl : public NON_EXPORTED_BASE(blink::WebLayer) {
  public:
-  CC_BLINK_EXPORT WebLayerImpl();
-  CC_BLINK_EXPORT explicit WebLayerImpl(scoped_refptr<cc::Layer>);
+  WebLayerImpl();
+  explicit WebLayerImpl(scoped_refptr<cc::Layer>);
   ~WebLayerImpl() override;
 
-  CC_BLINK_EXPORT static void SetLayerSettings(
-      const cc::LayerSettings& settings);
-  CC_BLINK_EXPORT static const cc::LayerSettings& LayerSettings();
-
-  CC_BLINK_EXPORT cc::Layer* layer() const;
+  cc::Layer* layer() const;
 
   // If set to true, content opaqueness cannot be changed using setOpaque.
   // However, it can still be modified using SetContentsOpaque on the
   // cc::Layer.
-  CC_BLINK_EXPORT void SetContentsOpaqueIsFixed(bool fixed);
+  void SetContentsOpaqueIsFixed(bool fixed);
 
   // WebLayer implementation.
   int id() const override;
@@ -77,7 +63,6 @@ class WebLayerImpl : public blink::WebLayer {
   void setMasksToBounds(bool masks_to_bounds) override;
   bool masksToBounds() const override;
   void setMaskLayer(blink::WebLayer* mask) override;
-  void setReplicaLayer(blink::WebLayer* replica) override;
   void setOpacity(float opacity) override;
   float opacity() const override;
   void setBlendMode(blink::WebBlendMode blend_mode) override;
@@ -100,30 +85,22 @@ class WebLayerImpl : public blink::WebLayer {
   void setUseParentBackfaceVisibility(bool visible) override;
   void setBackgroundColor(blink::WebColor color) override;
   blink::WebColor backgroundColor() const override;
-  void setFilters(const blink::WebFilterOperations& filters) override;
-  void setBackgroundFilters(const blink::WebFilterOperations& filters) override;
-  void setAnimationDelegate(
-      blink::WebCompositorAnimationDelegate* delegate) override;
-  bool addAnimation(blink::WebCompositorAnimation* animation) override;
-  void removeAnimation(int animation_id) override;
-  void removeAnimation(int animation_id,
-                       blink::WebCompositorAnimation::TargetProperty) override;
-  void pauseAnimation(int animation_id, double time_offset) override;
-  bool hasActiveAnimation() override;
-  void setForceRenderSurface(bool force) override;
+  void setFilters(const cc::FilterOperations& filters) override;
+  void setFiltersOrigin(const blink::WebFloatPoint& origin) override;
+  void setBackgroundFilters(const cc::FilterOperations& filters) override;
+  bool hasTickingAnimationForTesting() override;
   void setScrollPositionDouble(blink::WebDoublePoint position) override;
   blink::WebDoublePoint scrollPositionDouble() const override;
-  void setScrollCompensationAdjustment(blink::WebDoublePoint position) override;
   void setScrollClipLayer(blink::WebLayer* clip_layer) override;
   bool scrollable() const override;
   void setUserScrollable(bool horizontal, bool vertical) override;
   bool userScrollableHorizontal() const override;
   bool userScrollableVertical() const override;
-  void setHaveWheelEventHandlers(bool have_wheel_event_handlers) override;
-  bool haveWheelEventHandlers() const override;
-  void setHaveScrollEventHandlers(bool have_scroll_event_handlers) override;
-  bool haveScrollEventHandlers() const override;
-  void setShouldScrollOnMainThread(bool scroll_on_main) override;
+  void addMainThreadScrollingReasons(
+      uint32_t main_thread_scrolling_reasons) override;
+  void clearMainThreadScrollingReasons(
+      uint32_t main_thread_scrolling_reasons_to_clear) override;
+  uint32_t mainThreadScrollingReasons() override;
   bool shouldScrollOnMainThread() const override;
   void setNonFastScrollableRegion(
       const blink::WebVector<blink::WebRect>& region) override;
@@ -131,22 +108,26 @@ class WebLayerImpl : public blink::WebLayer {
   void setTouchEventHandlerRegion(
       const blink::WebVector<blink::WebRect>& region) override;
   blink::WebVector<blink::WebRect> touchEventHandlerRegion() const override;
-  void setScrollBlocksOn(blink::WebScrollBlocksOn) override;
-  blink::WebScrollBlocksOn scrollBlocksOn() const override;
-  void setFrameTimingRequests(
-      const blink::WebVector<std::pair<int64_t, blink::WebRect>>& requests)
-      override;
-  blink::WebVector<std::pair<int64_t, blink::WebRect>> frameTimingRequests()
-      const override;
   void setIsContainerForFixedPositionLayers(bool is_container) override;
   bool isContainerForFixedPositionLayers() const override;
   void setPositionConstraint(
       const blink::WebLayerPositionConstraint& constraint) override;
   blink::WebLayerPositionConstraint positionConstraint() const override;
+  void setStickyPositionConstraint(
+      const blink::WebLayerStickyPositionConstraint& constraint) override;
+  blink::WebLayerStickyPositionConstraint stickyPositionConstraint()
+      const override;
   void setScrollClient(blink::WebLayerScrollClient* client) override;
-  bool isOrphan() const override;
   void setLayerClient(cc::LayerClient* client) override;
   const cc::Layer* ccLayer() const override;
+  cc::Layer* ccLayer() override;
+  void setElementId(const cc::ElementId&) override;
+  cc::ElementId elementId() const override;
+  void setCompositorMutableProperties(uint32_t properties) override;
+  uint32_t compositorMutableProperties() const override;
+  void setHasWillChangeTransformHint(bool has_will_change) override;
+  void setPreferredRasterBounds(const blink::WebSize&) override;
+  void clearPreferredRasterBounds() override;
 
   void setScrollParent(blink::WebLayer* parent) override;
   void setClipParent(blink::WebLayer* parent) override;
@@ -157,8 +138,6 @@ class WebLayerImpl : public blink::WebLayer {
   bool contents_opaque_is_fixed_;
 
  private:
-  scoped_ptr<WebToCCAnimationDelegateAdapter> animation_delegate_adapter_;
-
   DISALLOW_COPY_AND_ASSIGN(WebLayerImpl);
 };
 

@@ -128,20 +128,16 @@ SBOX_TESTS_COMMAND int Lpc_GetUserDefaultLocaleName(int argc, wchar_t** argv) {
 }
 
 TEST(LpcPolicyTest, GetUserDefaultLocaleName) {
-  // GetUserDefaultLocaleName is not available before Vista.
-  if (base::win::GetVersion() < base::win::VERSION_VISTA) {
-    return;
-  }
   static GetUserDefaultLocaleNameFunction GetUserDefaultLocaleName_func = NULL;
   if (!GetUserDefaultLocaleName_func) {
     // GetUserDefaultLocaleName is not available on WIN XP.  So we'll
     // load it on-the-fly.
     HMODULE kernel32_dll = ::GetModuleHandle(kKernel32DllName);
-    EXPECT_NE(NULL, int(kernel32_dll));
+    EXPECT_NE(nullptr, kernel32_dll);
     GetUserDefaultLocaleName_func =
         reinterpret_cast<GetUserDefaultLocaleNameFunction>(
             GetProcAddress(kernel32_dll, "GetUserDefaultLocaleName"));
-    EXPECT_NE(NULL, int(GetUserDefaultLocaleName_func));
+    EXPECT_NE(nullptr, GetUserDefaultLocaleName_func);
   }
   wchar_t locale_name[LOCALE_NAME_MAX_LENGTH] = {0};
   EXPECT_NE(0, GetUserDefaultLocaleName_func(

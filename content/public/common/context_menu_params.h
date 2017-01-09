@@ -5,16 +5,18 @@
 #ifndef CONTENT_PUBLIC_COMMON_CONTEXT_MENU_PARAMS_H_
 #define CONTENT_PUBLIC_COMMON_CONTEXT_MENU_PARAMS_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "content/public/common/menu_item.h"
 #include "content/public/common/page_state.h"
-#include "content/public/common/ssl_status.h"
+#include "third_party/WebKit/public/platform/WebCString.h"
 #include "third_party/WebKit/public/platform/WebReferrerPolicy.h"
 #include "third_party/WebKit/public/web/WebContextMenuData.h"
 #include "ui/base/ui_base_types.h"
@@ -27,7 +29,7 @@
 namespace content {
 
 struct CONTENT_EXPORT CustomContextMenuContext {
-  static const int32 kCurrentRenderWidget;
+  static const int32_t kCurrentRenderWidget;
 
   CustomContextMenuContext();
 
@@ -36,7 +38,7 @@ struct CONTENT_EXPORT CustomContextMenuContext {
   // The routing ID of the render widget on which the context menu is shown.
   // It could also be |kCurrentRenderWidget|, which means the render widget that
   // the corresponding ViewHostMsg_ContextMenu is sent to.
-  int32 render_widget_id;
+  int32_t render_widget_id;
 
   // If the context menu was created for a link, and we navigated to that url,
   // this will contain the url that was navigated. This field may not be set
@@ -52,6 +54,7 @@ struct CONTENT_EXPORT CustomContextMenuContext {
 //              could be used for more contextual actions.
 struct CONTENT_EXPORT ContextMenuParams {
   ContextMenuParams();
+  ContextMenuParams(const ContextMenuParams& other);
   ~ContextMenuParams();
 
   // This is the type of Context Node that the context menu was invoked on.
@@ -118,7 +121,7 @@ struct CONTENT_EXPORT ContextMenuParams {
   base::string16 misspelled_word;
 
   // The identifier of the misspelling under the cursor, if any.
-  uint32 misspelling_hash;
+  uint32_t misspelling_hash;
 
   // Suggested replacements for a misspelled word under the cursor.
   // This vector gets populated in the render process host
@@ -141,9 +144,6 @@ struct CONTENT_EXPORT ContextMenuParams {
   // These flags indicate to the browser whether the renderer believes it is
   // able to perform the corresponding action.
   int edit_flags;
-
-  // The security info for the resource we are showing the menu on.
-  SSLStatus security_info;
 
   // The character encoding of the frame on which the menu is invoked.
   std::string frame_charset;

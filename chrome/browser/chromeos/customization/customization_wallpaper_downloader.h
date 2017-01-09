@@ -5,6 +5,8 @@
 #ifndef CHROME_BROWSER_CHROMEOS_CUSTOMIZATION_CUSTOMIZATION_WALLPAPER_DOWNLOADER_H_
 #define CHROME_BROWSER_CHROMEOS_CUSTOMIZATION_CUSTOMIZATION_WALLPAPER_DOWNLOADER_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/bind.h"
@@ -69,16 +71,16 @@ class CustomizationWallpaperDownloader : public net::URLFetcherDelegate {
   void Retry();
 
   // Called on UI thread.
-  void OnWallpaperDirectoryCreated(scoped_ptr<bool> success);
+  void OnWallpaperDirectoryCreated(std::unique_ptr<bool> success);
 
   // Called on UI thread.
-  void OnTemporaryFileRenamed(scoped_ptr<bool> success);
+  void OnTemporaryFileRenamed(std::unique_ptr<bool> success);
 
   // This is used to initialize net::URLFetcher object.
   scoped_refptr<net::URLRequestContextGetter> url_context_getter_;
 
   // This fetcher is used to download wallpaper file.
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
 
   // The wallpaper URL to fetch.
   const GURL wallpaper_url_;

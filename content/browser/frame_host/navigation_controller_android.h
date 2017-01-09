@@ -8,13 +8,13 @@
 #include <jni.h>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
-class NavigationController;
+class NavigationControllerImpl;
 
 // Android wrapper around NavigationController that provides safer passage
 // from java and back to native and provides java with a means of communicating
@@ -24,10 +24,10 @@ class CONTENT_EXPORT NavigationControllerAndroid {
   static bool Register(JNIEnv* env);
 
   explicit NavigationControllerAndroid(
-      NavigationController* navigation_controller);
+      NavigationControllerImpl* navigation_controller);
   ~NavigationControllerAndroid();
 
-  NavigationController* navigation_controller() const {
+  NavigationControllerImpl* navigation_controller() const {
     return navigation_controller_;
   }
 
@@ -54,12 +54,9 @@ class CONTENT_EXPORT NavigationControllerAndroid {
   void Reload(JNIEnv* env,
               const base::android::JavaParamRef<jobject>& obj,
               jboolean check_for_repost);
-  void ReloadIgnoringCache(JNIEnv* env,
-                           const base::android::JavaParamRef<jobject>& obj,
-                           jboolean check_for_repost);
-  void ReloadDisableLoFi(JNIEnv* env,
-                         const base::android::JavaParamRef<jobject>& obj,
-                         jboolean check_for_repost);
+  void ReloadBypassingCache(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& obj,
+                            jboolean check_for_repost);
   void RequestRestoreLoad(JNIEnv* env,
                           const base::android::JavaParamRef<jobject>& obj);
   void CancelPendingReload(JNIEnv* env,
@@ -77,9 +74,10 @@ class CONTENT_EXPORT NavigationControllerAndroid {
       jint referrer_policy,
       jint ua_override_option,
       const base::android::JavaParamRef<jstring>& extra_headers,
-      const base::android::JavaParamRef<jbyteArray>& post_data,
+      const base::android::JavaParamRef<jobject>& j_post_data,
       const base::android::JavaParamRef<jstring>& base_url_for_data_url,
       const base::android::JavaParamRef<jstring>& virtual_url_for_data_url,
+      const base::android::JavaParamRef<jstring>& data_url_as_string,
       jboolean can_load_local_resources,
       jboolean is_renderer_initiated,
       jboolean should_replace_current_entry);
@@ -134,9 +132,19 @@ class CONTENT_EXPORT NavigationControllerAndroid {
                              const base::android::JavaParamRef<jobject>& obj,
                              jlong source_native_navigation_controller_android,
                              jboolean replace_entry);
+  base::android::ScopedJavaLocalRef<jstring> GetEntryExtraData(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj,
+      jint index,
+      const base::android::JavaParamRef<jstring>& jkey);
+  void SetEntryExtraData(JNIEnv* env,
+                         const base::android::JavaParamRef<jobject>& obj,
+                         jint index,
+                         const base::android::JavaParamRef<jstring>& jkey,
+                         const base::android::JavaParamRef<jstring>& jvalue);
 
  private:
-  NavigationController* navigation_controller_;
+  NavigationControllerImpl* navigation_controller_;
   base::android::ScopedJavaGlobalRef<jobject> obj_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationControllerAndroid);

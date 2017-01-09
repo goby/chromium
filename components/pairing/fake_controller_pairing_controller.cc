@@ -7,12 +7,14 @@
 #include <map>
 
 #include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace pairing_chromeos {
 
@@ -231,15 +233,14 @@ void FakeControllerPairingController::ChangeStage(Stage new_stage) {
   if (current_stage_ == new_stage)
     return;
   current_stage_ = new_stage;
-  FOR_EACH_OBSERVER(Observer, observers_, PairingStageChanged(new_stage));
+  for (Observer& observer : observers_)
+    observer.PairingStageChanged(new_stage);
 }
 
 void FakeControllerPairingController::ChangeStageLater(Stage new_stage) {
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&FakeControllerPairingController::ChangeStage,
-                 base::Unretained(this),
-                 new_stage),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&FakeControllerPairingController::ChangeStage,
+                            base::Unretained(this), new_stage),
       async_duration_);
 }
 
@@ -266,11 +267,10 @@ void FakeControllerPairingController::ExecuteDiscoveryEvent(
   if (++event_position == discovery_scenario_.size()) {
     return;
   }
-  base::MessageLoop::current()->PostDelayedTask(
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
       FROM_HERE,
       base::Bind(&FakeControllerPairingController::ExecuteDiscoveryEvent,
-                 base::Unretained(this),
-                 event_position),
+                 base::Unretained(this), event_position),
       async_duration_);
 }
 
@@ -278,13 +278,15 @@ void FakeControllerPairingController::DeviceFound(
     const std::string& device_id) {
   CHECK(current_stage_ == STAGE_DEVICES_DISCOVERY);
   discovered_devices_.insert(device_id);
-  FOR_EACH_OBSERVER(Observer, observers_, DiscoveredDevicesListChanged());
+  for (Observer& observer : observers_)
+    observer.DiscoveredDevicesListChanged();
 }
 
 void FakeControllerPairingController::DeviceLost(const std::string& device_id) {
   CHECK(current_stage_ == STAGE_DEVICES_DISCOVERY);
   discovered_devices_.erase(device_id);
-  FOR_EACH_OBSERVER(Observer, observers_, DiscoveredDevicesListChanged());
+  for (Observer& observer : observers_)
+    observer.DiscoveredDevicesListChanged();
 }
 
 void FakeControllerPairingController::PairingStageChanged(Stage new_stage) {
@@ -292,11 +294,10 @@ void FakeControllerPairingController::PairingStageChanged(Stage new_stage) {
   switch (new_stage) {
     case STAGE_DEVICES_DISCOVERY: {
       discovered_devices_.clear();
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE,
           base::Bind(&FakeControllerPairingController::ExecuteDiscoveryEvent,
-                     base::Unretained(this),
-                     0),
+                     base::Unretained(this), 0),
           async_duration_);
       break;
     }

@@ -8,8 +8,8 @@
 #include "base/logging.h"
 #include "base/numerics/safe_conversions.h"
 #include "ipc/ipc_platform_file.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/proxy/ppapi_messages.h"
 #include "ppapi/proxy/resource_message_params.h"
@@ -255,7 +255,7 @@ void AudioInputResource::Run() {
 
   // This is a constantly increasing counter that is used to verify on the
   // browser side that buffers are in sync.
-  uint32 buffer_index = 0;
+  uint32_t buffer_index = 0;
 
   while (true) {
     int pending_data = 0;

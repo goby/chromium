@@ -5,8 +5,15 @@
 #ifndef CHROME_TEST_BASE_DIALOG_TEST_BROWSER_WINDOW_H_
 #define CHROME_TEST_BASE_DIALOG_TEST_BROWSER_WINDOW_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/test/base/test_browser_window.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
+
+namespace views {
+class Widget;
+}
 
 class Browser;
 
@@ -30,6 +37,9 @@ class DialogTestBrowserWindow : public TestBrowserWindow,
 
  private:
   Browser* FindBrowser() const;
+
+  // Dummy window for parenting dialogs.
+  std::unique_ptr<views::Widget> host_window_;
 
   DISALLOW_COPY_AND_ASSIGN(DialogTestBrowserWindow);
 };

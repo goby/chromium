@@ -10,21 +10,20 @@
 #include "base/guid.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
-#include "base/prefs/pref_registry_simple.h"
-#include "base/prefs/pref_service.h"
-#include "base/prefs/scoped_user_pref_update.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/policy/server_backed_device_state.h"
 #include "chrome/common/chrome_content_client.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/cloud/device_management_service.h"
-#include "components/policy/core/common/cloud/system_policy_request_context.h"
+#include "components/policy/proto/device_management_backend.pb.h"
+#include "components/prefs/pref_registry_simple.h"
+#include "components/prefs/pref_service.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_thread.h"
 #include "crypto/sha2.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "url/gurl.h"
 
 using content::BrowserThread;
@@ -43,12 +42,12 @@ const char kUMANetworkErrorCode[] =
     "Enterprise.AutoEnrollmentRequestNetworkErrorCode";
 
 // Returns the power of the next power-of-2 starting at |value|.
-int NextPowerOf2(int64 value) {
+int NextPowerOf2(int64_t value) {
   for (int i = 0; i <= AutoEnrollmentClient::kMaximumPower; ++i) {
     if ((INT64_C(1) << i) >= value)
       return i;
   }
-  // No other value can be represented in an int64.
+  // No other value can be represented in an int64_t.
   return AutoEnrollmentClient::kMaximumPower + 1;
 }
 
@@ -57,7 +56,7 @@ void UpdateDict(base::DictionaryValue* dict,
                 const char* pref_path,
                 bool set_or_clear,
                 base::Value* value) {
-  scoped_ptr<base::Value> scoped_value(value);
+  std::unique_ptr<base::Value> scoped_value(value);
   if (set_or_clear)
     dict->Set(pref_path, scoped_value.release());
   else
@@ -104,10 +103,8 @@ AutoEnrollmentClient::AutoEnrollmentClient(
       power_limit_(power_limit),
       modulus_updates_received_(0),
       device_management_service_(service),
-      local_state_(local_state) {
-  request_context_ = new SystemPolicyRequestContext(
-      system_request_context, GetUserAgent());
-
+      local_state_(local_state),
+      request_context_(system_request_context) {
   DCHECK_LE(current_power_, power_limit_);
   DCHECK(!progress_callback_.is_null());
   CHECK(!server_backed_state_key_.empty());
@@ -221,24 +218,25 @@ void AutoEnrollmentClient::ReportProgress(AutoEnrollmentState state) {
 }
 
 void AutoEnrollmentClient::NextStep() {
-  if (!RetryStep()) {
-    // Protocol finished successfully, report result.
-    const RestoreMode restore_mode = GetRestoreMode();
-    bool trigger_enrollment =
-        (restore_mode == RESTORE_MODE_REENROLLMENT_REQUESTED ||
-         restore_mode == RESTORE_MODE_REENROLLMENT_ENFORCED);
+  if (RetryStep())
+    return;
 
-    ReportProgress(trigger_enrollment ? AUTO_ENROLLMENT_STATE_TRIGGER_ENROLLMENT
-                                      : AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
+  // Protocol finished successfully, report result.
+  const RestoreMode restore_mode = GetRestoreMode();
+  if (restore_mode == RESTORE_MODE_REENROLLMENT_REQUESTED ||
+      restore_mode == RESTORE_MODE_REENROLLMENT_ENFORCED) {
+    ReportProgress(AUTO_ENROLLMENT_STATE_TRIGGER_ENROLLMENT);
+  } else {
+    ReportProgress(AUTO_ENROLLMENT_STATE_NO_ENROLLMENT);
   }
 }
 
 void AutoEnrollmentClient::SendBucketDownloadRequest() {
   // Only power-of-2 moduli are supported for now. These are computed by taking
   // the lower |current_power_| bits of the hash.
-  uint64 remainder = 0;
+  uint64_t remainder = 0;
   for (int i = 0; 8 * i < current_power_; ++i) {
-    uint64 byte = server_backed_state_key_hash_[31 - i] & 0xff;
+    uint64_t byte = server_backed_state_key_hash_[31 - i] & 0xff;
     remainder = remainder | (byte << (8 * i));
   }
   remainder = remainder & ((UINT64_C(1) << current_power_) - 1);
@@ -321,7 +319,7 @@ bool AutoEnrollmentClient::OnBucketDownloadRequestCompletion(
     // Server is asking us to retry with a different modulus.
     modulus_updates_received_++;
 
-    int64 modulus = enrollment_response.expected_modulus();
+    int64_t modulus = enrollment_response.expected_modulus();
     int power = NextPowerOf2(modulus);
     if ((INT64_C(1) << power) != modulus) {
       LOG(ERROR) << "Auto enrollment: the server didn't ask for a power-of-2 "
@@ -395,6 +393,9 @@ bool AutoEnrollmentClient::OnDeviceStateRequestCompletion(
                  state_response.has_disabled_state(),
                  new base::StringValue(
                      state_response.disabled_state().message()));
+
+      // Logging as "WARNING" to make sure it's preserved in the logs.
+      LOG(WARNING) << "Restore mode: " << restore_mode;
     }
     local_state_->CommitPendingWrite();
     device_state_available_ = true;

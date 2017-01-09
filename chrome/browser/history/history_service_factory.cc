@@ -4,7 +4,7 @@
 
 #include "chrome/browser/history/history_service_factory.h"
 
-#include "base/prefs/pref_service.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/history/chrome_history_client.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
@@ -17,6 +17,7 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "components/prefs/pref_service.h"
 
 // static
 history::HistoryService* HistoryServiceFactory::GetForProfile(
@@ -76,15 +77,13 @@ HistoryServiceFactory::~HistoryServiceFactory() {
 
 KeyedService* HistoryServiceFactory::BuildServiceInstanceFor(
     content::BrowserContext* context) const {
-  Profile* profile = Profile::FromBrowserContext(context);
-  scoped_ptr<history::HistoryService> history_service(
+  std::unique_ptr<history::HistoryService> history_service(
       new history::HistoryService(
-          make_scoped_ptr(new ChromeHistoryClient(
-              BookmarkModelFactory::GetForProfile(profile))),
-          make_scoped_ptr(new history::ContentVisitDelegate(profile))));
+          base::MakeUnique<ChromeHistoryClient>(
+              BookmarkModelFactory::GetForBrowserContext(context)),
+          base::MakeUnique<history::ContentVisitDelegate>(context)));
   if (!history_service->Init(
-          profile->GetPrefs()->GetString(prefs::kAcceptLanguages),
-          history::HistoryDatabaseParamsForPath(profile->GetPath()))) {
+          history::HistoryDatabaseParamsForPath(context->GetPath()))) {
     return nullptr;
   }
   return history_service.release();

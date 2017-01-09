@@ -5,6 +5,7 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
@@ -54,7 +55,7 @@ class ExtensionPrefsHidingBrowserActions : public ExtensionPrefsTest {
   }
 
  private:
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   ExtensionList extensions_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionPrefsHidingBrowserActions);

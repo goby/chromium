@@ -4,10 +4,13 @@
 
 #include "base/process/process.h"
 
+#include <utility>
+
 #include "base/process/kill.h"
 #include "base/test/multiprocess_test.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
 
@@ -17,6 +20,16 @@ namespace {
 const int kExpectedStillRunningExitCode = 0x102;
 #else
 const int kExpectedStillRunningExitCode = 0;
+#endif
+
+#if defined(OS_MACOSX)
+// Fake port provider that returns the calling process's
+// task port, ignoring its argument.
+class FakePortProvider : public base::PortProvider {
+  mach_port_t TaskForPid(base::ProcessHandle process) const override {
+    return mach_task_self();
+  }
+};
 #endif
 
 }  // namespace
@@ -49,13 +62,13 @@ TEST_F(ProcessTest, Move) {
   Process process2;
   EXPECT_FALSE(process2.IsValid());
 
-  process2 = process1.Pass();
+  process2 = std::move(process1);
   EXPECT_TRUE(process2.IsValid());
   EXPECT_FALSE(process1.IsValid());
   EXPECT_FALSE(process2.is_current());
 
   Process process3 = Process::Current();
-  process2 = process3.Pass();
+  process2 = std::move(process3);
   EXPECT_TRUE(process2.is_current());
   EXPECT_TRUE(process2.IsValid());
   EXPECT_FALSE(process3.IsValid());
@@ -168,6 +181,8 @@ TEST_F(ProcessTest, WaitForExitWithTimeout) {
 // Note: a platform may not be willing or able to lower the priority of
 // a process. The calls to SetProcessBackground should be noops then.
 TEST_F(ProcessTest, SetProcessBackgrounded) {
+  if (!Process::CanBackgroundProcesses())
+    return;
   Process process(SpawnChild("SimpleChildProcess"));
   int old_priority = process.GetPriority();
 #if defined(OS_WIN)
@@ -175,11 +190,22 @@ TEST_F(ProcessTest, SetProcessBackgrounded) {
   EXPECT_TRUE(process.IsProcessBackgrounded());
   EXPECT_TRUE(process.SetProcessBackgrounded(false));
   EXPECT_FALSE(process.IsProcessBackgrounded());
+#elif defined(OS_MACOSX)
+  // On the Mac, backgrounding a process requires a port to that process.
+  // In the browser it's available through the MachBroker class, which is not
+  // part of base. Additionally, there is an indefinite amount of time between
+  // spawning a process and receiving its port. Because this test just checks
+  // the ability to background/foreground a process, we can use the current
+  // process's port instead.
+  FakePortProvider provider;
+  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, true));
+  EXPECT_TRUE(process.IsProcessBackgrounded(&provider));
+  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, false));
+  EXPECT_FALSE(process.IsProcessBackgrounded(&provider));
+
 #else
-  if (process.CanBackgroundProcesses()) {
-    process.SetProcessBackgrounded(true);
-    process.SetProcessBackgrounded(false);
-  }
+  process.SetProcessBackgrounded(true);
+  process.SetProcessBackgrounded(false);
 #endif
   int new_priority = process.GetPriority();
   EXPECT_EQ(old_priority, new_priority);
@@ -188,6 +214,8 @@ TEST_F(ProcessTest, SetProcessBackgrounded) {
 // Same as SetProcessBackgrounded but to this very process. It uses
 // a different code path at least for Windows.
 TEST_F(ProcessTest, SetProcessBackgroundedSelf) {
+  if (!Process::CanBackgroundProcesses())
+    return;
   Process process = Process::Current();
   int old_priority = process.GetPriority();
 #if defined(OS_WIN)
@@ -195,6 +223,12 @@ TEST_F(ProcessTest, SetProcessBackgroundedSelf) {
   EXPECT_TRUE(process.IsProcessBackgrounded());
   EXPECT_TRUE(process.SetProcessBackgrounded(false));
   EXPECT_FALSE(process.IsProcessBackgrounded());
+#elif defined(OS_MACOSX)
+  FakePortProvider provider;
+  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, true));
+  EXPECT_TRUE(process.IsProcessBackgrounded(&provider));
+  EXPECT_TRUE(process.SetProcessBackgrounded(&provider, false));
+  EXPECT_FALSE(process.IsProcessBackgrounded(&provider));
 #else
   process.SetProcessBackgrounded(true);
   process.SetProcessBackgrounded(false);

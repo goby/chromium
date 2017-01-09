@@ -5,43 +5,44 @@
 #ifndef InspectorRenderingAgent_h
 #define InspectorRenderingAgent_h
 
-#include "core/InspectorFrontend.h"
 #include "core/inspector/InspectorBaseAgent.h"
+#include "core/inspector/protocol/Rendering.h"
 
 namespace blink {
 
+class InspectorOverlay;
 class WebLocalFrameImpl;
 class WebViewImpl;
 
-using ErrorString = String;
+class InspectorRenderingAgent final
+    : public InspectorBaseAgent<protocol::Rendering::Metainfo> {
+  WTF_MAKE_NONCOPYABLE(InspectorRenderingAgent);
 
-class InspectorRenderingAgent final : public InspectorBaseAgent<InspectorRenderingAgent, InspectorFrontend::Rendering>, public InspectorBackendDispatcher::RenderingCommandHandler {
-    WTF_MAKE_NONCOPYABLE(InspectorRenderingAgent);
-public:
-    static PassOwnPtrWillBeRawPtr<InspectorRenderingAgent> create(WebLocalFrameImpl*);
+ public:
+  static InspectorRenderingAgent* create(WebLocalFrameImpl*, InspectorOverlay*);
 
-    // InspectorBackendDispatcher::PageCommandHandler implementation.
-    void setShowPaintRects(ErrorString*, bool show) override;
-    void setShowDebugBorders(ErrorString*, bool show) override;
-    void setShowFPSCounter(ErrorString*, bool show) override;
-    void setShowScrollBottleneckRects(ErrorString*, bool show) override;
+  // protocol::Dispatcher::PageCommandHandler implementation.
+  Response setShowPaintRects(bool) override;
+  Response setShowDebugBorders(bool) override;
+  Response setShowFPSCounter(bool) override;
+  Response setShowScrollBottleneckRects(bool) override;
+  Response setShowViewportSizeOnResize(bool) override;
 
-    // InspectorBaseAgent overrides.
-    void disable(ErrorString*) override;
-    void restore() override;
+  // InspectorBaseAgent overrides.
+  Response disable() override;
+  void restore() override;
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    explicit InspectorRenderingAgent(WebLocalFrameImpl*);
-    bool compositingEnabled(ErrorString*);
-    WebViewImpl* webViewImpl();
+ private:
+  InspectorRenderingAgent(WebLocalFrameImpl*, InspectorOverlay*);
+  Response compositingEnabled();
+  WebViewImpl* webViewImpl();
 
-    RawPtrWillBeMember<WebLocalFrameImpl> m_webLocalFrameImpl;
+  Member<WebLocalFrameImpl> m_webLocalFrameImpl;
+  Member<InspectorOverlay> m_overlay;
 };
 
+}  // namespace blink
 
-} // namespace blink
-
-
-#endif // !defined(InspectorRenderingAgent_h)
+#endif  // !defined(InspectorRenderingAgent_h)

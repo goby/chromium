@@ -28,24 +28,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/page/PageVisibilityState.h"
 
 namespace blink {
 
-String pageVisibilityStateString(PageVisibilityState state)
-{
-    switch (state) {
+String pageVisibilityStateString(PageVisibilityState state) {
+  switch (state) {
     case PageVisibilityStateVisible:
-        return "visible";
+      return "visible";
     case PageVisibilityStateHidden:
-        return "hidden";
+      return "hidden";
     case PageVisibilityStatePrerender:
-        return "prerender";
-    }
+      return "prerender";
+  }
 
-    ASSERT_NOT_REACHED();
-    return String();
+  ASSERT_NOT_REACHED();
+  return String();
 }
 
-} // namespace blink
+}  // namespace blink

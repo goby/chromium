@@ -6,23 +6,24 @@
 
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
-#include "components/wifi_sync/wifi_credential_syncable_service.h"
-#include "components/wifi_sync/wifi_credential_syncable_service_factory.h"
+#include "components/sync_wifi/wifi_credential_syncable_service.h"
+#include "components/sync_wifi/wifi_credential_syncable_service_factory.h"
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/sync/test/integration/wifi_credentials_helper_chromeos.h"
 #endif
 
-using wifi_sync::WifiCredential;
-using wifi_sync::WifiCredentialSyncableService;
-using wifi_sync::WifiCredentialSyncableServiceFactory;
-using wifi_sync::WifiSecurityClass;
+using sync_wifi::WifiCredential;
+using sync_wifi::WifiCredentialSyncableService;
+using sync_wifi::WifiCredentialSyncableServiceFactory;
+using sync_wifi::WifiSecurityClass;
 using sync_datatype_helper::test;
 
-using WifiCredentialSet = wifi_sync::WifiCredential::CredentialSet;
+using WifiCredentialSet = sync_wifi::WifiCredential::CredentialSet;
 
 namespace wifi_credentials_helper {
 
@@ -128,9 +129,10 @@ bool AllProfilesMatch() {
   return true;
 }
 
-scoped_ptr<WifiCredential> MakeWifiCredential(const std::string& ssid,
-                                              WifiSecurityClass security_class,
-                                              const std::string& passphrase) {
+std::unique_ptr<WifiCredential> MakeWifiCredential(
+    const std::string& ssid,
+    WifiSecurityClass security_class,
+    const std::string& passphrase) {
   return WifiCredential::Create(WifiCredential::MakeSsidBytesForTest(ssid),
                                 security_class,
                                 passphrase);

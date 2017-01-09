@@ -5,14 +5,17 @@
 #ifndef DBUS_MESSAGE_H_
 #define DBUS_MESSAGE_H_
 
+#include <dbus/dbus.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
-#include <dbus/dbus.h>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/files/scoped_file.h"
+#include "base/macros.h"
 #include "dbus/dbus_export.h"
-#include "dbus/file_descriptor.h"
 #include "dbus/object_path.h"
 
 namespace google {
@@ -99,8 +102,8 @@ class CHROME_DBUS_EXPORT Message {
   bool SetMember(const std::string& member);
   bool SetErrorName(const std::string& error_name);
   bool SetSender(const std::string& sender);
-  void SetSerial(uint32 serial);
-  void SetReplySerial(uint32 reply_serial);
+  void SetSerial(uint32_t serial);
+  void SetReplySerial(uint32_t reply_serial);
   // SetSignature() does not exist as we cannot do it.
 
   // Gets the destination, the path, the interface, the member, etc.
@@ -113,8 +116,8 @@ class CHROME_DBUS_EXPORT Message {
   std::string GetSender();
   std::string GetSignature();
   // Gets the serial and reply serial numbers. Returns 0 if not set.
-  uint32 GetSerial();
-  uint32 GetReplySerial();
+  uint32_t GetSerial();
+  uint32_t GetReplySerial();
 
   // Returns the string representation of this message. Useful for
   // debugging. The output is truncated as needed (ex. strings are truncated
@@ -202,16 +205,16 @@ class CHROME_DBUS_EXPORT Response : public Message {
  public:
   // Returns a newly created Response from the given raw message of the
   // type DBUS_MESSAGE_TYPE_METHOD_RETURN. Takes the ownership of |raw_message|.
-  static scoped_ptr<Response> FromRawMessage(DBusMessage* raw_message);
+  static std::unique_ptr<Response> FromRawMessage(DBusMessage* raw_message);
 
   // Returns a newly created Response from the given method call.
   // Used for implementing exported methods. Does NOT take the ownership of
   // |method_call|.
-  static scoped_ptr<Response> FromMethodCall(MethodCall* method_call);
+  static std::unique_ptr<Response> FromMethodCall(MethodCall* method_call);
 
   // Returns a newly created Response with an empty payload.
   // Useful for testing.
-  static scoped_ptr<Response> CreateEmpty();
+  static std::unique_ptr<Response> CreateEmpty();
 
  protected:
   // Creates a Response message. The internal raw message is NULL.
@@ -227,13 +230,14 @@ class CHROME_DBUS_EXPORT ErrorResponse: public Response {
  public:
   // Returns a newly created Response from the given raw message of the
   // type DBUS_MESSAGE_TYPE_METHOD_RETURN. Takes the ownership of |raw_message|.
-  static scoped_ptr<ErrorResponse> FromRawMessage(DBusMessage* raw_message);
+  static std::unique_ptr<ErrorResponse> FromRawMessage(
+      DBusMessage* raw_message);
 
   // Returns a newly created ErrorResponse from the given method call, the
   // error name, and the error message.  The error name looks like
   // "org.freedesktop.DBus.Error.Failed". Used for returning an error to a
   // failed method call. Does NOT take the ownership of |method_call|.
-  static scoped_ptr<ErrorResponse> FromMethodCall(
+  static std::unique_ptr<ErrorResponse> FromMethodCall(
       MethodCall* method_call,
       const std::string& error_name,
       const std::string& error_message);
@@ -270,18 +274,21 @@ class CHROME_DBUS_EXPORT MessageWriter {
   ~MessageWriter();
 
   // Appends a byte to the message.
-  void AppendByte(uint8 value);
+  void AppendByte(uint8_t value);
   void AppendBool(bool value);
-  void AppendInt16(int16 value);
-  void AppendUint16(uint16 value);
-  void AppendInt32(int32 value);
-  void AppendUint32(uint32 value);
-  void AppendInt64(int64 value);
-  void AppendUint64(uint64 value);
+  void AppendInt16(int16_t value);
+  void AppendUint16(uint16_t value);
+  void AppendInt32(int32_t value);
+  void AppendUint32(uint32_t value);
+  void AppendInt64(int64_t value);
+  void AppendUint64(uint64_t value);
   void AppendDouble(double value);
   void AppendString(const std::string& value);
   void AppendObjectPath(const ObjectPath& value);
-  void AppendFileDescriptor(const FileDescriptor& value);
+
+  // Appends a file descriptor to the message.
+  // The FD will be duplicated so you still have to close the original FD.
+  void AppendFileDescriptor(int value);
 
   // Opens an array. The array contents can be added to the array with
   // |sub_writer|. The client code must close the array with
@@ -308,7 +315,10 @@ class CHROME_DBUS_EXPORT MessageWriter {
   // Appends the array of bytes. Arrays of bytes are often used for
   // exchanging binary blobs hence it's worth having a specialized
   // function.
-  void AppendArrayOfBytes(const uint8* values, size_t length);
+  void AppendArrayOfBytes(const uint8_t* values, size_t length);
+
+  // Appends the array of doubles. Used for audio mixer matrix doubles.
+  void AppendArrayOfDoubles(const double* values, size_t length);
 
   // Appends the array of strings. Arrays of strings are often used for
   // exchanging lists of names hence it's worth having a specialized
@@ -332,14 +342,14 @@ class CHROME_DBUS_EXPORT MessageWriter {
   // widely used in D-Bus services so it's worth having a specialized
   // function. For instance, The third parameter of
   // "org.freedesktop.DBus.Properties.Set" is a variant.
-  void AppendVariantOfByte(uint8 value);
+  void AppendVariantOfByte(uint8_t value);
   void AppendVariantOfBool(bool value);
-  void AppendVariantOfInt16(int16 value);
-  void AppendVariantOfUint16(uint16 value);
-  void AppendVariantOfInt32(int32 value);
-  void AppendVariantOfUint32(uint32 value);
-  void AppendVariantOfInt64(int64 value);
-  void AppendVariantOfUint64(uint64 value);
+  void AppendVariantOfInt16(int16_t value);
+  void AppendVariantOfUint16(uint16_t value);
+  void AppendVariantOfInt32(int32_t value);
+  void AppendVariantOfUint32(uint32_t value);
+  void AppendVariantOfInt64(int64_t value);
+  void AppendVariantOfUint64(uint64_t value);
   void AppendVariantOfDouble(double value);
   void AppendVariantOfString(const std::string& value);
   void AppendVariantOfObjectPath(const ObjectPath& value);
@@ -380,18 +390,18 @@ class CHROME_DBUS_EXPORT MessageReader {
   // Gets the byte at the current iterator position.
   // Returns true and advances the iterator on success.
   // Returns false if the data type is not a byte.
-  bool PopByte(uint8* value);
+  bool PopByte(uint8_t* value);
   bool PopBool(bool* value);
-  bool PopInt16(int16* value);
-  bool PopUint16(uint16* value);
-  bool PopInt32(int32* value);
-  bool PopUint32(uint32* value);
-  bool PopInt64(int64* value);
-  bool PopUint64(uint64* value);
+  bool PopInt16(int16_t* value);
+  bool PopUint16(uint16_t* value);
+  bool PopInt32(int32_t* value);
+  bool PopUint32(uint32_t* value);
+  bool PopInt64(int64_t* value);
+  bool PopUint64(uint64_t* value);
   bool PopDouble(double* value);
   bool PopString(std::string* value);
   bool PopObjectPath(ObjectPath* value);
-  bool PopFileDescriptor(FileDescriptor* value);
+  bool PopFileDescriptor(base::ScopedFD* value);
 
   // Sets up the given message reader to read an array at the current
   // iterator position.
@@ -411,7 +421,10 @@ class CHROME_DBUS_EXPORT MessageReader {
   // Ownership of the memory pointed to by |bytes| remains with the
   // MessageReader; |bytes| must be copied if the contents will be referenced
   // after the MessageReader is destroyed.
-  bool PopArrayOfBytes(const uint8** bytes, size_t* length);
+  bool PopArrayOfBytes(const uint8_t** bytes, size_t* length);
+
+  // Gets the array of doubles at the current iterator position.
+  bool PopArrayOfDoubles(const double** doubles, size_t* length);
 
   // Gets the array of strings at the current iterator position. |strings| is
   // cleared before being modified. Returns true and advances the iterator on
@@ -446,14 +459,14 @@ class CHROME_DBUS_EXPORT MessageReader {
   // Variants are widely used in D-Bus services so it's worth having a
   // specialized function. For instance, The return value type of
   // "org.freedesktop.DBus.Properties.Get" is a variant.
-  bool PopVariantOfByte(uint8* value);
+  bool PopVariantOfByte(uint8_t* value);
   bool PopVariantOfBool(bool* value);
-  bool PopVariantOfInt16(int16* value);
-  bool PopVariantOfUint16(uint16* value);
-  bool PopVariantOfInt32(int32* value);
-  bool PopVariantOfUint32(uint32* value);
-  bool PopVariantOfInt64(int64* value);
-  bool PopVariantOfUint64(uint64* value);
+  bool PopVariantOfInt16(int16_t* value);
+  bool PopVariantOfUint16(uint16_t* value);
+  bool PopVariantOfInt32(int32_t* value);
+  bool PopVariantOfUint32(uint32_t* value);
+  bool PopVariantOfInt64(int64_t* value);
+  bool PopVariantOfUint64(uint64_t* value);
   bool PopVariantOfDouble(double* value);
   bool PopVariantOfString(std::string* value);
   bool PopVariantOfObjectPath(ObjectPath* value);

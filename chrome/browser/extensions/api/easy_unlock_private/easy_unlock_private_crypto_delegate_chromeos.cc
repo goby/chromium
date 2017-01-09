@@ -4,6 +4,7 @@
 
 #include "chrome/browser/extensions/api/easy_unlock_private/easy_unlock_private_crypto_delegate.h"
 
+#include "base/macros.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/easy_unlock_client.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -123,9 +124,9 @@ class EasyUnlockPrivateCryptoDelegateChromeOS
 }  // namespace
 
 // static
-scoped_ptr<EasyUnlockPrivateCryptoDelegate>
-    EasyUnlockPrivateCryptoDelegate::Create() {
-  return scoped_ptr<EasyUnlockPrivateCryptoDelegate>(
+std::unique_ptr<EasyUnlockPrivateCryptoDelegate>
+EasyUnlockPrivateCryptoDelegate::Create() {
+  return std::unique_ptr<EasyUnlockPrivateCryptoDelegate>(
       new EasyUnlockPrivateCryptoDelegateChromeOS());
 }
 

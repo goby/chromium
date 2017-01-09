@@ -8,16 +8,20 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_scheduler.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider.h"
 #include "crypto/scoped_test_nss_db.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/x509_certificate.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -55,7 +59,7 @@ class TestCertFilter : public ClientCertStoreChromeOS::CertFilter {
 
   void FinishInit() {
     init_finished_ = true;
-    base::MessageLoop::current()->PostTask(FROM_HERE, pending_callback_);
+    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, pending_callback_);
     pending_callback_.Reset();
   }
 
@@ -74,7 +78,7 @@ class TestCertFilter : public ClientCertStoreChromeOS::CertFilter {
 
 class ClientCertStoreChromeOSTest : public ::testing::Test {
  public:
-  ClientCertStoreChromeOSTest() : message_loop_(new base::MessageLoopForIO()) {}
+  ClientCertStoreChromeOSTest() {}
 
   scoped_refptr<net::X509Certificate> ImportCertToSlot(
       const std::string& cert_filename,
@@ -85,7 +89,8 @@ class ClientCertStoreChromeOSTest : public ::testing::Test {
   }
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  base::test::ScopedTaskScheduler scoped_task_scheduler_;
+  base::MessageLoopForIO message_loop_;
 };
 
 // Ensure that cert requests, that are started before the filter is initialized,
@@ -97,7 +102,7 @@ TEST_F(ClientCertStoreChromeOSTest, RequestWaitsForNSSInitAndSucceeds) {
   TestCertFilter* cert_filter =
       new TestCertFilter(false /* init asynchronously */);
   ClientCertStoreChromeOS store(
-      nullptr /* no additional provider */, make_scoped_ptr(cert_filter),
+      nullptr /* no additional provider */, base::WrapUnique(cert_filter),
       ClientCertStoreChromeOS::PasswordDelegateFactory());
 
   scoped_refptr<net::X509Certificate> cert_1(
@@ -134,7 +139,7 @@ TEST_F(ClientCertStoreChromeOSTest, RequestsAfterNSSInitSucceed) {
 
   ClientCertStoreChromeOS store(
       nullptr,  // no additional provider
-      make_scoped_ptr(new TestCertFilter(true /* init synchronously */)),
+      base::WrapUnique(new TestCertFilter(true /* init synchronously */)),
       ClientCertStoreChromeOS::PasswordDelegateFactory());
 
   scoped_refptr<net::X509Certificate> cert_1(
@@ -159,7 +164,7 @@ TEST_F(ClientCertStoreChromeOSTest, Filter) {
   TestCertFilter* cert_filter =
       new TestCertFilter(true /* init synchronously */);
   ClientCertStoreChromeOS store(
-      nullptr /* no additional provider */, make_scoped_ptr(cert_filter),
+      nullptr /* no additional provider */, base::WrapUnique(cert_filter),
       ClientCertStoreChromeOS::PasswordDelegateFactory());
 
   scoped_refptr<net::X509Certificate> cert_1(
@@ -205,7 +210,7 @@ TEST_F(ClientCertStoreChromeOSTest, CertRequestMatching) {
       new TestCertFilter(true /* init synchronously */);
   ClientCertStoreChromeOS store(
       nullptr,  // no additional provider
-      make_scoped_ptr(cert_filter),
+      base::WrapUnique(cert_filter),
       ClientCertStoreChromeOS::PasswordDelegateFactory());
 
   scoped_refptr<net::X509Certificate> cert_1(

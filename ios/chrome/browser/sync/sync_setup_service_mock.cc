@@ -4,11 +4,13 @@
 
 #include "ios/chrome/browser/sync/sync_setup_service_mock.h"
 
-SyncSetupServiceMock::SyncSetupServiceMock(
-    sync_driver::SyncService* sync_service,
-    PrefService* prefs)
-    : SyncSetupService(sync_service, prefs) {
-}
+SyncSetupServiceMock::SyncSetupServiceMock(syncer::SyncService* sync_service,
+                                           PrefService* prefs)
+    : SyncSetupService(sync_service, prefs) {}
 
 SyncSetupServiceMock::~SyncSetupServiceMock() {
+}
+
+bool SyncSetupServiceMock::SyncSetupServiceHasFinishedInitialSetup() {
+  return SyncSetupService::HasFinishedInitialSetup();
 }

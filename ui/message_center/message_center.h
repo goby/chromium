@@ -5,19 +5,18 @@
 #ifndef UI_MESSAGE_CENTER_MESSAGE_CENTER_H_
 #define UI_MESSAGE_CENTER_MESSAGE_CENTER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/message_center/message_center_export.h"
 #include "ui/message_center/message_center_types.h"
 #include "ui/message_center/notification_list.h"
 
 class DownloadNotification;
 class DownloadNotificationTestBase;
-
-namespace base {
-class DictionaryValue;
-}
 
 // Interface to manage the NotificationList. The client (e.g. Chrome) calls
 // [Add|Remove|Update]Notification to create and update notifications in the
@@ -47,6 +46,13 @@ class NotifierSettingsProvider;
 
 class MESSAGE_CENTER_EXPORT MessageCenter {
  public:
+  enum class RemoveType {
+    // Remove all notifications.
+    ALL,
+    // Remove non-pinned notification (don't remove invisible ones).
+    NON_PINNED,
+  };
+
   // Creates the global message center object.
   static void Initialize();
 
@@ -66,6 +72,7 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   virtual size_t UnreadNotificationCount() const = 0;
   virtual bool HasPopupNotifications() const = 0;
   virtual bool IsQuietMode() const = 0;
+  virtual bool IsLockedState() const = 0;
   virtual bool HasClickedListener(const std::string& id) = 0;
 
   // Find the notification with the corresponding id. Returns NULL if not found.
@@ -90,17 +97,16 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
   // Basic operations of notification: add/remove/update.
 
   // Adds a new notification.
-  virtual void AddNotification(scoped_ptr<Notification> notification) = 0;
+  virtual void AddNotification(std::unique_ptr<Notification> notification) = 0;
 
   // Updates an existing notification with id = old_id and set its id to new_id.
   virtual void UpdateNotification(
       const std::string& old_id,
-      scoped_ptr<Notification> new_notification) = 0;
+      std::unique_ptr<Notification> new_notification) = 0;
 
   // Removes an existing notification.
   virtual void RemoveNotification(const std::string& id, bool by_user) = 0;
-  virtual void RemoveAllNotifications(bool by_user) = 0;
-  virtual void RemoveAllVisibleNotifications(bool by_user) = 0;
+  virtual void RemoveAllNotifications(bool by_user, RemoveType type) = 0;
 
   // Sets the icon image. Icon appears at the top-left of the notification.
   virtual void SetNotificationIcon(const std::string& notification_id,
@@ -161,6 +167,9 @@ class MESSAGE_CENTER_EXPORT MessageCenter {
 
   // This can be called to change the quiet mode state (without a timeout).
   virtual void SetQuietMode(bool in_quiet_mode) = 0;
+
+  // This can be called to change the lock mode state.
+  virtual void SetLockedState(bool locked) = 0;
 
   // Temporarily enables quiet mode for |expires_in| time.
   virtual void EnterQuietModeWithExpire(const base::TimeDelta& expires_in) = 0;

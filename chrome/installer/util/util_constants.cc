@@ -28,6 +28,10 @@ const char kConfigureUserSettings[] = "configure-user-settings";
 // in-use Chrome should be restarted ASAP.
 const char kCriticalUpdateVersion[] = "critical-update-version";
 
+// Delete files that belong to old versions of Chrome from the install
+// directory.
+const char kDeleteOldVersions[] = "delete-old-versions";
+
 // Delete user profile data. This param is useful only when specified with
 // kUninstall, otherwise it is silently ignored.
 const char kDeleteProfile[] = "delete-profile";
@@ -159,9 +163,6 @@ const char kVerboseLogging[] = "verbose-logging";
 // Show the embedded EULA dialog.
 const char kShowEula[] = "show-eula";
 
-// Show the embedded EULA dialog, relaunch metro Chrome on acceptance.
-const char kShowEulaForMetro[] = "show-eula-for-metro";
-
 // Perform the inactive user toast experiment.
 const char kInactiveUserToast[] = "inactive-user-toast";
 
@@ -214,12 +215,10 @@ const wchar_t kChromeFrameHelperDll[] = L"chrome_frame_helper.dll";
 const wchar_t kChromeFrameHelperExe[] = L"chrome_frame_helper.exe";
 const wchar_t kChromeFrameHelperWndClass[] = L"ChromeFrameHelperWindowClass";
 const wchar_t kChromeLauncherExe[] = L"chrome_launcher.exe";
-const wchar_t kChromeMetroDll[] = L"metro_driver.dll";
 const wchar_t kChromeNewExe[] = L"new_chrome.exe";
 const wchar_t kChromeOldExe[] = L"old_chrome.exe";
 const wchar_t kCmdOnOsUpgrade[] = L"on-os-upgrade";
 const wchar_t kCmdQuickEnableCf[] = L"quick-enable-cf";
-const wchar_t kDelegateExecuteExe[] = L"delegate_execute.exe";
 const wchar_t kEULASentinelFile[] = L"EULA Accepted";
 const wchar_t kGoogleChromeInstallSubDir1[] = L"Google";
 const wchar_t kGoogleChromeInstallSubDir2[] = L"Chrome";
@@ -256,5 +255,7 @@ const size_t kMaxAppModelIdLength = 64U;
 
 const char kCourgette[] = "courgette";
 const char kBsdiff[] = "bsdiff";
+
+const char kSetupHistogramAllocatorName[] = "SetupMetrics";
 
 }  // namespace installer

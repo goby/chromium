@@ -4,11 +4,13 @@
 
 #include "storage/browser/quota/storage_monitor.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
-#include "base/stl_util.h"
+#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "storage/browser/quota/quota_manager.h"
 #include "storage/common/quota/quota_status_code.h"
 
@@ -117,7 +119,7 @@ void StorageObserverList::MaybeDispatchEvent(
 }
 
 void StorageObserverList::ScheduleUpdateForObserver(StorageObserver* observer) {
-  DCHECK(ContainsKey(observers_, observer));
+  DCHECK(base::ContainsKey(observers_, observer));
   observers_[observer].requires_update = true;
 }
 
@@ -151,8 +153,8 @@ void HostStorageObservers::AddObserver(
 
   if (initialized_) {
     StorageObserver::Event event(params.filter,
-                                 std::max<int64>(cached_usage_, 0),
-                                 std::max<int64>(cached_quota_, 0));
+                                 std::max<int64_t>(cached_usage_, 0),
+                                 std::max<int64_t>(cached_quota_, 0));
     observer->OnStorageEvent(event);
     return;
   }
@@ -172,7 +174,8 @@ bool HostStorageObservers::ContainsObservers() const {
 }
 
 void HostStorageObservers::NotifyUsageChange(
-    const StorageObserver::Filter& filter, int64 delta) {
+    const StorageObserver::Filter& filter,
+    int64_t delta) {
   if (initialized_) {
     cached_usage_ += delta;
     DispatchEvent(filter, true);
@@ -215,8 +218,8 @@ void HostStorageObservers::StartInitialization(
 void HostStorageObservers::GotHostUsageAndQuota(
     const StorageObserver::Filter& filter,
     QuotaStatusCode status,
-    int64 usage,
-    int64 quota) {
+    int64_t usage,
+    int64_t quota) {
   initializing_ = false;
   if (status != kQuotaStatusOk)
     return;
@@ -228,9 +231,8 @@ void HostStorageObservers::GotHostUsageAndQuota(
 
 void HostStorageObservers::DispatchEvent(
     const StorageObserver::Filter& filter, bool is_update) {
-  StorageObserver::Event event(filter,
-                               std::max<int64>(cached_usage_, 0),
-                               std::max<int64>(cached_quota_, 0));
+  StorageObserver::Event event(filter, std::max<int64_t>(cached_usage_, 0),
+                               std::max<int64_t>(cached_quota_, 0));
   if (is_update)
     observers_.OnStorageChange(event);
   else
@@ -245,7 +247,6 @@ StorageTypeObservers::StorageTypeObservers(QuotaManager* quota_manager)
 }
 
 StorageTypeObservers::~StorageTypeObservers() {
-  STLDeleteValues(&host_observers_map_);
 }
 
 void StorageTypeObservers::AddObserver(
@@ -254,25 +255,22 @@ void StorageTypeObservers::AddObserver(
   if (host.empty())
     return;
 
-  HostStorageObservers* host_observers = NULL;
-  HostObserversMap::iterator it = host_observers_map_.find(host);
-  if (it == host_observers_map_.end()) {
-    host_observers = new HostStorageObservers(quota_manager_);
-    host_observers_map_[host] = host_observers;
-  } else {
-    host_observers = it->second;
+  auto& host_observers = host_observers_map_[host];
+  if (!host_observers) {
+    // Because there are no null entries in host_observers_map_, the [] inserted
+    // a blank pointer, so let's populate it.
+    host_observers = base::MakeUnique<HostStorageObservers>(quota_manager_);
   }
 
   host_observers->AddObserver(observer, params);
 }
 
 void StorageTypeObservers::RemoveObserver(StorageObserver* observer) {
-  for (HostObserversMap::iterator it = host_observers_map_.begin();
-       it != host_observers_map_.end(); ) {
+  for (auto it = host_observers_map_.begin();
+       it != host_observers_map_.end();) {
     it->second->RemoveObserver(observer);
     if (!it->second->ContainsObservers()) {
-      delete it->second;
-      host_observers_map_.erase(it++);
+      it = host_observers_map_.erase(it);
     } else {
       ++it;
     }
@@ -282,30 +280,29 @@ void StorageTypeObservers::RemoveObserver(StorageObserver* observer) {
 void StorageTypeObservers::RemoveObserverForFilter(
     StorageObserver* observer, const StorageObserver::Filter& filter) {
   std::string host = net::GetHostOrSpecFromURL(filter.origin);
-  HostObserversMap::iterator it = host_observers_map_.find(host);
+  auto it = host_observers_map_.find(host);
   if (it == host_observers_map_.end())
     return;
 
   it->second->RemoveObserver(observer);
-  if (!it->second->ContainsObservers()) {
-    delete it->second;
+  if (!it->second->ContainsObservers())
     host_observers_map_.erase(it);
-  }
 }
 
 const HostStorageObservers* StorageTypeObservers::GetHostObservers(
     const std::string& host) const {
-  HostObserversMap::const_iterator it = host_observers_map_.find(host);
+  auto it = host_observers_map_.find(host);
   if (it != host_observers_map_.end())
-    return it->second;
+    return it->second.get();
 
-  return NULL;
+  return nullptr;
 }
 
 void StorageTypeObservers::NotifyUsageChange(
-    const StorageObserver::Filter& filter, int64 delta) {
+    const StorageObserver::Filter& filter,
+    int64_t delta) {
   std::string host = net::GetHostOrSpecFromURL(filter.origin);
-  HostObserversMap::iterator it = host_observers_map_.find(host);
+  auto it = host_observers_map_.find(host);
   if (it == host_observers_map_.end())
     return;
 
@@ -320,7 +317,6 @@ StorageMonitor::StorageMonitor(QuotaManager* quota_manager)
 }
 
 StorageMonitor::~StorageMonitor() {
-  STLDeleteValues(&storage_type_observers_map_);
 }
 
 void StorageMonitor::AddObserver(
@@ -335,22 +331,16 @@ void StorageMonitor::AddObserver(
     return;
   }
 
-  StorageTypeObservers* type_observers = NULL;
-  StorageTypeObserversMap::iterator it =
-      storage_type_observers_map_.find(params.filter.storage_type);
-  if (it == storage_type_observers_map_.end()) {
-    type_observers = new StorageTypeObservers(quota_manager_);
-    storage_type_observers_map_[params.filter.storage_type] = type_observers;
-  } else {
-    type_observers = it->second;
-  }
+  auto& type_observers =
+      storage_type_observers_map_[params.filter.storage_type];
+  if (!type_observers)
+    type_observers = base::MakeUnique<StorageTypeObservers>(quota_manager_);
 
   type_observers->AddObserver(observer, params);
 }
 
 void StorageMonitor::RemoveObserver(StorageObserver* observer) {
-  for (StorageTypeObserversMap::iterator it =
-           storage_type_observers_map_.begin();
+  for (auto it = storage_type_observers_map_.begin();
        it != storage_type_observers_map_.end(); ++it) {
     it->second->RemoveObserver(observer);
   }
@@ -358,8 +348,7 @@ void StorageMonitor::RemoveObserver(StorageObserver* observer) {
 
 void StorageMonitor::RemoveObserverForFilter(
     StorageObserver* observer, const StorageObserver::Filter& filter) {
-  StorageTypeObserversMap::iterator it =
-      storage_type_observers_map_.find(filter.storage_type);
+  auto it = storage_type_observers_map_.find(filter.storage_type);
   if (it == storage_type_observers_map_.end())
     return;
 
@@ -368,16 +357,15 @@ void StorageMonitor::RemoveObserverForFilter(
 
 const StorageTypeObservers* StorageMonitor::GetStorageTypeObservers(
     StorageType storage_type) const {
-  StorageTypeObserversMap::const_iterator it =
-      storage_type_observers_map_.find(storage_type);
+  auto it = storage_type_observers_map_.find(storage_type);
   if (it != storage_type_observers_map_.end())
-    return it->second;
+    return it->second.get();
 
-  return NULL;
+  return nullptr;
 }
 
-void StorageMonitor::NotifyUsageChange(
-    const StorageObserver::Filter& filter, int64 delta) {
+void StorageMonitor::NotifyUsageChange(const StorageObserver::Filter& filter,
+                                       int64_t delta) {
   // Check preconditions.
   if (filter.storage_type == kStorageTypeUnknown ||
       filter.storage_type == kStorageTypeQuotaNotManaged ||
@@ -386,8 +374,7 @@ void StorageMonitor::NotifyUsageChange(
     return;
   }
 
-  StorageTypeObserversMap::iterator it =
-      storage_type_observers_map_.find(filter.storage_type);
+  auto it = storage_type_observers_map_.find(filter.storage_type);
   if (it == storage_type_observers_map_.end())
     return;
 

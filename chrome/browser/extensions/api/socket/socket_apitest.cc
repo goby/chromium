@@ -22,17 +22,18 @@ using extensions::ResultCatcher;
 
 namespace {
 
-const std::string kHostname = "127.0.0.1";
+const char kHostname[] = "127.0.0.1";
 const int kPort = 8888;
 
 class SocketApiTest : public ExtensionApiTest {
  public:
-  SocketApiTest() : resolver_event_(true, false),
-                    resolver_creator_(
-                        new extensions::MockHostResolverCreator()) {
-  }
+  SocketApiTest()
+      : resolver_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                        base::WaitableEvent::InitialState::NOT_SIGNALED),
+        resolver_creator_(new extensions::MockHostResolverCreator()) {}
 
   void SetUpOnMainThread() override {
+    ExtensionApiTest::SetUpOnMainThread();
     extensions::HostResolverWrapper::GetInstance()->SetHostResolverForTesting(
         resolver_creator_->CreateMockHostResolver());
   }
@@ -55,7 +56,7 @@ class SocketApiTest : public ExtensionApiTest {
 }  // namespace
 
 IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketUDPExtension) {
-  scoped_ptr<net::SpawnedTestServer> test_server(
+  std::unique_ptr<net::SpawnedTestServer> test_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_UDP_ECHO,
           net::SpawnedTestServer::kLocalhost,
@@ -83,7 +84,7 @@ IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketUDPExtension) {
 }
 
 IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketTCPExtension) {
-  scoped_ptr<net::SpawnedTestServer> test_server(
+  std::unique_ptr<net::SpawnedTestServer> test_server(
       new net::SpawnedTestServer(
           net::SpawnedTestServer::TYPE_TCP_ECHO,
           net::SpawnedTestServer::kLocalhost,
@@ -116,8 +117,7 @@ IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketTCPServerExtension) {
   ExtensionTestMessageListener listener("info_please", true);
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("socket/api")));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
-  listener.Reply(
-      base::StringPrintf("tcp_server:%s:%d", kHostname.c_str(), kPort));
+  listener.Reply(base::StringPrintf("tcp_server:%s:%d", kHostname, kPort));
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }
@@ -142,8 +142,7 @@ IN_PROC_BROWSER_TEST_F(SocketApiTest, SocketMulticast) {
   ExtensionTestMessageListener listener("info_please", true);
   ASSERT_TRUE(LoadExtension(test_data_dir_.AppendASCII("socket/api")));
   EXPECT_TRUE(listener.WaitUntilSatisfied());
-  listener.Reply(
-      base::StringPrintf("multicast:%s:%d", kHostname.c_str(), kPort));
+  listener.Reply(base::StringPrintf("multicast:%s:%d", kHostname, kPort));
 
   EXPECT_TRUE(catcher.GetNextResult()) << catcher.message();
 }

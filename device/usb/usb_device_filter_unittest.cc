@@ -20,15 +20,8 @@ using testing::Return;
 class UsbFilterTest : public testing::Test {
  public:
   void SetUp() override {
-    UsbInterfaceDescriptor interface;
-    interface.interface_number = 1;
-    interface.alternate_setting = 0;
-    interface.interface_class = 0xFF;
-    interface.interface_subclass = 0x42;
-    interface.interface_protocol = 0x01;
-
-    UsbConfigDescriptor config;
-    config.interfaces.push_back(interface);
+    UsbConfigDescriptor config(1, false, false, 0);
+    config.interfaces.emplace_back(1, 0, 0xff, 0x42, 0x01);
 
     android_phone_ = new MockUsbDevice(0x18d1, 0x4ee2, config);
   }
@@ -110,9 +103,9 @@ TEST_F(UsbFilterTest, MatchInterfaceProtocolNegative) {
   ASSERT_FALSE(filter.Matches(android_phone_));
 }
 
-TEST_F(UsbFilterTest, MatchAnyEmptyListNegative) {
+TEST_F(UsbFilterTest, MatchAnyEmptyList) {
   std::vector<UsbDeviceFilter> filters;
-  ASSERT_FALSE(UsbDeviceFilter::MatchesAny(android_phone_, filters));
+  ASSERT_TRUE(UsbDeviceFilter::MatchesAny(android_phone_, filters));
 }
 
 TEST_F(UsbFilterTest, MatchesAnyVendorId) {

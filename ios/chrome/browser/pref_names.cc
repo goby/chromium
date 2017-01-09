@@ -4,41 +4,58 @@
 
 #include "ios/chrome/browser/pref_names.h"
 
-namespace ios {
 namespace prefs {
 
-// Preferences in ios::prefs:: must have the same value as the corresponding
-// preference on desktop.
-// See chrome/common/pref_names.cc for a detailed description of each
-// preference.
-
+// The value to use for Accept-Languages HTTP header when making an HTTP
+// request.
 const char kAcceptLanguages[] = "intl.accept_languages";
-const char kAllowDeletingBrowserHistory[] = "history.deleting_enabled";
+
+// The application locale.
 const char kApplicationLocale[] = "intl.app_locale";
+
+// A map of browser state data directory to cached information. This cache can
+// be used to display information about browser states without actually having
+// to load them.
 const char kBrowserStateInfoCache[] = "profile.info_cache";
+
+// Directory of the browser state profile used.
 const char kBrowserStateLastUsed[] = "profile.last_used";
+
+// List of directories of the browser states last active.
 const char kBrowserStatesLastActive[] = "profile.last_active_profiles";
+
+// Total number of browser states created for this Chrome build. Used to tag
+// browser states directories.
 const char kBrowserStatesNumCreated[] = "profile.profiles_created";
-const char kDefaultCharset[] = "intl.charset_default";
-const char kEnableDoNotTrack[] = "enable_do_not_track";
-const char kHttpServerProperties[] = "net.http_server_properties";
-const char kNtpShownPage[] = "ntp.shown_page";
-const char kSavingBrowserHistoryDisabled[] = "history.saving_disabled";
-const char kSearchSuggestEnabled[] = "search.suggest_enabled";
 
-}  // namespace prefs
-}  // namespace ios
+// Boolean which indicates whether browsing data migration is/was possible in
+// this or a previous cold start.
+const char kBrowsingDataMigrationHasBeenPossible[] =
+    "ios.browsing_data_migration_controller.migration_has_been_possible";
 
-namespace prefs {
-
-// *************** CHROME BROWSER STATE PREFS ***************
-// These are attached to the user Chrome browser state.
+const char kClearBrowsingDataHistoryNoticeShownTimes[] =
+    "browser.clear_data.history_notice_shown_times";
 
 // String indicating the Contextual Search enabled state.
 // "false" - opt-out (disabled)
 // "" (empty string) - undecided
 // "true" - opt-in (enabled)
 const char kContextualSearchEnabled[] = "search.contextual_search_enabled";
+
+// Boolean that is true when Data Saver is enabled.
+// TODO(bengr): Migrate the preference string to "data_saver.enabled"
+// (crbug.com/564207).
+const char kDataSaverEnabled[] = "spdy_proxy.enabled";
+
+// The default character encoding to assume for a web page in the
+// absence of MIME charset specification
+const char kDefaultCharset[] = "intl.charset_default";
+
+// Whether to send the DNT header.
+const char kEnableDoNotTrack[] = "enable_do_not_track";
+
+// Prefs for persisting HttpServerProperties.
+const char kHttpServerProperties[] = "net.http_server_properties";
 
 // Preference that keep information about where to create a new bookmark.
 const char kIosBookmarkFolderDefault[] = "ios.bookmark.default_folder";
@@ -47,20 +64,9 @@ const char kIosBookmarkFolderDefault[] = "ios.bookmark.default_folder";
 // the bookmark promo dialog.
 const char kIosBookmarkPromoAlreadySeen[] = "ios.bookmark.promo_already_seen";
 
-// Boolean which indicates whether browsing data migration is/was possible in
-// this or a previous cold start.
-const char kBrowsingDataMigrationHasBeenPossible[] =
-    "ios.browsing_data_migration_controller.migration_has_been_possible";
-
-// Boolean which indicates if the user has already set a "do not backup" bit to
-// the OTR Profiles's state stash path to ensure that the folder is not
-// automatically synced to iCloud/iTunes.
-const char kOTRStashStatePathSystemBackupExcluded[] =
-    "ios.otr_stash_state_path_system_backup_excluded";
-
-// Whether Chrome should attempt to hand off the current URL to other Apple
-// devices that share an iCloud account.
-const char kIosHandoffToOtherDevices[] = "ios.handoff_to_other_devices";
+// Whether the user has enabled the Physical Web feature to surface URLs
+// broadcast by nearby devices.
+const char kIosPhysicalWebEnabled[] = "ios.physical_web_enabled";
 
 // True if the previous session exited cleanly.
 // This can be different from kStabilityExitedCleanly, because the last run of
@@ -70,14 +76,19 @@ const char kIosHandoffToOtherDevices[] = "ios.handoff_to_other_devices";
 const char kLastSessionExitedCleanly[] =
     "ios.user_experience_metrics.last_session_exited_cleanly";
 
-// True if the previous session was selected into the WKWebView control group.
-const char kLastSessionUsedWKWebViewControlGroup[] =
-    "ios.wkwebview_trial.was_control";
-
 // Preference that hold a boolean indicating whether metrics reporting should
 // be limited to wifi (when enabled).
 const char kMetricsReportingWifiOnly[] =
     "ios.user_experience_metrics.wifi_only";
+
+// Which page should be visible on the new tab page v4
+const char kNtpShownPage[] = "ntp.shown_page";
+
+// Boolean controlling whether history saving is disabled.
+const char kSavingBrowserHistoryDisabled[] = "history.saving_disabled";
+
+// Boolean that is true when Suggest support is enabled.
+const char kSearchSuggestEnabled[] = "search.suggest_enabled";
 
 // A boolean pref set to true if prediction of network actions is allowed.
 // Actions include prerendering of web pages.
@@ -94,12 +105,6 @@ const char kNtpShownBookmarksFolder[] = "ntp.shown_bookmarks_folder";
 
 // True if the memory debugging tools should be visible.
 const char kShowMemoryDebuggingTools[] = "ios.memory.show_debugging_tools";
-
-// User preferred speech input language for voice search.
-const char kVoiceSearchLocale[] = "ios.speechinput.voicesearch_locale";
-
-// Boolean which indicates if TTS after voice search is enabled.
-const char kVoiceSearchTTS[] = "ios.speechinput.voicesearch_tts";
 
 // List which contains the last known list of accounts.
 const char kSigninLastAccounts[] = "ios.signin.last_accounts";

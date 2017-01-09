@@ -4,10 +4,11 @@
 
 #include "chrome/browser/chromeos/file_manager/filesystem_api_util.h"
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/fileapi_util.h"
@@ -15,9 +16,9 @@
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_interface.h"
 #include "chrome/browser/extensions/extension_util.h"
 #include "chrome/browser/profiles/profile.h"
+#include "components/drive/chromeos/file_system_interface.h"
 #include "components/drive/file_errors.h"
 #include "components/drive/file_system_core_util.h"
-#include "components/drive/file_system_interface.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
 #include "google_apis/drive/task_util.h"
@@ -32,7 +33,7 @@ namespace {
 void GetMimeTypeAfterGetResourceEntryForDrive(
     const base::Callback<void(bool, const std::string&)>& callback,
     drive::FileError error,
-    scoped_ptr<drive::ResourceEntry> entry) {
+    std::unique_ptr<drive::ResourceEntry> entry) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   if (error != drive::FILE_ERROR_OK || !entry->has_file_specific_info() ||
@@ -47,7 +48,7 @@ void GetMimeTypeAfterGetResourceEntryForDrive(
 // the mime type from the passed metadata from a providing extension.
 void GetMimeTypeAfterGetMetadataForProvidedFileSystem(
     const base::Callback<void(bool, const std::string&)>& callback,
-    scoped_ptr<chromeos::file_system_provider::EntryMetadata> metadata,
+    std::unique_ptr<chromeos::file_system_provider::EntryMetadata> metadata,
     base::File::Error result) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 

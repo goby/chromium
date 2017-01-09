@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "cc/layers/append_quads_data.h"
 #include "cc/layers/heads_up_display_layer_impl.h"
+#include "cc/test/fake_compositor_frame_sink.h"
 #include "cc/test/fake_impl_task_runner_provider.h"
 #include "cc/test/fake_layer_tree_host_impl.h"
-#include "cc/test/fake_output_surface.h"
-#include "cc/test/test_shared_bitmap_manager.h"
 #include "cc/test/test_task_graph_runner.h"
+#include "cc/trees/layer_tree_impl.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
@@ -17,7 +19,7 @@ namespace {
 void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
                     ResourceProvider* resource_provider,
                     DrawMode draw_mode) {
-  scoped_ptr<RenderPass> render_pass = RenderPass::Create();
+  std::unique_ptr<RenderPass> render_pass = RenderPass::Create();
   AppendQuadsData data;
   bool will_draw = layer->WillDraw(draw_mode, resource_provider);
   if (will_draw)
@@ -32,28 +34,30 @@ void CheckDrawLayer(HeadsUpDisplayLayerImpl* layer,
 
 TEST(HeadsUpDisplayLayerImplTest, ResourcelessSoftwareDrawAfterResourceLoss) {
   FakeImplTaskRunnerProvider task_runner_provider;
-  TestSharedBitmapManager shared_bitmap_manager;
   TestTaskGraphRunner task_graph_runner;
-  scoped_ptr<OutputSurface> output_surface = FakeOutputSurface::Create3d();
-  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &shared_bitmap_manager,
-                                  &task_graph_runner);
+  std::unique_ptr<CompositorFrameSink> compositor_frame_sink =
+      FakeCompositorFrameSink::Create3d();
+  FakeLayerTreeHostImpl host_impl(&task_runner_provider, &task_graph_runner);
   host_impl.CreatePendingTree();
   host_impl.SetVisible(true);
-  host_impl.InitializeRenderer(output_surface.get());
-  scoped_ptr<HeadsUpDisplayLayerImpl> layer =
-    HeadsUpDisplayLayerImpl::Create(host_impl.pending_tree(), 1);
-  layer->SetBounds(gfx::Size(100, 100));
+  host_impl.InitializeRenderer(compositor_frame_sink.get());
+  std::unique_ptr<HeadsUpDisplayLayerImpl> layer_ptr =
+      HeadsUpDisplayLayerImpl::Create(host_impl.pending_tree(), 1);
+  layer_ptr->SetBounds(gfx::Size(100, 100));
+
+  HeadsUpDisplayLayerImpl* layer = layer_ptr.get();
+
+  host_impl.pending_tree()->SetRootLayerForTesting(std::move(layer_ptr));
+  host_impl.pending_tree()->BuildLayerListAndPropertyTreesForTesting();
 
   // Check regular hardware draw is ok.
-  CheckDrawLayer(
-      layer.get(), host_impl.resource_provider(), DRAW_MODE_HARDWARE);
+  CheckDrawLayer(layer, host_impl.resource_provider(), DRAW_MODE_HARDWARE);
 
   // Simulate a resource loss on transitioning to resourceless software mode.
   layer->ReleaseResources();
 
   // Should skip resourceless software draw and not crash in UpdateHudTexture.
-  CheckDrawLayer(layer.get(),
-                 host_impl.resource_provider(),
+  CheckDrawLayer(layer, host_impl.resource_provider(),
                  DRAW_MODE_RESOURCELESS_SOFTWARE);
 }
 

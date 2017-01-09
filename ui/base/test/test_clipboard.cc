@@ -5,6 +5,7 @@
 #include "ui/base/test/test_clipboard.h"
 
 #include <stddef.h>
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 
@@ -21,11 +22,11 @@ Clipboard* TestClipboard::CreateForCurrentThread() {
   base::AutoLock lock(Clipboard::clipboard_map_lock_.Get());
   Clipboard* clipboard = new TestClipboard;
   Clipboard::clipboard_map_.Get()[base::PlatformThread::CurrentId()] =
-      clipboard;
+      base::WrapUnique(clipboard);
   return clipboard;
 }
 
-uint64 TestClipboard::GetSequenceNumber(ClipboardType type) const {
+uint64_t TestClipboard::GetSequenceNumber(ClipboardType type) const {
   return GetStore(type).sequence_number;
 }
 
@@ -75,8 +76,8 @@ void TestClipboard::ReadAsciiText(ClipboardType type,
 void TestClipboard::ReadHTML(ClipboardType type,
                              base::string16* markup,
                              std::string* src_url,
-                             uint32* fragment_start,
-                             uint32* fragment_end) const {
+                             uint32_t* fragment_start,
+                             uint32_t* fragment_end) const {
   markup->clear();
   src_url->clear();
   const DataStore& store = GetStore(type);
@@ -85,7 +86,7 @@ void TestClipboard::ReadHTML(ClipboardType type,
     *markup = base::UTF8ToUTF16(it->second);
   *src_url = store.html_src_url;
   *fragment_start = 0;
-  *fragment_end = base::checked_cast<uint32>(markup->size());
+  *fragment_end = base::checked_cast<uint32_t>(markup->size());
 }
 
 void TestClipboard::ReadRTF(ClipboardType type, std::string* result) const {
@@ -181,6 +182,8 @@ void TestClipboard::WriteData(const FormatType& format,
 
 TestClipboard::DataStore::DataStore() : sequence_number(0) {
 }
+
+TestClipboard::DataStore::DataStore(const DataStore& other) = default;
 
 TestClipboard::DataStore::~DataStore() {
 }

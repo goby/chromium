@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  * explicitly blocks any post-dump hooks or uploading for Android builds.
  */
 public final class CastCrashUploader {
-    private static final String TAG = "cr.CastCrashUploader";
+    private static final String TAG = "cr_CastCrashUploader";
     private static final String CRASH_REPORT_HOST = "clients2.google.com";
     private static final String CAST_SHELL_USER_AGENT = android.os.Build.MODEL + "/CastShell";
     // Multipart dump filename has format "[random string].dmp[pid]", e.g.
@@ -48,8 +48,8 @@ public final class CastCrashUploader {
     public CastCrashUploader(String crashDumpPath, boolean uploadCrashToStaging) {
         this.mCrashDumpPath = crashDumpPath;
         mCrashReportUploadUrl = uploadCrashToStaging
-                ? "http://clients2.google.com/cr/staging_report"
-                : "http://clients2.google.com/cr/report";
+                ? "https://clients2.google.com/cr/staging_report"
+                : "https://clients2.google.com/cr/report";
         mExecutorService = Executors.newScheduledThreadPool(1);
     }
 

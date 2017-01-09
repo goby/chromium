@@ -5,13 +5,16 @@
 #ifndef STORAGE_BROWSER_FILEAPI_SANDBOX_FILE_SYSTEM_BACKEND_H_
 #define STORAGE_BROWSER_FILEAPI_SANDBOX_FILE_SYSTEM_BACKEND_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/file_system_quota_util.h"
 #include "storage/browser/fileapi/sandbox_file_system_backend_delegate.h"
@@ -49,15 +52,15 @@ class STORAGE_EXPORT SandboxFileSystemBackend
   bool SupportsStreaming(const FileSystemURL& url) const override;
   bool HasInplaceCopyImplementation(
       storage::FileSystemType type) const override;
-  scoped_ptr<storage::FileStreamReader> CreateFileStreamReader(
+  std::unique_ptr<storage::FileStreamReader> CreateFileStreamReader(
       const FileSystemURL& url,
-      int64 offset,
-      int64 max_bytes_to_read,
+      int64_t offset,
+      int64_t max_bytes_to_read,
       const base::Time& expected_modification_time,
       FileSystemContext* context) const override;
-  scoped_ptr<FileStreamWriter> CreateFileStreamWriter(
+  std::unique_ptr<FileStreamWriter> CreateFileStreamWriter(
       const FileSystemURL& url,
-      int64 offset,
+      int64_t offset,
       FileSystemContext* context) const override;
   FileSystemQuotaUtil* GetQuotaUtil() override;
   const UpdateObserverList* GetUpdateObservers(

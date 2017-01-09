@@ -5,14 +5,17 @@
 #ifndef ASH_TOUCH_TOUCH_OBSERVER_HUD_H_
 #define ASH_TOUCH_TOUCH_OBSERVER_HUD_H_
 
+#include <stdint.h>
+
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
+#include "base/macros.h"
+#include "ui/display/display_observer.h"
 #include "ui/events/event_handler.h"
-#include "ui/gfx/display_observer.h"
 #include "ui/views/widget/widget_observer.h"
 
 #if defined(OS_CHROMEOS)
-#include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
 #endif  // defined(OS_CHROMEOS)
 
 namespace views {
@@ -25,7 +28,7 @@ namespace ash {
 // class manage their own lifetime.
 class ASH_EXPORT TouchObserverHUD : public ui::EventHandler,
                                     public views::WidgetObserver,
-                                    public gfx::DisplayObserver,
+                                    public display::DisplayObserver,
 #if defined(OS_CHROMEOS)
                                     public ui::DisplayConfigurator::Observer,
 #endif  // defined(OS_CHROMEOS)
@@ -38,7 +41,7 @@ class ASH_EXPORT TouchObserverHUD : public ui::EventHandler,
   // Removes the HUD from the screen.
   void Remove();
 
-  int64 display_id() const { return display_id_; }
+  int64_t display_id() const { return display_id_; }
 
  protected:
   explicit TouchObserverHUD(aura::Window* initial_root);
@@ -58,10 +61,10 @@ class ASH_EXPORT TouchObserverHUD : public ui::EventHandler,
   // Overridden from views::WidgetObserver.
   void OnWidgetDestroying(views::Widget* widget) override;
 
-  // Overridden from gfx::DisplayObserver.
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  // Overridden from display::DisplayObserver.
+  void OnDisplayAdded(const display::Display& new_display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
 #if defined(OS_CHROMEOS)
@@ -78,7 +81,7 @@ class ASH_EXPORT TouchObserverHUD : public ui::EventHandler,
  private:
   friend class TouchHudTestBase;
 
-  const int64 display_id_;
+  const int64_t display_id_;
   aura::Window* root_window_;
 
   views::Widget* widget_;

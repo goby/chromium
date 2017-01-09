@@ -14,6 +14,7 @@
 
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "ui/gfx/geometry/insets_f.h"
 #include "ui/gfx/geometry/safe_integer_conversions.h"
 
@@ -211,13 +212,9 @@ float RectF::ManhattanInternalDistance(const RectF& rect) const {
   RectF c(*this);
   c.Union(rect);
 
-  static const float kEpsilon = std::numeric_limits<float>::is_integer
-                                    ? 1
-                                    : std::numeric_limits<float>::epsilon();
-
-  float x = std::max<float>(0, c.width() - width() - rect.width() + kEpsilon);
-  float y =
-      std::max<float>(0, c.height() - height() - rect.height() + kEpsilon);
+  static const float kEpsilon = std::numeric_limits<float>::epsilon();
+  float x = std::max(0.f, c.width() - width() - rect.width() + kEpsilon);
+  float y = std::max(0.f, c.height() - height() - rect.height() + kEpsilon);
   return x + y;
 }
 

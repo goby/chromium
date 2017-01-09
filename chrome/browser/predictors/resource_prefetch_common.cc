@@ -4,49 +4,38 @@
 
 #include "chrome/browser/predictors/resource_prefetch_common.h"
 
-#include <stdlib.h>
+#include <string>
 #include <tuple>
 
 #include "base/command_line.h"
-#include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
-#include "base/strings/string_split.h"
 #include "chrome/browser/net/prediction_options.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_switches.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 
-using base::FieldTrialList;
-using std::string;
-using std::vector;
-
 namespace predictors {
 
-const char kSpeculativePrefetchingTrialName[] =
-    "SpeculativeResourcePrefetching";
+namespace {
 
-/*
- * SpeculativeResourcePrefetching is a field trial, and its value must have the
- * following format: key1=value1:key2=value2:key3=value3
- * e.g. "Prefetching=Enabled:Predictor=Url:Confidence=High"
- * The function below extracts the value corresponding to a key provided from
- * the SpeculativeResourcePrefetching field trial.
- */
-std::string GetFiledTrialSpecValue(string key) {
-  std::string trial_name =
-      FieldTrialList::FindFullName(kSpeculativePrefetchingTrialName);
-  for (const base::StringPiece& element : base::SplitStringPiece(
-           trial_name, ":", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
-    std::vector<base::StringPiece> key_value = base::SplitStringPiece(
-        element, "=", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-    if (key_value.size() == 2 && key_value[0] == key)
-      return key_value[1].as_string();
+bool IsPrefetchingEnabledInternal(Profile* profile, int mode, int mask) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  if ((mode & mask) == 0)
+    return false;
+
+  if (!profile || !profile->GetPrefs() ||
+      chrome_browser_net::CanPrefetchAndPrerenderUI(profile->GetPrefs()) !=
+          chrome_browser_net::NetworkPredictionStatus::ENABLED) {
+    return false;
   }
-  return string();
+
+  return true;
 }
+
+}  // namespace
 
 bool IsSpeculativeResourcePrefetchingEnabled(
     Profile* profile,
@@ -68,85 +57,23 @@ bool IsSpeculativeResourcePrefetchingEnabled(
     if (value == switches::kSpeculativeResourcePrefetchingDisabled) {
       return false;
     } else if (value == switches::kSpeculativeResourcePrefetchingLearning) {
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
+      config->mode |= ResourcePrefetchPredictorConfig::LEARNING;
+      return true;
+    } else if (value ==
+               switches::kSpeculativeResourcePrefetchingEnabledExternal) {
+      config->mode |= ResourcePrefetchPredictorConfig::LEARNING |
+                      ResourcePrefetchPredictorConfig::PREFETCHING_FOR_EXTERNAL;
       return true;
     } else if (value == switches::kSpeculativeResourcePrefetchingEnabled) {
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::URL_PREFETCHING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_PRFETCHING;
+      config->mode |=
+          ResourcePrefetchPredictorConfig::LEARNING |
+          ResourcePrefetchPredictorConfig::PREFETCHING_FOR_NAVIGATION |
+          ResourcePrefetchPredictorConfig::PREFETCHING_FOR_EXTERNAL;
       return true;
     }
   }
 
-  // Disable if no field trial is specified.
-  std::string trial = base::FieldTrialList::FindFullName(
-        kSpeculativePrefetchingTrialName);
-  if (trial.empty())
-    return false;
-
-  // Enabled by field trial.
-  std::string spec_prefetching = GetFiledTrialSpecValue("Prefetching");
-  std::string spec_predictor = GetFiledTrialSpecValue("Predictor");
-  std::string spec_confidence = GetFiledTrialSpecValue("Confidence");
-  std::string spec_more_resources = GetFiledTrialSpecValue("MoreResources");
-  std::string spec_small_db = GetFiledTrialSpecValue("SmallDB");
-
-  if (spec_prefetching == "Learning") {
-    if (spec_predictor == "Url") {
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-    } else if (spec_predictor == "Host") {
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
-    } else {
-      // Default: both Url and Host
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
-    }
-  } else if (spec_prefetching == "Enabled") {
-    if (spec_predictor == "Url") {
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::URL_PREFETCHING;
-    } else if (spec_predictor == "Host") {
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_PRFETCHING;
-    } else {
-      // Default: both Url and Host
-      config->mode |= ResourcePrefetchPredictorConfig::URL_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_LEARNING;
-      config->mode |= ResourcePrefetchPredictorConfig::URL_PREFETCHING;
-      config->mode |= ResourcePrefetchPredictorConfig::HOST_PRFETCHING;
-    }
-  } else {
-    // Default: spec_prefetching == "Disabled"
-    return false;
-  }
-
-  if (spec_confidence == "Low") {
-    config->min_url_visit_count = 1;
-    config->min_resource_confidence_to_trigger_prefetch = 0.5f;
-    config->min_resource_hits_to_trigger_prefetch = 1;
-  } else if (spec_confidence == "High") {
-    config->min_url_visit_count = 3;
-    config->min_resource_confidence_to_trigger_prefetch = 0.9f;
-    config->min_resource_hits_to_trigger_prefetch = 3;
-  } else {
-    // default
-    config->min_url_visit_count = 2;
-    config->min_resource_confidence_to_trigger_prefetch = 0.7f;
-    config->min_resource_hits_to_trigger_prefetch = 2;
-  }
-
-  if (spec_more_resources == "Enabled") {
-    config->max_resources_per_entry = 100;
-  }
-
-  if (spec_small_db == "Enabled") {
-    config->max_urls_to_track = 200;
-    config->max_hosts_to_track = 100;
-  }
-
-  return true;
+  return false;
 }
 
 NavigationID::NavigationID()
@@ -166,6 +93,14 @@ NavigationID::NavigationID(content::WebContents* web_contents)
       render_frame_id(web_contents->GetMainFrame()->GetRoutingID()),
       main_frame_url(web_contents->GetURL()) {
 }
+
+NavigationID::NavigationID(content::WebContents* web_contents,
+                           const GURL& main_frame_url,
+                           const base::TimeTicks& creation_time)
+    : render_process_id(web_contents->GetRenderProcessHost()->GetID()),
+      render_frame_id(web_contents->GetMainFrame()->GetRoutingID()),
+      main_frame_url(main_frame_url),
+      creation_time(creation_time) {}
 
 bool NavigationID::is_valid() const {
   return render_process_id != -1 && render_frame_id != -1 &&
@@ -203,44 +138,35 @@ ResourcePrefetchPredictorConfig::ResourcePrefetchPredictorConfig()
       max_prefetches_inflight_per_host_per_navigation(3) {
 }
 
+ResourcePrefetchPredictorConfig::ResourcePrefetchPredictorConfig(
+    const ResourcePrefetchPredictorConfig& other) = default;
+
 ResourcePrefetchPredictorConfig::~ResourcePrefetchPredictorConfig() {
 }
 
 bool ResourcePrefetchPredictorConfig::IsLearningEnabled() const {
-  return IsURLLearningEnabled() || IsHostLearningEnabled();
+  return (mode & LEARNING) > 0;
 }
 
-bool ResourcePrefetchPredictorConfig::IsPrefetchingEnabled(
+bool ResourcePrefetchPredictorConfig::IsPrefetchingEnabledForSomeOrigin(
     Profile* profile) const {
-  return IsURLPrefetchingEnabled(profile) || IsHostPrefetchingEnabled(profile);
+  int mask = PREFETCHING_FOR_NAVIGATION | PREFETCHING_FOR_EXTERNAL;
+  return IsPrefetchingEnabledInternal(profile, mode, mask);
 }
 
-bool ResourcePrefetchPredictorConfig::IsURLLearningEnabled() const {
-  return (mode & URL_LEARNING) > 0;
-}
-
-bool ResourcePrefetchPredictorConfig::IsHostLearningEnabled() const {
-  return (mode & HOST_LEARNING) > 0;
-}
-
-bool ResourcePrefetchPredictorConfig::IsURLPrefetchingEnabled(
-    Profile* profile) const {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (!profile || !profile->GetPrefs() ||
-      !chrome_browser_net::CanPrefetchAndPrerenderUI(profile->GetPrefs())) {
-    return false;
+bool ResourcePrefetchPredictorConfig::IsPrefetchingEnabledForOrigin(
+    Profile* profile,
+    PrefetchOrigin origin) const {
+  int mask = 0;
+  switch (origin) {
+    case PrefetchOrigin::NAVIGATION:
+      mask = PREFETCHING_FOR_NAVIGATION;
+      break;
+    case PrefetchOrigin::EXTERNAL:
+      mask = PREFETCHING_FOR_EXTERNAL;
+      break;
   }
-  return (mode & URL_PREFETCHING) > 0;
-}
-
-bool ResourcePrefetchPredictorConfig::IsHostPrefetchingEnabled(
-    Profile* profile) const {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  if (!profile || !profile->GetPrefs() ||
-      !chrome_browser_net::CanPrefetchAndPrerenderUI(profile->GetPrefs())) {
-    return false;
-  }
-  return (mode & HOST_PRFETCHING) > 0;
+  return IsPrefetchingEnabledInternal(profile, mode, mask);
 }
 
 bool ResourcePrefetchPredictorConfig::IsLowConfidenceForTest() const {

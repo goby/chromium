@@ -4,6 +4,8 @@
 
 #include "chrome/browser/safe_browsing/sandboxed_zip_analyzer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
@@ -57,8 +59,9 @@ void SandboxedZipAnalyzer::CloseTemporaryFile() {
   // Close the temporary file in the blocking pool since doing so will delete
   // the file.
   if (!BrowserThread::GetBlockingPool()->PostWorkerTaskWithShutdownBehavior(
-          FROM_HERE, base::Bind(&base::File::Close,
-                                base::Owned(new base::File(temp_file_.Pass()))),
+          FROM_HERE,
+          base::Bind(&base::File::Close,
+                     base::Owned(new base::File(std::move(temp_file_)))),
           base::SequencedWorkerPool::CONTINUE_ON_SHUTDOWN)) {
     NOTREACHED();
   }
@@ -98,11 +101,17 @@ void SandboxedZipAnalyzer::AnalyzeInSandbox() {
       base::Bind(&SandboxedZipAnalyzer::StartProcessOnIOThread, this));
 }
 
+void SandboxedZipAnalyzer::OnProcessCrashed(int exit_code) {
+  OnAnalyzeZipFileFinished(zip_analyzer::Results());
+}
+
+void SandboxedZipAnalyzer::OnProcessLaunchFailed(int error_code) {
+  OnAnalyzeZipFileFinished(zip_analyzer::Results());
+}
+
 bool SandboxedZipAnalyzer::OnMessageReceived(const IPC::Message& message) {
   bool handled = true;
   IPC_BEGIN_MESSAGE_MAP(SandboxedZipAnalyzer, message)
-    IPC_MESSAGE_HANDLER(ChromeUtilityHostMsg_ProcessStarted,
-                        OnUtilityProcessStarted)
     IPC_MESSAGE_HANDLER(
         ChromeUtilityHostMsg_AnalyzeZipFileForDownloadProtection_Finished,
         OnAnalyzeZipFileFinished)
@@ -113,33 +122,17 @@ bool SandboxedZipAnalyzer::OnMessageReceived(const IPC::Message& message) {
 
 void SandboxedZipAnalyzer::StartProcessOnIOThread() {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  utility_process_host_ = content::UtilityProcessHost::Create(
-      this,
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO).get())
-      ->AsWeakPtr();
+  utility_process_host_ =
+      content::UtilityProcessHost::Create(
+          this, BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get())
+          ->AsWeakPtr();
   utility_process_host_->SetName(l10n_util::GetStringUTF16(
       IDS_UTILITY_PROCESS_SAFE_BROWSING_ZIP_FILE_ANALYZER_NAME));
-  utility_process_host_->Send(new ChromeUtilityMsg_StartupPing);
-  // Wait for the startup notification before sending the main IPC to the
-  // utility process, so that we can dup the file handle.
-}
-
-void SandboxedZipAnalyzer::OnUtilityProcessStarted() {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  base::ProcessHandle utility_process =
-      content::RenderProcessHost::run_renderer_in_process() ?
-          base::GetCurrentProcessHandle() :
-          utility_process_host_->GetData().handle;
-
-  if (utility_process == base::kNullProcessHandle) {
-    DLOG(ERROR) << "Child process handle is null";
-  }
   utility_process_host_->Send(
       new ChromeUtilityMsg_AnalyzeZipFileForDownloadProtection(
-          IPC::TakeFileHandleForProcess(zip_file_.Pass(), utility_process),
-          IPC::GetFileHandleForProcess(temp_file_.GetPlatformFile(),
-                                       utility_process,
-                                       false /* !close_source_handle */)));
+          IPC::TakePlatformFileForTransit(std::move(zip_file_)),
+          IPC::GetPlatformFileForTransit(temp_file_.GetPlatformFile(),
+                                         false /* !close_source_handle */)));
 }
 
 void SandboxedZipAnalyzer::OnAnalyzeZipFileFinished(

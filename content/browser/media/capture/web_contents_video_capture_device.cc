@@ -44,30 +44,31 @@
 // In the above example, both capturing and rendering *each* take almost the
 // full 33 ms available between frames, yet we see that the required throughput
 // is obtained.
-//
-// Turning on verbose logging will cause the effective frame rate to be logged
-// at 5-second intervals.
 
 #include "content/browser/media/capture/web_contents_video_capture_device.h"
 
-#include <algorithm>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <algorithm>
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
-#include "base/metrics/histogram.h"
 #include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/browser/media/capture/cursor_renderer.h"
-#include "content/browser/media/capture/web_contents_capture_util.h"
 #include "content/browser/media/capture/web_contents_tracker.h"
+#include "content/browser/media/capture/window_activity_tracker.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_view_base.h"
 #include "content/public/browser/browser_thread.h"
@@ -75,12 +76,14 @@
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/render_widget_host_view_frame_subscriber.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_contents_media_capture_id.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/base/video_capture_types.h"
+#include "media/base/video_frame_metadata.h"
 #include "media/base/video_util.h"
 #include "media/capture/content/screen_capture_device_core.h"
 #include "media/capture/content/thread_safe_capture_oracle.h"
 #include "media/capture/content/video_capture_oracle.h"
+#include "media/capture/video_capture_types.h"
 #include "skia/ext/image_operations.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkColor.h"
@@ -88,15 +91,19 @@
 #include "ui/gfx/geometry/dip_util.h"
 #include "ui/gfx/geometry/size_conversions.h"
 
-#if defined(USE_AURA)
-#include "content/browser/media/capture/cursor_renderer_aura.h"
-#endif
-
 namespace content {
 
 namespace {
 
-void DeleteOnWorkerThread(scoped_ptr<base::Thread> render_thread,
+enum InteractiveModeSettings {
+  // Minimum amount of time for which there should be no animation detected
+  // to consider interactive mode being active. This is to prevent very brief
+  // periods of animated content not being detected (due to CPU fluctations for
+  // example) from causing a flip-flop on interactive mode.
+  kMinPeriodNoAnimationMillis = 3000
+};
+
+void DeleteOnWorkerThread(std::unique_ptr<base::Thread> render_thread,
                           const base::Closure& callback) {
   render_thread.reset();
 
@@ -104,35 +111,18 @@ void DeleteOnWorkerThread(scoped_ptr<base::Thread> render_thread,
   BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, callback);
 }
 
-// Responsible for logging the effective frame rate.
-class VideoFrameDeliveryLog {
- public:
-  VideoFrameDeliveryLog();
-
-  // Report that the frame posted with |frame_time| has been delivered.
-  void ChronicleFrameDelivery(base::TimeTicks frame_time);
-
- private:
-  // The following keep track of and log the effective frame rate whenever
-  // verbose logging is turned on.
-  base::TimeTicks last_frame_rate_log_time_;
-  int count_frames_rendered_;
-
-  DISALLOW_COPY_AND_ASSIGN(VideoFrameDeliveryLog);
-};
-
 // FrameSubscriber is a proxy to the ThreadSafeCaptureOracle that's compatible
 // with RenderWidgetHostViewFrameSubscriber. We create one per event type.
 class FrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
  public:
   FrameSubscriber(media::VideoCaptureOracle::Event event_type,
                   const scoped_refptr<media::ThreadSafeCaptureOracle>& oracle,
-                  VideoFrameDeliveryLog* delivery_log,
-                  base::WeakPtr<content::CursorRenderer> cursor_renderer)
+                  base::WeakPtr<content::CursorRenderer> cursor_renderer,
+                  base::WeakPtr<content::WindowActivityTracker> tracker)
       : event_type_(event_type),
         oracle_proxy_(oracle),
-        delivery_log_(delivery_log),
         cursor_renderer_(cursor_renderer),
+        window_activity_tracker_(tracker),
         weak_ptr_factory_(this) {}
 
   bool ShouldCaptureFrame(
@@ -146,18 +136,22 @@ class FrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
       base::WeakPtr<FrameSubscriber> frame_subscriber_,
       const media::ThreadSafeCaptureOracle::CaptureFrameCallback&
           capture_frame_cb,
-      const scoped_refptr<media::VideoFrame>& frame,
+      scoped_refptr<media::VideoFrame> frame,
       base::TimeTicks timestamp,
       const gfx::Rect& region_in_frame,
       bool success);
 
+  bool IsUserInteractingWithContent();
+
  private:
   const media::VideoCaptureOracle::Event event_type_;
   scoped_refptr<media::ThreadSafeCaptureOracle> oracle_proxy_;
-  VideoFrameDeliveryLog* const delivery_log_;
   // We need a weak pointer since FrameSubscriber is owned externally and
   // may outlive the cursor renderer.
   base::WeakPtr<CursorRenderer> cursor_renderer_;
+  // We need a weak pointer since FrameSubscriber is owned externally and
+  // may outlive the ui activity tracker.
+  base::WeakPtr<WindowActivityTracker> window_activity_tracker_;
   base::WeakPtrFactory<FrameSubscriber> weak_ptr_factory_;
 };
 
@@ -167,19 +161,19 @@ class FrameSubscriber : public RenderWidgetHostViewFrameSubscriber {
 // knows how to do the capture and prepare the result for delivery.
 //
 // In practice, this means (a) installing a RenderWidgetHostFrameSubscriber in
-// the RenderWidgetHostView, to process compositor updates, and (b) running a
-// timer to possibly initiate forced, non-event-driven captures needed by
-// downstream consumers that require frame repeats of unchanged content.
+// the RenderWidgetHostView, to process compositor updates, and (b) occasionally
+// initiating forced, non-event-driven captures needed by downstream consumers
+// that request "refresh frames" of unchanged content.
 //
 // All of this happens on the UI thread, although the
 // RenderWidgetHostViewFrameSubscriber we install may be dispatching updates
 // autonomously on some other thread.
 class ContentCaptureSubscription {
  public:
-  typedef base::Callback<
-      void(const base::TimeTicks&,
-           const scoped_refptr<media::VideoFrame>&,
-           const RenderWidgetHostViewFrameSubscriber::DeliverFrameCallback&)>
+  typedef base::Callback<void(
+      const base::TimeTicks&,
+      const scoped_refptr<media::VideoFrame>&,
+      const RenderWidgetHostViewFrameSubscriber::DeliverFrameCallback&)>
       CaptureCallback;
 
   // Create a subscription. Whenever a manual capture is required, the
@@ -191,8 +185,11 @@ class ContentCaptureSubscription {
       const CaptureCallback& capture_callback);
   ~ContentCaptureSubscription();
 
+  void MaybeCaptureForRefresh();
+
  private:
-  void OnTimer();
+  // Called for active frame refresh requests, or mouse activity events.
+  void OnEvent(FrameSubscriber* subscriber);
 
   // Maintain a weak reference to the RenderWidgetHost (via its routing ID),
   // since the instance could be destroyed externally during the lifetime of
@@ -200,15 +197,18 @@ class ContentCaptureSubscription {
   const int render_process_id_;
   const int render_widget_id_;
 
-  VideoFrameDeliveryLog delivery_log_;
-  scoped_ptr<FrameSubscriber> timer_subscriber_;
+  std::unique_ptr<FrameSubscriber> refresh_subscriber_;
+  std::unique_ptr<FrameSubscriber> mouse_activity_subscriber_;
   CaptureCallback capture_callback_;
-  base::Timer timer_;
 
   // Responsible for tracking the cursor state and input events to make
   // decisions and then render the mouse cursor on the video frame after
   // capture is completed.
-  scoped_ptr<content::CursorRenderer> cursor_renderer_;
+  std::unique_ptr<content::CursorRenderer> cursor_renderer_;
+
+  // Responsible for tracking the UI events and making a decision on whether
+  // user is actively interacting with content.
+  std::unique_ptr<content::WindowActivityTracker> window_activity_tracker_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentCaptureSubscription);
 };
@@ -240,10 +240,13 @@ class WebContentsCaptureMachine : public media::VideoCaptureMachine {
   void Start(const scoped_refptr<media::ThreadSafeCaptureOracle>& oracle_proxy,
              const media::VideoCaptureParams& params,
              const base::Callback<void(bool)> callback) override;
+  void Suspend() override;
+  void Resume() override;
   void Stop(const base::Closure& callback) override;
   bool IsAutoThrottlingEnabled() const override {
     return auto_throttling_enabled_;
   }
+  void MaybeCaptureForRefresh() override;
 
   // Starts a copy from the backing store or the composited surface. Must be run
   // on the UI BrowserThread. |deliver_frame_cb| will be run when the operation
@@ -259,7 +262,10 @@ class WebContentsCaptureMachine : public media::VideoCaptureMachine {
   bool InternalStart(
       const scoped_refptr<media::ThreadSafeCaptureOracle>& oracle_proxy,
       const media::VideoCaptureParams& params);
+  void InternalSuspend();
+  void InternalResume();
   void InternalStop(const base::Closure& callback);
+  void InternalMaybeCaptureForRefresh();
   bool IsStarted() const;
 
   // Computes the preferred size of the target RenderWidget for optimal capture.
@@ -304,7 +310,7 @@ class WebContentsCaptureMachine : public media::VideoCaptureMachine {
 
   // A dedicated worker thread on which SkBitmap->VideoFrame conversion will
   // occur. Only used when this activity cannot be done on the GPU.
-  scoped_ptr<base::Thread> render_thread_;
+  std::unique_ptr<base::Thread> render_thread_;
 
   // Makes all the decisions about which frames to copy, and how.
   scoped_refptr<media::ThreadSafeCaptureOracle> oracle_proxy_;
@@ -312,12 +318,14 @@ class WebContentsCaptureMachine : public media::VideoCaptureMachine {
   // Video capture parameters that this machine is started with.
   media::VideoCaptureParams capture_params_;
 
-  // Last known RenderView size.
-  gfx::Size last_view_size_;
-
   // Responsible for forwarding events from the active RenderWidgetHost to the
   // oracle, and initiating captures accordingly.
-  scoped_ptr<ContentCaptureSubscription> subscription_;
+  std::unique_ptr<ContentCaptureSubscription> subscription_;
+
+  // False while frame capture has been suspended. This prevents subscriptions
+  // from being created by RenewFrameSubscription() until frame capture is
+  // resumed.
+  bool frame_capture_active_;
 
   // Weak pointer factory used to invalidate callbacks.
   // NOTE: Weak pointers must be invalidated before all other member variables.
@@ -331,8 +339,8 @@ bool FrameSubscriber::ShouldCaptureFrame(
     base::TimeTicks present_time,
     scoped_refptr<media::VideoFrame>* storage,
     DeliverFrameCallback* deliver_frame_cb) {
-  TRACE_EVENT1("gpu.capture", "FrameSubscriber::ShouldCaptureFrame",
-               "instance", this);
+  TRACE_EVENT1("gpu.capture", "FrameSubscriber::ShouldCaptureFrame", "instance",
+               this);
 
   media::ThreadSafeCaptureOracle::CaptureFrameCallback capture_frame_cb;
 
@@ -343,8 +351,6 @@ bool FrameSubscriber::ShouldCaptureFrame(
     *deliver_frame_cb =
         base::Bind(&FrameSubscriber::DidCaptureFrame,
                    weak_ptr_factory_.GetWeakPtr(), capture_frame_cb, *storage);
-  if (oracle_decision)
-    delivery_log_->ChronicleFrameDelivery(present_time);
   return oracle_decision;
 }
 
@@ -352,7 +358,7 @@ void FrameSubscriber::DidCaptureFrame(
     base::WeakPtr<FrameSubscriber> frame_subscriber_,
     const media::ThreadSafeCaptureOracle::CaptureFrameCallback&
         capture_frame_cb,
-    const scoped_refptr<media::VideoFrame>& frame,
+    scoped_refptr<media::VideoFrame> frame,
     base::TimeTicks timestamp,
     const gfx::Rect& region_in_frame,
     bool success) {
@@ -365,12 +371,36 @@ void FrameSubscriber::DidCaptureFrame(
     // experience in any particular scenarios. Doing it prior to capture may
     // require evaluating region_in_frame in this file.
     if (frame_subscriber_ && frame_subscriber_->cursor_renderer_) {
-      if (frame_subscriber_->cursor_renderer_->SnapshotCursorState(
-              region_in_frame))
-        frame_subscriber_->cursor_renderer_->RenderOnVideoFrame(frame);
+      CursorRenderer* cursor_renderer =
+          frame_subscriber_->cursor_renderer_.get();
+      if (cursor_renderer->SnapshotCursorState(region_in_frame))
+        cursor_renderer->RenderOnVideoFrame(frame);
+      frame->metadata()->SetBoolean(
+          media::VideoFrameMetadata::INTERACTIVE_CONTENT,
+          frame_subscriber_->IsUserInteractingWithContent());
     }
   }
-  capture_frame_cb.Run(frame, timestamp, success);
+  capture_frame_cb.Run(std::move(frame), timestamp, success);
+}
+
+bool FrameSubscriber::IsUserInteractingWithContent() {
+  bool interactive_mode = false;
+  bool ui_activity = false;
+  if (window_activity_tracker_) {
+    ui_activity = window_activity_tracker_->IsUiInteractionActive();
+  }
+  if (cursor_renderer_) {
+    bool animation_active =
+        (base::TimeTicks::Now() -
+         oracle_proxy_->last_time_animation_was_detected()) <
+        base::TimeDelta::FromMilliseconds(kMinPeriodNoAnimationMillis);
+    if (ui_activity && !animation_active) {
+      interactive_mode = true;
+    } else if (animation_active && window_activity_tracker_.get()) {
+      window_activity_tracker_->Reset();
+    }
+  }
+  return interactive_mode;
 }
 
 ContentCaptureSubscription::ContentCaptureSubscription(
@@ -379,43 +409,49 @@ ContentCaptureSubscription::ContentCaptureSubscription(
     const CaptureCallback& capture_callback)
     : render_process_id_(source.GetProcess()->GetID()),
       render_widget_id_(source.GetRoutingID()),
-      delivery_log_(),
-      capture_callback_(capture_callback),
-      timer_(true, true) {
+      capture_callback_(capture_callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   RenderWidgetHostView* const view = source.GetView();
-// TODO(isheriff): Cursor resources currently only available on linux. Remove
-// this once we add the necessary resources for windows.
-#if defined(USE_AURA) && defined(OS_LINUX)
-  if (view)
-    cursor_renderer_.reset(
-        new content::CursorRendererAura(view->GetNativeView()));
+#if defined(USE_AURA) || defined(OS_MACOSX)
+  if (view) {
+    cursor_renderer_ = CursorRenderer::Create(view->GetNativeView());
+    window_activity_tracker_ =
+        WindowActivityTracker::Create(view->GetNativeView());
+  }
 #endif
-  timer_subscriber_.reset(new FrameSubscriber(
-      media::VideoCaptureOracle::kTimerPoll, oracle_proxy, &delivery_log_,
+  refresh_subscriber_.reset(new FrameSubscriber(
+      media::VideoCaptureOracle::kActiveRefreshRequest, oracle_proxy,
       cursor_renderer_ ? cursor_renderer_->GetWeakPtr()
-                       : base::WeakPtr<CursorRenderer>()));
+                       : base::WeakPtr<CursorRenderer>(),
+      window_activity_tracker_ ? window_activity_tracker_->GetWeakPtr()
+                               : base::WeakPtr<WindowActivityTracker>()));
+  mouse_activity_subscriber_.reset(new FrameSubscriber(
+      media::VideoCaptureOracle::kMouseCursorUpdate, oracle_proxy,
+      cursor_renderer_ ? cursor_renderer_->GetWeakPtr()
+                       : base::WeakPtr<CursorRenderer>(),
+      window_activity_tracker_ ? window_activity_tracker_->GetWeakPtr()
+                               : base::WeakPtr<WindowActivityTracker>()));
 
   // Subscribe to compositor updates. These will be serviced directly by the
   // oracle.
   if (view) {
-    scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber(
-        new FrameSubscriber(media::VideoCaptureOracle::kCompositorUpdate,
-                            oracle_proxy, &delivery_log_,
-                            cursor_renderer_
-                                ? cursor_renderer_->GetWeakPtr()
-                                : base::WeakPtr<CursorRenderer>()));
-    view->BeginFrameSubscription(subscriber.Pass());
+    std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber(
+        new FrameSubscriber(
+            media::VideoCaptureOracle::kCompositorUpdate, oracle_proxy,
+            cursor_renderer_ ? cursor_renderer_->GetWeakPtr()
+                             : base::WeakPtr<CursorRenderer>(),
+            window_activity_tracker_ ? window_activity_tracker_->GetWeakPtr()
+                                     : base::WeakPtr<WindowActivityTracker>()));
+    view->BeginFrameSubscription(std::move(subscriber));
   }
 
-  // Subscribe to timer events. This instance will service these as well.
-  timer_.Start(FROM_HERE,
-               std::max(oracle_proxy->min_capture_period(),
-                        base::TimeDelta::FromMilliseconds(media
-                            ::VideoCaptureOracle::kMinTimerPollPeriodMillis)),
-               base::Bind(&ContentCaptureSubscription::OnTimer,
-                          base::Unretained(this)));
+  // Subscribe to mouse movement and mouse cursor update events.
+  if (window_activity_tracker_) {
+    window_activity_tracker_->RegisterMouseInteractionObserver(
+        base::Bind(&ContentCaptureSubscription::OnEvent, base::Unretained(this),
+                   mouse_activity_subscriber_.get()));
+  }
 }
 
 ContentCaptureSubscription::~ContentCaptureSubscription() {
@@ -433,16 +469,23 @@ ContentCaptureSubscription::~ContentCaptureSubscription() {
     view->EndFrameSubscription();
 }
 
-void ContentCaptureSubscription::OnTimer() {
+void ContentCaptureSubscription::MaybeCaptureForRefresh() {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  TRACE_EVENT0("gpu.capture", "ContentCaptureSubscription::OnTimer");
+  OnEvent(refresh_subscriber_.get());
+}
+
+void ContentCaptureSubscription::OnEvent(FrameSubscriber* subscriber) {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  TRACE_EVENT0("gpu.capture", "ContentCaptureSubscription::OnEvent");
 
   scoped_refptr<media::VideoFrame> frame;
   RenderWidgetHostViewFrameSubscriber::DeliverFrameCallback deliver_frame_cb;
 
   const base::TimeTicks start_time = base::TimeTicks::Now();
-  if (timer_subscriber_->ShouldCaptureFrame(gfx::Rect(), start_time, &frame,
-                                            &deliver_frame_cb)) {
+  DCHECK(subscriber == refresh_subscriber_.get() ||
+         subscriber == mouse_activity_subscriber_.get());
+  if (subscriber->ShouldCaptureFrame(gfx::Rect(), start_time, &frame,
+                                     &deliver_frame_cb)) {
     capture_callback_.Run(start_time, frame, deliver_frame_cb);
   }
 }
@@ -457,12 +500,10 @@ void RenderVideoFrame(
   SkAutoLockPixels locker(input);
 
   // Sanity-check the captured bitmap.
-  if (input.empty() ||
-      !input.readyToDraw() ||
-      input.colorType() != kN32_SkColorType ||
-      input.width() < 2 || input.height() < 2) {
-    DVLOG(1) << "input unacceptable (size="
-             << input.getSize()
+  if (input.empty() || !input.readyToDraw() ||
+      input.colorType() != kN32_SkColorType || input.width() < 2 ||
+      input.height() < 2) {
+    DVLOG(1) << "input unacceptable (size=" << input.getSize()
              << ", ready=" << input.readyToDraw()
              << ", colorType=" << input.colorType() << ')';
     return;
@@ -493,11 +534,10 @@ void RenderVideoFrame(
       method = skia::ImageOperations::RESIZE_BOX;
     }
 
-    TRACE_EVENT_ASYNC_STEP_INTO0("gpu.capture",
-                                 "Capture", output.get(), "Scale");
-    scaled_bitmap = skia::ImageOperations::Resize(input, method,
-                                                  region_in_frame.width(),
-                                                  region_in_frame.height());
+    TRACE_EVENT_ASYNC_STEP_INTO0("gpu.capture", "Capture", output.get(),
+                                 "Scale");
+    scaled_bitmap = skia::ImageOperations::Resize(
+        input, method, region_in_frame.width(), region_in_frame.height());
   } else {
     scaled_bitmap = input;
   }
@@ -506,53 +546,21 @@ void RenderVideoFrame(
   {
     // Align to 2x2 pixel boundaries, as required by
     // media::CopyRGBToVideoFrame().
-    const gfx::Rect region_in_yv12_frame(region_in_frame.x() & ~1,
-                                         region_in_frame.y() & ~1,
-                                         region_in_frame.width() & ~1,
-                                         region_in_frame.height() & ~1);
+    const gfx::Rect region_in_yv12_frame(
+        region_in_frame.x() & ~1, region_in_frame.y() & ~1,
+        region_in_frame.width() & ~1, region_in_frame.height() & ~1);
     if (region_in_yv12_frame.IsEmpty())
       return;
 
     SkAutoLockPixels scaled_bitmap_locker(scaled_bitmap);
     media::CopyRGBToVideoFrame(
-        reinterpret_cast<uint8*>(scaled_bitmap.getPixels()),
-        scaled_bitmap.rowBytes(),
-        region_in_yv12_frame,
-        output.get());
+        reinterpret_cast<uint8_t*>(scaled_bitmap.getPixels()),
+        scaled_bitmap.rowBytes(), region_in_yv12_frame, output.get());
   }
 
   // The result is now ready.
   ignore_result(failure_handler.Release());
   done_cb.Run(region_in_frame, true);
-}
-
-VideoFrameDeliveryLog::VideoFrameDeliveryLog()
-    : last_frame_rate_log_time_(),
-      count_frames_rendered_(0) {
-}
-
-void VideoFrameDeliveryLog::ChronicleFrameDelivery(base::TimeTicks frame_time) {
-  // Log frame rate, if verbose logging is turned on.
-  static const base::TimeDelta kFrameRateLogInterval =
-      base::TimeDelta::FromSeconds(10);
-  if (last_frame_rate_log_time_.is_null()) {
-    last_frame_rate_log_time_ = frame_time;
-    count_frames_rendered_ = 0;
-  } else {
-    ++count_frames_rendered_;
-    const base::TimeDelta elapsed = frame_time - last_frame_rate_log_time_;
-    if (elapsed >= kFrameRateLogInterval) {
-      const double measured_fps =
-          count_frames_rendered_ / elapsed.InSecondsF();
-      UMA_HISTOGRAM_COUNTS(
-          "TabCapture.FrameRate",
-          static_cast<int>(measured_fps));
-      VLOG(1) << "Current measured frame rate for "
-              << "WebContentsVideoCaptureDevice is " << measured_fps << " FPS.";
-      last_frame_rate_log_time_ = frame_time;
-      count_frames_rendered_ = 0;
-    }
-  }
 }
 
 WebContentsCaptureMachine::WebContentsCaptureMachine(
@@ -563,9 +571,10 @@ WebContentsCaptureMachine::WebContentsCaptureMachine(
       initial_main_render_frame_id_(main_render_frame_id),
       tracker_(new WebContentsTracker(true)),
       auto_throttling_enabled_(enable_auto_throttling),
+      frame_capture_active_(true),
       weak_ptr_factory_(this) {
-  DVLOG(1) << "Created WebContentsCaptureMachine for "
-           << render_process_id << ':' << main_render_frame_id
+  DVLOG(1) << "Created WebContentsCaptureMachine for " << render_process_id
+           << ':' << main_render_frame_id
            << (auto_throttling_enabled_ ? " with auto-throttling enabled" : "");
 }
 
@@ -582,12 +591,9 @@ void WebContentsCaptureMachine::Start(
     const base::Callback<void(bool)> callback) {
   // Starts the capture machine asynchronously.
   BrowserThread::PostTaskAndReplyWithResult(
-      BrowserThread::UI,
-      FROM_HERE,
+      BrowserThread::UI, FROM_HERE,
       base::Bind(&WebContentsCaptureMachine::InternalStart,
-                 base::Unretained(this),
-                 oracle_proxy,
-                 params),
+                 base::Unretained(this), oracle_proxy, params),
       callback);
 }
 
@@ -597,7 +603,7 @@ bool WebContentsCaptureMachine::InternalStart(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(!IsStarted());
 
-  DCHECK(oracle_proxy.get());
+  DCHECK(oracle_proxy);
   oracle_proxy_ = oracle_proxy;
   capture_params_ = params;
 
@@ -616,17 +622,48 @@ bool WebContentsCaptureMachine::InternalStart(
   tracker_->Start(initial_render_process_id_, initial_main_render_frame_id_,
                   base::Bind(&WebContentsCaptureMachine::RenewFrameSubscription,
                              weak_ptr_factory_.GetWeakPtr()));
+  if (WebContents* contents = tracker_->web_contents())
+    contents->IncrementCapturerCount(ComputeOptimalViewSize());
 
   return true;
 }
 
+void WebContentsCaptureMachine::Suspend() {
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&WebContentsCaptureMachine::InternalSuspend,
+                 base::Unretained(this)));
+}
+
+void WebContentsCaptureMachine::InternalSuspend() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (!frame_capture_active_)
+    return;
+  frame_capture_active_ = false;
+  if (IsStarted())
+    RenewFrameSubscription(true);
+}
+
+void WebContentsCaptureMachine::Resume() {
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::Bind(&WebContentsCaptureMachine::InternalResume,
+                                     base::Unretained(this)));
+}
+
+void WebContentsCaptureMachine::InternalResume() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (frame_capture_active_)
+    return;
+  frame_capture_active_ = true;
+  if (IsStarted())
+    RenewFrameSubscription(true);
+}
+
 void WebContentsCaptureMachine::Stop(const base::Closure& callback) {
   // Stops the capture machine asynchronously.
-  BrowserThread::PostTask(
-      BrowserThread::UI, FROM_HERE, base::Bind(
-          &WebContentsCaptureMachine::InternalStop,
-          base::Unretained(this),
-          callback));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
+                          base::Bind(&WebContentsCaptureMachine::InternalStop,
+                                     base::Unretained(this), callback));
 }
 
 void WebContentsCaptureMachine::InternalStop(const base::Closure& callback) {
@@ -641,19 +678,33 @@ void WebContentsCaptureMachine::InternalStop(const base::Closure& callback) {
   // return false from here onward.
   weak_ptr_factory_.InvalidateWeakPtrs();
 
-  // Note: RenewFrameSubscription() must be called before stopping |tracker_| so
-  // the web_contents() can be notified that the capturing is ending.
   RenewFrameSubscription(false);
+  if (WebContents* contents = tracker_->web_contents())
+    contents->DecrementCapturerCount();
   tracker_->Stop();
 
   // The render thread cannot be stopped on the UI thread, so post a message
   // to the thread pool used for blocking operations.
-  if (render_thread_.get()) {
+  if (render_thread_) {
     BrowserThread::PostBlockingPoolTask(
-        FROM_HERE,
-        base::Bind(&DeleteOnWorkerThread, base::Passed(&render_thread_),
-                   callback));
+        FROM_HERE, base::Bind(&DeleteOnWorkerThread,
+                              base::Passed(&render_thread_), callback));
   }
+}
+
+void WebContentsCaptureMachine::MaybeCaptureForRefresh() {
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(&WebContentsCaptureMachine::InternalMaybeCaptureForRefresh,
+                 // Use of Unretained() is safe here since this task must run
+                 // before InternalStop().
+                 base::Unretained(this)));
+}
+
+void WebContentsCaptureMachine::InternalMaybeCaptureForRefresh() {
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
+  if (IsStarted() && subscription_)
+    subscription_->MaybeCaptureForRefresh();
 }
 
 void WebContentsCaptureMachine::Capture(
@@ -671,34 +722,25 @@ void WebContentsCaptureMachine::Capture(
     return;
   }
 
-  gfx::Size view_size = view->GetViewBounds().size();
-  if (view_size != last_view_size_) {
-    last_view_size_ = view_size;
-
-    // Measure the number of kilopixels.
-    UMA_HISTOGRAM_COUNTS_10000(
-        "TabCapture.ViewChangeKiloPixels",
-        view_size.width() * view_size.height() / 1024);
-  }
-
+  const gfx::Size view_size = view->GetViewBounds().size();
   if (view->CanCopyToVideoFrame()) {
     view->CopyFromCompositingSurfaceToVideoFrame(
-        gfx::Rect(view_size),
-        target,
+        gfx::Rect(view_size), target,
         base::Bind(&WebContentsCaptureMachine::
-                        DidCopyFromCompositingSurfaceToVideoFrame,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   start_time, deliver_frame_cb));
+                       DidCopyFromCompositingSurfaceToVideoFrame,
+                   weak_ptr_factory_.GetWeakPtr(), start_time,
+                   deliver_frame_cb));
   } else {
-    const gfx::Size fitted_size = view_size.IsEmpty() ? gfx::Size() :
-        media::ComputeLetterboxRegion(target->visible_rect(), view_size).size();
+    const gfx::Size fitted_size =
+        view_size.IsEmpty()
+            ? gfx::Size()
+            : media::ComputeLetterboxRegion(target->visible_rect(), view_size)
+                  .size();
     rwh->CopyFromBackingStore(
         gfx::Rect(),
         fitted_size,  // Size here is a request not always honored.
         base::Bind(&WebContentsCaptureMachine::DidCopyFromBackingStore,
-                   weak_ptr_factory_.GetWeakPtr(),
-                   start_time,
-                   target,
+                   weak_ptr_factory_.GetWeakPtr(), start_time, target,
                    deliver_frame_cb),
         kN32_SkColorType);
   }
@@ -724,18 +766,17 @@ gfx::Size WebContentsCaptureMachine::ComputeOptimalViewSize() const {
       // issues caused by "one pixel stretching" and/or odd-to-even dimension
       // scaling, and to improve the performance of consumers of the captured
       // video.
-      const auto HasIntendedAspectRatio =
-          [](const gfx::Size& size, int width_units, int height_units) {
+      const auto HasIntendedAspectRatio = [](
+          const gfx::Size& size, int width_units, int height_units) {
         const int a = height_units * size.width();
         const int b = width_units * size.height();
         const int percentage_diff = 100 * std::abs((a - b)) / b;
         return percentage_diff <= 1;  // Effectively, anything strictly <2%.
       };
-      const auto RoundToExactAspectRatio =
-          [](const gfx::Size& size, int width_step, int height_step) {
-        const int adjusted_height =
-            std::max(size.height() - (size.height() % height_step),
-                     height_step);
+      const auto RoundToExactAspectRatio = [](const gfx::Size& size,
+                                              int width_step, int height_step) {
+        const int adjusted_height = std::max(
+            size.height() - (size.height() % height_step), height_step);
         DCHECK_EQ((adjusted_height * width_step) % height_step, 0);
         return gfx::Size(adjusted_height * width_step / height_step,
                          adjusted_height);
@@ -780,16 +821,14 @@ void WebContentsCaptureMachine::DidCopyFromBackingStore(
     ReadbackResponse response) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  base::TimeTicks now = base::TimeTicks::Now();
-  DCHECK(render_thread_.get());
+  DCHECK(render_thread_);
   if (response == READBACK_SUCCESS) {
-    UMA_HISTOGRAM_TIMES("TabCapture.CopyTimeBitmap", now - start_time);
     TRACE_EVENT_ASYNC_STEP_INTO0("gpu.capture", "Capture", target.get(),
                                  "Render");
     render_thread_->task_runner()->PostTask(
         FROM_HERE, media::BindToCurrentLoop(
-            base::Bind(&RenderVideoFrame, bitmap, target,
-                              base::Bind(deliver_frame_cb, start_time))));
+                       base::Bind(&RenderVideoFrame, bitmap, target,
+                                  base::Bind(deliver_frame_cb, start_time))));
   } else {
     // Capture can fail due to transient issues, so just skip this frame.
     DVLOG(1) << "CopyFromBackingStore failed; skipping frame.";
@@ -804,14 +843,9 @@ void WebContentsCaptureMachine::DidCopyFromCompositingSurfaceToVideoFrame(
     const gfx::Rect& region_in_frame,
     bool success) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  base::TimeTicks now = base::TimeTicks::Now();
 
-  if (success) {
-    UMA_HISTOGRAM_TIMES("TabCapture.CopyTimeVideoFrame", now - start_time);
-  } else {
-    // Capture can fail due to transient issues, so just skip this frame.
-    DVLOG(1) << "CopyFromCompositingSurface failed; skipping frame.";
-  }
+  // Capture can fail due to transient issues, so just skip this frame.
+  DVLOG_IF(1, !success) << "CopyFromCompositingSurface failed; skipping frame.";
   deliver_frame_cb.Run(start_time, region_in_frame, success);
 }
 
@@ -822,15 +856,13 @@ void WebContentsCaptureMachine::RenewFrameSubscription(bool had_target) {
       had_target ? tracker_->GetTargetRenderWidgetHost() : nullptr;
 
   // Always destroy the old subscription before creating a new one.
-  const bool had_subscription = !!subscription_;
-  subscription_.reset();
-
-  DVLOG(1) << "Renewing frame subscription to RWH@" << rwh
-           << ", had_subscription=" << had_subscription;
+  if (subscription_) {
+    DVLOG(1) << "Cancelling existing ContentCaptureSubscription.";
+    subscription_.reset();
+  }
 
   if (!rwh) {
-    if (had_subscription && tracker_->web_contents())
-      tracker_->web_contents()->DecrementCapturerCount();
+    DVLOG(1) << "Cannot renew ContentCaptureSubscription: no RWH target.";
     if (IsStarted()) {
       // Tracking of WebContents and/or its main frame has failed before Stop()
       // was called, so report this as an error:
@@ -840,12 +872,12 @@ void WebContentsCaptureMachine::RenewFrameSubscription(bool had_target) {
     return;
   }
 
-  if (!had_subscription && tracker_->web_contents())
-    tracker_->web_contents()->IncrementCapturerCount(ComputeOptimalViewSize());
-
-  subscription_.reset(new ContentCaptureSubscription(*rwh, oracle_proxy_,
-      base::Bind(&WebContentsCaptureMachine::Capture,
-                 weak_ptr_factory_.GetWeakPtr())));
+  if (frame_capture_active_) {
+    DVLOG(1) << "Renewing ContentCaptureSubscription to RWH@" << rwh;
+    subscription_.reset(new ContentCaptureSubscription(
+        *rwh, oracle_proxy_, base::Bind(&WebContentsCaptureMachine::Capture,
+                                        weak_ptr_factory_.GetWeakPtr())));
+  }
 }
 
 void WebContentsCaptureMachine::UpdateCaptureSize() {
@@ -878,41 +910,56 @@ WebContentsVideoCaptureDevice::WebContentsVideoCaptureDevice(
     int main_render_frame_id,
     bool enable_auto_throttling)
     : core_(new media::ScreenCaptureDeviceCore(
-          scoped_ptr<media::VideoCaptureMachine>(new WebContentsCaptureMachine(
-              render_process_id,
-              main_render_frame_id,
-              enable_auto_throttling)))) {}
+          std::unique_ptr<media::VideoCaptureMachine>(
+              new WebContentsCaptureMachine(render_process_id,
+                                            main_render_frame_id,
+                                            enable_auto_throttling)))) {}
 
 WebContentsVideoCaptureDevice::~WebContentsVideoCaptureDevice() {
   DVLOG(2) << "WebContentsVideoCaptureDevice@" << this << " destroying.";
 }
 
 // static
-media::VideoCaptureDevice* WebContentsVideoCaptureDevice::Create(
-    const std::string& device_id) {
+std::unique_ptr<media::VideoCaptureDevice>
+WebContentsVideoCaptureDevice::Create(const std::string& device_id) {
   // Parse device_id into render_process_id and main_render_frame_id.
-  int render_process_id = -1;
-  int main_render_frame_id = -1;
-  if (!WebContentsCaptureUtil::ExtractTabCaptureTarget(
-           device_id, &render_process_id, &main_render_frame_id)) {
+  WebContentsMediaCaptureId media_id;
+  if (!WebContentsMediaCaptureId::Parse(device_id, &media_id)) {
     return NULL;
   }
 
-  return new WebContentsVideoCaptureDevice(
-      render_process_id,
-      main_render_frame_id,
-      WebContentsCaptureUtil::IsAutoThrottlingOptionSet(device_id));
+  return std::unique_ptr<media::VideoCaptureDevice>(
+      new WebContentsVideoCaptureDevice(media_id.render_process_id,
+                                        media_id.main_render_frame_id,
+                                        media_id.enable_auto_throttling));
 }
 
 void WebContentsVideoCaptureDevice::AllocateAndStart(
     const media::VideoCaptureParams& params,
-    scoped_ptr<Client> client) {
+    std::unique_ptr<Client> client) {
   DVLOG(1) << "Allocating " << params.requested_format.frame_size.ToString();
-  core_->AllocateAndStart(params, client.Pass());
+  core_->AllocateAndStart(params, std::move(client));
+}
+
+void WebContentsVideoCaptureDevice::RequestRefreshFrame() {
+  core_->RequestRefreshFrame();
+}
+
+void WebContentsVideoCaptureDevice::MaybeSuspend() {
+  core_->Suspend();
+}
+
+void WebContentsVideoCaptureDevice::Resume() {
+  core_->Resume();
 }
 
 void WebContentsVideoCaptureDevice::StopAndDeAllocate() {
   core_->StopAndDeAllocate();
+}
+
+void WebContentsVideoCaptureDevice::OnUtilizationReport(int frame_feedback_id,
+                                                        double utilization) {
+  core_->OnConsumerReportingUtilization(frame_feedback_id, utilization);
 }
 
 }  // namespace content

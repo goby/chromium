@@ -4,19 +4,31 @@
 
 #include "net/url_request/url_request_intercepting_job_factory.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "net/url_request/url_request_interceptor.h"
 
 namespace net {
 
 URLRequestInterceptingJobFactory::URLRequestInterceptingJobFactory(
-    scoped_ptr<URLRequestJobFactory> job_factory,
-    scoped_ptr<URLRequestInterceptor> interceptor)
-    : job_factory_(job_factory.Pass()),
-      interceptor_(interceptor.Pass()) {
-}
+    std::unique_ptr<URLRequestJobFactory> job_factory,
+    std::unique_ptr<URLRequestInterceptor> interceptor)
+    : owning_(true),
+      job_factory_(job_factory.release()),
+      interceptor_(interceptor.release()) {}
 
-URLRequestInterceptingJobFactory::~URLRequestInterceptingJobFactory() {}
+URLRequestInterceptingJobFactory::URLRequestInterceptingJobFactory(
+    URLRequestJobFactory* job_factory,
+    URLRequestInterceptor* interceptor)
+    : owning_(false), job_factory_(job_factory), interceptor_(interceptor) {}
+
+URLRequestInterceptingJobFactory::~URLRequestInterceptingJobFactory() {
+  if (owning_) {
+    delete job_factory_;
+    delete interceptor_;
+  }
+}
 
 URLRequestJob* URLRequestInterceptingJobFactory::
 MaybeCreateJobWithProtocolHandler(

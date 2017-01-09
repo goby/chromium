@@ -5,13 +5,14 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_GCD_PRIVATE_PRIVET_V3_SESSION_H_
 #define CHROME_BROWSER_EXTENSIONS_API_GCD_PRIVATE_PRIVET_V3_SESSION_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/common/extensions/api/gcd_private.h"
 #include "net/url_request/url_fetcher.h"
@@ -114,7 +115,7 @@ class PrivetV3Session {
   std::string commitment_;
 
   // Key exchange algorithm for pairing.
-  scoped_ptr<crypto::P224EncryptedKeyExchange> spake_;
+  std::unique_ptr<crypto::P224EncryptedKeyExchange> spake_;
 
   // HTTPS port of the device.
   uint16_t https_port_ = 0;
@@ -123,7 +124,7 @@ class PrivetV3Session {
   bool use_https_ = false;
 
   // List of fetches to cancel when session is destroyed.
-  ScopedVector<FetcherDelegate> fetchers_;
+  std::vector<std::unique_ptr<FetcherDelegate>> fetchers_;
 
   // Intercepts POST requests. Used by tests only.
   base::Callback<void(const base::DictionaryValue&)> on_post_data_;

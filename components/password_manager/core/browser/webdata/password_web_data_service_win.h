@@ -7,6 +7,7 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "components/webdata/common/web_data_results.h"
@@ -66,8 +67,8 @@ class PasswordWebDataService : public WebDataServiceBase {
                                      WebDatabase* db);
   WebDatabase::State RemoveIE7LoginImpl(const IE7PasswordInfo& info,
                                         WebDatabase* db);
-  scoped_ptr<WDTypedResult> GetIE7LoginImpl(const IE7PasswordInfo& info,
-                                            WebDatabase* db);
+  std::unique_ptr<WDTypedResult> GetIE7LoginImpl(const IE7PasswordInfo& info,
+                                                 WebDatabase* db);
 
   DISALLOW_COPY_AND_ASSIGN(PasswordWebDataService);
 };

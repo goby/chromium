@@ -12,6 +12,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/storage_monitor/removable_device_constants.h"
 #include "components/storage_monitor/storage_monitor.h"
 #include "content/public/browser/browser_thread.h"
@@ -70,7 +71,6 @@ void FilterAttachedDevicesOnFileThread(MediaStorageUtil::DeviceIdSet* devices) {
 
     if (type == StorageInfo::FIXED_MASS_STORAGE ||
         type == StorageInfo::ITUNES ||
-        type == StorageInfo::IPHOTO ||
         type == StorageInfo::PICASA) {
       if (!base::PathExists(base::FilePath::FromUTF8Unsafe(unique_id)))
         missing_devices.insert(*it);
@@ -193,7 +193,6 @@ base::FilePath MediaStorageUtil::FindDevicePathById(
 
   if (type == StorageInfo::FIXED_MASS_STORAGE ||
       type == StorageInfo::ITUNES ||
-      type == StorageInfo::IPHOTO ||
       type == StorageInfo::PICASA) {
     // For this type, the unique_id is the path.
     return base::FilePath::FromUTF8Unsafe(unique_id);

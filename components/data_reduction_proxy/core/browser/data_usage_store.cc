@@ -11,13 +11,12 @@
 
 #include "components/data_reduction_proxy/core/browser/data_usage_store.h"
 
-#include <stdlib.h>
-
 #include <algorithm>
 #include <string>
 #include <utility>
 
 #include "base/metrics/histogram_macros.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
@@ -57,7 +56,11 @@ base::Time BucketLowerBoundary(base::Time time) {
   exploded.minute -= exploded.minute % kDataUsageBucketLengthInMinutes;
   exploded.second = 0;
   exploded.millisecond = 0;
-  return base::Time::FromUTCExploded(exploded);
+
+  base::Time out_time;
+  bool conversion_success = base::Time::FromUTCExploded(exploded, &out_time);
+  DCHECK(conversion_success);
+  return out_time;
 }
 
 }  // namespace
@@ -70,7 +73,7 @@ DataUsageStore::DataUsageStore(DataStore* db)
 }
 
 DataUsageStore::~DataUsageStore() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 }
 
 void DataUsageStore::LoadDataUsage(std::vector<DataUsageBucket>* data_usage) {
@@ -90,17 +93,17 @@ void DataUsageStore::LoadDataUsage(std::vector<DataUsageBucket>* data_usage) {
 }
 
 void DataUsageStore::LoadCurrentDataUsageBucket(DataUsageBucket* current) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(current);
 
   std::string current_index_string;
   DataStore::Status index_read_status =
       db_->Get(kCurrentBucketIndexKey, &current_index_string);
 
-  if (index_read_status == DataStore::Status::OK)
-    current_bucket_index_ = atoi(current_index_string.c_str());
-  else
+  if (index_read_status != DataStore::Status::OK ||
+      !base::StringToInt(current_index_string, &current_bucket_index_)) {
     current_bucket_index_ = 0;
+  }
 
   DCHECK_GE(current_bucket_index_, 0);
   DCHECK_LT(current_bucket_index_, kNumDataUsageBuckets);
@@ -114,7 +117,7 @@ void DataUsageStore::LoadCurrentDataUsageBucket(DataUsageBucket* current) {
 
 void DataUsageStore::StoreCurrentDataUsageBucket(
     const DataUsageBucket& current) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(current_bucket_index_ >= 0 &&
          current_bucket_index_ < kNumDataUsageBuckets);
 
@@ -130,9 +133,8 @@ void DataUsageStore::StoreCurrentDataUsageBucket(
       base::Time::FromInternalValue(current.last_updated_timestamp());
   std::map<std::string, std::string> buckets_to_save;
   int num_buckets_since_last_saved = BucketOffsetFromLastSaved(last_updated);
-  DataUsageBucket empty_bucket;
   for (int i = 0; i < num_buckets_since_last_saved - 1; ++i)
-    GenerateKeyAndAddToMap(empty_bucket, &buckets_to_save, true);
+    GenerateKeyAndAddToMap(DataUsageBucket(), &buckets_to_save, true);
 
   GenerateKeyAndAddToMap(current, &buckets_to_save,
                          num_buckets_since_last_saved > 0);
@@ -140,10 +142,8 @@ void DataUsageStore::StoreCurrentDataUsageBucket(
   current_bucket_last_updated_ =
       base::Time::FromInternalValue(current.last_updated_timestamp());
 
-  std::stringstream current_index_string;
-  current_index_string << current_bucket_index_;
   buckets_to_save.insert(std::pair<std::string, std::string>(
-      kCurrentBucketIndexKey, current_index_string.str()));
+      kCurrentBucketIndexKey, base::IntToString(current_bucket_index_)));
 
   DataStore::Status status = db_->Put(buckets_to_save);
   if (status != DataStore::Status::OK) {
@@ -225,7 +225,6 @@ bool DataUsageStore::BucketOverlapsInterval(
     const base::Time& start_interval,
     const base::Time& end_interval) {
   DCHECK(!bucket_last_updated.is_null());
-  DCHECK(!start_interval.is_null());
   DCHECK(!end_interval.is_null());
   DCHECK_LE(start_interval, end_interval);
 
@@ -253,7 +252,8 @@ void DataUsageStore::GenerateKeyAndAddToMap(
   bool success = bucket.SerializeToString(&bucket_value);
   DCHECK(success);
 
-  map->insert(std::pair<std::string, std::string>(bucket_key, bucket_value));
+  map->insert(std::pair<std::string, std::string>(std::move(bucket_key),
+                                                  std::move(bucket_value)));
 }
 
 int DataUsageStore::BucketOffsetFromLastSaved(

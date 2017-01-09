@@ -2,33 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/dom/IncrementLoadEventDelayCount.h"
 
 #include "core/dom/Document.h"
+#include "wtf/PtrUtil.h"
+#include <memory>
 
 namespace blink {
 
-PassOwnPtr<IncrementLoadEventDelayCount> IncrementLoadEventDelayCount::create(Document& document)
-{
-    return adoptPtr(new IncrementLoadEventDelayCount(document));
+std::unique_ptr<IncrementLoadEventDelayCount>
+IncrementLoadEventDelayCount::create(Document& document) {
+  return WTF::wrapUnique(new IncrementLoadEventDelayCount(document));
 }
 
 IncrementLoadEventDelayCount::IncrementLoadEventDelayCount(Document& document)
-    : m_document(&document)
-{
-    document.incrementLoadEventDelayCount();
+    : m_document(&document) {
+  document.incrementLoadEventDelayCount();
 }
 
-IncrementLoadEventDelayCount::~IncrementLoadEventDelayCount()
-{
-    m_document->decrementLoadEventDelayCount();
+IncrementLoadEventDelayCount::~IncrementLoadEventDelayCount() {
+  m_document->decrementLoadEventDelayCount();
 }
 
-void IncrementLoadEventDelayCount::documentChanged(Document& newDocument)
-{
-    newDocument.incrementLoadEventDelayCount();
-    m_document->decrementLoadEventDelayCount();
-    m_document = &newDocument;
+void IncrementLoadEventDelayCount::documentChanged(Document& newDocument) {
+  newDocument.incrementLoadEventDelayCount();
+  m_document->decrementLoadEventDelayCount();
+  m_document = &newDocument;
 }
-}
+}  // namespace blink

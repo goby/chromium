@@ -5,12 +5,16 @@
 #ifndef CONTENT_RENDERER_IMAGE_DOWNLOADER_IMAGE_DOWNLOADER_IMPL_H_
 #define CONTENT_RENDERER_IMAGE_DOWNLOADER_IMAGE_DOWNLOADER_IMPL_H_
 
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "content/common/image_downloader/image_downloader.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "mojo/public/cpp/bindings/strong_binding.h"
+#include "content/public/renderer/render_thread_observer.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "url/gurl.h"
 
 class SkBitmap;
@@ -24,21 +28,30 @@ namespace content {
 class MultiResolutionImageResourceFetcher;
 class RenderFrame;
 
-class ImageDownloaderImpl : public image_downloader::ImageDownloader,
-                            public RenderFrameObserver {
+class ImageDownloaderImpl : public mojom::ImageDownloader,
+                            public RenderFrameObserver,
+                            public RenderThreadObserver {
  public:
-  static void CreateMojoService(
-      RenderFrame* render_frame,
-      mojo::InterfaceRequest<image_downloader::ImageDownloader> request);
-
- private:
-  ImageDownloaderImpl(
-      RenderFrame* render_frame,
-      mojo::InterfaceRequest<image_downloader::ImageDownloader> request);
   ~ImageDownloaderImpl() override;
 
+  static void CreateMojoService(RenderFrame* render_frame,
+                                mojom::ImageDownloaderRequest request);
+
+  // RenderThreadObserver implementation.
+  void OnRenderProcessShutdown() override;
+
+ private:
+  ImageDownloaderImpl(RenderFrame* render_frame,
+                      mojom::ImageDownloaderRequest request);
+
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   // ImageDownloader methods:
-  void DownloadImage(image_downloader::DownloadRequestPtr req,
+  void DownloadImage(const GURL& url,
+                     bool is_favicon,
+                     uint32_t max_bitmap_size,
+                     bool bypass_cache,
                      const DownloadImageCallback& callback) override;
 
   // Requests to fetch an image. When done, the ImageDownloaderImpl
@@ -71,14 +84,13 @@ class ImageDownloaderImpl : public image_downloader::ImageDownloader,
       const std::vector<gfx::Size>& result_original_image_sizes,
       const DownloadImageCallback& callback);
 
-  // We use StrongBinding to ensure deletion of "this" when connection closed
-  mojo::StrongBinding<ImageDownloader> binding_;
-
   typedef ScopedVector<MultiResolutionImageResourceFetcher>
       ImageResourceFetcherList;
 
   // ImageResourceFetchers schedule via FetchImage.
   ImageResourceFetcherList image_fetchers_;
+
+  mojo::Binding<mojom::ImageDownloader> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageDownloaderImpl);
 };

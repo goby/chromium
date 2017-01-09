@@ -5,19 +5,21 @@
 #ifndef STORAGE_BROWSER_QUOTA_QUOTA_MANAGER_H_
 #define STORAGE_BROWSER_QUOTA_QUOTA_MANAGER_H_
 
+#include <stdint.h>
+
 #include <deque>
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "storage/browser/quota/quota_callbacks.h"
@@ -59,16 +61,16 @@ class UsageTracker;
 struct QuotaManagerDeleter;
 
 struct STORAGE_EXPORT UsageAndQuota {
-  int64 usage;
-  int64 global_limited_usage;
-  int64 quota;
-  int64 available_disk_space;
+  int64_t usage;
+  int64_t global_limited_usage;
+  int64_t quota;
+  int64_t available_disk_space;
 
   UsageAndQuota();
-  UsageAndQuota(int64 usage,
-                int64 global_limited_usage,
-                int64 quota,
-                int64 available_disk_space);
+  UsageAndQuota(int64_t usage,
+                int64_t global_limited_usage,
+                int64_t quota,
+                int64_t available_disk_space);
 };
 
 // TODO(calamity): Use this in the temporary storage eviction path.
@@ -83,24 +85,25 @@ class STORAGE_EXPORT QuotaEvictionPolicy {
   virtual void GetEvictionOrigin(
       const scoped_refptr<SpecialStoragePolicy>& special_storage_policy,
       const std::set<GURL>& exceptions,
-      const std::map<GURL, int64>& usage_map,
-      int64 global_quota,
+      const std::map<GURL, int64_t>& usage_map,
+      int64_t global_quota,
       const GetOriginCallback& callback) = 0;
 };
 
 // An interface called by QuotaTemporaryStorageEvictor.
 class STORAGE_EXPORT QuotaEvictionHandler {
  public:
-  typedef StatusCallback EvictOriginDataCallback;
-  typedef base::Callback<void(QuotaStatusCode status,
-                              const UsageAndQuota& usage_and_quota)>
-      UsageAndQuotaCallback;
+  using EvictOriginDataCallback = StatusCallback;
+  using UsageAndQuotaCallback = base::Callback<
+      void(QuotaStatusCode status, const UsageAndQuota& usage_and_quota)>;
+  using VolumeInfoCallback = base::Callback<
+      void(bool success, uint64_t available_space, uint64_t total_space)>;
 
   // Returns next origin to evict.  It might return an empty GURL when there are
   // no evictable origins.
   virtual void GetEvictionOrigin(StorageType type,
                                  const std::set<GURL>& extra_exceptions,
-                                 int64 global_quota,
+                                 int64_t global_quota,
                                  const GetOriginCallback& callback) = 0;
 
   virtual void EvictOriginData(
@@ -108,6 +111,7 @@ class STORAGE_EXPORT QuotaEvictionHandler {
       StorageType type,
       const EvictOriginDataCallback& callback) = 0;
 
+  virtual void AsyncGetVolumeInfo(const VolumeInfoCallback& callback) = 0;
   virtual void GetUsageAndQuotaForEviction(
       const UsageAndQuotaCallback& callback) = 0;
 
@@ -116,13 +120,11 @@ class STORAGE_EXPORT QuotaEvictionHandler {
 };
 
 struct UsageInfo {
-  UsageInfo(const std::string& host, StorageType type, int64 usage)
-      : host(host),
-        type(type),
-        usage(usage) {}
+  UsageInfo(const std::string& host, StorageType type, int64_t usage)
+      : host(host), type(type), usage(usage) {}
   std::string host;
   StorageType type;
-  int64 usage;
+  int64_t usage;
 };
 
 // The quota manager class.  This class is instantiated per profile and
@@ -134,12 +136,11 @@ class STORAGE_EXPORT QuotaManager
       public base::RefCountedThreadSafe<QuotaManager, QuotaManagerDeleter> {
  public:
   typedef base::Callback<void(QuotaStatusCode,
-                              int64 /* usage */,
-                              int64 /* quota */)>
-      GetUsageAndQuotaCallback;
+                              int64_t /* usage */,
+                              int64_t /* quota */)> GetUsageAndQuotaCallback;
 
-  static const int64 kIncognitoDefaultQuotaLimit;
-  static const int64 kNoLimit;
+  static const int64_t kIncognitoDefaultQuotaLimit;
+  static const int64_t kNoLimit;
 
   QuotaManager(
       bool is_incognito,
@@ -185,7 +186,7 @@ class STORAGE_EXPORT QuotaManager
   void NotifyStorageModified(QuotaClient::ID client_id,
                              const GURL& origin,
                              StorageType type,
-                             int64 delta);
+                             int64_t delta);
 
   // Used to avoid evicting origins with open pages.
   // A call to NotifyOriginInUse must be balanced by a later call
@@ -203,7 +204,7 @@ class STORAGE_EXPORT QuotaManager
 
   // Set the eviction policy to use when choosing an origin to evict.
   void SetTemporaryStorageEvictionPolicy(
-      scoped_ptr<QuotaEvictionPolicy> policy);
+      std::unique_ptr<QuotaEvictionPolicy> policy);
 
   // DeleteOriginData and DeleteHostData (surprisingly enough) delete data of a
   // particular StorageType associated with either a specific origin or set of
@@ -226,13 +227,13 @@ class STORAGE_EXPORT QuotaManager
   void GetTemporaryGlobalQuota(const QuotaCallback& callback);
 
   // Ok to call with NULL callback.
-  void SetTemporaryGlobalOverrideQuota(int64 new_quota,
+  void SetTemporaryGlobalOverrideQuota(int64_t new_quota,
                                        const QuotaCallback& callback);
 
   void GetPersistentHostQuota(const std::string& host,
                               const QuotaCallback& callback);
   void SetPersistentHostQuota(const std::string& host,
-                              int64 new_quota,
+                              int64_t new_quota,
                               const QuotaCallback& callback);
   void GetGlobalUsage(StorageType type, const GlobalUsageCallback& callback);
   void GetHostUsage(const std::string& host, StorageType type,
@@ -269,7 +270,7 @@ class STORAGE_EXPORT QuotaManager
   // utilized by a single host (ie. 5 for 20%).
   static const int kPerHostTemporaryPortion;
 
-  static const int64 kPerHostPersistentQuotaLimit;
+  static const int64_t kPerHostPersistentQuotaLimit;
 
   static const char kDatabaseName[];
 
@@ -284,8 +285,8 @@ class STORAGE_EXPORT QuotaManager
   // These are kept non-const so that test code can change the value.
   // TODO(kinuko): Make this a real const value and add a proper way to set
   // the quota for syncable storage. (http://crbug.com/155488)
-  static int64 kMinimumPreserveForSystem;
-  static int64 kSyncableStorageDefaultHostQuota;
+  static int64_t kMinimumPreserveForSystem;
+  static int64_t kSyncableStorageDefaultHostQuota;
 
  protected:
   ~QuotaManager() override;
@@ -317,9 +318,10 @@ class STORAGE_EXPORT QuotaManager
   typedef std::vector<QuotaTableEntry> QuotaTableEntries;
   typedef std::vector<OriginInfoTableEntry> OriginInfoTableEntries;
 
-  // Function pointer type used to store the function which returns the
-  // available disk space for the disk containing the given FilePath.
-  typedef int64 (*GetAvailableDiskSpaceFn)(const base::FilePath&);
+  // Function pointer type used to store the function which returns
+  // information about the volume containing the given FilePath.
+  using GetVolumeInfoFn = bool(*)(const base::FilePath&,
+                                  uint64_t* available, uint64_t* total);
 
   typedef base::Callback<void(const QuotaTableEntries&)>
       DumpQuotaTableCallback;
@@ -327,9 +329,9 @@ class STORAGE_EXPORT QuotaManager
       DumpOriginInfoTableCallback;
 
   typedef CallbackQueue<base::Closure> ClosureQueue;
-  typedef CallbackQueue<AvailableSpaceCallback, QuotaStatusCode, int64>
+  typedef CallbackQueue<AvailableSpaceCallback, QuotaStatusCode, int64_t>
       AvailableSpaceCallbackQueue;
-  typedef CallbackQueueMap<QuotaCallback, std::string, QuotaStatusCode, int64>
+  typedef CallbackQueueMap<QuotaCallback, std::string, QuotaStatusCode, int64_t>
       HostQuotaCallbackMap;
 
   struct EvictionContext {
@@ -367,12 +369,11 @@ class STORAGE_EXPORT QuotaManager
       const GURL& origin,
       StorageType type,
       base::Time accessed_time);
-  void NotifyStorageModifiedInternal(
-      QuotaClient::ID client_id,
-      const GURL& origin,
-      StorageType type,
-      int64 delta,
-      base::Time modified_time);
+  void NotifyStorageModifiedInternal(QuotaClient::ID client_id,
+                                     const GURL& origin,
+                                     StorageType type,
+                                     int64_t delta,
+                                     base::Time modified_time);
 
   void DumpQuotaTable(const DumpQuotaTableCallback& callback);
   void DumpOriginInfoTable(const DumpOriginInfoTableCallback& callback);
@@ -392,10 +393,12 @@ class STORAGE_EXPORT QuotaManager
   void DidOriginDataEvicted(QuotaStatusCode status);
 
   void ReportHistogram();
-  void DidGetTemporaryGlobalUsageForHistogram(int64 usage,
-                                              int64 unlimited_usage);
-  void DidGetPersistentGlobalUsageForHistogram(int64 usage,
-                                               int64 unlimited_usage);
+  void DidGetTemporaryGlobalUsageForHistogram(int64_t usage,
+                                              int64_t unlimited_usage);
+  void DidGetPersistentGlobalUsageForHistogram(int64_t usage,
+                                               int64_t unlimited_usage);
+  void DidDumpOriginInfoTableForHistogram(
+      const OriginInfoTableEntries& entries);
 
   std::set<GURL> GetEvictionOriginExceptions(
       const std::set<GURL>& extra_exceptions);
@@ -405,35 +408,41 @@ class STORAGE_EXPORT QuotaManager
   // QuotaEvictionHandler.
   void GetEvictionOrigin(StorageType type,
                          const std::set<GURL>& extra_exceptions,
-                         int64 global_quota,
+                         int64_t global_quota,
                          const GetOriginCallback& callback) override;
   void EvictOriginData(const GURL& origin,
                        StorageType type,
                        const EvictOriginDataCallback& callback) override;
   void GetUsageAndQuotaForEviction(
       const UsageAndQuotaCallback& callback) override;
+  void AsyncGetVolumeInfo(const VolumeInfoCallback& callback) override;
+
+  void DidGetVolumeInfo(
+      const VolumeInfoCallback& callback,
+      uint64_t* available_space, uint64_t* total_space, bool success);
 
   void GetLRUOrigin(StorageType type, const GetOriginCallback& callback);
 
   void DidSetTemporaryGlobalOverrideQuota(const QuotaCallback& callback,
-                                          const int64* new_quota,
+                                          const int64_t* new_quota,
                                           bool success);
   void DidGetPersistentHostQuota(const std::string& host,
-                                 const int64* quota,
+                                 const int64_t* quota,
                                  bool success);
   void DidSetPersistentHostQuota(const std::string& host,
                                  const QuotaCallback& callback,
-                                 const int64* new_quota,
+                                 const int64_t* new_quota,
                                  bool success);
-  void DidInitialize(int64* temporary_quota_override,
-                     int64* desired_available_space,
+  void DidInitialize(int64_t* temporary_quota_override,
+                     int64_t* desired_available_space,
                      bool success);
   void DidGetLRUOrigin(const GURL* origin,
                        bool success);
-  void DidGetInitialTemporaryGlobalQuota(QuotaStatusCode status,
-                                         int64 quota_unused);
+  void DidGetInitialTemporaryGlobalQuota(base::TimeTicks start_ticks,
+                                         QuotaStatusCode status,
+                                         int64_t quota_unused);
   void DidInitializeTemporaryOriginsInfo(bool success);
-  void DidGetAvailableSpace(int64 space);
+  void DidGetAvailableSpace(int64_t space);
   void DidDatabaseWork(bool success);
 
   void DeleteOnCorrectThread() const;
@@ -443,6 +452,13 @@ class STORAGE_EXPORT QuotaManager
       const base::Callback<bool(QuotaDatabase*)>& task,
       const base::Callback<void(bool)>& reply);
 
+  static int64_t CallGetAmountOfFreeDiskSpace(
+      GetVolumeInfoFn get_vol_info_fn,
+      const base::FilePath& profile_path);
+  static bool GetVolumeInfo(const base::FilePath& path,
+                            uint64_t* available_space,
+                            uint64_t* total_size);
+
   const bool is_incognito_;
   const base::FilePath profile_path_;
 
@@ -451,22 +467,22 @@ class STORAGE_EXPORT QuotaManager
   bool eviction_disabled_;
   scoped_refptr<base::SingleThreadTaskRunner> io_thread_;
   scoped_refptr<base::SequencedTaskRunner> db_thread_;
-  mutable scoped_ptr<QuotaDatabase> database_;
+  mutable std::unique_ptr<QuotaDatabase> database_;
 
   GetOriginCallback lru_origin_callback_;
   std::set<GURL> access_notified_origins_;
 
   QuotaClientList clients_;
 
-  scoped_ptr<UsageTracker> temporary_usage_tracker_;
-  scoped_ptr<UsageTracker> persistent_usage_tracker_;
-  scoped_ptr<UsageTracker> syncable_usage_tracker_;
+  std::unique_ptr<UsageTracker> temporary_usage_tracker_;
+  std::unique_ptr<UsageTracker> persistent_usage_tracker_;
+  std::unique_ptr<UsageTracker> syncable_usage_tracker_;
   // TODO(michaeln): Need a way to clear the cache, drop and
   // reinstantiate the trackers when they're not handling requests.
 
-  scoped_ptr<QuotaTemporaryStorageEvictor> temporary_storage_evictor_;
+  std::unique_ptr<QuotaTemporaryStorageEvictor> temporary_storage_evictor_;
   EvictionContext eviction_context_;
-  scoped_ptr<QuotaEvictionPolicy> temporary_storage_eviction_policy_;
+  std::unique_ptr<QuotaEvictionPolicy> temporary_storage_eviction_policy_;
   bool is_getting_eviction_origin_;
 
   ClosureQueue db_initialization_callbacks_;
@@ -474,9 +490,8 @@ class STORAGE_EXPORT QuotaManager
   HostQuotaCallbackMap persistent_host_quota_callbacks_;
 
   bool temporary_quota_initialized_;
-  int64 temporary_quota_override_;
-
-  int64 desired_available_space_;
+  int64_t temporary_quota_override_;
+  int64_t desired_available_space_;
 
   // Map from origin to count.
   std::map<GURL, int> origins_in_use_;
@@ -487,12 +502,12 @@ class STORAGE_EXPORT QuotaManager
 
   base::RepeatingTimer histogram_timer_;
 
-  // Pointer to the function used to get the available disk space. This is
-  // overwritten by QuotaManagerTest in order to attain a deterministic reported
-  // value. The default value points to base::SysInfo::AmountOfFreeDiskSpace.
-  GetAvailableDiskSpaceFn get_disk_space_fn_;
+  // Pointer to the function used to get volume information. This is
+  // overwritten by QuotaManagerTest in order to attain deterministic reported
+  // values. The default value points to QuotaManager::GetVolumeInfo.
+  GetVolumeInfoFn get_volume_info_fn_;
 
-  scoped_ptr<StorageMonitor> storage_monitor_;
+  std::unique_ptr<StorageMonitor> storage_monitor_;
 
   base::WeakPtrFactory<QuotaManager> weak_factory_;
 

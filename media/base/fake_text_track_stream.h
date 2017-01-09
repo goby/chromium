@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef MEDIA_BASE_FAKE_TEXT_TRACK_STREAM_H_
+#define MEDIA_BASE_FAKE_TEXT_TRACK_STREAM_H_
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/demuxer_stream.h"
@@ -25,6 +29,9 @@ class FakeTextTrackStream : public DemuxerStream {
   MOCK_METHOD0(EnableBitstreamConverter, void());
   bool SupportsConfigChanges() override;
   VideoRotation video_rotation() override;
+  bool enabled() const override;
+  void set_enabled(bool enabled, base::TimeDelta timestamp) override;
+  void SetStreamStatusChangeCB(const StreamStatusChangeCB& cb) override;
 
   void SatisfyPendingRead(const base::TimeDelta& start,
                           const base::TimeDelta& duration,
@@ -47,3 +54,5 @@ class FakeTextTrackStream : public DemuxerStream {
 };
 
 }  // namespace media
+
+#endif  // MEDIA_BASE_FAKE_TEXT_TRACK_STREAM_H_

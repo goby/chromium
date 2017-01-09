@@ -2,14 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "mojo/public/cpp/bindings/array.h"
-#include "mojo/public/cpp/bindings/lib/array_serialization.h"
-#include "mojo/public/cpp/bindings/lib/bindings_internal.h"
-#include "mojo/public/cpp/bindings/lib/fixed_buffer.h"
-#include "mojo/public/cpp/bindings/lib/validate_params.h"
 #include "mojo/public/cpp/bindings/map.h"
+
+#include <stddef.h>
+#include <stdint.h>
+#include <unordered_map>
+#include <utility>
+
+#include "mojo/public/cpp/bindings/array.h"
 #include "mojo/public/cpp/bindings/string.h"
 #include "mojo/public/cpp/bindings/tests/container_test_util.h"
+#include "mojo/public/cpp/bindings/tests/map_common_test.h"
+#include "mojo/public/cpp/bindings/tests/rect_chromium.h"
+#include "mojo/public/interfaces/bindings/tests/rect.mojom.h"
+#include "mojo/public/interfaces/bindings/tests/test_structs.mojom.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace mojo {
@@ -17,80 +23,15 @@ namespace test {
 
 namespace {
 
-using mojo::internal::Array_Data;
-using mojo::internal::ArrayValidateParams;
-using mojo::internal::FixedBufferForTesting;
-using mojo::internal::Map_Data;
-using mojo::internal::String_Data;
-
-struct StringIntData {
-  const char* string_data;
-  int int_data;
-} kStringIntData[] = {
-      {"one", 1},
-      {"two", 2},
-      {"three", 3},
-      {"four", 4},
-};
-
-const size_t kStringIntDataSize = 4;
-
 using MapTest = testing::Test;
 
-// Tests that basic Map operations work.
-TEST_F(MapTest, InsertWorks) {
-  Map<String, int> map;
-  for (size_t i = 0; i < kStringIntDataSize; ++i)
-    map.insert(kStringIntData[i].string_data, kStringIntData[i].int_data);
-
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    EXPECT_EQ(kStringIntData[i].int_data,
-              map.at(kStringIntData[i].string_data));
-  }
-}
-
-TEST_F(MapTest, TestIndexOperator) {
-  Map<String, int> map;
-  for (size_t i = 0; i < kStringIntDataSize; ++i)
-    map[kStringIntData[i].string_data] = kStringIntData[i].int_data;
-
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    EXPECT_EQ(kStringIntData[i].int_data,
-              map.at(kStringIntData[i].string_data));
-  }
-}
-
-TEST_F(MapTest, TestIndexOperatorAsRValue) {
-  Map<String, int> map;
-  for (size_t i = 0; i < kStringIntDataSize; ++i)
-    map.insert(kStringIntData[i].string_data, kStringIntData[i].int_data);
-
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    EXPECT_EQ(kStringIntData[i].int_data, map[kStringIntData[i].string_data]);
-  }
-}
-
-TEST_F(MapTest, TestIndexOperatorMoveOnly) {
-  ASSERT_EQ(0u, MoveOnlyType::num_instances());
-  mojo::Map<mojo::String, mojo::Array<int32_t>> map;
-  std::vector<MoveOnlyType*> value_ptrs;
-
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    const char* key = kStringIntData[i].string_data;
-    Array<int32_t> array(1);
-    array[0] = kStringIntData[i].int_data;
-    map[key] = array.Pass();
-    EXPECT_TRUE(map);
-  }
-
-  // We now read back that data, to test the behavior of operator[].
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    auto it = map.find(kStringIntData[i].string_data);
-    ASSERT_TRUE(it != map.end());
-    ASSERT_EQ(1u, it.GetValue().size());
-    EXPECT_EQ(kStringIntData[i].int_data, it.GetValue()[0]);
-  }
-}
+MAP_COMMON_TEST(Map, NullAndEmpty)
+MAP_COMMON_TEST(Map, InsertWorks)
+MAP_COMMON_TEST(Map, TestIndexOperator)
+MAP_COMMON_TEST(Map, TestIndexOperatorAsRValue)
+MAP_COMMON_TEST(Map, TestIndexOperatorMoveOnly)
+MAP_COMMON_TEST(Map, MapArrayClone)
+MAP_COMMON_TEST(Map, ArrayOfMap)
 
 TEST_F(MapTest, ConstructedFromArray) {
   Array<String> keys(kStringIntDataSize);
@@ -100,7 +41,7 @@ TEST_F(MapTest, ConstructedFromArray) {
     values[i] = kStringIntData[i].int_data;
   }
 
-  Map<String, int> map(keys.Pass(), values.Pass());
+  Map<String, int> map(std::move(keys), std::move(values));
 
   for (size_t i = 0; i < kStringIntDataSize; ++i) {
     EXPECT_EQ(kStringIntData[i].int_data,
@@ -116,7 +57,7 @@ TEST_F(MapTest, DecomposeMapTo) {
     values[i] = kStringIntData[i].int_data;
   }
 
-  Map<String, int> map(keys.Pass(), values.Pass());
+  Map<String, int> map(std::move(keys), std::move(values));
   EXPECT_EQ(kStringIntDataSize, map.size());
 
   Array<String> keys2;
@@ -168,7 +109,7 @@ TEST_F(MapTest, Insert_Copyable) {
   // std::map doesn't have a capacity() method like std::vector so this test is
   // a lot more boring.
 
-  map.reset();
+  map = nullptr;
   EXPECT_EQ(0u, CopyableType::num_instances());
 }
 
@@ -181,7 +122,7 @@ TEST_F(MapTest, Insert_MoveOnly) {
     const char* key = kStringIntData[i].string_data;
     MoveOnlyType value;
     value_ptrs.push_back(value.ptr());
-    map.insert(key, value.Pass());
+    map.insert(key, std::move(value));
     ASSERT_EQ(i + 1, map.size());
     ASSERT_EQ(i + 1, value_ptrs.size());
     EXPECT_EQ(map.size() + 1, MoveOnlyType::num_instances());
@@ -194,7 +135,7 @@ TEST_F(MapTest, Insert_MoveOnly) {
   // std::map doesn't have a capacity() method like std::vector so this test is
   // a lot more boring.
 
-  map.reset();
+  map = nullptr;
   EXPECT_EQ(0u, MoveOnlyType::num_instances());
 }
 
@@ -207,7 +148,7 @@ TEST_F(MapTest, IndexOperator_MoveOnly) {
     const char* key = kStringIntData[i].string_data;
     MoveOnlyType value;
     value_ptrs.push_back(value.ptr());
-    map[key] = value.Pass();
+    map[key] = std::move(value);
     ASSERT_EQ(i + 1, map.size());
     ASSERT_EQ(i + 1, value_ptrs.size());
     EXPECT_EQ(map.size() + 1, MoveOnlyType::num_instances());
@@ -220,7 +161,7 @@ TEST_F(MapTest, IndexOperator_MoveOnly) {
   // std::map doesn't have a capacity() method like std::vector so this test is
   // a lot more boring.
 
-  map.reset();
+  map = nullptr;
   EXPECT_EQ(0u, MoveOnlyType::num_instances());
 }
 
@@ -250,65 +191,79 @@ TEST_F(MapTest, MojoToSTL) {
   }
 }
 
-TEST_F(MapTest, MapArrayClone) {
-  Map<String, Array<String>> m;
-  for (size_t i = 0; i < kStringIntDataSize; ++i) {
-    Array<String> s;
-    s.push_back(kStringIntData[i].string_data);
-    m.insert(kStringIntData[i].string_data, s.Pass());
-  }
+TEST_F(MapTest, MoveFromAndToSTLMap_Copyable) {
+  std::map<int32_t, CopyableType> map1;
+  map1.insert(std::make_pair(123, CopyableType()));
+  map1[123].ResetCopied();
 
-  Map<String, Array<String>> m2 = m.Clone();
+  Map<int32_t, CopyableType> mojo_map(std::move(map1));
+  ASSERT_EQ(1u, mojo_map.size());
+  ASSERT_NE(mojo_map.end(), mojo_map.find(123));
+  ASSERT_FALSE(mojo_map[123].copied());
 
-  for (auto it = m2.begin(); it != m2.end(); ++it) {
-    ASSERT_EQ(1u, it.GetValue().size());
-    EXPECT_EQ(it.GetKey(), it.GetValue().at(0));
-  }
+  std::map<int32_t, CopyableType> map2(mojo_map.PassStorage());
+  ASSERT_EQ(1u, map2.size());
+  ASSERT_NE(map2.end(), map2.find(123));
+  ASSERT_FALSE(map2[123].copied());
+
+  ASSERT_EQ(0u, mojo_map.size());
+  ASSERT_TRUE(mojo_map.is_null());
 }
 
-TEST_F(MapTest, ArrayOfMap) {
-  {
-    Array<Map<int32_t, int8_t>> array(1);
-    array[0].insert(1, 42);
+TEST_F(MapTest, MoveFromAndToSTLMap_MoveOnly) {
+  std::map<int32_t, MoveOnlyType> map1;
+  map1.insert(std::make_pair(123, MoveOnlyType()));
 
-    size_t size = GetSerializedSize_(array);
-    FixedBufferForTesting buf(size);
-    Array_Data<Map_Data<int32_t, int8_t>*>* data;
-    ArrayValidateParams validate_params(
-        0, false, new ArrayValidateParams(0, false, nullptr));
-    SerializeArray_(array.Pass(), &buf, &data, &validate_params);
+  Map<int32_t, MoveOnlyType> mojo_map(std::move(map1));
+  ASSERT_EQ(1u, mojo_map.size());
+  ASSERT_NE(mojo_map.end(), mojo_map.find(123));
 
-    Array<Map<int32_t, int8_t>> deserialized_array;
-    Deserialize_(data, &deserialized_array, nullptr);
+  std::map<int32_t, MoveOnlyType> map2(mojo_map.PassStorage());
+  ASSERT_EQ(1u, map2.size());
+  ASSERT_NE(map2.end(), map2.find(123));
 
-    ASSERT_EQ(1u, deserialized_array.size());
-    ASSERT_EQ(1u, deserialized_array[0].size());
-    ASSERT_EQ(42, deserialized_array[0].at(1));
-  }
+  ASSERT_EQ(0u, mojo_map.size());
+  ASSERT_TRUE(mojo_map.is_null());
+}
 
-  {
-    Array<Map<String, Array<bool>>> array(1);
-    Array<bool> map_value(2);
-    map_value[0] = false;
-    map_value[1] = true;
-    array[0].insert("hello world", map_value.Pass());
+static RectPtr MakeRect(int32_t x, int32_t y, int32_t width, int32_t height) {
+  RectPtr rect_ptr = Rect::New();
+  rect_ptr->x = x;
+  rect_ptr->y = y;
+  rect_ptr->width = width;
+  rect_ptr->height = height;
+  return rect_ptr;
+}
 
-    size_t size = GetSerializedSize_(array);
-    FixedBufferForTesting buf(size);
-    Array_Data<Map_Data<String_Data*, Array_Data<bool>*>*>* data;
-    ArrayValidateParams validate_params(
-        0, false, new ArrayValidateParams(
-                      0, false, new ArrayValidateParams(0, false, nullptr)));
-    SerializeArray_(array.Pass(), &buf, &data, &validate_params);
+TEST_F(MapTest, StructKey) {
+  std::unordered_map<RectPtr, int32_t> map;
+  map.insert(std::make_pair(MakeRect(1, 2, 3, 4), 123));
 
-    Array<Map<String, Array<bool>>> deserialized_array;
-    Deserialize_(data, &deserialized_array, nullptr);
+  RectPtr key = MakeRect(1, 2, 3, 4);
+  ASSERT_NE(map.end(), map.find(key));
+  ASSERT_EQ(123, map.find(key)->second);
 
-    ASSERT_EQ(1u, deserialized_array.size());
-    ASSERT_EQ(1u, deserialized_array[0].size());
-    ASSERT_FALSE(deserialized_array[0].at("hello world")[0]);
-    ASSERT_TRUE(deserialized_array[0].at("hello world")[1]);
-  }
+  map.erase(key);
+  ASSERT_EQ(0u, map.size());
+}
+
+static ContainsHashablePtr MakeContainsHashablePtr(RectChromium rect) {
+  ContainsHashablePtr ptr = ContainsHashable::New();
+  ptr->rect = rect;
+  return ptr;
+}
+
+TEST_F(MapTest, TypemappedStructKey) {
+  std::unordered_map<ContainsHashablePtr, int32_t> map;
+  map.insert(
+      std::make_pair(MakeContainsHashablePtr(RectChromium(1, 2, 3, 4)), 123));
+
+  ContainsHashablePtr key = MakeContainsHashablePtr(RectChromium(1, 2, 3, 4));
+  ASSERT_NE(map.end(), map.find(key));
+  ASSERT_EQ(123, map.find(key)->second);
+
+  map.erase(key);
+  ASSERT_EQ(0u, map.size());
 }
 
 }  // namespace

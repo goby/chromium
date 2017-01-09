@@ -5,12 +5,15 @@
 #include "base/trace_event/trace_event_impl.h"
 
 #include <fcntl.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/threading/thread.h"
 #include "base/trace_event/trace_event.h"
 
 namespace base {
@@ -44,11 +47,11 @@ void WriteEvent(
     const char** arg_names,
     const unsigned char* arg_types,
     const TraceEvent::TraceValue* arg_values,
-    const scoped_refptr<ConvertableToTraceFormat>* convertable_values,
+    const std::unique_ptr<ConvertableToTraceFormat>* convertable_values,
     unsigned int flags) {
   std::string out = StringPrintf("%c|%d|%s", phase, getpid(), name);
   if (flags & TRACE_EVENT_FLAG_HAS_ID)
-    StringAppendF(&out, "-%" PRIx64, static_cast<uint64>(id));
+    StringAppendF(&out, "-%" PRIx64, static_cast<uint64_t>(id));
   out += '|';
 
   for (int i = 0; i < kTraceMaxNumArgs && arg_names[i];
@@ -126,7 +129,8 @@ void TraceLog::StopATrace() {
   // TraceLog::Flush() requires the current thread to have a message loop, but
   // this thread called from Java may not have one, so flush in another thread.
   Thread end_chrome_tracing_thread("end_chrome_tracing");
-  WaitableEvent complete_event(false, false);
+  WaitableEvent complete_event(WaitableEvent::ResetPolicy::AUTOMATIC,
+                               WaitableEvent::InitialState::NOT_SIGNALED);
   end_chrome_tracing_thread.Start();
   end_chrome_tracing_thread.task_runner()->PostTask(
       FROM_HERE, base::Bind(&EndChromeTracing, Unretained(this),
@@ -177,7 +181,7 @@ void TraceEvent::SendToATrace() {
         std::string out = base::StringPrintf(
             "C|%d|%s-%s", getpid(), name_, arg_names_[i]);
         if (flags_ & TRACE_EVENT_FLAG_HAS_ID)
-          StringAppendF(&out, "-%" PRIx64, static_cast<uint64>(id_));
+          StringAppendF(&out, "-%" PRIx64, static_cast<uint64_t>(id_));
         StringAppendF(&out, "|%d|%s",
                       static_cast<int>(arg_values_[i].as_int), category_group);
         WriteToATrace(g_atrace_fd, out.c_str(), out.size());

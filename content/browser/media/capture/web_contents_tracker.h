@@ -17,6 +17,7 @@
 #define CONTENT_BROWSER_MEDIA_CAPTURE_WEB_CONTENTS_TRACKER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/web_contents_observer.h"
@@ -107,8 +108,8 @@ class CONTENT_EXPORT WebContentsTracker
 
   // WebContentsObserver overrides to notify the client that the capture target
   // may have changed due to a separate fullscreen widget shown/destroyed.
-  void DidShowFullscreenWidget(int routing_id) override;
-  void DidDestroyFullscreenWidget(int routing_id) override;
+  void DidShowFullscreenWidget() override;
+  void DidDestroyFullscreenWidget() override;
 
   // If true, the client is interested in the showing/destruction of fullscreen
   // RenderWidgetHosts.

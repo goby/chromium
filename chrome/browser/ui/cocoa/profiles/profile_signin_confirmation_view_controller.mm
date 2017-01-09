@@ -4,6 +4,8 @@
 
 #import "chrome/browser/ui/cocoa/profiles/profile_signin_confirmation_view_controller.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <cmath>
 
@@ -14,10 +16,9 @@
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
 #include "chrome/browser/ui/browser_navigator_params.h"
-#import "chrome/browser/ui/chrome_style.h"
+#import "chrome/browser/ui/cocoa/chrome_style.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_control_utils.h"
 #import "chrome/browser/ui/cocoa/hover_close_button.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/sync/profile_signin_confirmation_helper.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
@@ -28,7 +29,7 @@
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #import "ui/base/cocoa/controls/hyperlink_text_view.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/native_theme/native_theme_mac.h"
+#include "ui/native_theme/native_theme.h"
 
 namespace {
 
@@ -92,7 +93,7 @@ NSTextView* AddTextView(
       [[HyperlinkTextView alloc] initWithFrame:NSZeroRect]);
   NSFont* font = ui::ResourceBundle::GetSharedInstance().GetFont(
       font_style).GetNativeFont();
-  NSColor* linkColor = gfx::SkColorToCalibratedNSColor(
+  NSColor* linkColor = skia::SkColorToCalibratedNSColor(
       chrome_style::GetLinkColor());
   NSMutableString* finalMessage = [NSMutableString stringWithString:
                                              base::SysUTF16ToNSString(message)];
@@ -103,7 +104,7 @@ NSTextView* AddTextView(
               withFont:font
           messageColor:[NSColor blackColor]];
   [textView addLinkRange:NSMakeRange(offset, [linkString length])
-                 withURL:@"about:blank"  // using a link here is bad ui
+                 withURL:nil
                linkColor:linkColor];
   RemoveUnderlining(textView, offset, link.size());
   [textView setDelegate:delegate];
@@ -246,15 +247,15 @@ NSTextField* AddTextField(
 
   // Prompt box.
   [promptBox_
-      setBorderColor:gfx::SkColorToCalibratedNSColor(
+      setBorderColor:skia::SkColorToCalibratedNSColor(
                          ui::GetSigninConfirmationPromptBarColor(
-                             ui::NativeThemeMac::instance(),
+                             ui::NativeTheme::GetInstanceForNativeUi(),
                              ui::kSigninConfirmationPromptBarBorderAlpha))];
   [promptBox_ setBorderWidth:kDialogAlertBarBorderWidth];
   [promptBox_
-      setFillColor:gfx::SkColorToCalibratedNSColor(
+      setFillColor:skia::SkColorToCalibratedNSColor(
                        ui::GetSigninConfirmationPromptBarColor(
-                           ui::NativeThemeMac::instance(),
+                           ui::NativeTheme::GetInstanceForNativeUi(),
                            ui::kSigninConfirmationPromptBarBackgroundAlpha))];
   [promptBox_ setBoxType:NSBoxCustom];
   [promptBox_ setTitlePosition:NSNoTitle];
@@ -408,7 +409,7 @@ NSTextField* AddTextField(
   chrome::NavigateParams params(
       browser_, GURL(chrome::kChromeEnterpriseSignInLearnMoreURL),
       ui::PAGE_TRANSITION_AUTO_TOPLEVEL);
-  params.disposition = NEW_POPUP;
+  params.disposition = WindowOpenDisposition::NEW_POPUP;
   params.window_action = chrome::NavigateParams::SHOW_WINDOW;
   chrome::Navigate(&params);
 }

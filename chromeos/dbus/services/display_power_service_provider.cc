@@ -4,6 +4,8 @@
 
 #include "chromeos/dbus/services/display_power_service_provider.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "dbus/message.h"
 
@@ -21,10 +23,8 @@ void RunConfigurationCallback(
 }  // namespace
 
 DisplayPowerServiceProvider::DisplayPowerServiceProvider(
-    scoped_ptr<Delegate> delegate)
-    : delegate_(delegate.Pass()),
-      weak_ptr_factory_(this) {
-}
+    std::unique_ptr<Delegate> delegate)
+    : delegate_(std::move(delegate)), weak_ptr_factory_(this) {}
 
 DisplayPowerServiceProvider::~DisplayPowerServiceProvider() {}
 

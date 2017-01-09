@@ -5,12 +5,13 @@
 #ifndef CC_TREES_TASK_RUNNER_PROVIDER_H_
 #define CC_TREES_TASK_RUNNER_PROVIDER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -18,9 +19,6 @@
 #include "cc/base/cc_export.h"
 
 namespace base {
-namespace trace_event {
-class TracedValue;
-}
 class SingleThreadTaskRunner;
 }
 
@@ -31,13 +29,15 @@ class BlockingTaskRunner;
 // Useful for assertion checks.
 class CC_EXPORT TaskRunnerProvider {
  public:
-  static scoped_ptr<TaskRunnerProvider> Create(
+  static std::unique_ptr<TaskRunnerProvider> Create(
       scoped_refptr<base::SingleThreadTaskRunner> main_task_runner,
       scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner) {
-    return make_scoped_ptr(
+    return base::WrapUnique(
         new TaskRunnerProvider(main_task_runner, impl_task_runner));
   }
 
+  // TODO(vmpstr): Should these return scoped_refptr to task runners? Many
+  // places turn them into scoped_refptrs. How many of them need to?
   base::SingleThreadTaskRunner* MainThreadTaskRunner() const;
   bool HasImplThread() const;
   base::SingleThreadTaskRunner* ImplThreadTaskRunner() const;
@@ -69,7 +69,7 @@ class CC_EXPORT TaskRunnerProvider {
  private:
   scoped_refptr<base::SingleThreadTaskRunner> main_task_runner_;
   scoped_refptr<base::SingleThreadTaskRunner> impl_task_runner_;
-  scoped_ptr<BlockingTaskRunner> blocking_main_thread_task_runner_;
+  std::unique_ptr<BlockingTaskRunner> blocking_main_thread_task_runner_;
 
 #if DCHECK_IS_ON()
   const base::PlatformThreadId main_thread_id_;

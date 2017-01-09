@@ -7,10 +7,12 @@
 
 #include "components/infobars/core/infobar_container.h"
 
+#include <stddef.h>
+
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 
 @class InfoBarContainerView;
-class InfoBarIOS;
 
 // IOS infobar container specialization, managing infobars visibility so
 // that only the front most one is visible at any time.

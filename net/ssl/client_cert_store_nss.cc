@@ -7,16 +7,22 @@
 #include <nss.h>
 #include <ssl.h>
 
+#include <algorithm>
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "base/threading/worker_pool.h"
 #include "crypto/nss_crypto_module_delegate.h"
+#include "net/cert/scoped_nss_types.h"
 #include "net/cert/x509_util.h"
 #include "net/ssl/ssl_cert_request_info.h"
+#include "net/third_party/nss/ssl/cmpcert.h"
 
 namespace net {
 
@@ -29,7 +35,8 @@ ClientCertStoreNSS::~ClientCertStoreNSS() {}
 void ClientCertStoreNSS::GetClientCerts(const SSLCertRequestInfo& request,
                                          CertificateList* selected_certs,
                                          const base::Closure& callback) {
-  scoped_ptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate;
+  std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+      password_delegate;
   if (!password_delegate_factory_.is_null()) {
     password_delegate.reset(
         password_delegate_factory_.Run(request.host_and_port));
@@ -54,31 +61,10 @@ void ClientCertStoreNSS::GetClientCerts(const SSLCertRequestInfo& request,
 void ClientCertStoreNSS::FilterCertsOnWorkerThread(
     const CertificateList& certs,
     const SSLCertRequestInfo& request,
-    bool query_nssdb,
     CertificateList* filtered_certs) {
   DCHECK(filtered_certs);
 
   filtered_certs->clear();
-
-  // Create a "fake" CERTDistNames structure. No public API exists to create
-  // one from a list of issuers.
-  CERTDistNames ca_names;
-  ca_names.arena = NULL;
-  ca_names.nnames = 0;
-  ca_names.names = NULL;
-  ca_names.head = NULL;
-
-  std::vector<SECItem> ca_names_items(request.cert_authorities.size());
-  for (size_t i = 0; i < request.cert_authorities.size(); ++i) {
-    const std::string& authority = request.cert_authorities[i];
-    ca_names_items[i].type = siBuffer;
-    ca_names_items[i].data =
-        reinterpret_cast<unsigned char*>(const_cast<char*>(authority.data()));
-    ca_names_items[i].len = static_cast<unsigned int>(authority.size());
-  }
-  ca_names.nnames = static_cast<int>(ca_names_items.size());
-  if (!ca_names_items.empty())
-    ca_names.names = &ca_names_items[0];
 
   size_t num_raw = 0;
   for (const auto& cert : certs) {
@@ -93,17 +79,26 @@ void ClientCertStoreNSS::FilterCertsOnWorkerThread(
       continue;
     }
 
-    // Check if the certificate issuer is allowed by the server.
-    if (request.cert_authorities.empty() ||
-        (!query_nssdb && cert->IsIssuedByEncoded(request.cert_authorities)) ||
-        (query_nssdb &&
-         NSS_CmpCertChainWCANames(handle, &ca_names) == SECSuccess)) {
-      DVLOG(2) << "matched cert: " << base::StringPiece(handle->nickname);
-      filtered_certs->push_back(cert);
-    } else {
+    std::vector<ScopedCERTCertificate> intermediates;
+    if (!MatchClientCertificateIssuers(handle, request.cert_authorities,
+                                       &intermediates)) {
       DVLOG(2) << "skipped non-matching cert: "
                << base::StringPiece(handle->nickname);
+      continue;
     }
+
+    DVLOG(2) << "matched cert: " << base::StringPiece(handle->nickname);
+
+    X509Certificate::OSCertHandles intermediates_raw;
+    for (const auto& intermediate : intermediates) {
+      intermediates_raw.push_back(intermediate.get());
+    }
+
+    // Retain a copy of the intermediates. Some deployments expect the client to
+    // supply intermediates out of the local store. See
+    // https://crbug.com/548631.
+    filtered_certs->push_back(
+        X509Certificate::CreateFromHandle(handle, intermediates_raw));
   }
   DVLOG(2) << "num_raw:" << num_raw
            << " num_filtered:" << filtered_certs->size();
@@ -113,17 +108,19 @@ void ClientCertStoreNSS::FilterCertsOnWorkerThread(
 }
 
 void ClientCertStoreNSS::GetAndFilterCertsOnWorkerThread(
-    scoped_ptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate,
+    std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+        password_delegate,
     const SSLCertRequestInfo* request,
     CertificateList* selected_certs) {
   CertificateList platform_certs;
-  GetPlatformCertsOnWorkerThread(password_delegate.Pass(), &platform_certs);
-  FilterCertsOnWorkerThread(platform_certs, *request, true, selected_certs);
+  GetPlatformCertsOnWorkerThread(std::move(password_delegate), &platform_certs);
+  FilterCertsOnWorkerThread(platform_certs, *request, selected_certs);
 }
 
 // static
 void ClientCertStoreNSS::GetPlatformCertsOnWorkerThread(
-    scoped_ptr<crypto::CryptoModuleBlockingPasswordDelegate> password_delegate,
+    std::unique_ptr<crypto::CryptoModuleBlockingPasswordDelegate>
+        password_delegate,
     net::CertificateList* certs) {
   CERTCertList* found_certs =
       CERT_FindUserCertsByUsage(CERT_GetDefaultCertDB(), certUsageSSLClient,

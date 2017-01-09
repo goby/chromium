@@ -7,16 +7,17 @@
 
 #include <EGL/egl.h>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace egl {
 
 class Config {
  public:
-  Config();
+  explicit Config(EGLint surface_type);
   ~Config();
-
+  bool Matches(const EGLint* attrib_list) const;
   bool GetAttrib(EGLint attribute, EGLint* value) const;
+  static bool ValidateAttributeList(const EGLint* attrib_list);
 
  private:
   // Total color component bits in the color buffer.

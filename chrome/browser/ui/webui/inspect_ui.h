@@ -6,10 +6,12 @@
 #define CHROME_BROWSER_UI_WEBUI_INSPECT_UI_H_
 
 #include <map>
+#include <memory>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -20,9 +22,12 @@ class Value;
 class ListValue;
 }
 
+namespace content {
+class DevToolsAgentHost;
+}
+
 class Browser;
 class DevToolsTargetsUIHandler;
-class DevToolsTargetImpl;
 class PortForwardingStatusSerializer;
 
 class InspectUI : public content::WebUIController,
@@ -60,21 +65,25 @@ class InspectUI : public content::WebUIController,
   void UpdateDiscoverUsbDevicesEnabled();
   void UpdatePortForwardingEnabled();
   void UpdatePortForwardingConfig();
+  void UpdateTCPDiscoveryEnabled();
+  void UpdateTCPDiscoveryConfig();
 
   void SetPortForwardingDefaults();
 
   const base::Value* GetPrefValue(const char* name);
 
-  void AddTargetUIHandler(
-      scoped_ptr<DevToolsTargetsUIHandler> handler);
+  void AddTargetUIHandler(std::unique_ptr<DevToolsTargetsUIHandler> handler);
 
   DevToolsTargetsUIHandler* FindTargetHandler(
       const std::string& source_id);
-  DevToolsTargetImpl* FindTarget(const std::string& source_id,
-                                 const std::string& target_id);
+  scoped_refptr<content::DevToolsAgentHost> FindTarget(
+      const std::string& source_id,
+      const std::string& target_id);
 
   void PopulateTargets(const std::string& source_id,
                        const base::ListValue& targets);
+
+  void PopulateAdditionalTargets(const base::ListValue& targets);
 
   void ForceUpdateIfNeeded(const std::string& source_id,
                            const std::string& target_type);
@@ -89,10 +98,10 @@ class InspectUI : public content::WebUIController,
   // A scoped container for preference change registries.
   PrefChangeRegistrar pref_change_registrar_;
 
-  typedef std::map<std::string, DevToolsTargetsUIHandler*> TargetHandlerMap;
-  TargetHandlerMap target_handlers_;
+  std::map<std::string, std::unique_ptr<DevToolsTargetsUIHandler>>
+      target_handlers_;
 
-  scoped_ptr<PortForwardingStatusSerializer> port_status_serializer_;
+  std::unique_ptr<PortForwardingStatusSerializer> port_status_serializer_;
 
   DISALLOW_COPY_AND_ASSIGN(InspectUI);
 };

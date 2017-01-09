@@ -9,28 +9,49 @@
 namespace ui {
 
 TEST(TemplateExpressionsTest, ReplaceTemplateExpressionsPieces) {
-  std::map<base::StringPiece, std::string> substitutions;
+  TemplateReplacements substitutions;
   substitutions["test"] = "word";
   substitutions["5"] = "number";
-  substitutions[""] = "blank";
 
-  EXPECT_EQ(ReplaceTemplateExpressions("${}", substitutions), "blank");
-  EXPECT_EQ(ReplaceTemplateExpressions("", substitutions), "");
-  EXPECT_EQ(ReplaceTemplateExpressions("${test}", substitutions), "word");
-  EXPECT_EQ(ReplaceTemplateExpressions("${5} ", substitutions), "number ");
-  EXPECT_EQ(
-      ReplaceTemplateExpressions("multiple: ${test}, ${5}.", substitutions),
-      "multiple: word, number.");
+  EXPECT_EQ("", ReplaceTemplateExpressions("", substitutions));
+  EXPECT_EQ("word", ReplaceTemplateExpressions("$i18n{test}", substitutions));
+  EXPECT_EQ("number ", ReplaceTemplateExpressions("$i18n{5} ", substitutions));
+  EXPECT_EQ("multiple: word, number.",
+            ReplaceTemplateExpressions("multiple: $i18n{test}, $i18n{5}.",
+                                       substitutions));
 }
 
 TEST(TemplateExpressionsTest,
      ReplaceTemplateExpressionsConsecutiveDollarSignsPieces) {
-  std::map<base::StringPiece, std::string> substitutions;
+  TemplateReplacements substitutions;
   substitutions["a"] = "x";
-  EXPECT_EQ(ReplaceTemplateExpressions("$ $$ $$$", substitutions), "$ $$ $$$");
-  EXPECT_EQ(ReplaceTemplateExpressions("$${a}", substitutions), "$x");
-  EXPECT_EQ(ReplaceTemplateExpressions("$$${a}", substitutions), "$$x");
-  EXPECT_EQ(ReplaceTemplateExpressions("$12", substitutions), "$12");
+  EXPECT_EQ("$ $$ $$$", ReplaceTemplateExpressions("$ $$ $$$", substitutions));
+  EXPECT_EQ("$x", ReplaceTemplateExpressions("$$i18n{a}", substitutions));
+  EXPECT_EQ("$$x", ReplaceTemplateExpressions("$$$i18n{a}", substitutions));
+  EXPECT_EQ("$i1812", ReplaceTemplateExpressions("$i1812", substitutions));
+}
+
+TEST(TemplateExpressionsTest, ReplaceTemplateExpressionsEscaping) {
+  static TemplateReplacements substitutions;
+  substitutions["punctuationSample"] = "a\"b'c<d>e&f";
+  substitutions["htmlSample"] = "<div>hello</div>";
+  EXPECT_EQ(
+      "a&quot;b&#39;c&lt;d&gt;e&amp;f",
+      ReplaceTemplateExpressions("$i18n{punctuationSample}", substitutions));
+  EXPECT_EQ("&lt;div&gt;hello&lt;/div&gt;",
+            ReplaceTemplateExpressions("$i18n{htmlSample}", substitutions));
+  EXPECT_EQ(
+      "multiple: &lt;div&gt;hello&lt;/div&gt;, a&quot;b&#39;c&lt;d&gt;e&amp;f.",
+      ReplaceTemplateExpressions(
+          "multiple: $i18n{htmlSample}, $i18n{punctuationSample}.",
+          substitutions));
+}
+
+TEST(TemplateExpressionsTest, ReplaceTemplateExpressionsRaw) {
+  static TemplateReplacements substitutions;
+  substitutions["rawSample"] = "<a href=\"example.com\">hello</a>";
+  EXPECT_EQ("<a href=\"example.com\">hello</a>",
+            ReplaceTemplateExpressions("$i18nRaw{rawSample}", substitutions));
 }
 
 }  // namespace ui

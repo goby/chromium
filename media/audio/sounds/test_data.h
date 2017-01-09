@@ -5,14 +5,14 @@
 #ifndef MEDIA_AUDIO_SOUNDS_TEST_DATA_H_
 #define MEDIA_AUDIO_SOUNDS_TEST_DATA_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "media/audio/sounds/audio_stream_handler.h"
-
-namespace base {
-class MessageLoop;
-}
 
 namespace media {
 
@@ -38,7 +38,7 @@ class TestObserver : public AudioStreamHandler::TestObserver {
   int cursor() const { return cursor_; }
 
  private:
-  base::MessageLoop* loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
   base::Closure quit_;
 
   int num_play_requests_;

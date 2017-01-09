@@ -12,38 +12,52 @@
 #include "platform/heap/Handle.h"
 #include "public/platform/modules/serviceworker/WebServiceWorkerClientsInfo.h"
 #include "wtf/Forward.h"
+#include <memory>
 
 namespace blink {
 
 class ExecutionContext;
-class ScriptState;
+class ScriptPromiseResolver;
 
-class MODULES_EXPORT ServiceWorkerClient : public GarbageCollectedFinalized<ServiceWorkerClient>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static ServiceWorkerClient* create(const WebServiceWorkerClientInfo&);
+class MODULES_EXPORT ServiceWorkerClient
+    : public GarbageCollectedFinalized<ServiceWorkerClient>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    virtual ~ServiceWorkerClient();
+ public:
+  // To be used by CallbackPromiseAdapter.
+  using WebType = std::unique_ptr<WebServiceWorkerClientInfo>;
 
-    // Client.idl
-    String url() const { return m_url; }
-    String frameType() const;
-    String id() const { return m_uuid; }
-    void postMessage(ExecutionContext*, PassRefPtr<SerializedScriptValue> message, const MessagePortArray*, ExceptionState&);
+  static ServiceWorkerClient* take(ScriptPromiseResolver*,
+                                   std::unique_ptr<WebServiceWorkerClientInfo>);
+  static ServiceWorkerClient* create(const WebServiceWorkerClientInfo&);
 
-    DEFINE_INLINE_VIRTUAL_TRACE() { }
+  virtual ~ServiceWorkerClient();
 
-protected:
-    explicit ServiceWorkerClient(const WebServiceWorkerClientInfo&);
+  // Client.idl
+  String url() const { return m_url; }
+  String frameType() const;
+  String id() const { return m_uuid; }
+  void postMessage(ExecutionContext*,
+                   PassRefPtr<SerializedScriptValue> message,
+                   const MessagePortArray&,
+                   ExceptionState&);
 
-    String uuid() const { return m_uuid; }
+  static bool canTransferArrayBuffersAndImageBitmaps() { return false; }
 
-private:
-    String m_uuid;
-    String m_url;
-    WebURLRequest::FrameType m_frameType;
+  DEFINE_INLINE_VIRTUAL_TRACE() {}
+
+ protected:
+  explicit ServiceWorkerClient(const WebServiceWorkerClientInfo&);
+
+  String uuid() const { return m_uuid; }
+
+ private:
+  String m_uuid;
+  String m_url;
+  WebURLRequest::FrameType m_frameType;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ServiceWorkerClient_h
+#endif  // ServiceWorkerClient_h

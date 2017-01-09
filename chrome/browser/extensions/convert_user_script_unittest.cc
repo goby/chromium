@@ -2,16 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/extensions/convert_user_script.h"
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/extensions/convert_user_script.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/extensions/manifest_handlers/content_scripts_handler.h"
 #include "extensions/common/constants.h"
@@ -42,9 +43,9 @@ TEST_F(ExtensionFromUserScript, Basic) {
                        .AppendASCII("user_script_basic.user.js");
 
   base::string16 error;
-  scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
-      test_file, GURL("http://www.google.com/foo"),
-      extensions_dir.path(), &error));
+  scoped_refptr<Extension> extension(
+      ConvertUserScriptToExtension(test_file, GURL("http://www.google.com/foo"),
+                                   extensions_dir.GetPath(), &error));
 
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(base::string16(), error);
@@ -63,7 +64,7 @@ TEST_F(ExtensionFromUserScript, Basic) {
 
   ASSERT_EQ(1u, ContentScriptsInfo::GetContentScripts(extension.get()).size());
   const UserScript& script =
-      ContentScriptsInfo::GetContentScripts(extension.get())[0];
+      *ContentScriptsInfo::GetContentScripts(extension.get())[0];
   EXPECT_EQ(UserScript::DOCUMENT_IDLE, script.run_location());
   ASSERT_EQ(2u, script.globs().size());
   EXPECT_EQ("http://www.google.com/*", script.globs().at(0));
@@ -80,7 +81,7 @@ TEST_F(ExtensionFromUserScript, Basic) {
 
   // Make sure the files actually exist on disk.
   EXPECT_TRUE(base::PathExists(
-      extension->path().Append(script.js_scripts()[0].relative_path())));
+      extension->path().Append(script.js_scripts()[0]->relative_path())));
   EXPECT_TRUE(base::PathExists(
       extension->path().Append(kManifestFilename)));
 }
@@ -97,7 +98,7 @@ TEST_F(ExtensionFromUserScript, NoMetadata) {
   base::string16 error;
   scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
       test_file, GURL("http://www.google.com/foo/bar.user.js?monkey"),
-      extensions_dir.path(), &error));
+      extensions_dir.GetPath(), &error));
 
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(base::string16(), error);
@@ -116,7 +117,7 @@ TEST_F(ExtensionFromUserScript, NoMetadata) {
 
   ASSERT_EQ(1u, ContentScriptsInfo::GetContentScripts(extension.get()).size());
   const UserScript& script =
-      ContentScriptsInfo::GetContentScripts(extension.get())[0];
+      *ContentScriptsInfo::GetContentScripts(extension.get())[0];
   ASSERT_EQ(1u, script.globs().size());
   EXPECT_EQ("*", script.globs()[0]);
   EXPECT_EQ(0u, script.exclude_globs().size());
@@ -129,7 +130,7 @@ TEST_F(ExtensionFromUserScript, NoMetadata) {
 
   // Make sure the files actually exist on disk.
   EXPECT_TRUE(base::PathExists(
-      extension->path().Append(script.js_scripts()[0].relative_path())));
+      extension->path().Append(script.js_scripts()[0]->relative_path())));
   EXPECT_TRUE(base::PathExists(
       extension->path().Append(kManifestFilename)));
 }
@@ -146,7 +147,7 @@ TEST_F(ExtensionFromUserScript, NotUTF8) {
   base::string16 error;
   scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
       test_file, GURL("http://www.google.com/foo/bar.user.js?monkey"),
-      extensions_dir.path(), &error));
+      extensions_dir.GetPath(), &error));
 
   ASSERT_FALSE(extension.get());
   EXPECT_EQ(base::ASCIIToUTF16("User script must be UTF8 encoded."), error);
@@ -162,9 +163,9 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentStart) {
                        .AppendASCII("user_script_run_at_start.user.js");
 
   base::string16 error;
-  scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
-      test_file, GURL("http://www.google.com/foo"),
-      extensions_dir.path(), &error));
+  scoped_refptr<Extension> extension(
+      ConvertUserScriptToExtension(test_file, GURL("http://www.google.com/foo"),
+                                   extensions_dir.GetPath(), &error));
 
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(base::string16(), error);
@@ -183,7 +184,7 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentStart) {
   // Validate run location.
   ASSERT_EQ(1u, ContentScriptsInfo::GetContentScripts(extension.get()).size());
   const UserScript& script =
-      ContentScriptsInfo::GetContentScripts(extension.get())[0];
+      *ContentScriptsInfo::GetContentScripts(extension.get())[0];
   EXPECT_EQ(UserScript::DOCUMENT_START, script.run_location());
 }
 
@@ -197,9 +198,9 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentEnd) {
                        .AppendASCII("user_script_run_at_end.user.js");
 
   base::string16 error;
-  scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
-      test_file, GURL("http://www.google.com/foo"),
-      extensions_dir.path(), &error));
+  scoped_refptr<Extension> extension(
+      ConvertUserScriptToExtension(test_file, GURL("http://www.google.com/foo"),
+                                   extensions_dir.GetPath(), &error));
 
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(base::string16(), error);
@@ -218,7 +219,7 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentEnd) {
   // Validate run location.
   ASSERT_EQ(1u, ContentScriptsInfo::GetContentScripts(extension.get()).size());
   const UserScript& script =
-      ContentScriptsInfo::GetContentScripts(extension.get())[0];
+      *ContentScriptsInfo::GetContentScripts(extension.get())[0];
   EXPECT_EQ(UserScript::DOCUMENT_END, script.run_location());
 }
 
@@ -233,9 +234,9 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentIdle) {
   ASSERT_TRUE(base::PathExists(test_file)) << test_file.value();
 
   base::string16 error;
-  scoped_refptr<Extension> extension(ConvertUserScriptToExtension(
-      test_file, GURL("http://www.google.com/foo"),
-      extensions_dir.path(), &error));
+  scoped_refptr<Extension> extension(
+      ConvertUserScriptToExtension(test_file, GURL("http://www.google.com/foo"),
+                                   extensions_dir.GetPath(), &error));
 
   ASSERT_TRUE(extension.get());
   EXPECT_EQ(base::string16(), error);
@@ -254,7 +255,7 @@ TEST_F(ExtensionFromUserScript, RunAtDocumentIdle) {
   // Validate run location.
   ASSERT_EQ(1u, ContentScriptsInfo::GetContentScripts(extension.get()).size());
   const UserScript& script =
-      ContentScriptsInfo::GetContentScripts(extension.get())[0];
+      *ContentScriptsInfo::GetContentScripts(extension.get())[0];
   EXPECT_EQ(UserScript::DOCUMENT_IDLE, script.run_location());
 }
 

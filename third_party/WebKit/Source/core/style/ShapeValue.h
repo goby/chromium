@@ -30,7 +30,7 @@
 #ifndef ShapeValue_h
 #define ShapeValue_h
 
-#include "core/fetch/ImageResource.h"
+#include "core/fetch/ImageResourceContent.h"
 #include "core/style/BasicShapes.h"
 #include "core/style/DataEquivalency.h"
 #include "core/style/ComputedStyleConstants.h"
@@ -39,106 +39,82 @@
 
 namespace blink {
 
-class ShapeValue final : public RefCountedWillBeGarbageCollectedFinalized<ShapeValue> {
-public:
-    enum ShapeValueType {
-        // The Auto value is defined by a null ShapeValue*
-        Shape,
-        Box,
-        Image
-    };
+class ShapeValue final : public GarbageCollectedFinalized<ShapeValue> {
+ public:
+  enum ShapeValueType {
+    // The Auto value is defined by a null ShapeValue*
+    Shape,
+    Box,
+    Image
+  };
 
-    static PassRefPtrWillBeRawPtr<ShapeValue> createShapeValue(PassRefPtr<BasicShape> shape, CSSBoxType cssBox)
-    {
-        return adoptRefWillBeNoop(new ShapeValue(shape, cssBox));
-    }
+  static ShapeValue* createShapeValue(PassRefPtr<BasicShape> shape,
+                                      CSSBoxType cssBox) {
+    return new ShapeValue(std::move(shape), cssBox);
+  }
 
-    static PassRefPtrWillBeRawPtr<ShapeValue> createBoxShapeValue(CSSBoxType cssBox)
-    {
-        return adoptRefWillBeNoop(new ShapeValue(cssBox));
-    }
+  static ShapeValue* createBoxShapeValue(CSSBoxType cssBox) {
+    return new ShapeValue(cssBox);
+  }
 
-    static PassRefPtrWillBeRawPtr<ShapeValue> createImageValue(PassRefPtrWillBeRawPtr<StyleImage> image)
-    {
-        return adoptRefWillBeNoop(new ShapeValue(image));
-    }
+  static ShapeValue* createImageValue(StyleImage* image) {
+    return new ShapeValue(image);
+  }
 
-    ShapeValueType type() const { return m_type; }
-    BasicShape* shape() const { return m_shape.get(); }
+  ShapeValueType type() const { return m_type; }
+  BasicShape* shape() const { return m_shape.get(); }
 
-    StyleImage* image() const { return m_image.get(); }
-    bool isImageValid() const
-    {
-        if (!image())
-            return false;
-        if (image()->isImageResource() || image()->isImageResourceSet())
-            return image()->cachedImage() && image()->cachedImage()->hasImage();
-        return image()->isGeneratedImage();
-    }
-    void setImage(PassRefPtrWillBeRawPtr<StyleImage> image)
-    {
-        ASSERT(type() == Image);
-        if (m_image != image)
-            m_image = image;
-    }
-    CSSBoxType cssBox() const { return m_cssBox; }
+  StyleImage* image() const { return m_image.get(); }
+  bool isImageValid() const {
+    if (!image())
+      return false;
+    if (image()->isImageResource() || image()->isImageResourceSet())
+      return image()->cachedImage() && image()->cachedImage()->hasImage();
+    return image()->isGeneratedImage();
+  }
+  void setImage(StyleImage* image) {
+    ASSERT(type() == Image);
+    if (m_image != image)
+      m_image = image;
+  }
+  CSSBoxType cssBox() const { return m_cssBox; }
 
-    bool operator==(const ShapeValue& other) const;
+  bool operator==(const ShapeValue& other) const;
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-        visitor->trace(m_image);
-    }
+  DEFINE_INLINE_VIRTUAL_TRACE() { visitor->trace(m_image); }
 
-private:
-    ShapeValue(PassRefPtr<BasicShape> shape, CSSBoxType cssBox)
-        : m_type(Shape)
-        , m_shape(shape)
-        , m_cssBox(cssBox)
-    {
-    }
-    ShapeValue(ShapeValueType type)
-        : m_type(type)
-        , m_cssBox(BoxMissing)
-    {
-    }
-    ShapeValue(PassRefPtrWillBeRawPtr<StyleImage> image)
-        : m_type(Image)
-        , m_image(image)
-        , m_cssBox(ContentBox)
-    {
-    }
-    ShapeValue(CSSBoxType cssBox)
-        : m_type(Box)
-        , m_cssBox(cssBox)
-    {
-    }
+ private:
+  ShapeValue(PassRefPtr<BasicShape> shape, CSSBoxType cssBox)
+      : m_type(Shape), m_shape(shape), m_cssBox(cssBox) {}
+  ShapeValue(ShapeValueType type) : m_type(type), m_cssBox(BoxMissing) {}
+  ShapeValue(StyleImage* image)
+      : m_type(Image), m_image(image), m_cssBox(ContentBox) {}
+  ShapeValue(CSSBoxType cssBox) : m_type(Box), m_cssBox(cssBox) {}
 
-
-    ShapeValueType m_type;
-    RefPtr<BasicShape> m_shape;
-    RefPtrWillBeMember<StyleImage> m_image;
-    CSSBoxType m_cssBox;
+  ShapeValueType m_type;
+  RefPtr<BasicShape> m_shape;
+  Member<StyleImage> m_image;
+  CSSBoxType m_cssBox;
 };
 
-inline bool ShapeValue::operator==(const ShapeValue& other) const
-{
-    if (type() != other.type())
-        return false;
-
-    switch (type()) {
-    case Shape:
-        return dataEquivalent(shape(), other.shape()) && cssBox() == other.cssBox();
-    case Box:
-        return cssBox() == other.cssBox();
-    case Image:
-        return dataEquivalent(image(), other.image());
-    }
-
-    ASSERT_NOT_REACHED();
+inline bool ShapeValue::operator==(const ShapeValue& other) const {
+  if (type() != other.type())
     return false;
+
+  switch (type()) {
+    case Shape:
+      return dataEquivalent(shape(), other.shape()) &&
+             cssBox() == other.cssBox();
+    case Box:
+      return cssBox() == other.cssBox();
+    case Image:
+      return dataEquivalent(image(), other.image());
+  }
+
+  NOTREACHED();
+  return false;
 }
 
-}
+}  // namespace blink
 
 #endif

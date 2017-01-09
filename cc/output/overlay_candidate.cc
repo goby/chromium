@@ -8,7 +8,6 @@
 #include <limits>
 #include "base/logging.h"
 #include "cc/base/math_util.h"
-#include "cc/quads/io_surface_draw_quad.h"
 #include "cc/quads/solid_color_draw_quad.h"
 #include "cc/quads/stream_video_draw_quad.h"
 #include "cc/quads/texture_draw_quad.h"
@@ -174,9 +173,16 @@ OverlayCandidate::OverlayCandidate()
       is_clipped(false),
       use_output_surface_for_resource(false),
       resource_id(0),
+#if defined(OS_ANDROID)
+      is_backed_by_surface_texture(false),
+      is_promotable_hint(false),
+#endif
       plane_z_order(0),
       is_unoccluded(false),
-      overlay_handled(false) {}
+      overlay_handled(false) {
+}
+
+OverlayCandidate::OverlayCandidate(const OverlayCandidate& other) = default;
 
 OverlayCandidate::~OverlayCandidate() {}
 
@@ -184,8 +190,9 @@ OverlayCandidate::~OverlayCandidate() {}
 bool OverlayCandidate::FromDrawQuad(ResourceProvider* resource_provider,
                                     const DrawQuad* quad,
                                     OverlayCandidate* candidate) {
-  if (quad->needs_blending || quad->shared_quad_state->opacity != 1.f ||
-      quad->shared_quad_state->blend_mode != SkXfermode::kSrcOver_Mode)
+  if (quad->ShouldDrawWithBlending() ||
+      quad->shared_quad_state->opacity != 1.f ||
+      quad->shared_quad_state->blend_mode != SkBlendMode::kSrcOver)
     return false;
 
   auto& transform = quad->shared_quad_state->quad_to_target_transform;
@@ -206,9 +213,6 @@ bool OverlayCandidate::FromDrawQuad(ResourceProvider* resource_provider,
       return FromStreamVideoQuad(resource_provider,
                                  StreamVideoDrawQuad::MaterialCast(quad),
                                  candidate);
-    case DrawQuad::IO_SURFACE_CONTENT:
-      return FromIOSurfaceQuad(
-          resource_provider, IOSurfaceDrawQuad::MaterialCast(quad), candidate);
     default:
       break;
   }
@@ -218,9 +222,11 @@ bool OverlayCandidate::FromDrawQuad(ResourceProvider* resource_provider,
 
 // static
 bool OverlayCandidate::IsInvisibleQuad(const DrawQuad* quad) {
+  float opacity = quad->shared_quad_state->opacity;
+  if (opacity < std::numeric_limits<float>::epsilon())
+    return true;
   if (quad->material == DrawQuad::SOLID_COLOR) {
     SkColor color = SolidColorDrawQuad::MaterialCast(quad)->color;
-    float opacity = quad->shared_quad_state->opacity;
     float alpha = (SkColorGetA(color) * (1.0f / 255.0f)) * opacity;
     return quad->ShouldDrawWithBlending() &&
            alpha < std::numeric_limits<float>::epsilon();
@@ -254,7 +260,6 @@ bool OverlayCandidate::FromTextureQuad(ResourceProvider* resource_provider,
   gfx::OverlayTransform overlay_transform = GetOverlayTransform(
       quad->shared_quad_state->quad_to_target_transform, quad->y_flipped);
   if (quad->background_color != SK_ColorTRANSPARENT ||
-      quad->premultiplied_alpha ||
       overlay_transform == gfx::OVERLAY_TRANSFORM_INVALID)
     return false;
   candidate->resource_id = quad->resource_id();
@@ -282,6 +287,10 @@ bool OverlayCandidate::FromStreamVideoQuad(ResourceProvider* resource_provider,
   candidate->resource_id = quad->resource_id();
   candidate->resource_size_in_pixels = quad->resource_size_in_pixels();
   candidate->transform = overlay_transform;
+#if defined(OS_ANDROID)
+  candidate->is_backed_by_surface_texture =
+      resource_provider->IsBackedBySurfaceTexture(quad->resource_id());
+#endif
 
   gfx::Point3F uv0 = gfx::Point3F(0, 0, 0);
   gfx::Point3F uv1 = gfx::Point3F(1, 1, 0);
@@ -310,21 +319,20 @@ bool OverlayCandidate::FromStreamVideoQuad(ResourceProvider* resource_provider,
   return true;
 }
 
-// static
-bool OverlayCandidate::FromIOSurfaceQuad(ResourceProvider* resource_provider,
-                                         const IOSurfaceDrawQuad* quad,
-                                         OverlayCandidate* candidate) {
-  if (!resource_provider->IsOverlayCandidate(quad->io_surface_resource_id()))
-    return false;
-  gfx::OverlayTransform overlay_transform = GetOverlayTransform(
-      quad->shared_quad_state->quad_to_target_transform, false);
-  if (overlay_transform != gfx::OVERLAY_TRANSFORM_NONE)
-    return false;
-  candidate->resource_id = quad->io_surface_resource_id();
-  candidate->resource_size_in_pixels = quad->io_surface_size;
-  candidate->transform = overlay_transform;
-  candidate->uv_rect = gfx::RectF(1.f, 1.f);
-  return true;
-}
+OverlayCandidateList::OverlayCandidateList() {}
+
+OverlayCandidateList::OverlayCandidateList(const OverlayCandidateList& other) =
+    default;
+
+OverlayCandidateList::OverlayCandidateList(OverlayCandidateList&& other) =
+    default;
+
+OverlayCandidateList::~OverlayCandidateList() {}
+
+OverlayCandidateList& OverlayCandidateList::operator=(
+    const OverlayCandidateList& other) = default;
+
+OverlayCandidateList& OverlayCandidateList::operator=(
+    OverlayCandidateList&& other) = default;
 
 }  // namespace cc

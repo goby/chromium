@@ -4,6 +4,8 @@
 
 #include "remoting/signaling/xmpp_login_handler.h"
 
+#include <utility>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/logging.h"
@@ -81,7 +83,7 @@ void XmppLoginHandler::OnDataReceived(const std::string& data) {
   stream_parser_->AppendData(data);
 }
 
-void XmppLoginHandler::OnStanza(scoped_ptr<buzz::XmlElement> stanza) {
+void XmppLoginHandler::OnStanza(std::unique_ptr<buzz::XmlElement> stanza) {
   switch (state_) {
     case State::WAIT_STREAM_HEADER: {
       if (stanza->Name() == kJabberFeaturesName &&
@@ -182,7 +184,7 @@ void XmppLoginHandler::OnStanza(scoped_ptr<buzz::XmlElement> stanza) {
         return;
       }
       state_ = State::DONE;
-      delegate_->OnHandshakeDone(jid_, stream_parser_.Pass());
+      delegate_->OnHandshakeDone(jid_, std::move(stream_parser_));
       break;
 
     default:

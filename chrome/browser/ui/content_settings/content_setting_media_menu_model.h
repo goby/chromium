@@ -8,6 +8,7 @@
 #include <map>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "content/public/common/media_stream_request.h"
 #include "ui/base/models/simple_menu_model.h"
 
@@ -15,6 +16,8 @@ class ContentSettingBubbleModel;
 
 // A menu model that builds the contents of the media capture devices menu in
 // the content setting bubble.
+// DEPRECATED: only used on OSX. Port OSX to
+// ContentSettingBubbleContents::MediaComboboxModel. See crbug.com/590850
 class ContentSettingMediaMenuModel : public ui::SimpleMenuModel,
                                      public ui::SimpleMenuModel::Delegate {
  public:
@@ -31,8 +34,6 @@ class ContentSettingMediaMenuModel : public ui::SimpleMenuModel,
   // ui::SimpleMenuModel::Delegate:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:

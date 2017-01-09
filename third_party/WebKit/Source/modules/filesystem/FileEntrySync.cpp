@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/filesystem/FileEntrySync.h"
 
 #include "bindings/core/v8/ExceptionState.h"
@@ -37,24 +36,20 @@
 
 namespace blink {
 
-FileEntrySync::FileEntrySync(DOMFileSystemBase* fileSystem, const String& fullPath)
-    : EntrySync(fileSystem, fullPath)
-{
+FileEntrySync::FileEntrySync(DOMFileSystemBase* fileSystem,
+                             const String& fullPath)
+    : EntrySync(fileSystem, fullPath) {}
+
+File* FileEntrySync::file(ExceptionState& exceptionState) {
+  return filesystem()->createFile(this, exceptionState);
 }
 
-File* FileEntrySync::file(ExceptionState& exceptionState)
-{
-    return filesystem()->createFile(this, exceptionState);
+FileWriterSync* FileEntrySync::createWriter(ExceptionState& exceptionState) {
+  return filesystem()->createWriter(this, exceptionState);
 }
 
-FileWriterSync* FileEntrySync::createWriter(ExceptionState& exceptionState)
-{
-    return filesystem()->createWriter(this, exceptionState);
+DEFINE_TRACE(FileEntrySync) {
+  EntrySync::trace(visitor);
 }
 
-DEFINE_TRACE(FileEntrySync)
-{
-    EntrySync::trace(visitor);
-}
-
-}
+}  // namespace blink

@@ -5,11 +5,13 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_DEVICE_ENUMERATION_HOST_HELPER_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_DEVICE_ENUMERATION_HOST_HELPER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "ppapi/c/dev/ppb_device_ref_dev.h"
@@ -42,19 +44,27 @@ class CONTENT_EXPORT PepperDeviceEnumerationHostHelper {
    public:
     virtual ~Delegate() {}
 
-    typedef base::Callback<
-        void(int /* request_id */,
-             const std::vector<ppapi::DeviceRefData>& /* devices */)>
-        EnumerateDevicesCallback;
+    using DevicesCallback = base::Callback<void(
+        const std::vector<ppapi::DeviceRefData>& /* devices */)>;
 
-    // Enumerates devices of the specified type. The request ID passed into the
-    // callback will be the same as the return value.
-    virtual int EnumerateDevices(PP_DeviceType_Dev type,
-                                 const GURL& document_url,
-                                 const EnumerateDevicesCallback& callback) = 0;
-    // Stop enumerating devices of the specified |request_id|. The |request_id|
-    // is the return value of EnumerateDevicesCallback.
-    virtual void StopEnumerateDevices(int request_id) = 0;
+    // Enumerates devices of the specified type.
+    virtual void EnumerateDevices(PP_DeviceType_Dev type,
+                                  const GURL& document_url,
+                                  const DevicesCallback& callback) = 0;
+
+    // Starts monitoring devices of the specified |type|. Returns a
+    // subscription ID that must be used to stop monitoring for the device
+    // |type|. Does not invoke |callback| synchronously. |callback| is invoked
+    // when device changes of the specified |type| occur.
+    virtual uint32_t StartMonitoringDevices(
+        PP_DeviceType_Dev type,
+        const GURL& document_url,
+        const DevicesCallback& callback) = 0;
+
+    // Stops monitoring devices of the specified |type|. The
+    // |subscription_id| is the return value of StartMonitoringDevices.
+    virtual void StopMonitoringDevices(PP_DeviceType_Dev type,
+                                       uint32_t subscription_id) = 0;
   };
 
   // |resource_host| and |delegate| must outlive this object.
@@ -70,7 +80,8 @@ class CONTENT_EXPORT PepperDeviceEnumerationHostHelper {
                              int32_t* result);
 
  private:
-  class ScopedRequest;
+  class ScopedEnumerationRequest;
+  class ScopedMonitoringRequest;
 
   // Has a different signature than HandleResourceMessage() in order to utilize
   // message dispatching macros.
@@ -86,10 +97,8 @@ class CONTENT_EXPORT PepperDeviceEnumerationHostHelper {
       ppapi::host::HostMessageContext* context);
 
   void OnEnumerateDevicesComplete(
-      int request_id,
       const std::vector<ppapi::DeviceRefData>& devices);
   void OnNotifyDeviceChange(uint32_t callback_id,
-                            int request_id,
                             const std::vector<ppapi::DeviceRefData>& devices);
 
   // Non-owning pointers.
@@ -99,8 +108,8 @@ class CONTENT_EXPORT PepperDeviceEnumerationHostHelper {
   PP_DeviceType_Dev device_type_;
   GURL document_url_;
 
-  scoped_ptr<ScopedRequest> enumerate_;
-  scoped_ptr<ScopedRequest> monitor_;
+  std::unique_ptr<ScopedEnumerationRequest> enumerate_;
+  std::unique_ptr<ScopedMonitoringRequest> monitor_;
 
   ppapi::host::ReplyMessageContext enumerate_devices_context_;
 

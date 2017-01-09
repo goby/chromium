@@ -43,3 +43,41 @@ class ArgumentParserTest(unittest.TestCase):
         check(['--coverage', '--coverage-omit', 'foo'])
         check(['--jobs', '3'])
         check(['-vv'], ['--verbose', '--verbose'])
+
+    def test_argv_from_args_foreign_argument(self):
+        parser = ArgumentParser()
+        parser.add_argument('--some-foreign-argument', default=False,
+                            action='store_true')
+        args = parser.parse_args(['--some-foreign-argument', '--verbose'])
+        self.assertEqual(['--verbose'], ArgumentParser().argv_from_args(args))
+
+    def test_valid_shard_options(self):
+        parser = ArgumentParser()
+
+        parser.parse_args(['--total-shards', '1'])
+        self.assertEqual(parser.exit_status, None)
+
+        parser.parse_args(['--total-shards', '5', '--shard-index', '4'])
+        self.assertEqual(parser.exit_status, None)
+
+        parser.parse_args(['--total-shards', '5', '--shard-index', '0'])
+        self.assertEqual(parser.exit_status, None)
+
+
+    def test_invalid_shard_options(self):
+        parser = ArgumentParser()
+
+        parser.parse_args(['--total-shards', '0'])
+        self.assertEqual(parser.exit_status, 2)
+
+        parser.parse_args(['--total-shards', '-1'])
+        self.assertEqual(parser.exit_status, 2)
+
+        parser.parse_args(['--total-shards', '5', '--shard-index', '-1'])
+        self.assertEqual(parser.exit_status, 2)
+
+        parser.parse_args(['--total-shards', '5', '--shard-index', '5'])
+        self.assertEqual(parser.exit_status, 2)
+
+        parser.parse_args(['--total-shards', '5', '--shard-index', '6'])
+        self.assertEqual(parser.exit_status, 2)

@@ -5,6 +5,7 @@
 #include "components/gcm_driver/fake_gcm_driver.h"
 
 #include "base/files/file_path.h"
+#include "base/sequenced_task_runner.h"
 
 namespace gcm {
 
@@ -50,7 +51,7 @@ bool FakeGCMDriver::IsConnected() const {
 }
 
 void FakeGCMDriver::GetGCMStatistics(const GetGCMStatisticsCallback& callback,
-                                     bool clear_logs) {
+                                     ClearActivityLogs clear_logs) {
 }
 
 void FakeGCMDriver::SetGCMRecording(const GetGCMStatisticsCallback& callback,
@@ -74,6 +75,11 @@ void FakeGCMDriver::SendImpl(const std::string& app_id,
                              const OutgoingMessage& message) {
 }
 
+void FakeGCMDriver::RecordDecryptionFailure(
+    const std::string& app_id,
+    GCMEncryptionProvider::DecryptionResult result) {
+}
+
 void FakeGCMDriver::SetAccountTokens(
     const std::vector<GCMClient::AccountTokenInfo>& account_tokens) {
 }
@@ -95,7 +101,7 @@ void FakeGCMDriver::SetLastTokenFetchTime(const base::Time& time) {
 void FakeGCMDriver::WakeFromSuspendForHeartbeat(bool wake) {
 }
 
-InstanceIDHandler* FakeGCMDriver::GetInstanceIDHandler() {
+InstanceIDHandler* FakeGCMDriver::GetInstanceIDHandlerInternal() {
   return NULL;
 }
 

@@ -5,6 +5,7 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_GCM_UNREGISTRATION_REQUEST_HANDLER_H_
 #define GOOGLE_APIS_GCM_ENGINE_GCM_UNREGISTRATION_REQUEST_HANDLER_H_
 
+#include "base/macros.h"
 #include "google_apis/gcm/engine/unregistration_request.h"
 
 namespace gcm {
@@ -20,7 +21,7 @@ class GCM_EXPORT GCMUnregistrationRequestHandler :
   // UnregistrationRequest::CustomRequestHandler overrides:
   void BuildRequestBody(std::string* body) override;
   UnregistrationRequest::Status ParseResponse(
-      const net::URLFetcher* source) override;
+      const std::string& response) override;
   void ReportUMAs(UnregistrationRequest::Status status,
                   int retry_count,
                   base::TimeDelta complete_time) override;

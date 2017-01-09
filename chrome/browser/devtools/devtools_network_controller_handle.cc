@@ -4,6 +4,8 @@
 
 #include "chrome/browser/devtools/devtools_network_controller_handle.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "chrome/browser/devtools/devtools_network_conditions.h"
 #include "chrome/browser/devtools/devtools_network_controller.h"
@@ -19,7 +21,7 @@ DevToolsNetworkControllerHandle::~DevToolsNetworkControllerHandle() {}
 
 void DevToolsNetworkControllerHandle::SetNetworkState(
     const std::string& client_id,
-    scoped_ptr<DevToolsNetworkConditions> conditions) {
+    std::unique_ptr<DevToolsNetworkConditions> conditions) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   BrowserThread::PostTask(
@@ -44,9 +46,9 @@ void DevToolsNetworkControllerHandle::LazyInitialize() {
 
 void DevToolsNetworkControllerHandle::SetNetworkStateOnIO(
     const std::string& client_id,
-    scoped_ptr<DevToolsNetworkConditions> conditions) {
+    std::unique_ptr<DevToolsNetworkConditions> conditions) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
 
   LazyInitialize();
-  controller_->SetNetworkState(client_id, conditions.Pass());
+  controller_->SetNetworkState(client_id, std::move(conditions));
 }

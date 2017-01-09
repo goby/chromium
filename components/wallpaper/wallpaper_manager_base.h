@@ -5,26 +5,29 @@
 #ifndef COMPONENTS_WALLPAPER_WALLPAPER_MANAGER_BASE_H_
 #define COMPONENTS_WALLPAPER_WALLPAPER_MANAGER_BASE_H_
 
+#include <stddef.h>
+
 #include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_checker.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
+#include "components/signin/core/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_image/user_image.h"
 #include "components/wallpaper/wallpaper_export.h"
 #include "components/wallpaper/wallpaper_layout.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "ui/gfx/image/image_skia.h"
 
 class PrefRegistrySimple;
@@ -54,7 +57,8 @@ class WALLPAPER_EXPORT MovableOnDestroyCallback {
   base::Closure callback_;
 };
 
-typedef scoped_ptr<MovableOnDestroyCallback> MovableOnDestroyCallbackHolder;
+using MovableOnDestroyCallbackHolder =
+    std::unique_ptr<MovableOnDestroyCallback>;
 
 struct WALLPAPER_EXPORT WallpaperInfo {
   WallpaperInfo();
@@ -65,7 +69,7 @@ struct WALLPAPER_EXPORT WallpaperInfo {
   ~WallpaperInfo();
 
   // Either file name of migrated wallpaper including first directory level
-  // (corresponding to user id hash) or online wallpaper URL.
+  // (corresponding to user wallpaper_files_id) or online wallpaper URL.
   std::string location;
   WallpaperLayout layout;
   user_manager::User::WallpaperType type;
@@ -75,6 +79,10 @@ struct WALLPAPER_EXPORT WallpaperInfo {
            (type == other.type);
   }
 };
+
+// Asserts that the current task is sequenced with any other task that calls
+// this.
+void WALLPAPER_EXPORT AssertCalledOnWallpaperSequence();
 
 class WallpaperManagerBrowserTest;
 
@@ -116,10 +124,10 @@ WALLPAPER_EXPORT extern const char kUserWallpapers[];
 // A dictionary pref that maps usernames to wallpaper properties.
 WALLPAPER_EXPORT extern const char kUserWallpapersProperties[];
 
-// This singleton class maintains wallpapers for users who have logged into this
-// Chrome OS device.
-class WALLPAPER_EXPORT WallpaperManagerBase
-    : public content::NotificationObserver {
+class WallpaperFilesId;
+
+// This singleton class maintains wallpapers for users.
+class WALLPAPER_EXPORT WallpaperManagerBase {
  public:
   enum WallpaperResolution {
     WALLPAPER_RESOLUTION_LARGE,
@@ -166,13 +174,12 @@ class WALLPAPER_EXPORT WallpaperManagerBase
     explicit TestApi(WallpaperManagerBase* wallpaper_manager);
     virtual ~TestApi();
 
-    bool GetWallpaperFromCache(const std::string& user_id,
+    bool GetWallpaperFromCache(const AccountId& account_id,
                                gfx::ImageSkia* image);
 
-    bool GetPathFromCache(const std::string& user_id,
-                          base::FilePath* path);
+    bool GetPathFromCache(const AccountId& account_id, base::FilePath* path);
 
-    void SetWallpaperCache(const std::string& user_id,
+    void SetWallpaperCache(const AccountId& account_id,
                            const base::FilePath& path,
                            const gfx::ImageSkia& image);
 
@@ -187,7 +194,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   class Observer {
    public:
     virtual ~Observer() {}
-    virtual void OnWallpaperAnimationFinished(const std::string& user_id) = 0;
+    virtual void OnWallpaperAnimationFinished(const AccountId& account_id) = 0;
     virtual void OnUpdateWallpaperForTesting() {}
     virtual void OnPendingListEmptyForTesting() {}
   };
@@ -224,14 +231,16 @@ class WALLPAPER_EXPORT WallpaperManagerBase
                                      int preferred_height,
                                      gfx::ImageSkia* output_skia);
 
-  // Returns custom wallpaper path. Append |sub_dir|, |user_id_hash| and |file|
+  // Returns custom wallpaper path. Append |sub_dir|, |wallpaper_files_id| and
+  // |file|
   // to custom wallpaper directory.
-  static base::FilePath GetCustomWallpaperPath(const char* sub_dir,
-                                               const std::string& user_id_hash,
-                                               const std::string& file);
+  static base::FilePath GetCustomWallpaperPath(
+      const char* sub_dir,
+      const WallpaperFilesId& wallpaper_files_id,
+      const std::string& file);
 
   WallpaperManagerBase();
-  ~WallpaperManagerBase() override;
+  virtual ~WallpaperManagerBase();
 
   // Returns the appropriate wallpaper resolution for all root windows.
   virtual WallpaperResolution GetAppropriateResolution() = 0;
@@ -253,27 +262,14 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // empty wallpaper.
   virtual void InitializeWallpaper() = 0;
 
-  // NotificationObserver overrides:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override = 0;
-
-  // Removes all |user_id| related wallpaper info and saved wallpapers.
-  virtual void RemoveUserWallpaperInfo(const std::string& user_id) = 0;
-
-  // Calls SetCustomWallpaper() with |user_id_hash| received from cryptohome.
-  virtual void SetCustomWallpaperOnSanitizedUsername(
-      const std::string& user_id,
-      const gfx::ImageSkia& image,
-      bool update_wallpaper,
-      bool cryptohome_success,
-      const std::string& user_id_hash);
+  // Removes all |account_id| related wallpaper info and saved wallpapers.
+  virtual void RemoveUserWallpaperInfo(const AccountId& account_id) = 0;
 
   // Saves custom wallpaper to file, post task to generate thumbnail and updates
   // local state preferences. If |update_wallpaper| is false, don't change
   // wallpaper but only update cache.
-  virtual void SetCustomWallpaper(const std::string& user_id,
-                                  const std::string& user_id_hash,
+  virtual void SetCustomWallpaper(const AccountId& account_id,
+                                  const WallpaperFilesId& wallpaper_files_id,
                                   const std::string& file,
                                   WallpaperLayout layout,
                                   user_manager::User::WallpaperType type,
@@ -287,31 +283,31 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // |large_wallpaper_image| depending on GetAppropriateResolution().
   virtual void SetDefaultWallpaperPath(
       const base::FilePath& customized_default_wallpaper_file_small,
-      scoped_ptr<gfx::ImageSkia> small_wallpaper_image,
+      std::unique_ptr<gfx::ImageSkia> small_wallpaper_image,
       const base::FilePath& customized_default_wallpaper_file_large,
-      scoped_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
+      std::unique_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
 
   // Sets wallpaper to default wallpaper (asynchronously with zero delay).
-  virtual void SetDefaultWallpaperNow(const std::string& user_id) = 0;
+  virtual void SetDefaultWallpaperNow(const AccountId& account_id) = 0;
 
   // Sets wallpaper to default wallpaper (asynchronously with default delay).
-  virtual void SetDefaultWallpaperDelayed(const std::string& user_id) = 0;
+  virtual void SetDefaultWallpaperDelayed(const AccountId& account_id) = 0;
 
-  // Sets selected wallpaper information for |user_id| and saves it to Local
+  // Sets selected wallpaper information for |account_id| and saves it to Local
   // State if |is_persistent| is true.
-  virtual void SetUserWallpaperInfo(const std::string& user_id,
+  virtual void SetUserWallpaperInfo(const AccountId& account_id,
                                     const WallpaperInfo& info,
                                     bool is_persistent) = 0;
 
-  // Sets |user_id|'s wallpaper (asynchronously with zero delay).
-  virtual void SetUserWallpaperNow(const std::string& user_id);
+  // Sets |account_id|'s wallpaper (asynchronously with zero delay).
+  virtual void SetUserWallpaperNow(const AccountId& account_id);
 
-  // Sets |user_id|'s wallpaper (asynchronously with default delay).
-  virtual void SetUserWallpaperDelayed(const std::string& user_id);
+  // Sets |account_id|'s wallpaper (asynchronously with default delay).
+  virtual void SetUserWallpaperDelayed(const AccountId& account_id);
 
   // Sets wallpaper to |image| (asynchronously with zero delay). If
   // |update_wallpaper| is false, skip change wallpaper but only update cache.
-  virtual void SetWallpaperFromImageSkia(const std::string& user_id,
+  virtual void SetWallpaperFromImageSkia(const AccountId& account_id,
                                          const gfx::ImageSkia& image,
                                          WallpaperLayout layout,
                                          bool update_wallpaper) = 0;
@@ -326,23 +322,23 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // Removes given observer from the list.
   virtual void RemoveObserver(Observer* observer);
 
-  // Returns whether a wallpaper policy is enforced for |user_id|.
-  virtual bool IsPolicyControlled(const std::string& user_id) const;
+  // Returns whether a wallpaper policy is enforced for |account_id|.
+  virtual bool IsPolicyControlled(const AccountId& account_id) const;
 
-  // Called when a wallpaper policy has been set for |user_id|.  Blocks user
+  // Called when a wallpaper policy has been set for |account_id|.  Blocks user
   // from changing the wallpaper.
   virtual void OnPolicySet(const std::string& policy,
-                           const std::string& user_id);
+                           const AccountId& account_id);
 
-  // Called when the wallpaper policy has been cleared for |user_id|.
+  // Called when the wallpaper policy has been cleared for |account_id|.
   virtual void OnPolicyCleared(const std::string& policy,
-                               const std::string& user_id);
+                               const AccountId& account_id);
 
   // Called when the policy-set wallpaper has been fetched.  Initiates decoding
   // of the JPEG |data| with a callback to SetPolicyControlledWallpaper().
   virtual void OnPolicyFetched(const std::string& policy,
-                               const std::string& user_id,
-                               scoped_ptr<std::string> data) = 0;
+                               const AccountId& account_id,
+                               std::unique_ptr<std::string> data) = 0;
 
   // This is called from CustomizationDocument.
   // |resized_directory| is the directory where resized versions are stored and
@@ -355,6 +351,9 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // Returns queue size.
   virtual size_t GetPendingListSizeForTesting() const = 0;
 
+  // Ruturns files identifier for the |account_id|.
+  virtual WallpaperFilesId GetFilesId(const AccountId& account_id) const = 0;
+
  protected:
   friend class TestApi;
   friend class WallpaperManagerBrowserTest;
@@ -365,37 +364,38 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // is currently being loaded and or in progress of being loaded and |second|
   // the image itself.
   typedef std::pair<base::FilePath, gfx::ImageSkia> CustomWallpaperElement;
-  typedef std::map<std::string, CustomWallpaperElement> CustomWallpaperMap;
+  typedef std::map<AccountId, CustomWallpaperElement> CustomWallpaperMap;
 
   // Saves original custom wallpaper to |path| (absolute path) on filesystem
   // and starts resizing operation of the custom wallpaper if necessary.
-  static void SaveCustomWallpaper(const std::string& user_id_hash,
+  static void SaveCustomWallpaper(const WallpaperFilesId& wallpaper_files_id,
                                   const base::FilePath& path,
                                   WallpaperLayout layout,
-                                  scoped_ptr<gfx::ImageSkia> image);
+                                  std::unique_ptr<gfx::ImageSkia> image);
 
-  // Moves custom wallpapers from |user_id| directory to |user_id_hash|
-  // directory.
+  // Moves custom wallpapers from user email directory to
+  // |wallpaper_files_id| directory.
   static void MoveCustomWallpapersOnWorker(
-      const std::string& user_id,
-      const std::string& user_id_hash,
+      const AccountId& account_id,
+      const WallpaperFilesId& wallpaper_files_id,
+      const scoped_refptr<base::SingleThreadTaskRunner>& reply_task_runner,
       base::WeakPtr<WallpaperManagerBase> weak_ptr);
 
-  // Gets |user_id|'s custom wallpaper at |wallpaper_path|. Falls back on
+  // Gets |account_id|'s custom wallpaper at |wallpaper_path|. Falls back on
   // original custom wallpaper. When |update_wallpaper| is true, sets wallpaper
   // to the loaded wallpaper. Must run on wallpaper sequenced worker thread.
   static void GetCustomWallpaperInternal(
-      const std::string& user_id,
+      const AccountId& account_id,
       const WallpaperInfo& info,
       const base::FilePath& wallpaper_path,
       bool update_wallpaper,
+      const scoped_refptr<base::SingleThreadTaskRunner>& reply_task_runner,
       MovableOnDestroyCallbackHolder on_finish,
       base::WeakPtr<WallpaperManagerBase> weak_ptr);
 
   // Resize and save customized default wallpaper.
   static void ResizeCustomizedDefaultWallpaper(
-      scoped_ptr<gfx::ImageSkia> image,
-      const user_manager::UserImage::RawImage& raw_image,
+      std::unique_ptr<gfx::ImageSkia> image,
       const CustomizedWallpaperRescaledFiles* rescaled_files,
       bool* success,
       gfx::ImageSkia* small_wallpaper_image,
@@ -403,21 +403,15 @@ class WALLPAPER_EXPORT WallpaperManagerBase
 
   // Initialize wallpaper for the specified user to default and saves this
   // settings in local state.
-  virtual void InitInitialUserWallpaper(const std::string& user_id,
+  virtual void InitInitialUserWallpaper(const AccountId& account_id,
                                         bool is_persistent);
 
-  // Set wallpaper to |user_image| controlled by policy.  (Takes a UserImage
-  // because that's the callback interface provided by UserImageLoader.)
-  virtual void SetPolicyControlledWallpaper(
-      const std::string& user_id,
-      const user_manager::UserImage& user_image);
-
   // Gets encoded wallpaper from cache. Returns true if success.
-  virtual bool GetWallpaperFromCache(const std::string& user_id,
+  virtual bool GetWallpaperFromCache(const AccountId& account_id,
                                      gfx::ImageSkia* image);
 
   // Gets path of encoded wallpaper from cache. Returns true if success.
-  virtual bool GetPathFromCache(const std::string& user_id,
+  virtual bool GetPathFromCache(const AccountId& account_id,
                                 base::FilePath* path);
 
   // The number of wallpapers have loaded. For test only.
@@ -435,15 +429,15 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // should be only executed once.
   virtual void CacheUsersWallpapers();
 
-  // Caches |user_id|'s wallpaper to memory.
-  virtual void CacheUserWallpaper(const std::string& user_id);
+  // Caches |account_id|'s wallpaper to memory.
+  virtual void CacheUserWallpaper(const AccountId& account_id);
 
   // Clears disposable ONLINE and CUSTOM wallpaper cache. At multi profile
   // world, logged in users' wallpaper cache is not disposable.
   virtual void ClearDisposableWallpaperCache();
 
-  // Deletes all |user_id| related custom wallpapers and directories.
-  virtual void DeleteUserWallpapers(const std::string& user_id,
+  // Deletes all |account_id| related custom wallpapers and directories.
+  virtual void DeleteUserWallpapers(const AccountId& account_id,
                                     const std::string& path_to_file);
 
   // Gets the CommandLine representing the current process's command line.
@@ -453,51 +447,53 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   // Note that before device is enrolled, it proceeds with untrusted setting.
   virtual void InitializeRegisteredDeviceWallpaper() = 0;
 
-  // Loads |user_id|'s wallpaper. When |update_wallpaper| is true, sets
+  // Loads |account_id|'s wallpaper. When |update_wallpaper| is true, sets
   // wallpaper to the loaded wallpaper.
-  virtual void LoadWallpaper(const std::string& user_id,
+  virtual void LoadWallpaper(const AccountId& account_id,
                              const WallpaperInfo& info,
                              bool update_wallpaper,
                              MovableOnDestroyCallbackHolder on_finish);
 
   // Called when the original custom wallpaper is moved to the new place.
   // Updates the corresponding user wallpaper info.
-  virtual void MoveCustomWallpapersSuccess(const std::string& user_id,
-                                           const std::string& user_id_hash);
+  virtual void MoveCustomWallpapersSuccess(
+      const AccountId& account_id,
+      const wallpaper::WallpaperFilesId& wallpaper_files_id);
 
   // Moves custom wallpaper to a new place. Email address was used as directory
   // name in the old system, this is not safe. New directory system uses
-  // user_id_hash instead of user_id. This must be called after user_id_hash is
-  // ready.
+  // wallpaper_files_id instead of e-mail. This must be called after
+  // wallpaper_files_id is ready.
   virtual void MoveLoggedInUserCustomWallpaper();
 
-  // Gets wallpaper information of |user_id| from Local State or memory. Returns
+  // Gets wallpaper information of |account_id| from Local State or memory.
+  // Returns
   // false if wallpaper information is not found.
-  virtual bool GetUserWallpaperInfo(const std::string& user_id,
+  virtual bool GetUserWallpaperInfo(const AccountId& account_id,
                                     WallpaperInfo* info) const = 0;
 
   // Sets wallpaper to the decoded wallpaper if |update_wallpaper| is true.
   // Otherwise, cache wallpaper to memory if not logged in.  (Takes a UserImage
   // because that's the callback interface provided by UserImageLoader.)
   virtual void OnWallpaperDecoded(
-      const std::string& user_id,
+      const AccountId& account_id,
       WallpaperLayout layout,
       bool update_wallpaper,
       MovableOnDestroyCallbackHolder on_finish,
-      const user_manager::UserImage& user_image) = 0;
+      std::unique_ptr<user_manager::UserImage> user_image) = 0;
 
   // Creates new PendingWallpaper request (or updates currently pending).
-  virtual void ScheduleSetUserWallpaper(const std::string& user_id,
+  virtual void ScheduleSetUserWallpaper(const AccountId& account_id,
                                         bool delayed) = 0;
 
   // Sets wallpaper to default.
   virtual void DoSetDefaultWallpaper(
-      const std::string& user_id,
+      const AccountId& account_id,
       MovableOnDestroyCallbackHolder on_finish) = 0;
 
   // Starts to load wallpaper at |wallpaper_path|. If |wallpaper_path| is
   // already loaded for that user, do nothing. Must be called on UI thread.
-  virtual void StartLoad(const std::string& user_id,
+  virtual void StartLoad(const AccountId& account_id,
                          const WallpaperInfo& info,
                          bool update_wallpaper,
                          const base::FilePath& wallpaper_path,
@@ -520,42 +516,42 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   virtual void SetCustomizedDefaultWallpaperAfterCheck(
       const GURL& wallpaper_url,
       const base::FilePath& downloaded_file,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files) = 0;
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files) = 0;
 
   // Starts rescaling of customized wallpaper.
   virtual void OnCustomizedDefaultWallpaperDecoded(
       const GURL& wallpaper_url,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
-      const user_manager::UserImage& user_image);
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
+      std::unique_ptr<user_manager::UserImage> user_image);
 
   // Check the result of ResizeCustomizedDefaultWallpaper and finally
   // apply Customized Default Wallpaper.
   virtual void OnCustomizedDefaultWallpaperResized(
       const GURL& wallpaper_url,
-      scoped_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
-      scoped_ptr<bool> success,
-      scoped_ptr<gfx::ImageSkia> small_wallpaper_image,
-      scoped_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
+      std::unique_ptr<CustomizedWallpaperRescaledFiles> rescaled_files,
+      std::unique_ptr<bool> success,
+      std::unique_ptr<gfx::ImageSkia> small_wallpaper_image,
+      std::unique_ptr<gfx::ImageSkia> large_wallpaper_image) = 0;
 
   // Init |*default_*_wallpaper_file_| from given command line and
   // clear |default_wallpaper_image_|.
   virtual void SetDefaultWallpaperPathsFromCommandLine(
-      base::CommandLine* command_line);
+      base::CommandLine* command_line) = 0;
 
   // Sets wallpaper to decoded default.
   virtual void OnDefaultWallpaperDecoded(
       const base::FilePath& path,
       const WallpaperLayout layout,
-      scoped_ptr<user_manager::UserImage>* result,
+      std::unique_ptr<user_manager::UserImage>* result,
       MovableOnDestroyCallbackHolder on_finish,
-      const user_manager::UserImage& user_image) = 0;
+      std::unique_ptr<user_manager::UserImage> user_image) = 0;
 
   // Start decoding given default wallpaper.
   virtual void StartLoadAndSetDefaultWallpaper(
       const base::FilePath& path,
       const WallpaperLayout layout,
       MovableOnDestroyCallbackHolder on_finish,
-      scoped_ptr<user_manager::UserImage>* result_out) = 0;
+      std::unique_ptr<user_manager::UserImage>* result_out) = 0;
 
   // Returns wallpaper subdirectory name for current resolution.
   virtual const char* GetCustomWallpaperSubdirForCurrentResolution();
@@ -565,6 +561,8 @@ class WALLPAPER_EXPORT WallpaperManagerBase
 
   // The number of loaded wallpapers.
   int loaded_wallpapers_for_test_;
+
+  base::ThreadChecker thread_checker_;
 
   // Sequence token associated with wallpaper operations.
   base::SequencedWorkerPool::SequenceToken sequence_token_;
@@ -582,11 +580,9 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   CustomWallpaperMap wallpaper_cache_;
 
   // The last selected user on user pod row.
-  std::string last_selected_user_;
+  AccountId last_selected_user_ = EmptyAccountId();
 
   bool should_cache_wallpaper_;
-
-  content::NotificationRegistrar registrar_;
 
   base::ObserverList<Observer> observers_;
 
@@ -608,7 +604,7 @@ class WALLPAPER_EXPORT WallpaperManagerBase
   base::FilePath child_large_wallpaper_file_;
 
   // Current decoded default image is stored in cache.
-  scoped_ptr<user_manager::UserImage> default_wallpaper_image_;
+  std::unique_ptr<user_manager::UserImage> default_wallpaper_image_;
 
   base::WeakPtrFactory<WallpaperManagerBase> weak_factory_;
 

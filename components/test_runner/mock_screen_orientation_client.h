@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_TEST_RUNNER_MOCK_SCREEN_ORIENTATION_CLIENT_H_
 #define COMPONENTS_TEST_RUNNER_MOCK_SCREEN_ORIENTATION_CLIENT_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "components/test_runner/test_runner_export.h"
@@ -31,15 +33,18 @@ class TEST_RUNNER_EXPORT MockScreenOrientationClient
 
   blink::WebScreenOrientationType CurrentOrientationType() const;
   unsigned CurrentOrientationAngle() const;
+  bool IsDisabled() const { return is_disabled_; }
+  void SetDisabled(bool disabled);
 
  private:
   // From blink::WebScreenOrientationClient.
-  void lockOrientation(blink::WebScreenOrientationLockType orientation,
-                       blink::WebLockOrientationCallback* callback) override;
+  void lockOrientation(
+      blink::WebScreenOrientationLockType orientation,
+      std::unique_ptr<blink::WebLockOrientationCallback> callback) override;
   void unlockOrientation() override;
 
   void UpdateLockSync(blink::WebScreenOrientationLockType,
-                      blink::WebLockOrientationCallback*);
+                      std::unique_ptr<blink::WebLockOrientationCallback>);
   void ResetLockSync();
 
   void UpdateScreenOrientation(blink::WebScreenOrientationType);
@@ -51,6 +56,7 @@ class TEST_RUNNER_EXPORT MockScreenOrientationClient
   blink::WebScreenOrientationLockType current_lock_;
   blink::WebScreenOrientationType device_orientation_;
   blink::WebScreenOrientationType current_orientation_;
+  bool is_disabled_;
 
   DISALLOW_COPY_AND_ASSIGN(MockScreenOrientationClient);
 };

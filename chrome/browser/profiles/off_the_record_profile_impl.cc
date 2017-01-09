@@ -4,12 +4,14 @@
 
 #include "chrome/browser/profiles/off_the_record_profile_impl.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/json_pref_store.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
@@ -40,42 +42,41 @@
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "components/content_settings/core/browser/host_content_settings_map.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/prefs/json_pref_store.h"
 #include "components/proxy_config/pref_proxy_config_tracker.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/ui/zoom/zoom_event_manager.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "components/user_prefs/user_prefs.h"
+#include "components/zoom/zoom_event_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/storage_partition.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
+#include "extensions/features/features.h"
 #include "net/http/http_server_properties.h"
 #include "net/http/transport_security_state.h"
+#include "ppapi/features/features.h"
 #include "storage/browser/database/database_tracker.h"
 
 #if defined(OS_ANDROID)
-#include "chrome/browser/media/protected_media_identifier_permission_context.h"
-#include "chrome/browser/media/protected_media_identifier_permission_context_factory.h"
-#endif  // defined(OS_ANDROID)
-
-#if defined(OS_ANDROID) || defined(OS_IOS)
-#include "base/prefs/scoped_user_pref_update.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/proxy_config/proxy_prefs.h"
-#endif  // defined(OS_ANDROID) || defined(OS_IOS)
+#endif  // defined(OS_ANDROID)
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/chromeos/preferences.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
 #endif
 
-#if defined(ENABLE_CONFIGURATION_POLICY) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
 #include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
 #endif
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "components/guest_view/browser/guest_view_manager.h"
@@ -84,7 +85,7 @@
 #include "extensions/common/extension.h"
 #endif
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/content_settings/content_settings_supervised_provider.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service_factory.h"
@@ -94,7 +95,7 @@ using content::BrowserThread;
 using content::DownloadManagerDelegate;
 using content::HostZoomMap;
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 namespace {
 
 void NotifyOTRProfileCreatedOnIOThread(void* original_profile,
@@ -116,6 +117,7 @@ OffTheRecordProfileImpl::OffTheRecordProfileImpl(Profile* real_profile)
     : profile_(real_profile),
       prefs_(PrefServiceSyncableIncognitoFromProfile(real_profile)),
       start_time_(Time::Now()) {
+  BrowserContext::Initialize(this, profile_->GetPath());
   // Register on BrowserContext.
   user_prefs::UserPrefs::Set(this, prefs_);
 }
@@ -128,7 +130,7 @@ void OffTheRecordProfileImpl::Init() {
   // we have to instantiate OffTheRecordProfileIOData::Handle here after a ctor.
   InitIoData();
 
-#if defined(ENABLE_CONFIGURATION_POLICY) && !defined(OS_CHROMEOS)
+#if !defined(OS_CHROMEOS)
   // Because UserCloudPolicyManager is in a component, it cannot access
   // GetOriginalProfile. Instead, we have to inject this relation here.
   policy::UserCloudPolicyManagerFactory::RegisterForOffTheRecordBrowserContext(
@@ -148,13 +150,12 @@ void OffTheRecordProfileImpl::Init() {
 
   TrackZoomLevelsFromParent();
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   ChromePluginServiceFilter::GetInstance()->RegisterResourceContext(
-      PluginPrefs::GetForProfile(this).get(),
-      io_data_->GetResourceContextNoInit());
+      this, io_data_->GetResourceContextNoInit());
 #endif
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   // Make the chrome//extension-icon/ resource available.
   extensions::ExtensionIconSource* icon_source =
       new extensions::ExtensionIconSource(profile_);
@@ -167,13 +168,13 @@ void OffTheRecordProfileImpl::Init() {
 
   // The DomDistillerViewerSource is not a normal WebUI so it must be registered
   // as a URLDataSource early.
-  RegisterDomDistillerViewerSource(this);
+  dom_distiller::RegisterViewerSource(this);
 }
 
 OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
   MaybeSendDestroyedNotification();
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   ChromePluginServiceFilter::GetInstance()->UnregisterResourceContext(
       io_data_->GetResourceContextNoInit());
 #endif
@@ -181,7 +182,7 @@ OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
   BrowserContextDependencyManager::GetInstance()->DestroyBrowserContextServices(
       this);
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   BrowserThread::PostTask(
       BrowserThread::IO, FROM_HERE,
       base::Bind(&NotifyOTRProfileDestroyedOnIOThread, profile_, this));
@@ -193,6 +194,10 @@ OffTheRecordProfileImpl::~OffTheRecordProfileImpl() {
   // Clears any data the network stack contains that may be related to the
   // OTR session.
   g_browser_process->io_thread()->ChangedToOnTheRecord();
+
+  // This must be called before ProfileIOData::ShutdownOnUIThread but after
+  // other profile-related destroy notifications are dispatched.
+  ShutdownStoragePartitions();
 }
 
 void OffTheRecordProfileImpl::InitIoData() {
@@ -241,11 +246,11 @@ base::FilePath OffTheRecordProfileImpl::GetPath() const {
   return profile_->GetPath();
 }
 
-scoped_ptr<content::ZoomLevelDelegate>
+std::unique_ptr<content::ZoomLevelDelegate>
 OffTheRecordProfileImpl::CreateZoomLevelDelegate(
     const base::FilePath& partition_path) {
-  return make_scoped_ptr(new ChromeZoomLevelOTRDelegate(
-      ui_zoom::ZoomEventManager::GetForBrowserContext(this)->GetWeakPtr()));
+  return base::MakeUnique<ChromeZoomLevelOTRDelegate>(
+      zoom::ZoomEventManager::GetForBrowserContext(this)->GetWeakPtr());
 }
 
 scoped_refptr<base::SequencedTaskRunner>
@@ -310,44 +315,30 @@ DownloadManagerDelegate* OffTheRecordProfileImpl::GetDownloadManagerDelegate() {
       GetDownloadManagerDelegate();
 }
 
-net::URLRequestContextGetter* OffTheRecordProfileImpl::GetRequestContext() {
-  return GetDefaultStoragePartition(this)->GetURLRequestContext();
-}
-
 net::URLRequestContextGetter* OffTheRecordProfileImpl::CreateRequestContext(
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) {
   return io_data_->CreateMainRequestContextGetter(
-      protocol_handlers, request_interceptors.Pass()).get();
+                     protocol_handlers, std::move(request_interceptors))
+      .get();
 }
 
 net::URLRequestContextGetter*
-    OffTheRecordProfileImpl::GetRequestContextForRenderProcess(
-        int renderer_child_id) {
-  content::RenderProcessHost* rph = content::RenderProcessHost::FromID(
-      renderer_child_id);
-  return rph->GetStoragePartition()->GetURLRequestContext();
-}
-
-net::URLRequestContextGetter*
-    OffTheRecordProfileImpl::GetMediaRequestContext() {
+    OffTheRecordProfileImpl::CreateMediaRequestContext() {
   // In OTR mode, media request context is the same as the original one.
   return GetRequestContext();
 }
 
 net::URLRequestContextGetter*
-    OffTheRecordProfileImpl::GetMediaRequestContextForRenderProcess(
-        int renderer_child_id) {
-  // In OTR mode, media request context is the same as the original one.
-  return GetRequestContextForRenderProcess(renderer_child_id);
-}
-
-net::URLRequestContextGetter*
-OffTheRecordProfileImpl::GetMediaRequestContextForStoragePartition(
+OffTheRecordProfileImpl::CreateMediaRequestContextForStoragePartition(
     const base::FilePath& partition_path,
     bool in_memory) {
   return io_data_->GetIsolatedAppRequestContextGetter(partition_path, in_memory)
       .get();
+}
+
+net::URLRequestContextGetter* OffTheRecordProfileImpl::GetRequestContext() {
+  return GetDefaultStoragePartition(this)->GetURLRequestContext();
 }
 
 net::URLRequestContextGetter*
@@ -362,10 +353,9 @@ OffTheRecordProfileImpl::CreateRequestContextForStoragePartition(
     content::ProtocolHandlerMap* protocol_handlers,
     content::URLRequestInterceptorScopedVector request_interceptors) {
   return io_data_->CreateIsolatedAppRequestContextGetter(
-      partition_path,
-      in_memory,
-      protocol_handlers,
-      request_interceptors.Pass()).get();
+                     partition_path, in_memory, protocol_handlers,
+                     std::move(request_interceptors))
+      .get();
 }
 
 content::ResourceContext* OffTheRecordProfileImpl::GetResourceContext() {
@@ -377,7 +367,7 @@ net::SSLConfigService* OffTheRecordProfileImpl::GetSSLConfigService() {
 }
 
 content::BrowserPluginGuestManager* OffTheRecordProfileImpl::GetGuestManager() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   return guest_view::GuestViewManager::FromBrowserContext(this);
 #else
   return NULL;
@@ -386,7 +376,7 @@ content::BrowserPluginGuestManager* OffTheRecordProfileImpl::GetGuestManager() {
 
 storage::SpecialStoragePolicy*
 OffTheRecordProfileImpl::GetSpecialStoragePolicy() {
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   return GetExtensionSpecialStoragePolicy();
 #else
   return NULL;
@@ -515,7 +505,7 @@ class GuestSessionProfile : public OffTheRecordProfileImpl {
 
  private:
   // The guest user should be able to customize Chrome OS preferences.
-  scoped_ptr<chromeos::Preferences> chromeos_preferences_;
+  std::unique_ptr<chromeos::Preferences> chromeos_preferences_;
 };
 #endif
 
@@ -557,7 +547,7 @@ void OffTheRecordProfileImpl::UpdateDefaultZoomLevel() {
   host_zoom_map->SetDefaultZoomLevel(default_zoom_level);
   // HostZoomMap does not trigger zoom notification events when the default
   // zoom level is set, so we need to do it here.
-  ui_zoom::ZoomEventManager::GetForBrowserContext(this)
+  zoom::ZoomEventManager::GetForBrowserContext(this)
       ->OnDefaultZoomLevelChanged();
 }
 

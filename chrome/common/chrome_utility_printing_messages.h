@@ -7,18 +7,25 @@
 #include <string>
 #include <vector>
 
+#include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "components/printing/common/printing_param_traits_macros.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_platform_file.h"
 #include "printing/backend/print_backend.h"
+#include "printing/features/features.h"
 #include "printing/page_range.h"
 #include "printing/pdf_render_settings.h"
 #include "printing/pwg_raster_settings.h"
 
+#if defined(OS_WIN)
+#include <windows.h>
+#endif
+
 #define IPC_MESSAGE_START ChromeUtilityPrintingMsgStart
 
 // Preview and Cloud Print messages.
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 IPC_STRUCT_TRAITS_BEGIN(printing::PrinterCapsAndDefaults)
   IPC_STRUCT_TRAITS_MEMBER(printer_capabilities)
   IPC_STRUCT_TRAITS_MEMBER(caps_mime_type)
@@ -65,8 +72,8 @@ IPC_STRUCT_TRAITS_END()
 
 // Tell the utility process to render the given PDF into a PWGRaster.
 IPC_MESSAGE_CONTROL4(ChromeUtilityMsg_RenderPDFPagesToPWGRaster,
-                     IPC::PlatformFileForTransit, /* Input PDF file */
-                     printing::PdfRenderSettings, /* PDF render settings */
+                     IPC::PlatformFileForTransit /* Input PDF file */,
+                     printing::PdfRenderSettings /* PDF render settings */,
                      // PWG transform settings.
                      printing::PwgRasterSettings,
                      IPC::PlatformFileForTransit /* Output PWG file */)
@@ -88,13 +95,14 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityMsg_GetPrinterSemanticCapsAndDefaults,
 
 // Windows uses messages for printing even without preview. crbug.com/170859
 // Primary user of Windows without preview is CEF. crbug.com/417967
-#if defined(ENABLE_PRINTING) && defined(OS_WIN)
+#if BUILDFLAG(ENABLE_PRINTING) && defined(OS_WIN)
 // Tell the utility process to start rendering the given PDF into a metafile.
 // Utility process would be alive until
 // ChromeUtilityMsg_RenderPDFPagesToMetafiles_Stop message.
-IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_RenderPDFPagesToMetafiles,
-                     IPC::PlatformFileForTransit, /* input_file */
-                     printing::PdfRenderSettings /* settings */)
+IPC_MESSAGE_CONTROL3(ChromeUtilityMsg_RenderPDFPagesToMetafiles,
+                     IPC::PlatformFileForTransit /* input_file */,
+                     printing::PdfRenderSettings /* settings */,
+                     bool /* print_text_with_gdi */)
 
 // Requests conversion of the next page.
 IPC_MESSAGE_CONTROL2(ChromeUtilityMsg_RenderPDFPagesToMetafiles_GetPage,
@@ -109,7 +117,7 @@ IPC_MESSAGE_CONTROL0(ChromeUtilityMsg_RenderPDFPagesToMetafiles_Stop)
 // Utility process host messages:
 // These are messages from the utility process to the browser.
 
-#if defined(ENABLE_PRINT_PREVIEW)
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 // Reply when the utility process has succeeded in rendering the PDF to PWG.
 IPC_MESSAGE_CONTROL0(ChromeUtilityHostMsg_RenderPDFPagesToPWGRaster_Succeeded)
 
@@ -141,7 +149,7 @@ IPC_MESSAGE_CONTROL1(
   std::string /* printer name */)
 #endif  // ENABLE_PRINT_PREVIEW
 
-#if defined(ENABLE_PRINTING) && defined(OS_WIN)
+#if BUILDFLAG(ENABLE_PRINTING) && defined(OS_WIN)
 // Reply when the utility process loaded PDF. |page_count| is 0, if loading
 // failed.
 IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_RenderPDFPagesToMetafiles_PageCount,
@@ -151,4 +159,12 @@ IPC_MESSAGE_CONTROL1(ChromeUtilityHostMsg_RenderPDFPagesToMetafiles_PageCount,
 IPC_MESSAGE_CONTROL2(ChromeUtilityHostMsg_RenderPDFPagesToMetafiles_PageDone,
                      bool /* success */,
                      float /* scale_factor */)
+
+// Request that the given font characters be loaded by the browser so it's
+// cached by the OS. Please see
+// PdfToEmfUtilityProcessHostClient::OnPreCacheFontCharacters for details.
+IPC_SYNC_MESSAGE_CONTROL2_0(ChromeUtilityHostMsg_PreCacheFontCharacters,
+                            LOGFONT /* font_data */,
+                            base::string16 /* characters */)
+
 #endif  // ENABLE_PRINTING && OS_WIN

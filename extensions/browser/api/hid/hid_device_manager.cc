@@ -4,11 +4,18 @@
 
 #include "extensions/browser/api/hid/hid_device_manager.h"
 
+#include <stdint.h>
+
 #include <limits>
+#include <utility>
 #include <vector>
 
 #include "base/lazy_instance.h"
-#include "device/core/device_client.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "device/base/device_client.h"
 #include "device/hid/hid_device_filter.h"
 #include "device/hid/hid_service.h"
 #include "extensions/browser/api/device_permissions_manager.h"
@@ -42,18 +49,18 @@ void PopulateHidDeviceInfo(hid::HidDeviceInfo* output,
       continue;
     }
 
-    hid::HidCollectionInfo* api_collection = new hid::HidCollectionInfo();
-    api_collection->usage_page = collection.usage.usage_page;
-    api_collection->usage = collection.usage.usage;
+    hid::HidCollectionInfo api_collection;
+    api_collection.usage_page = collection.usage.usage_page;
+    api_collection.usage = collection.usage.usage;
 
-    api_collection->report_ids.resize(collection.report_ids.size());
+    api_collection.report_ids.resize(collection.report_ids.size());
     std::copy(collection.report_ids.begin(), collection.report_ids.end(),
-              api_collection->report_ids.begin());
+              api_collection.report_ids.begin());
 
-    output->collections.push_back(make_linked_ptr(api_collection));
+    output->collections.push_back(std::move(api_collection));
   }
 
-  const std::vector<uint8>& report_descriptor = input->report_descriptor();
+  const std::vector<uint8_t>& report_descriptor = input->report_descriptor();
   if (report_descriptor.size() > 0) {
     output->report_descriptor.assign(report_descriptor.begin(),
                                      report_descriptor.end());
@@ -118,20 +125,20 @@ void HidDeviceManager::GetApiDevices(
   LazyInitialize();
 
   if (enumeration_ready_) {
-    scoped_ptr<base::ListValue> devices =
+    std::unique_ptr<base::ListValue> devices =
         CreateApiDeviceList(extension, filters);
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, base::Passed(&devices)));
   } else {
     pending_enumerations_.push_back(
-        make_scoped_ptr(new GetApiDevicesParams(extension, filters, callback)));
+        base::MakeUnique<GetApiDevicesParams>(extension, filters, callback));
   }
 }
 
-scoped_ptr<base::ListValue> HidDeviceManager::GetApiDevicesFromList(
+std::unique_ptr<base::ListValue> HidDeviceManager::GetApiDevicesFromList(
     const std::vector<scoped_refptr<HidDeviceInfo>>& devices) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  scoped_ptr<base::ListValue> device_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> device_list(new base::ListValue());
   for (const auto& device : devices) {
     const auto device_entry = resource_ids_.find(device->device_id());
     DCHECK(device_entry != resource_ids_.end());
@@ -139,9 +146,9 @@ scoped_ptr<base::ListValue> HidDeviceManager::GetApiDevicesFromList(
     hid::HidDeviceInfo device_info;
     device_info.device_id = device_entry->second;
     PopulateHidDeviceInfo(&device_info, device);
-    device_list->Append(device_info.ToValue().release());
+    device_list->Append(device_info.ToValue());
   }
-  return device_list.Pass();
+  return device_list;
 }
 
 scoped_refptr<HidDeviceInfo> HidDeviceManager::GetDeviceInfo(int resource_id) {
@@ -176,11 +183,11 @@ bool HidDeviceManager::HasPermission(const Extension* extension,
     return true;
   }
 
-  UsbDevicePermission::CheckParam usbParam(
-      device_info->vendor_id(), device_info->product_id(),
-      UsbDevicePermissionData::UNSPECIFIED_INTERFACE);
+  std::unique_ptr<UsbDevicePermission::CheckParam> usb_param =
+      UsbDevicePermission::CheckParam::ForHidDevice(
+          extension, device_info->vendor_id(), device_info->product_id());
   if (extension->permissions_data()->CheckAPIPermissionWithParam(
-          APIPermission::kUsbDevice, &usbParam)) {
+          APIPermission::kUsbDevice, usb_param.get())) {
     return true;
   }
 
@@ -210,7 +217,7 @@ void HidDeviceManager::OnDeviceAdded(scoped_refptr<HidDeviceInfo> device_info) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_LT(next_resource_id_, std::numeric_limits<int>::max());
   int new_id = next_resource_id_++;
-  DCHECK(!ContainsKey(resource_ids_, device_info->device_id()));
+  DCHECK(!base::ContainsKey(resource_ids_, device_info->device_id()));
   resource_ids_[device_info->device_id()] = new_id;
   device_ids_[new_id] = device_info->device_id();
 
@@ -221,10 +228,10 @@ void HidDeviceManager::OnDeviceAdded(scoped_refptr<HidDeviceInfo> device_info) {
     PopulateHidDeviceInfo(&api_device_info, device_info);
 
     if (api_device_info.collections.size() > 0) {
-      scoped_ptr<base::ListValue> args(
+      std::unique_ptr<base::ListValue> args(
           hid::OnDeviceAdded::Create(api_device_info));
       DispatchEvent(events::HID_ON_DEVICE_ADDED, hid::OnDeviceAdded::kEventName,
-                    args.Pass(), device_info);
+                    std::move(args), device_info);
     }
   }
 }
@@ -242,9 +249,11 @@ void HidDeviceManager::OnDeviceRemoved(
 
   if (event_router_) {
     DCHECK(enumeration_ready_);
-    scoped_ptr<base::ListValue> args(hid::OnDeviceRemoved::Create(resource_id));
+    std::unique_ptr<base::ListValue> args(
+        hid::OnDeviceRemoved::Create(resource_id));
     DispatchEvent(events::HID_ON_DEVICE_REMOVED,
-                  hid::OnDeviceRemoved::kEventName, args.Pass(), device_info);
+                  hid::OnDeviceRemoved::kEventName, std::move(args),
+                  device_info);
   }
 }
 
@@ -264,13 +273,13 @@ void HidDeviceManager::LazyInitialize() {
   initialized_ = true;
 }
 
-scoped_ptr<base::ListValue> HidDeviceManager::CreateApiDeviceList(
+std::unique_ptr<base::ListValue> HidDeviceManager::CreateApiDeviceList(
     const Extension* extension,
     const std::vector<HidDeviceFilter>& filters) {
   HidService* hid_service = device::DeviceClient::Get()->GetHidService();
   DCHECK(hid_service);
 
-  scoped_ptr<base::ListValue> api_devices(new base::ListValue());
+  std::unique_ptr<base::ListValue> api_devices(new base::ListValue());
   for (const ResourceIdToDeviceIdMap::value_type& map_entry : device_ids_) {
     int resource_id = map_entry.first;
     const HidDeviceId& device_id = map_entry.second;
@@ -300,7 +309,7 @@ scoped_ptr<base::ListValue> HidDeviceManager::CreateApiDeviceList(
     }
   }
 
-  return api_devices.Pass();
+  return api_devices;
 }
 
 void HidDeviceManager::OnEnumerationComplete(
@@ -313,22 +322,23 @@ void HidDeviceManager::OnEnumerationComplete(
   enumeration_ready_ = true;
 
   for (const auto& params : pending_enumerations_) {
-    scoped_ptr<base::ListValue> devices =
+    std::unique_ptr<base::ListValue> devices =
         CreateApiDeviceList(params->extension, params->filters);
-    params->callback.Run(devices.Pass());
+    params->callback.Run(std::move(devices));
   }
   pending_enumerations_.clear();
 }
 
-void HidDeviceManager::DispatchEvent(events::HistogramValue histogram_value,
-                                     const std::string& event_name,
-                                     scoped_ptr<base::ListValue> event_args,
-                                     scoped_refptr<HidDeviceInfo> device_info) {
-  scoped_ptr<Event> event(
-      new Event(histogram_value, event_name, event_args.Pass()));
+void HidDeviceManager::DispatchEvent(
+    events::HistogramValue histogram_value,
+    const std::string& event_name,
+    std::unique_ptr<base::ListValue> event_args,
+    scoped_refptr<HidDeviceInfo> device_info) {
+  std::unique_ptr<Event> event(
+      new Event(histogram_value, event_name, std::move(event_args)));
   event->will_dispatch_callback = base::Bind(
       &WillDispatchDeviceEvent, weak_factory_.GetWeakPtr(), device_info);
-  event_router_->BroadcastEvent(event.Pass());
+  event_router_->BroadcastEvent(std::move(event));
 }
 
 }  // namespace extensions

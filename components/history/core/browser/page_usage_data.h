@@ -9,8 +9,6 @@
 #include "components/history/core/browser/history_types.h"
 #include "url/gurl.h"
 
-class SkBitmap;
-
 namespace history {
 
 /////////////////////////////////////////////////////////////////////////////
@@ -55,9 +53,6 @@ class PageUsageData {
   double GetScore() const {
     return score_;
   }
-
-  // Sort predicate to sort instances by score (high to low)
-  static bool Predicate(const PageUsageData* dud1, const PageUsageData* dud2);
 
  private:
   SegmentID id_;

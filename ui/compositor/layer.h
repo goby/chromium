@@ -5,15 +5,17 @@
 #ifndef UI_COMPOSITOR_LAYER_H_
 #define UI_COMPOSITOR_LAYER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
-#include "cc/animation/animation_events.h"
-#include "cc/animation/layer_animation_event_observer.h"
+#include "base/observer_list.h"
 #include "cc/base/region.h"
 #include "cc/layers/content_layer_client.h"
 #include "cc/layers/layer_client.h"
@@ -31,16 +33,10 @@
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/transform.h"
 
-class SkCanvas;
-
 namespace cc {
-class ContentLayer;
 class CopyOutputRequest;
-class DelegatedFrameProvider;
-class DelegatedRendererLayer;
 class Layer;
 class NinePatchLayer;
-class ResourceUpdateQueue;
 class SolidColorLayer;
 class SurfaceLayer;
 class TextureLayer;
@@ -52,7 +48,9 @@ namespace ui {
 
 class Compositor;
 class LayerAnimator;
+class LayerObserver;
 class LayerOwner;
+class LayerThreadedAnimationDelegate;
 
 // Layer manages a texture, transform and a set of child Layers. Any View that
 // has enabled layers ends up creating a Layer to manage the texture.
@@ -68,15 +66,21 @@ class COMPOSITOR_EXPORT Layer
     : public LayerAnimationDelegate,
       NON_EXPORTED_BASE(public cc::ContentLayerClient),
       NON_EXPORTED_BASE(public cc::TextureLayerClient),
-      NON_EXPORTED_BASE(public cc::LayerClient),
-      NON_EXPORTED_BASE(public cc::LayerAnimationEventObserver) {
+      NON_EXPORTED_BASE(public cc::LayerClient) {
  public:
   Layer();
   explicit Layer(LayerType type);
   ~Layer() override;
 
-  static const cc::LayerSettings& UILayerSettings();
-  static void InitializeUILayerSettings();
+  // Note that only solid color and surface content is copied.
+  std::unique_ptr<Layer> Clone() const;
+
+  // Returns a new layer that mirrors this layer and is optionally synchronized
+  // with the bounds thereof. Note that children are not mirrored, and that the
+  // content is only mirrored if painted by a delegate or backed by a surface.
+  std::unique_ptr<Layer> Mirror();
+
+  void set_sync_bounds(bool sync_bounds) { sync_bounds_ = sync_bounds; }
 
   // Retrieves the Layer's compositor. The Layer will walk up its parent chain
   // to locate it. Returns NULL if the Layer is not attached to a compositor.
@@ -96,6 +100,9 @@ class COMPOSITOR_EXPORT Layer
   void set_delegate(LayerDelegate* delegate) { delegate_ = delegate; }
 
   LayerOwner* owner() { return owner_; }
+
+  void AddObserver(LayerObserver* observer);
+  void RemoveObserver(LayerObserver* observer);
 
   // Adds a new Layer to this Layer.
   void Add(Layer* child);
@@ -216,7 +223,7 @@ class COMPOSITOR_EXPORT Layer
 
   // Set the shape of this layer.
   SkRegion* alpha_shape() const { return alpha_shape_.get(); }
-  void SetAlphaShape(scoped_ptr<SkRegion> region);
+  void SetAlphaShape(std::unique_ptr<SkRegion> region);
 
   // Invert the layer.
   bool layer_inverted() const { return layer_inverted_; }
@@ -277,19 +284,16 @@ class COMPOSITOR_EXPORT Layer
 
   // Set new TextureMailbox for this layer. Note that |mailbox| may hold a
   // shared memory resource or an actual mailbox for a texture.
-  void SetTextureMailbox(const cc::TextureMailbox& mailbox,
-                         scoped_ptr<cc::SingleReleaseCallback> release_callback,
-                         gfx::Size texture_size_in_dip);
+  void SetTextureMailbox(
+      const cc::TextureMailbox& mailbox,
+      std::unique_ptr<cc::SingleReleaseCallback> release_callback,
+      gfx::Size texture_size_in_dip);
   void SetTextureSize(gfx::Size texture_size_in_dip);
   void SetTextureFlipped(bool flipped);
   bool TextureFlipped() const;
 
-  // Begins showing delegated frames from the |frame_provider|.
-  void SetShowDelegatedContent(cc::DelegatedFrameProvider* frame_provider,
-                               gfx::Size frame_size_in_dip);
-
   // Begins showing content from a surface with a particular id.
-  void SetShowSurface(cc::SurfaceId surface_id,
+  void SetShowSurface(const cc::SurfaceId& surface_id,
                       const cc::SurfaceLayer::SatisfyCallback& satisfy_callback,
                       const cc::SurfaceLayer::RequireCallback& require_callback,
                       gfx::Size surface_size,
@@ -297,8 +301,7 @@ class COMPOSITOR_EXPORT Layer
                       gfx::Size frame_size_in_dip);
 
   bool has_external_content() {
-    return texture_layer_.get() || delegated_renderer_layer_.get() ||
-           surface_layer_.get();
+    return texture_layer_.get() || surface_layer_.get();
   }
 
   // Show a solid color instead of delegated or surface contents.
@@ -306,7 +309,7 @@ class COMPOSITOR_EXPORT Layer
 
   // Sets the layer's fill color.  May only be called for LAYER_SOLID_COLOR.
   void SetColor(SkColor color);
-  SkColor GetTargetColor();
+  SkColor GetTargetColor() const;
   SkColor background_color() const;
 
   // Updates the nine patch layer's image, aperture and border. May only be
@@ -314,6 +317,9 @@ class COMPOSITOR_EXPORT Layer
   void UpdateNinePatchLayerImage(const gfx::ImageSkia& image);
   void UpdateNinePatchLayerAperture(const gfx::Rect& aperture_in_dip);
   void UpdateNinePatchLayerBorder(const gfx::Rect& border);
+  // Updates the area completely occluded by another layer, this can be an
+  // empty rectangle if nothing is occluded.
+  void UpdateNinePatchOcclusion(const gfx::Rect& occlusion);
 
   // Adds |invalid_rect| to the Layer's pending invalid rect and calls
   // ScheduleDraw(). Returns false if the paint request is ignored.
@@ -327,7 +333,6 @@ class COMPOSITOR_EXPORT Layer
   // Uses damaged rectangles recorded in |damaged_region_| to invalidate the
   // |cc_layer_|.
   void SendDamagedRects();
-  void ClearDamagedRects();
 
   const cc::Region& damaged_region() const { return damaged_region_; }
 
@@ -344,7 +349,15 @@ class COMPOSITOR_EXPORT Layer
   void OnDelegatedFrameDamage(const gfx::Rect& damage_rect_in_dip);
 
   // Requets a copy of the layer's output as a texture or bitmap.
-  void RequestCopyOfOutput(scoped_ptr<cc::CopyOutputRequest> request);
+  void RequestCopyOfOutput(std::unique_ptr<cc::CopyOutputRequest> request);
+
+  // Makes this Layer scrollable, clipping to |parent_clip_layer|. |on_scroll|
+  // is invoked when scrolling performed by the cc::InputHandler is committed.
+  void SetScrollable(Layer* parent_clip_layer, const base::Closure& on_scroll);
+
+  // Gets and sets the current scroll offset of the layer.
+  gfx::ScrollOffset CurrentScrollOffset() const;
+  void SetScrollOffset(const gfx::ScrollOffset& offset);
 
   // ContentLayerClient
   gfx::Rect PaintableRegion() override;
@@ -358,33 +371,26 @@ class COMPOSITOR_EXPORT Layer
   // TextureLayerClient
   bool PrepareTextureMailbox(
       cc::TextureMailbox* mailbox,
-      scoped_ptr<cc::SingleReleaseCallback>* release_callback,
-      bool use_shared_memory) override;
+      std::unique_ptr<cc::SingleReleaseCallback>* release_callback) override;
 
   float device_scale_factor() const { return device_scale_factor_; }
 
-  // Forces a render surface to be used on this layer. This has no positive
-  // impact, and is only used for benchmarking/testing purpose.
-  void SetForceRenderSurface(bool force);
-  bool force_render_surface() const { return force_render_surface_; }
-
   // LayerClient
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat> TakeDebugInfo(
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> TakeDebugInfo(
       cc::Layer* layer) override;
-
-  // LayerAnimationEventObserver
-  void OnAnimationStarted(const cc::AnimationEvent& event) override;
-
-  // Whether this layer has animations waiting to get sent to its cc::Layer.
-  bool HasPendingThreadedAnimations() {
-    return pending_threaded_animations_.size() != 0;
-  }
+  void didUpdateMainThreadScrollingReasons() override;
+  void didChangeScrollbarsHidden(bool) override;
 
   // Triggers a call to SwitchToLayer.
   void SwitchCCLayerForTest();
 
+  const cc::Region& damaged_region_for_testing() const {
+    return damaged_region_;
+  }
+
  private:
   friend class LayerOwner;
+  class LayerMirror;
 
   void CollectAnimators(std::vector<scoped_refptr<LayerAnimator> >* animators);
 
@@ -412,8 +418,8 @@ class COMPOSITOR_EXPORT Layer
   float GetGrayscaleForAnimation() const override;
   SkColor GetColorForAnimation() const override;
   float GetDeviceScaleFactor() const override;
-  void AddThreadedAnimation(scoped_ptr<cc::Animation> animation) override;
-  void RemoveThreadedAnimation(int animation_id) override;
+  cc::Layer* GetCcLayer() const override;
+  LayerThreadedAnimationDelegate* GetThreadedAnimationDelegate() override;
   LayerAnimatorCollection* GetLayerAnimatorCollection() override;
 
   // Creates a corresponding composited layer for |type_|.
@@ -432,17 +438,10 @@ class COMPOSITOR_EXPORT Layer
   // Cleanup |cc_layer_| and replaces it with |new_layer|.
   void SwitchToLayer(scoped_refptr<cc::Layer> new_layer);
 
-  // We cannot send animations to our cc_layer_ until we have been added to a
-  // layer tree. Instead, we hold on to these animations in
-  // pending_threaded_animations_, and expect SendPendingThreadedAnimations to
-  // be called once we have been added to a tree.
-  void SendPendingThreadedAnimations();
+  void SetCompositorForAnimatorsInTree(Compositor* compositor);
+  void ResetCompositorForAnimatorsInTree(Compositor* compositor);
 
-  void AddAnimatorsInTreeToCollection(LayerAnimatorCollection* collection);
-  void RemoveAnimatorsInTreeFromCollection(LayerAnimatorCollection* collection);
-
-  // Returns whether the layer has an animating LayerAnimator.
-  bool IsAnimating() const;
+  void OnMirrorDestroyed(LayerMirror* mirror);
 
   const LayerType type_;
 
@@ -453,20 +452,27 @@ class COMPOSITOR_EXPORT Layer
   // This layer's children, in bottom-to-top stacking order.
   std::vector<Layer*> children_;
 
+  std::vector<std::unique_ptr<LayerMirror>> mirrors_;
+
+  // If true, changes to the bounds of this layer are propagated to mirrors.
+  bool sync_bounds_ = false;
+
   gfx::Rect bounds_;
   gfx::Vector2dF subpixel_position_offset_;
 
   // Visibility of this layer. See SetVisible/IsDrawn for more details.
   bool visible_;
 
-  bool force_render_surface_;
-
   bool fills_bounds_opaquely_;
   bool fills_bounds_completely_;
 
+  // Union of damaged rects, in layer space, that SetNeedsDisplayRect should
+  // be called on.
+  cc::Region damaged_region_;
+
   // Union of damaged rects, in layer space, to be used when compositor is ready
   // to paint the content.
-  cc::Region damaged_region_;
+  cc::Region paint_region_;
 
   int background_blur_radius_;
 
@@ -492,19 +498,17 @@ class COMPOSITOR_EXPORT Layer
   int zoom_inset_;
 
   // Shape of the window.
-  scoped_ptr<SkRegion> alpha_shape_;
+  std::unique_ptr<SkRegion> alpha_shape_;
 
   std::string name_;
 
   LayerDelegate* delegate_;
 
+  base::ObserverList<LayerObserver> observer_list_;
+
   LayerOwner* owner_;
 
   scoped_refptr<LayerAnimator> animator_;
-
-  // Animations that are passed to AddThreadedAnimation before this layer is
-  // added to a tree.
-  std::vector<scoped_ptr<cc::Animation>> pending_threaded_animations_;
 
   // Ownership of the layer is held through one of the strongly typed layer
   // pointers, depending on which sort of layer this is.
@@ -512,7 +516,6 @@ class COMPOSITOR_EXPORT Layer
   scoped_refptr<cc::NinePatchLayer> nine_patch_layer_;
   scoped_refptr<cc::TextureLayer> texture_layer_;
   scoped_refptr<cc::SolidColorLayer> solid_color_layer_;
-  scoped_refptr<cc::DelegatedRendererLayer> delegated_renderer_layer_;
   scoped_refptr<cc::SurfaceLayer> surface_layer_;
   cc::Layer* cc_layer_;
 
@@ -529,7 +532,7 @@ class COMPOSITOR_EXPORT Layer
 
   // The callback to release the mailbox. This is only set after
   // SetTextureMailbox is called, before we give it to the TextureLayer.
-  scoped_ptr<cc::SingleReleaseCallback> mailbox_release_callback_;
+  std::unique_ptr<cc::SingleReleaseCallback> mailbox_release_callback_;
 
   // The size of the frame or texture in DIP, set when SetShowDelegatedContent
   // or SetTextureMailbox was called.

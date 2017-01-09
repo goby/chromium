@@ -4,13 +4,17 @@
 
 #import <Cocoa/Cocoa.h>
 #include <dirent.h>
+#include <stddef.h>
 
 extern "C" {
 #include <sandbox.h>
 }
 
+#include <memory>
+
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/process/kill.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/strings/utf_string_conversions.h"
@@ -139,7 +143,7 @@ struct ScopedDirectoryDelete {
   }
 };
 
-typedef scoped_ptr<base::FilePath, ScopedDirectoryDelete> ScopedDirectory;
+typedef std::unique_ptr<base::FilePath, ScopedDirectoryDelete> ScopedDirectory;
 
 TEST_F(MacDirAccessSandboxTest, SandboxAccess) {
   using base::CreateDirectory;

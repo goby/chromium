@@ -21,6 +21,8 @@ ContextState::EnableFlags::EnableFlags()
       cached_depth_test(false),
       dither(true),
       cached_dither(true),
+      framebuffer_srgb_ext(true),
+      cached_framebuffer_srgb_ext(true),
       polygon_offset_fill(false),
       cached_polygon_offset_fill(false),
       sample_alpha_to_coverage(false),
@@ -65,6 +67,7 @@ void ContextState::Initialize() {
   cached_color_mask_blue = true;
   color_mask_alpha = true;
   cached_color_mask_alpha = true;
+  coverage_modulation = GL_NONE;
   cull_mode = GL_BACK;
   depth_func = GL_LESS;
   depth_mask = true;
@@ -274,6 +277,9 @@ void ContextState::InitState(const ContextState* prev_state) const {
         (cached_color_mask_alpha != prev_state->cached_color_mask_alpha))
       glColorMask(cached_color_mask_red, cached_color_mask_green,
                   cached_color_mask_blue, cached_color_mask_alpha);
+    if (feature_info_->feature_flags().chromium_framebuffer_mixed_samples)
+      if ((coverage_modulation != prev_state->coverage_modulation))
+        glCoverageModulationNV(coverage_modulation);
     if ((cull_mode != prev_state->cull_mode))
       glCullFace(cull_mode);
     if ((depth_func != prev_state->depth_func))
@@ -284,8 +290,8 @@ void ContextState::InitState(const ContextState* prev_state) const {
       glDepthRange(z_near, z_far);
     if ((front_face != prev_state->front_face))
       glFrontFace(front_face);
-    if (prev_state->hint_generate_mipmap != hint_generate_mipmap) {
-      if (!feature_info_->gl_version_info().is_desktop_core_profile) {
+    if (!feature_info_->gl_version_info().is_desktop_core_profile) {
+      if (prev_state->hint_generate_mipmap != hint_generate_mipmap) {
         glHint(GL_GENERATE_MIPMAP_HINT, hint_generate_mipmap);
       }
     }
@@ -297,7 +303,7 @@ void ContextState::InitState(const ContextState* prev_state) const {
       }
     }
     if ((line_width != prev_state->line_width))
-      glLineWidth(line_width);
+      DoLineWidth(line_width);
     if (feature_info_->feature_flags().chromium_path_rendering) {
       if (memcmp(prev_state->modelview_matrix, modelview_matrix,
                  sizeof(GLfloat) * 16)) {
@@ -321,46 +327,6 @@ void ContextState::InitState(const ContextState* prev_state) const {
     }
     if (prev_state->unpack_alignment != unpack_alignment) {
       glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->pack_row_length != pack_row_length) {
-        glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->pack_skip_pixels != pack_skip_pixels) {
-        glPixelStorei(GL_PACK_SKIP_PIXELS, pack_skip_pixels);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->pack_skip_rows != pack_skip_rows) {
-        glPixelStorei(GL_PACK_SKIP_ROWS, pack_skip_rows);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->unpack_row_length != unpack_row_length) {
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->unpack_image_height != unpack_image_height) {
-        glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, unpack_image_height);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->unpack_skip_pixels != unpack_skip_pixels) {
-        glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack_skip_pixels);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->unpack_skip_rows != unpack_skip_rows) {
-        glPixelStorei(GL_UNPACK_SKIP_ROWS, unpack_skip_rows);
-      }
-    }
-    if (feature_info_->IsES3Capable()) {
-      if (prev_state->unpack_skip_images != unpack_skip_images) {
-        glPixelStorei(GL_UNPACK_SKIP_IMAGES, unpack_skip_images);
-      }
     }
     if ((polygon_offset_factor != prev_state->polygon_offset_factor) ||
         (polygon_offset_units != prev_state->polygon_offset_units))
@@ -416,6 +382,8 @@ void ContextState::InitState(const ContextState* prev_state) const {
     glClearStencil(stencil_clear);
     glColorMask(cached_color_mask_red, cached_color_mask_green,
                 cached_color_mask_blue, cached_color_mask_alpha);
+    if (feature_info_->feature_flags().chromium_framebuffer_mixed_samples)
+      glCoverageModulationNV(coverage_modulation);
     glCullFace(cull_mode);
     glDepthFunc(depth_func);
     glDepthMask(cached_depth_mask);
@@ -428,7 +396,7 @@ void ContextState::InitState(const ContextState* prev_state) const {
       glHint(GL_FRAGMENT_SHADER_DERIVATIVE_HINT_OES,
              hint_fragment_shader_derivative);
     }
-    glLineWidth(line_width);
+    DoLineWidth(line_width);
     if (feature_info_->feature_flags().chromium_path_rendering) {
       glMatrixLoadfEXT(GL_PATH_MODELVIEW_CHROMIUM, modelview_matrix);
     }
@@ -440,30 +408,6 @@ void ContextState::InitState(const ContextState* prev_state) const {
                           stencil_path_mask);
     glPixelStorei(GL_PACK_ALIGNMENT, pack_alignment);
     glPixelStorei(GL_UNPACK_ALIGNMENT, unpack_alignment);
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_PACK_ROW_LENGTH, pack_row_length);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_PACK_SKIP_PIXELS, pack_skip_pixels);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_PACK_SKIP_ROWS, pack_skip_rows);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_UNPACK_ROW_LENGTH, unpack_row_length);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_UNPACK_IMAGE_HEIGHT, unpack_image_height);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_UNPACK_SKIP_PIXELS, unpack_skip_pixels);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_UNPACK_SKIP_ROWS, unpack_skip_rows);
-    }
-    if (feature_info_->IsES3Capable()) {
-      glPixelStorei(GL_UNPACK_SKIP_IMAGES, unpack_skip_images);
-    }
     glPolygonOffset(polygon_offset_factor, polygon_offset_units);
     glSampleCoverage(sample_coverage_value, sample_coverage_invert);
     glScissor(scissor_x, scissor_y, scissor_width, scissor_height);
@@ -479,6 +423,7 @@ void ContextState::InitState(const ContextState* prev_state) const {
                         stencil_back_z_pass_op);
     glViewport(viewport_x, viewport_y, viewport_width, viewport_height);
   }
+  InitStateManual(prev_state);
 }
 bool ContextState::GetEnabled(GLenum cap) const {
   switch (cap) {
@@ -490,6 +435,8 @@ bool ContextState::GetEnabled(GLenum cap) const {
       return enable_flags.depth_test;
     case GL_DITHER:
       return enable_flags.dither;
+    case GL_FRAMEBUFFER_SRGB_EXT:
+      return enable_flags.framebuffer_srgb_ext;
     case GL_POLYGON_OFFSET_FILL:
       return enable_flags.polygon_offset_fill;
     case GL_SAMPLE_ALPHA_TO_COVERAGE:
@@ -591,6 +538,12 @@ bool ContextState::GetStateAsGLint(GLenum pname,
         params[1] = static_cast<GLint>(color_mask_green);
         params[2] = static_cast<GLint>(color_mask_blue);
         params[3] = static_cast<GLint>(color_mask_alpha);
+      }
+      return true;
+    case GL_COVERAGE_MODULATION_CHROMIUM:
+      *num_written = 1;
+      if (params) {
+        params[0] = static_cast<GLint>(coverage_modulation);
       }
       return true;
     case GL_CULL_FACE_MODE:
@@ -886,6 +839,12 @@ bool ContextState::GetStateAsGLint(GLenum pname,
         params[0] = static_cast<GLint>(enable_flags.dither);
       }
       return true;
+    case GL_FRAMEBUFFER_SRGB_EXT:
+      *num_written = 1;
+      if (params) {
+        params[0] = static_cast<GLint>(enable_flags.framebuffer_srgb_ext);
+      }
+      return true;
     case GL_POLYGON_OFFSET_FILL:
       *num_written = 1;
       if (params) {
@@ -1023,6 +982,12 @@ bool ContextState::GetStateAsGLfloat(GLenum pname,
         params[1] = static_cast<GLfloat>(color_mask_green);
         params[2] = static_cast<GLfloat>(color_mask_blue);
         params[3] = static_cast<GLfloat>(color_mask_alpha);
+      }
+      return true;
+    case GL_COVERAGE_MODULATION_CHROMIUM:
+      *num_written = 1;
+      if (params) {
+        params[0] = static_cast<GLfloat>(coverage_modulation);
       }
       return true;
     case GL_CULL_FACE_MODE:
@@ -1312,6 +1277,12 @@ bool ContextState::GetStateAsGLfloat(GLenum pname,
       *num_written = 1;
       if (params) {
         params[0] = static_cast<GLfloat>(enable_flags.dither);
+      }
+      return true;
+    case GL_FRAMEBUFFER_SRGB_EXT:
+      *num_written = 1;
+      if (params) {
+        params[0] = static_cast<GLfloat>(enable_flags.framebuffer_srgb_ext);
       }
       return true;
     case GL_POLYGON_OFFSET_FILL:

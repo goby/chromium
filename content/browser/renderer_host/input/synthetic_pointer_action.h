@@ -8,34 +8,42 @@
 #include "base/macros.h"
 #include "content/browser/renderer_host/input/synthetic_gesture.h"
 #include "content/browser/renderer_host/input/synthetic_gesture_target.h"
-#include "content/browser/renderer_host/input/synthetic_pointer.h"
+#include "content/browser/renderer_host/input/synthetic_pointer_driver.h"
 #include "content/common/content_export.h"
+#include "content/common/input/synthetic_pointer_action_params.h"
+
+using blink::WebTouchEvent;
 
 namespace content {
 
 class CONTENT_EXPORT SyntheticPointerAction : public SyntheticGesture {
  public:
-  SyntheticPointerAction(
-      SyntheticGestureParams::GestureSourceType gesture_source_type,
-      PointerActionType pointer_action_type,
-      SyntheticPointer* synthetic_pointer,
-      gfx::PointF position,
-      int index = 0);
+  SyntheticPointerAction(std::vector<SyntheticPointerActionParams>* param_list,
+                         SyntheticPointerDriver* synthetic_pointer_driver);
   ~SyntheticPointerAction() override;
 
   SyntheticGesture::Result ForwardInputEvents(
       const base::TimeTicks& timestamp,
       SyntheticGestureTarget* target) override;
 
-  void ForwardTouchOrMouseInputEvents(const base::TimeTicks& timestamp,
-                                      SyntheticGestureTarget* target);
-
  private:
-  SyntheticGestureParams::GestureSourceType gesture_source_type_;
-  PointerActionType pointer_action_type_;
-  gfx::PointF position_;
-  int index_;
-  SyntheticPointer* synthetic_pointer_;
+  explicit SyntheticPointerAction(const SyntheticPointerActionParams& params);
+  SyntheticGesture::Result ForwardTouchOrMouseInputEvents(
+      const base::TimeTicks& timestamp,
+      SyntheticGestureTarget* target);
+
+  // SyntheticGestureController is responsible to create the
+  // SyntheticPointerActions and control when to forward them.
+
+  // These two objects will be owned by SyntheticGestureController, which
+  // will manage their lifetime by initiating them when it starts processing a
+  // pointer action sequence and resetting them when it finishes.
+  // param_list_ contains a list of pointer actions which will be dispatched
+  // together.
+  std::vector<SyntheticPointerActionParams>* param_list_;
+  SyntheticPointerDriver* synthetic_pointer_driver_;
+
+  SyntheticPointerActionParams params_;
 
   DISALLOW_COPY_AND_ASSIGN(SyntheticPointerAction);
 };

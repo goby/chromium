@@ -7,10 +7,10 @@
 #include "rlz/win/lib/machine_deal.h"
 
 #include <windows.h>
+#include <stddef.h>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -57,7 +57,7 @@ bool IsGoodDccChar(char ch) {
 // reasonable size. It also assumes that normalized_dcc is at least
 // kMaxDccLength+1 long.
 void NormalizeDcc(const char* raw_dcc, char* normalized_dcc) {
-  int index = 0;
+  size_t index = 0;
   for (; raw_dcc[index] != 0 && index < rlz_lib::kMaxDccLength; ++index) {
     char current = raw_dcc[index];
     if (IsGoodDccChar(current)) {

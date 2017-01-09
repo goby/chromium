@@ -6,12 +6,11 @@
 
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <utility>
 
 #include "base/logging.h"
-#include "base/posix/eintr_wrapper.h"
-#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/base/sockaddr_storage.h"
 #include "net/socket/socket_posix.h"
 
 namespace net {
@@ -22,8 +21,9 @@ UnixDomainClientSocket::UnixDomainClientSocket(const std::string& socket_path,
       use_abstract_namespace_(use_abstract_namespace) {
 }
 
-UnixDomainClientSocket::UnixDomainClientSocket(scoped_ptr<SocketPosix> socket)
-    : use_abstract_namespace_(false), socket_(socket.Pass()) {}
+UnixDomainClientSocket::UnixDomainClientSocket(
+    std::unique_ptr<SocketPosix> socket)
+    : use_abstract_namespace_(false), socket_(std::move(socket)) {}
 
 UnixDomainClientSocket::~UnixDomainClientSocket() {
   Disconnect();
@@ -33,8 +33,10 @@ UnixDomainClientSocket::~UnixDomainClientSocket() {
 bool UnixDomainClientSocket::FillAddress(const std::string& socket_path,
                                          bool use_abstract_namespace,
                                          SockaddrStorage* address) {
-  struct sockaddr_un* socket_addr =
-      reinterpret_cast<struct sockaddr_un*>(address->addr);
+  // Caller should provide a non-empty path for the socket address.
+  if (socket_path.empty())
+    return false;
+
   size_t path_max = address->addr_len - offsetof(struct sockaddr_un, sun_path);
   // Non abstract namespace pathname should be null-terminated. Abstract
   // namespace pathname must start with '\0'. So, the size is always greater
@@ -43,6 +45,8 @@ bool UnixDomainClientSocket::FillAddress(const std::string& socket_path,
   if (path_size > path_max)
     return false;
 
+  struct sockaddr_un* socket_addr =
+      reinterpret_cast<struct sockaddr_un*>(address->addr);
   memset(socket_addr, 0, address->addr_len);
   socket_addr->sun_family = AF_UNIX;
   address->addr_len = path_size + offsetof(struct sockaddr_un, sun_path);
@@ -66,9 +70,6 @@ bool UnixDomainClientSocket::FillAddress(const std::string& socket_path,
 
 int UnixDomainClientSocket::Connect(const CompletionCallback& callback) {
   DCHECK(!socket_);
-
-  if (socket_path_.empty())
-    return ERR_ADDRESS_INVALID;
 
   SockaddrStorage address;
   if (!FillAddress(socket_path_, use_abstract_namespace_, &address))
@@ -117,7 +118,7 @@ int UnixDomainClientSocket::GetLocalAddress(IPEndPoint* address) const {
   return ERR_ADDRESS_INVALID;
 }
 
-const BoundNetLog& UnixDomainClientSocket::NetLog() const {
+const NetLogWithSource& UnixDomainClientSocket::NetLog() const {
   return net_log_;
 }
 
@@ -129,10 +130,6 @@ void UnixDomainClientSocket::SetOmniboxSpeculation() {
 
 bool UnixDomainClientSocket::WasEverUsed() const {
   return true;  // We don't care.
-}
-
-bool UnixDomainClientSocket::UsingTCPFastOpen() const {
-  return false;
 }
 
 bool UnixDomainClientSocket::WasNpnNegotiated() const {
@@ -169,12 +166,12 @@ int UnixDomainClientSocket::Write(IOBuffer* buf, int buf_len,
   return socket_->Write(buf, buf_len, callback);
 }
 
-int UnixDomainClientSocket::SetReceiveBufferSize(int32 size) {
+int UnixDomainClientSocket::SetReceiveBufferSize(int32_t size) {
   NOTIMPLEMENTED();
   return ERR_NOT_IMPLEMENTED;
 }
 
-int UnixDomainClientSocket::SetSendBufferSize(int32 size) {
+int UnixDomainClientSocket::SetSendBufferSize(int32_t size) {
   NOTIMPLEMENTED();
   return ERR_NOT_IMPLEMENTED;
 }

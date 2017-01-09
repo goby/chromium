@@ -4,14 +4,15 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
-#import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_model_observer_for_cocoa.h"
 #import "chrome/browser/ui/cocoa/has_weak_browser_pointer.h"
+#import "chrome/browser/ui/cocoa/omnibox_decoration_bubble_controller.h"
 
 @class BookmarkBubbleController;
-@class BookmarkSyncPromoController;
+@class BubbleSyncPromoController;
 
 namespace bookmarks {
 class BookmarkBubbleObserver;
@@ -25,7 +26,7 @@ class ManagedBookmarkService;
 // add or remove it as a bookmark.  This bubble allows for editing of
 // the bookmark in various ways (name, folder, etc.)
 @interface BookmarkBubbleController
-    : BaseBubbleController<HasWeakBrowserPointer> {
+    : OmniboxDecorationBubbleController<HasWeakBrowserPointer> {
  @private
   // |managed_|, |model_| and |node_| are weak and owned by the current
   // browser's profile.
@@ -39,10 +40,10 @@ class ManagedBookmarkService;
   BOOL alreadyBookmarked_;
 
   // Ping me when the bookmark model changes out from under us.
-  scoped_ptr<BookmarkModelObserverForCocoa> bookmarkObserver_;
+  std::unique_ptr<BookmarkModelObserverForCocoa> bookmarkObserver_;
 
   // Sync promo controller, if the sync promo is displayed.
-  base::scoped_nsobject<BookmarkSyncPromoController> syncPromoController_;
+  base::scoped_nsobject<BubbleSyncPromoController> syncPromoController_;
 
   IBOutlet NSTextField* bigTitle_;   // "Bookmark" or "Bookmark Added!"
   IBOutlet NSTextField* nameTextField_;

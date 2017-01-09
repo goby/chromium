@@ -9,12 +9,12 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_command_controller.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/common/chrome_switches.h"
@@ -23,15 +23,23 @@
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "components/web_cache/browser/web_cache_manager.h"
+#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/context_menu_params.h"
 #include "net/base/load_states.h"
 #include "net/http/http_request_headers.h"
 #include "ui/base/l10n/l10n_util.h"
+
+#if !defined(OS_ANDROID)
+#include "chrome/browser/ui/browser.h"
+#endif
 
 using content::WebContents;
 
@@ -95,8 +103,10 @@ void CoreTabHelper::UpdateContentRestrictions(int content_restrictions) {
 #endif
 }
 
-void CoreTabHelper::SearchByImageInNewTab(const GURL& src_url) {
+void CoreTabHelper::SearchByImageInNewTab(
+    content::RenderFrameHost* render_frame_host, const GURL& src_url) {
   RequestThumbnailForContextNode(
+      render_frame_host,
       kImageSearchThumbnailMinSize,
       gfx::Size(kImageSearchThumbnailMaxWidth,
                 kImageSearchThumbnailMaxHeight),
@@ -106,14 +116,13 @@ void CoreTabHelper::SearchByImageInNewTab(const GURL& src_url) {
 }
 
 void CoreTabHelper::RequestThumbnailForContextNode(
+    content::RenderFrameHost* render_frame_host,
     int minimum_size,
     gfx::Size maximum_size,
     const ContextNodeThumbnailCallback& callback) {
   int callback_id = thumbnail_callbacks_.Add(
-      new ContextNodeThumbnailCallback(callback));
+      base::MakeUnique<ContextNodeThumbnailCallback>(callback));
 
-  content::RenderFrameHost* render_frame_host =
-      web_contents()->GetMainFrame();
   render_frame_host->Send(
       new ChromeViewMsg_RequestThumbnailForContextNode(
           render_frame_host->GetRoutingID(),
@@ -130,7 +139,7 @@ bool CoreTabHelper::GetStatusTextForWebContents(
   tracked_objects::ScopedTracker tracking_profile1(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
           "467185 CoreTabHelper::GetStatusTextForWebContents1"));
-  auto guest_manager = guest_view::GuestViewManager::FromBrowserContext(
+  auto* guest_manager = guest_view::GuestViewManager::FromBrowserContext(
       source->GetBrowserContext());
   if (!source->IsLoading() ||
       source->GetLoadState().state == net::LOAD_STATE_IDLE) {
@@ -218,6 +227,9 @@ bool CoreTabHelper::GetStatusTextForWebContents(
       *status_text =
           l10n_util::GetStringFUTF16(IDS_LOAD_STATE_WAITING_FOR_RESPONSE,
                                      source->GetLoadStateHost());
+      return true;
+    case net::LOAD_STATE_THROTTLED:
+      *status_text = l10n_util::GetStringUTF16(IDS_LOAD_STATE_THROTTLED);
       return true;
     // Ignore net::LOAD_STATE_READING_RESPONSE and net::LOAD_STATE_IDLE
     case net::LOAD_STATE_IDLE:
@@ -344,15 +356,15 @@ void CoreTabHelper::DoSearchByImageInNewTab(const GURL& src_url,
     return;
 
   content::OpenURLParams open_url_params(
-      result, content::Referrer(), NEW_FOREGROUND_TAB,
+      result, content::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui::PAGE_TRANSITION_LINK, false);
   const std::string& content_type = post_content.first;
-  std::string* post_data = &post_content.second;
-  if (!post_data->empty()) {
+  const std::string& post_data = post_content.second;
+  if (!post_data.empty()) {
     DCHECK(!content_type.empty());
     open_url_params.uses_post = true;
-    open_url_params.browser_initiated_post_data =
-        base::RefCountedString::TakeString(post_data);
+    open_url_params.post_data = content::ResourceRequestBody::CreateFromBytes(
+        post_data.data(), post_data.size());
     open_url_params.extra_headers += base::StringPrintf(
         "%s: %s\r\n", net::HttpRequestHeaders::kContentType,
         content_type.c_str());

@@ -6,20 +6,20 @@
 
 #include "base/bind.h"
 #include "base/lazy_instance.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/common/url_constants.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/user_metrics.h"
 #include "extensions/browser/extension_prefs.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_system.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
 namespace extensions {
@@ -100,13 +100,21 @@ ExtensionMessageBubbleController::ExtensionMessageBubbleController(
     Delegate* delegate,
     Browser* browser)
     : browser_(browser),
+      model_(ToolbarActionsModel::Get(browser_->profile())),
       user_action_(ACTION_BOUNDARY),
       delegate_(delegate),
       initialized_(false),
-      did_highlight_(false) {
+      is_highlighting_(false),
+      is_active_bubble_(false),
+      browser_list_observer_(this) {
+  browser_list_observer_.Add(BrowserList::GetInstance());
 }
 
 ExtensionMessageBubbleController::~ExtensionMessageBubbleController() {
+  if (is_active_bubble_)
+    model_->set_has_active_bubble(false);
+  if (is_highlighting_)
+    model_->StopHighlighting();
 }
 
 Profile* ExtensionMessageBubbleController::profile() {
@@ -116,6 +124,7 @@ Profile* ExtensionMessageBubbleController::profile() {
 bool ExtensionMessageBubbleController::ShouldShow() {
   std::set<Profile*>* profiles = GetProfileSet();
   return !profiles->count(profile()->GetOriginalProfile()) &&
+         (!model_->has_active_bubble() || is_active_bubble_) &&
          !GetExtensionList().empty();
 }
 
@@ -166,16 +175,18 @@ bool ExtensionMessageBubbleController::CloseOnDeactivate() {
 }
 
 void ExtensionMessageBubbleController::HighlightExtensionsIfNecessary() {
-  if (delegate_->ShouldHighlightExtensions() && !did_highlight_) {
-    did_highlight_ = true;
+  DCHECK(is_active_bubble_);
+  if (delegate_->ShouldHighlightExtensions() && !is_highlighting_) {
+    is_highlighting_ = true;
     const ExtensionIdList& extension_ids = GetExtensionIdList();
     DCHECK(!extension_ids.empty());
-    ToolbarActionsModel::Get(profile())->HighlightActions(
-        extension_ids, ToolbarActionsModel::HIGHLIGHT_WARNING);
+    model_->HighlightActions(extension_ids,
+                             ToolbarActionsModel::HIGHLIGHT_WARNING);
   }
 }
 
 void ExtensionMessageBubbleController::OnShown() {
+  DCHECK(is_active_bubble_);
   GetProfileSet()->insert(profile()->GetOriginalProfile());
 }
 
@@ -213,15 +224,23 @@ void ExtensionMessageBubbleController::OnLinkClicked() {
   user_action_ = ACTION_LEARN_MORE;
 
   delegate_->LogAction(ACTION_LEARN_MORE);
-  if (!g_should_ignore_learn_more_for_testing) {
-    browser_->OpenURL(
-        content::OpenURLParams(delegate_->GetLearnMoreUrl(),
-                               content::Referrer(),
-                               NEW_FOREGROUND_TAB,
-                               ui::PAGE_TRANSITION_LINK,
-                               false));
-  }
+  // Opening a new tab for the learn more link can cause the bubble to close, so
+  // perform our cleanup here before opening the new tab.
   OnClose();
+  if (!g_should_ignore_learn_more_for_testing) {
+    browser_->OpenURL(content::OpenURLParams(
+        delegate_->GetLearnMoreUrl(), content::Referrer(),
+        WindowOpenDisposition::NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_LINK,
+        false));
+  }
+  // Warning: |this| may be deleted here!
+}
+
+void ExtensionMessageBubbleController::SetIsActiveBubble() {
+  DCHECK(!is_active_bubble_);
+  DCHECK(!model_->has_active_bubble());
+  is_active_bubble_ = true;
+  model_->set_has_active_bubble(true);
 }
 
 void ExtensionMessageBubbleController::ClearProfileListForTesting() {
@@ -234,6 +253,19 @@ void ExtensionMessageBubbleController::set_should_ignore_learn_more_for_testing(
   g_should_ignore_learn_more_for_testing = should_ignore;
 }
 
+void ExtensionMessageBubbleController::OnBrowserRemoved(Browser* browser) {
+  if (browser == browser_) {
+    if (is_highlighting_) {
+      model_->StopHighlighting();
+      is_highlighting_ = false;
+    }
+    if (is_active_bubble_) {
+      model_->set_has_active_bubble(false);
+      is_active_bubble_ = false;
+    }
+  }
+}
+
 void ExtensionMessageBubbleController::AcknowledgeExtensions() {
   ExtensionIdList* list = GetOrCreateExtensionList();
   for (ExtensionIdList::const_iterator it = list->begin();
@@ -244,7 +276,7 @@ void ExtensionMessageBubbleController::AcknowledgeExtensions() {
 ExtensionIdList* ExtensionMessageBubbleController::GetOrCreateExtensionList() {
   if (!initialized_) {
     ExtensionRegistry* registry = ExtensionRegistry::Get(profile());
-    scoped_ptr<const ExtensionSet> all_extensions;
+    std::unique_ptr<const ExtensionSet> all_extensions;
     if (!delegate_->ShouldLimitToEnabledExtensions())
       all_extensions = registry->GenerateInstalledExtensionsSet();
     const ExtensionSet& extensions_to_check =
@@ -272,9 +304,6 @@ void ExtensionMessageBubbleController::OnClose() {
     if (delegate_->ClearProfileSetAfterAction())
       GetProfileSet()->clear();
   }
-
-  if (did_highlight_)
-    ToolbarActionsModel::Get(profile())->StopHighlighting();
 }
 
 std::set<Profile*>* ExtensionMessageBubbleController::GetProfileSet() {

@@ -15,7 +15,7 @@ GEN_INCLUDE(
  * Test fixture for Media Router Polymer elements.
  * @constructor
  * @extends {PolymerTest}
-*/
+ */
 function MediaRouterElementsBrowserTest() {}
 
 MediaRouterElementsBrowserTest.prototype = {
@@ -24,15 +24,30 @@ MediaRouterElementsBrowserTest.prototype = {
   /** @override */
   browsePreload: 'chrome://media-router/',
 
+  /** @override */
+  runAccessibilityChecks: true,
+
+  /** @override */
+  accessibilityIssuesAreErrors: true,
+
   commandLineSwitches: [{
     switchName: 'media-router', switchValue: '1'
   }],
 
-  // List tests for individual elements.
+  // List tests for individual elements. The media-router-container tests are
+  // split between several files and use common functionality from
+  // media_router_container_test_base.js.
   extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
     'issue_banner_tests.js',
-    'media_router_container_tests.js',
+    'media_router_container_cast_mode_list_tests.js',
+    'media_router_container_filter_tests.js',
+    'media_router_container_first_run_flow_tests.js',
+    'media_router_container_route_tests.js',
+    'media_router_container_search_tests.js',
+    'media_router_container_sink_list_tests.js',
+    'media_router_container_test_base.js',
     'media_router_header_tests.js',
+    'media_router_search_highlighter_tests.js',
     'route_details_tests.js',
   ]),
 
@@ -40,21 +55,86 @@ MediaRouterElementsBrowserTest.prototype = {
   setUp: function() {
     PolymerTest.prototype.setUp.call(this);
 
-    // TODO(apacible): Enable when false positive AX_FOCUS_01 bug is fixed.
-    // https://github.com/GoogleChrome/accessibility-developer-tools/issues/171
-    this.accessibilityAuditConfig.auditRulesToIgnore.push(
-        'focusableElementNotVisibleAndNotAriaHidden');
+    // Enable when failure is resolved.
+    // AX_ARIA_02: http://crbug.com/591547
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'nonExistentAriaRelatedElement', '#input');
+
+    // Enable when failure is resolved.
+    // AX_ARIA_04: http://crbug.com/591550
+    this.accessibilityAuditConfig.ignoreSelectors(
+        'badAriaAttributeValue', '#input');
+
+    // This element is used as a focus placeholder on dialog open, then
+    // deleted. The user will be unable to tab to it. Remove when there is a
+    // long term fix.
+    this.accessibilityAuditConfig.ignoreSelectors(
+       'focusableElementNotVisibleAndNotAriaHidden', '#focus-placeholder');
   },
 };
 
-// Runs all tests.
-TEST_F('MediaRouterElementsBrowserTest', 'MediaRouterElementsTest', function() {
-  // Register mocha tests for each element.
+TEST_F('MediaRouterElementsBrowserTest', 'IssueBanner', function() {
   issue_banner.registerTests();
-  media_router_container.registerTests();
-  media_router_header.registerTests();
-  route_details.registerTests();
+  mocha.run();
+});
 
-  // Run all registered tests.
+// The media-router-container tests are being split into multiple parts due to
+// timeout issues on bots.
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerCastModeList',
+    function() {
+  media_router_container_cast_mode_list.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerFirstRunFlow',
+    function() {
+  media_router_container_first_run_flow.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerRoute',
+    function() {
+  media_router_container_route.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerSearch',
+    function() {
+  media_router_container_search.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterContainerSinkList',
+    function() {
+  media_router_container_sink_list.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'DISABLED_MediaRouterContainerFilter',
+    function() {
+  media_router_container_filter.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest', 'MediaRouterHeader', function() {
+  media_router_header.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest',
+    'MediaRouterSearchHighlighter',
+    function() {
+  media_router_search_highlighter.registerTests();
+  mocha.run();
+});
+
+TEST_F('MediaRouterElementsBrowserTest', 'MediaRouterRouteDetails', function() {
+  route_details.registerTests();
   mocha.run();
 });

@@ -5,86 +5,146 @@
 /**
  * @fileoverview
  * 'settings-search-page' is the settings page containing search settings.
- *
- * Example:
- *
- *    <iron-animated-pages>
- *      <settings-search-page prefs="{{prefs}}"></settings-search-page>
- *      ... other pages ...
- *    </iron-animated-pages>
- *
- * @group Chrome Settings Elements
- * @element settings-search-page
  */
 Polymer({
   is: 'settings-search-page',
 
+  behaviors: [I18nBehavior],
+
   properties: {
-    /**
-     * The current active route.
-     */
-    currentRoute: {
-      type: Object,
-      notify: true,
-    },
+    prefs: Object,
 
     /**
      * List of default search engines available.
-     * @type {?Array<!SearchEngine>}
+     * @private {!Array<!SearchEngine>}
      */
-    searchEngines: {
+    searchEngines_: {
       type: Array,
-      value: function() { return []; },
+      value: function() {
+        return [];
+      }
     },
+
+    /** @private {!SearchPageHotwordInfo|undefined} */
+    hotwordInfo_: Object,
+
+    /**
+     * This is a local PrefObject used to reflect the enabled state of hotword
+     * search. It is not tied directly to a pref. (There are two prefs
+     * associated with  state and they do not map directly to whether or not
+     * hotword search is actually enabled).
+     * @private {!chrome.settingsPrivate.PrefObject|undefined}
+     */
+    hotwordSearchEnablePref_: Object,
   },
+
+  /** @private {?settings.SearchEnginesBrowserProxy} */
+  browserProxy_: null,
 
   /** @override */
   created: function() {
-    chrome.searchEnginesPrivate.onSearchEnginesChanged.addListener(
-        this.updateSearchEngines_.bind(this));
-    chrome.searchEnginesPrivate.getSearchEngines(
-        this.updateSearchEngines_.bind(this));
+    this.browserProxy_ = settings.SearchEnginesBrowserProxyImpl.getInstance();
   },
 
-  /**
-   * Persists the new default search engine back to Chrome. Called when the
-   * user selects a new default in the search engines dropdown.
-   * @private
-   */
-  defaultEngineGuidChanged_: function() {
-    chrome.searchEnginesPrivate.setSelectedSearchEngine(
-        this.$.searchEnginesMenu.value);
-  },
+  /** @override */
+  ready: function() {
+    // Omnibox search engine
+    var updateSearchEngines = function(searchEngines) {
+      this.set('searchEngines_', searchEngines.defaults);
+    }.bind(this);
+    this.browserProxy_.getSearchEnginesList().then(updateSearchEngines);
+    cr.addWebUIListener('search-engines-changed', updateSearchEngines);
 
-
-  /**
-   * Updates the list of default search engines based on the given |engines|.
-   * @param {!Array<!SearchEngine>} engines All the search engines.
-   * @private
-   */
-  updateSearchEngines_: function(engines) {
-    var defaultEngines = [];
-
-    engines.forEach(function(engine) {
-      if (engine.type ==
-          chrome.searchEnginesPrivate.SearchEngineType.DEFAULT) {
-        defaultEngines.push(engine);
-        if (engine.isSelected) {
-          this.$.searchEnginesMenu.value = engine.guid;
-        }
-      }
-    }, this);
-
-    this.searchEngines = defaultEngines;
+    // Hotword (OK Google)
+    cr.addWebUIListener(
+        'hotword-info-update', this.hotwordInfoUpdate_.bind(this));
+    this.browserProxy_.getHotwordInfo().then(function(hotwordInfo) {
+      this.hotwordInfoUpdate_(hotwordInfo);
+    }.bind(this));
   },
 
   /** @private */
-  onSearchEnginesTap_: function() {
-    this.$.pages.setSubpageChain(['search-engines']);
+  onChange_: function() {
+    var select = /** @type {!HTMLSelectElement} */ (this.$$('select'));
+    var searchEngine = this.searchEngines_[select.selectedIndex];
+    this.browserProxy_.setDefaultSearchEngine(searchEngine.modelIndex);
   },
 
   /** @private */
-  onSearchEnginesAdvancedTap_: function() {
-    this.$.pages.setSubpageChain(['search-engines', 'search-engines-advanced']);
+  onDisableExtension_: function() {
+    this.fire('refresh-pref', 'default_search_provider.enabled');
   },
+
+  /** @private */
+  onManageSearchEnginesTap_: function() {
+    settings.navigateTo(settings.Route.SEARCH_ENGINES);
+  },
+
+  /**
+   * @param {Event} event
+   * @private
+   */
+  onHotwordSearchEnableChange_: function(event) {
+    // Do not set the pref directly, allow Chrome to run the setup app instead.
+    this.browserProxy_.setHotwordSearchEnabled(
+        !!this.hotwordSearchEnablePref_.value);
+  },
+
+  /**
+   * @param {!SearchPageHotwordInfo} hotwordInfo
+   * @private
+   */
+  hotwordInfoUpdate_: function(hotwordInfo) {
+    this.hotwordInfo_ = hotwordInfo;
+    this.hotwordSearchEnablePref_ = {
+      key: 'unused',  // required for PrefObject
+      type: chrome.settingsPrivate.PrefType.BOOLEAN,
+      value: this.hotwordInfo_.enabled,
+    };
+  },
+
+  /**
+   * @return {string}
+   * @private
+   */
+  getHotwordSearchEnableSubLabel_: function() {
+    return this.i18n(
+        this.hotwordInfo_.alwaysOn ? 'searchOkGoogleSubtextAlwaysOn' :
+                                     'searchOkGoogleSubtextNoHardware');
+  },
+
+  /**
+   * @return {boolean}
+   * @private
+   */
+  getShowHotwordSearchRetrain_: function() {
+    return this.hotwordInfo_.enabled && this.hotwordInfo_.alwaysOn;
+  },
+
+  /**
+   * @return {boolean} True if the pref is enabled but hotword is not.
+   * @private
+   */
+  getShowHotwordError_: function() {
+    return this.hotwordInfo_.enabled && !!this.hotwordInfo_.errorMessage;
+  },
+
+  /** @private */
+  onRetrainTap_: function() {
+    // Re-enable hotword search enable; this will trigger the retrain UI.
+    this.browserProxy_.setHotwordSearchEnabled(this.hotwordInfo_.enabled);
+  },
+
+  /** @private */
+  onManageAudioHistoryTap_: function() {
+    window.open(loadTimeData.getString('manageAudioHistoryUrl'));
+  },
+
+  /**
+   * @param {Event} event
+   * @private
+   */
+  doNothing_: function(event) {
+    event.stopPropagation();
+  }
 });

@@ -3,7 +3,9 @@
 // found in the LICENSE file.
 
 #include <string>
+#include <utility>
 
+#include "build/build_config.h"
 #include "chrome/browser/extensions/activity_log/activity_log.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/common/chrome_switches.h"
@@ -28,7 +30,6 @@ class ActivityLogApiTest : public ExtensionApiTest {
   ActivityLogApiTest() : saved_cmdline_(base::CommandLine::NO_PROGRAM) {}
 
   ~ActivityLogApiTest() override {
-    ExtensionApiTest::SetUpCommandLine(&saved_cmdline_);
     *base::CommandLine::ForCurrentProcess() = saved_cmdline_;
   }
 
@@ -38,12 +39,12 @@ class ActivityLogApiTest : public ExtensionApiTest {
     command_line->AppendSwitch(switches::kEnableExtensionActivityLogging);
   }
 
-  scoped_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
-    scoped_ptr<BasicHttpResponse> response(new BasicHttpResponse);
+  std::unique_ptr<HttpResponse> HandleRequest(const HttpRequest& request) {
+    std::unique_ptr<BasicHttpResponse> response(new BasicHttpResponse);
     response->set_code(net::HTTP_OK);
     response->set_content("<html><head><title>ActivityLogTest</title>"
                           "</head><body>Hello World</body></html>");
-    return response.Pass();
+    return std::move(response);
   }
 
  private:
@@ -60,18 +61,12 @@ class ActivityLogApiTest : public ExtensionApiTest {
 // The test extension sends a message to its 'friend'. The test completes
 // if it successfully sees the 'friend' receive the message.
 IN_PROC_BROWSER_TEST_F(ActivityLogApiTest, MAYBE_TriggerEvent) {
-#if defined(OS_MACOSX)
-  if (base::mac::IsOSSnowLeopard()) {
-    // This test flakes on 10.6 only. http://crbug.com/499176
-    return;
-  }
-#endif
   ActivityLog::GetInstance(profile())->SetWatchdogAppActiveForTesting(true);
 
   host_resolver()->AddRule("*", "127.0.0.1");
-  ASSERT_TRUE(StartEmbeddedTestServer());
   embedded_test_server()->RegisterRequestHandler(
       base::Bind(&ActivityLogApiTest::HandleRequest, base::Unretained(this)));
+  ASSERT_TRUE(StartEmbeddedTestServer());
 
   const Extension* friend_extension = LoadExtensionIncognito(
       test_data_dir_.AppendASCII("activity_log_private/friend"));

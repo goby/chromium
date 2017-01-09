@@ -5,7 +5,9 @@
 #ifndef CONTENT_CHILD_WEBFALLBACKTHEMEENGINE_IMPL_H_
 #define CONTENT_CHILD_WEBFALLBACKTHEMEENGINE_IMPL_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "third_party/WebKit/public/platform/WebFallbackThemeEngine.h"
 
 namespace content {
@@ -28,7 +30,7 @@ class WebFallbackThemeEngineImpl : public blink::WebFallbackThemeEngine {
 
  private:
   class WebFallbackNativeTheme;
-  scoped_ptr<WebFallbackNativeTheme> theme_;
+  std::unique_ptr<WebFallbackNativeTheme> theme_;
 
   DISALLOW_COPY_AND_ASSIGN(WebFallbackThemeEngineImpl);
 };

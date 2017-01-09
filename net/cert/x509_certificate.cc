@@ -4,29 +4,31 @@
 
 #include "net/cert/x509_certificate.h"
 
+#include <limits.h>
 #include <stdlib.h>
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/pickle.h"
 #include "base/profiler/scoped_tracker.h"
-#include "base/sha1.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "crypto/secure_hash.h"
-#include "net/base/net_util.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 #include "net/cert/pem_tokenizer.h"
 #include "url/url_canon.h"
 
@@ -81,7 +83,7 @@ class X509CertificateCache {
   void Remove(X509Certificate::OSCertHandle cert_handle);
 
  private:
-  // A single entry in the cache. Certificates will be keyed by their SHA1
+  // A single entry in the cache. Certificates will be keyed by their SHA-256
   // fingerprints, but will not be considered equivalent unless the entire
   // certificate data matches.
   struct Entry {
@@ -95,7 +97,7 @@ class X509CertificateCache {
     // the cached OS certificate handle will be freed.
     int ref_count;
   };
-  typedef std::map<SHA1HashValue, Entry, SHA1HashValueLessThan> CertMap;
+  typedef std::map<SHA256HashValue, Entry, SHA256HashValueLessThan> CertMap;
 
   // Obtain an instance of X509CertificateCache via a LazyInstance.
   X509CertificateCache() {}
@@ -118,8 +120,8 @@ base::LazyInstance<X509CertificateCache>::Leaky
 void X509CertificateCache::InsertOrUpdate(
     X509Certificate::OSCertHandle* cert_handle) {
   DCHECK(cert_handle);
-  SHA1HashValue fingerprint =
-      X509Certificate::CalculateFingerprint(*cert_handle);
+  SHA256HashValue fingerprint =
+      X509Certificate::CalculateFingerprint256(*cert_handle);
 
   X509Certificate::OSCertHandle old_handle = NULL;
   {
@@ -137,7 +139,7 @@ void X509CertificateCache::InsertOrUpdate(
       bool is_same_cert =
           X509Certificate::IsSameOSCert(*cert_handle, pos->second.cert_handle);
       if (!is_same_cert) {
-        // Two certificates don't match, due to a SHA1 hash collision. Given
+        // Two certificates don't match, due to a SHA-256 hash collision. Given
         // the low probability, the simplest solution is to not cache the
         // certificate, which should not affect performance too negatively.
         return;
@@ -166,8 +168,8 @@ void X509CertificateCache::InsertOrUpdate(
 }
 
 void X509CertificateCache::Remove(X509Certificate::OSCertHandle cert_handle) {
-  SHA1HashValue fingerprint =
-      X509Certificate::CalculateFingerprint(cert_handle);
+  SHA256HashValue fingerprint =
+      X509Certificate::CalculateFingerprint256(cert_handle);
   base::AutoLock lock(lock_);
 
   CertMap::iterator pos = cache_.find(fingerprint);
@@ -223,37 +225,8 @@ void SplitOnChar(const base::StringPiece& src,
 
 }  // namespace
 
-bool X509Certificate::LessThan::operator()(
-    const scoped_refptr<X509Certificate>& lhs,
-    const scoped_refptr<X509Certificate>& rhs) const {
-  if (lhs.get() == rhs.get())
-    return false;
-
-  int rv = memcmp(lhs->fingerprint_.data, rhs->fingerprint_.data,
-                  sizeof(lhs->fingerprint_.data));
-  if (rv != 0)
-    return rv < 0;
-
-  rv = memcmp(lhs->ca_fingerprint_.data, rhs->ca_fingerprint_.data,
-              sizeof(lhs->ca_fingerprint_.data));
-  return rv < 0;
-}
-
-X509Certificate::X509Certificate(const std::string& subject,
-                                 const std::string& issuer,
-                                 base::Time start_date,
-                                 base::Time expiration_date)
-    : subject_(subject),
-      issuer_(issuer),
-      valid_start_(start_date),
-      valid_expiry_(expiration_date),
-      cert_handle_(NULL) {
-  memset(fingerprint_.data, 0, sizeof(fingerprint_.data));
-  memset(ca_fingerprint_.data, 0, sizeof(ca_fingerprint_.data));
-}
-
 // static
-X509Certificate* X509Certificate::CreateFromHandle(
+scoped_refptr<X509Certificate> X509Certificate::CreateFromHandle(
     OSCertHandle cert_handle,
     const OSCertHandles& intermediates) {
   DCHECK(cert_handle);
@@ -261,8 +234,10 @@ X509Certificate* X509Certificate::CreateFromHandle(
 }
 
 // static
-X509Certificate* X509Certificate::CreateFromDERCertChain(
+scoped_refptr<X509Certificate> X509Certificate::CreateFromDERCertChain(
     const std::vector<base::StringPiece>& der_certs) {
+  TRACE_EVENT0("io", "X509Certificate::CreateFromDERCertChain");
+
   // TODO(cbentzel): Remove ScopedTracker below once crbug.com/424386 is fixed.
   tracked_objects::ScopedTracker tracking_profile(
       FROM_HERE_WITH_EXPLICIT_FUNCTION(
@@ -287,7 +262,7 @@ X509Certificate* X509Certificate::CreateFromDERCertChain(
         const_cast<char*>(der_certs[0].data()), der_certs[0].size());
   }
 
-  X509Certificate* cert = NULL;
+  scoped_refptr<X509Certificate> cert = nullptr;
   if (handle) {
     cert = CreateFromHandle(handle, intermediate_ca_certs);
     FreeOSCertHandle(handle);
@@ -300,19 +275,21 @@ X509Certificate* X509Certificate::CreateFromDERCertChain(
 }
 
 // static
-X509Certificate* X509Certificate::CreateFromBytes(const char* data,
-                                                  size_t length) {
+scoped_refptr<X509Certificate> X509Certificate::CreateFromBytes(
+    const char* data,
+    size_t length) {
   OSCertHandle cert_handle = CreateOSCertHandleFromBytes(data, length);
   if (!cert_handle)
     return NULL;
 
-  X509Certificate* cert = CreateFromHandle(cert_handle, OSCertHandles());
+  scoped_refptr<X509Certificate> cert =
+      CreateFromHandle(cert_handle, OSCertHandles());
   FreeOSCertHandle(cert_handle);
   return cert;
 }
 
 // static
-X509Certificate* X509Certificate::CreateFromPickle(
+scoped_refptr<X509Certificate> X509Certificate::CreateFromPickle(
     base::PickleIterator* pickle_iter,
     PickleType type) {
   if (type == PICKLETYPE_CERTIFICATE_CHAIN_V3) {
@@ -387,7 +364,7 @@ X509Certificate* X509Certificate::CreateFromPickle(
     }
   }
 
-  X509Certificate* cert = NULL;
+  scoped_refptr<X509Certificate> cert = nullptr;
   if (intermediates.size() == num_intermediates)
     cert = CreateFromHandle(cert_handle, intermediates);
   FreeOSCertHandle(cert_handle);
@@ -468,8 +445,7 @@ CertificateList X509Certificate::CreateCertificateListFromBytes(
 
   for (OSCertHandles::iterator it = certificates.begin();
        it != certificates.end(); ++it) {
-    X509Certificate* result = CreateFromHandle(*it, OSCertHandles());
-    results.push_back(scoped_refptr<X509Certificate>(result));
+    results.push_back(CreateFromHandle(*it, OSCertHandles()));
     FreeOSCertHandle(*it);
   }
 
@@ -578,7 +554,7 @@ bool X509Certificate::VerifyHostname(
     // is not registry controlled, this ensures that all reference domains
     // contain at least three domain components when using wildcards.
     size_t registry_length =
-        registry_controlled_domains::GetRegistryLength(
+        registry_controlled_domains::GetCanonicalHostRegistryLength(
             reference_name,
             registry_controlled_domains::INCLUDE_UNKNOWN_REGISTRIES,
             registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
@@ -704,26 +680,6 @@ bool X509Certificate::GetPEMEncodedChain(
   }
   pem_encoded->swap(encoded_chain);
   return true;
-}
-
-// static
-SHA256HashValue X509Certificate::CalculateCAFingerprint256(
-    const OSCertHandles& intermediates) {
-  SHA256HashValue sha256;
-  memset(sha256.data, 0, sizeof(sha256.data));
-
-  scoped_ptr<crypto::SecureHash> hash(
-      crypto::SecureHash::Create(crypto::SecureHash::SHA256));
-
-  for (size_t i = 0; i < intermediates.size(); ++i) {
-    std::string der_encoded;
-    if (!GetDEREncoded(intermediates[i], &der_encoded))
-      return sha256;
-    hash->Update(der_encoded.data(), der_encoded.length());
-  }
-  hash->Finish(sha256.data, sizeof(sha256.data));
-
-  return sha256;
 }
 
 // static

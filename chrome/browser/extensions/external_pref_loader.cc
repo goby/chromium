@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/external_pref_loader.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
@@ -11,16 +13,18 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/pref_service_syncable_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/common/chrome_paths.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -72,28 +76,27 @@ std::set<base::FilePath> GetPrefsCandidateFilesFromFolder(
 // occurs). An empty dictionary is returned in case of failure (e.g. invalid
 // path or json content).
 // Caller takes ownership of the returned dictionary.
-scoped_ptr<base::DictionaryValue> ExtractExtensionPrefs(
+std::unique_ptr<base::DictionaryValue> ExtractExtensionPrefs(
     base::ValueDeserializer* deserializer,
     const base::FilePath& path) {
   std::string error_msg;
-  scoped_ptr<base::Value> extensions =
+  std::unique_ptr<base::Value> extensions =
       deserializer->Deserialize(NULL, &error_msg);
   if (!extensions) {
     LOG(WARNING) << "Unable to deserialize json data: " << error_msg
                  << " in file " << path.value() << ".";
-    return make_scoped_ptr(new base::DictionaryValue);
+    return base::WrapUnique(new base::DictionaryValue);
   }
 
-  scoped_ptr<base::DictionaryValue> ext_dictionary =
-      base::DictionaryValue::From(extensions.Pass());
+  std::unique_ptr<base::DictionaryValue> ext_dictionary =
+      base::DictionaryValue::From(std::move(extensions));
   if (ext_dictionary) {
     return ext_dictionary;
   }
 
   LOG(WARNING) << "Expected a JSON dictionary in file " << path.value()
                  << ".";
-  return make_scoped_ptr(new base::DictionaryValue);
-
+  return base::WrapUnique(new base::DictionaryValue);
 }
 
 }  // namespace
@@ -126,16 +129,15 @@ void ExternalPrefLoader::StartLoading() {
       (profile_ && profile_->IsSyncAllowed())) {
     if (!PostLoadIfPrioritySyncReady()) {
       DCHECK(profile_);
-      syncable_prefs::PrefServiceSyncable* prefs =
+      sync_preferences::PrefServiceSyncable* prefs =
           PrefServiceSyncableFromProfile(profile_);
       DCHECK(prefs);
       syncable_pref_observer_.Add(prefs);
-      ProfileSyncService* service =
+      browser_sync::ProfileSyncService* service =
           ProfileSyncServiceFactory::GetForProfile(profile_);
       DCHECK(service);
-      if (service->CanSyncStart() &&
-          (service->HasSyncSetupCompleted() ||
-           browser_defaults::kSyncAutoStarts)) {
+      if (service->CanSyncStart() && (service->IsFirstSetupComplete() ||
+                                      browser_defaults::kSyncAutoStarts)) {
         service->AddObserver(this);
       } else {
         PostLoadAndRemoveObservers();
@@ -153,7 +155,7 @@ void ExternalPrefLoader::OnIsSyncingChanged() {
 }
 
 void ExternalPrefLoader::OnStateChanged() {
-  ProfileSyncService* service =
+  browser_sync::ProfileSyncService* service =
       ProfileSyncServiceFactory::GetForProfile(profile_);
   DCHECK(service);
   if (!service->CanSyncStart()) {
@@ -165,7 +167,7 @@ bool ExternalPrefLoader::PostLoadIfPrioritySyncReady() {
   DCHECK(options_ & DELAY_LOAD_UNTIL_PRIORITY_SYNC);
   DCHECK(profile_);
 
-  syncable_prefs::PrefServiceSyncable* prefs =
+  sync_preferences::PrefServiceSyncable* prefs =
       PrefServiceSyncableFromProfile(profile_);
   DCHECK(prefs);
   if (prefs->IsPrioritySyncing()) {
@@ -177,12 +179,12 @@ bool ExternalPrefLoader::PostLoadIfPrioritySyncReady() {
 }
 
 void ExternalPrefLoader::PostLoadAndRemoveObservers() {
-  syncable_prefs::PrefServiceSyncable* prefs =
+  sync_preferences::PrefServiceSyncable* prefs =
       PrefServiceSyncableFromProfile(profile_);
   DCHECK(prefs);
   syncable_pref_observer_.Remove(prefs);
 
-  ProfileSyncService* service =
+  browser_sync::ProfileSyncService* service =
       ProfileSyncServiceFactory::GetForProfile(profile_);
   DCHECK(service);
   service->RemoveObserver(this);
@@ -195,7 +197,7 @@ void ExternalPrefLoader::PostLoadAndRemoveObservers() {
 void ExternalPrefLoader::LoadOnFileThread() {
   CHECK(BrowserThread::CurrentlyOn(BrowserThread::FILE));
 
-  scoped_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> prefs(new base::DictionaryValue);
 
   // TODO(skerner): Some values of base_path_id_ will cause
   // PathService::Get() to return false, because the path does
@@ -265,7 +267,7 @@ void ExternalPrefLoader::ReadExternalExtensionPrefFile(
   }
 
   JSONFileValueDeserializer deserializer(json_file);
-  scoped_ptr<base::DictionaryValue> ext_prefs =
+  std::unique_ptr<base::DictionaryValue> ext_prefs =
       ExtractExtensionPrefs(&deserializer, json_file);
   if (ext_prefs)
     prefs->MergeDictionary(ext_prefs.get());
@@ -303,7 +305,7 @@ void ExternalPrefLoader::ReadStandaloneExtensionPrefFiles(
              << extension_candidate_path.LossyDisplayName();
 
     JSONFileValueDeserializer deserializer(extension_candidate_path);
-    scoped_ptr<base::DictionaryValue> ext_prefs =
+    std::unique_ptr<base::DictionaryValue> ext_prefs =
         ExtractExtensionPrefs(&deserializer, extension_candidate_path);
     if (ext_prefs) {
       DVLOG(1) << "Adding extension with id: " << id;

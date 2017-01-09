@@ -4,16 +4,18 @@
 
 #include "ppapi/proxy/interface_list.h"
 
+#include <stdint.h>
+
 #include "base/hash.h"
 #include "base/lazy_instance.h"
 #include "base/memory/singleton.h"
+#include "build/build_config.h"
 #include "ppapi/c/dev/ppb_audio_input_dev.h"
 #include "ppapi/c/dev/ppb_buffer_dev.h"
 #include "ppapi/c/dev/ppb_char_set_dev.h"
 #include "ppapi/c/dev/ppb_crypto_dev.h"
 #include "ppapi/c/dev/ppb_cursor_control_dev.h"
 #include "ppapi/c/dev/ppb_device_ref_dev.h"
-#include "ppapi/c/dev/ppb_font_dev.h"
 #include "ppapi/c/dev/ppb_gles_chromium_texture_mapping_dev.h"
 #include "ppapi/c/dev/ppb_ime_input_event_dev.h"
 #include "ppapi/c/dev/ppb_memory_dev.h"
@@ -26,6 +28,7 @@
 #include "ppapi/c/dev/ppb_var_deprecated.h"
 #include "ppapi/c/dev/ppb_video_capture_dev.h"
 #include "ppapi/c/dev/ppb_view_dev.h"
+#include "ppapi/c/pp_errors.h"
 #include "ppapi/c/ppb_audio.h"
 #include "ppapi/c/ppb_audio_buffer.h"
 #include "ppapi/c/ppb_audio_config.h"
@@ -67,7 +70,7 @@
 #include "ppapi/c/ppb_video_encoder.h"
 #include "ppapi/c/ppb_video_frame.h"
 #include "ppapi/c/ppb_view.h"
-#include "ppapi/c/pp_errors.h"
+#include "ppapi/c/ppb_vpn_provider.h"
 #include "ppapi/c/ppp_instance.h"
 #include "ppapi/c/private/ppb_camera_capabilities_private.h"
 #include "ppapi/c/private/ppb_camera_device_private.h"
@@ -76,13 +79,13 @@
 #include "ppapi/c/private/ppb_file_io_private.h"
 #include "ppapi/c/private/ppb_file_ref_private.h"
 #include "ppapi/c/private/ppb_find_private.h"
+#include "ppapi/c/private/ppb_flash.h"
 #include "ppapi/c/private/ppb_flash_clipboard.h"
+#include "ppapi/c/private/ppb_flash_device_id.h"
+#include "ppapi/c/private/ppb_flash_drm.h"
 #include "ppapi/c/private/ppb_flash_file.h"
 #include "ppapi/c/private/ppb_flash_font_file.h"
 #include "ppapi/c/private/ppb_flash_fullscreen.h"
-#include "ppapi/c/private/ppb_flash.h"
-#include "ppapi/c/private/ppb_flash_device_id.h"
-#include "ppapi/c/private/ppb_flash_drm.h"
 #include "ppapi/c/private/ppb_flash_menu.h"
 #include "ppapi/c/private/ppb_flash_message_loop.h"
 #include "ppapi/c/private/ppb_flash_print.h"
@@ -396,19 +399,19 @@ void InterfaceList::AddPPB(const char* name,
                            Permission perm) {
   DCHECK(name_to_browser_info_.find(name) == name_to_browser_info_.end());
   name_to_browser_info_.add(
-      name, scoped_ptr<InterfaceInfo>(new InterfaceInfo(iface, perm)));
+      name, std::unique_ptr<InterfaceInfo>(new InterfaceInfo(iface, perm)));
 }
 
 void InterfaceList::AddPPP(const char* name,
                            const void* iface) {
   DCHECK(name_to_plugin_info_.find(name) == name_to_plugin_info_.end());
-  name_to_plugin_info_.add(
-      name,
-      scoped_ptr<InterfaceInfo>(new InterfaceInfo(iface, PERMISSION_NONE)));
+  name_to_plugin_info_.add(name,
+                           std::unique_ptr<InterfaceInfo>(
+                               new InterfaceInfo(iface, PERMISSION_NONE)));
 }
 
 int InterfaceList::HashInterfaceName(const std::string& name) {
-  uint32 data = base::Hash(name.c_str(), name.size());
+  uint32_t data = base::Hash(name.c_str(), name.size());
   // Strip off the signed bit because UMA doesn't support negative values,
   // but takes a signed int as input.
   return static_cast<int>(data & 0x7fffffff);

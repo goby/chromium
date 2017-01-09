@@ -10,7 +10,6 @@
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/first_run/upgrade_util.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
 #include "chrome/grit/generated_resources.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/web_contents.h"
@@ -26,7 +25,8 @@ VersionUpdaterWin::VersionUpdaterWin(gfx::AcceleratedWidget owner_widget)
 VersionUpdaterWin::~VersionUpdaterWin() {
 }
 
-void VersionUpdaterWin::CheckForUpdate(const StatusCallback& callback) {
+void VersionUpdaterWin::CheckForUpdate(const StatusCallback& callback,
+                                       const PromoteCallback&) {
   // There is no supported integration with Google Update for Chromium.
   callback_ = callback;
 
@@ -41,10 +41,6 @@ void VersionUpdaterWin::CheckForUpdate(const StatusCallback& callback) {
     callback_.Run(CHECKING, 0, base::string16());
     BeginUpdateCheckOnFileThread(false /* !install_update_if_possible */);
   }
-}
-
-void VersionUpdaterWin::RelaunchBrowser() const {
-  chrome::AttemptRestart();
 }
 
 void VersionUpdaterWin::OnUpdateCheckComplete(
@@ -119,7 +115,9 @@ void VersionUpdaterWin::OnError(GoogleUpdateErrorCode error_code,
 
 void VersionUpdaterWin::BeginUpdateCheckOnFileThread(
     bool install_update_if_possible) {
-  BeginUpdateCheck(content::BrowserThread::GetMessageLoopProxyForThread(
+  // Disconnect from any previous attempts to avoid redundant callbacks.
+  weak_factory_.InvalidateWeakPtrs();
+  BeginUpdateCheck(content::BrowserThread::GetTaskRunnerForThread(
                        content::BrowserThread::FILE),
                    g_browser_process->GetApplicationLocale(),
                    install_update_if_possible, owner_widget_,

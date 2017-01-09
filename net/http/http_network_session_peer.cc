@@ -4,6 +4,7 @@
 
 #include "net/http/http_network_session_peer.h"
 
+#include "net/base/network_throttle_manager.h"
 #include "net/http/http_network_session.h"
 #include "net/http/http_proxy_client_socket_pool.h"
 #include "net/proxy/proxy_service.h"
@@ -20,22 +21,23 @@ HttpNetworkSessionPeer::HttpNetworkSessionPeer(HttpNetworkSession* session)
 HttpNetworkSessionPeer::~HttpNetworkSessionPeer() {}
 
 void HttpNetworkSessionPeer::SetClientSocketPoolManager(
-    scoped_ptr<ClientSocketPoolManager> socket_pool_manager) {
+    std::unique_ptr<ClientSocketPoolManager> socket_pool_manager) {
   session_->normal_socket_pool_manager_.swap(socket_pool_manager);
 }
 
-void HttpNetworkSessionPeer::SetProxyService(ProxyService* proxy_service) {
-  session_->proxy_service_ = proxy_service;
-}
-
 void HttpNetworkSessionPeer::SetHttpStreamFactory(
-    scoped_ptr<HttpStreamFactory> http_stream_factory) {
+    std::unique_ptr<HttpStreamFactory> http_stream_factory) {
   session_->http_stream_factory_.swap(http_stream_factory);
 }
 
 void HttpNetworkSessionPeer::SetHttpStreamFactoryForWebSocket(
-    scoped_ptr<HttpStreamFactory> http_stream_factory) {
+    std::unique_ptr<HttpStreamFactory> http_stream_factory) {
   session_->http_stream_factory_for_websocket_.swap(http_stream_factory);
+}
+
+void HttpNetworkSessionPeer::SetNetworkStreamThrottler(
+    std::unique_ptr<NetworkThrottleManager> network_throttle_manager) {
+  session_->network_stream_throttler_.swap(network_throttle_manager);
 }
 
 }  // namespace net

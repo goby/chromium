@@ -5,9 +5,10 @@
 #ifndef EXTENSIONS_BROWSER_DECLARATIVE_USER_SCRIPT_MASTER_H_
 #define EXTENSIONS_BROWSER_DECLARATIVE_USER_SCRIPT_MASTER_H_
 
+#include <memory>
 #include <set>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "extensions/common/host_id.h"
 
@@ -19,6 +20,8 @@ namespace extensions {
 
 class UserScript;
 class UserScriptLoader;
+
+struct UserScriptIDPair;
 
 // Manages declarative user scripts for a single extension. Owns a
 // UserScriptLoader to which file loading and shared memory management
@@ -32,23 +35,24 @@ class DeclarativeUserScriptMaster {
 
   // Adds script to shared memory region. This may not happen right away if a
   // script load is in progress.
-  void AddScript(const UserScript& script);
+  void AddScript(std::unique_ptr<UserScript> script);
 
   // Adds a set of scripts to shared meomory region. The fetch of the content
   // of the script on WebUI requires to start URL request to the associated
-  // render specified by |render_process_id, render_view_id|.
+  // render specified by |render_process_id, render_frame_id|.
   // This may not happen right away if a script load is in progress.
-  void AddScripts(const std::set<UserScript>& scripts,
-                  int render_process_id,
-                  int render_view_id);
+  void AddScripts(
+      std::unique_ptr<std::vector<std::unique_ptr<UserScript>>> scripts,
+      int render_process_id,
+      int render_frame_id);
 
   // Removes script from shared memory region. This may not happen right away if
   // a script load is in progress.
-  void RemoveScript(const UserScript& script);
+  void RemoveScript(const UserScriptIDPair& script);
 
   // Removes a set of scripts from shared memory region. This may not happen
   // right away if a script load is in progress.
-  void RemoveScripts(const std::set<UserScript>& scripts);
+  void RemoveScripts(const std::set<UserScriptIDPair>& scripts);
 
   // Removes all scripts from shared memory region. This may not happen right
   // away if a script load is in progress.
@@ -64,7 +68,7 @@ class DeclarativeUserScriptMaster {
 
   // Script loader that handles loading contents of scripts into shared memory
   // and notifying renderers of script updates.
-  scoped_ptr<UserScriptLoader> loader_;
+  std::unique_ptr<UserScriptLoader> loader_;
 
   DISALLOW_COPY_AND_ASSIGN(DeclarativeUserScriptMaster);
 };

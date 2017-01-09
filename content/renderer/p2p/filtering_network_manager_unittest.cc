@@ -4,11 +4,16 @@
 
 #include "content/renderer/p2p/filtering_network_manager.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/renderer/p2p/empty_network_manager.h"
 #include "media/base/media_permission.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -67,7 +72,7 @@ class MockNetworkManager : public rtc::NetworkManager {
 
  private:
   bool sent_first_update_ = false;
-  scoped_ptr<rtc::Network> network_;
+  std::unique_ptr<rtc::Network> network_;
 };
 
 class MockMediaPermission : public media::MediaPermission {
@@ -124,17 +129,15 @@ class FilteringNetworkManagerTest : public testing::Test,
                                     public sigslot::has_slots<> {
  public:
   FilteringNetworkManagerTest()
-      : task_runner_(new base::TestSimpleTaskRunner()),
+      : media_permission_(new MockMediaPermission()),
+        task_runner_(new base::TestSimpleTaskRunner()),
         task_runner_handle_(task_runner_) {}
   void SetupNetworkManager(bool multiple_routes_requested) {
     mock_network_manager_.reset(new MockNetworkManager());
-
-    scoped_ptr<MockMediaPermission> media_permission(new MockMediaPermission());
-    media_permission_ = media_permission.get();
     if (multiple_routes_requested) {
       FilteringNetworkManager* filtering_network_manager =
           new FilteringNetworkManager(mock_network_manager_.get(), GURL(),
-                                      media_permission.Pass());
+                                      media_permission_.get());
       filtering_network_manager->Initialize();
       network_manager_.reset(filtering_network_manager);
     } else {
@@ -199,11 +202,10 @@ class FilteringNetworkManagerTest : public testing::Test,
   void clear_callback_called() { callback_called_ = false; }
 
   bool callback_called_ = false;
-  scoped_ptr<rtc::NetworkManager> network_manager_;
-  scoped_ptr<MockNetworkManager> mock_network_manager_;
+  std::unique_ptr<rtc::NetworkManager> network_manager_;
+  std::unique_ptr<MockNetworkManager> mock_network_manager_;
 
-  // Raw pointer to MockMediaPermission. It's owned by FilteringNetworkManager.
-  MockMediaPermission* media_permission_ = nullptr;
+  std::unique_ptr<MockMediaPermission> media_permission_;
 
   NetworkList network_list_;
   scoped_refptr<base::TestSimpleTaskRunner> task_runner_;
@@ -221,9 +223,9 @@ TEST_F(FilteringNetworkManagerTest, MultipleRoutesNotRequested) {
       // StartUpdating() is called, should receive callback as the multiple
       // routes is not requested.
       {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
-      // Further network signal shouldn't trigger callback in
-      // ENUMERATION_BLOCKED mode.
-      {MOCK_NETWORKS_CHANGED, NO_SIGNAL},
+      // Further network signal should trigger callback, since the default
+      // network could have changed.
+      {MOCK_NETWORKS_CHANGED, SIGNAL_ENUMERATION_BLOCKED},
       // New StartUpdating() should trigger callback.
       {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
       {STOP_UPDATING, NO_SIGNAL},
@@ -247,8 +249,9 @@ TEST_F(FilteringNetworkManagerTest, BlockMultipleRoutesByStartUpdating) {
       // Once StartUpdating() is called, signal network changed event with
       // ENUMERATION_BLOCKED.
       {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
-      // Further network signal shouldn't trigger callback.
-      {MOCK_NETWORKS_CHANGED, NO_SIGNAL},
+      // Further network signal should trigger callback, since the default
+      // network could have changed.
+      {MOCK_NETWORKS_CHANGED, SIGNAL_ENUMERATION_BLOCKED},
       // New StartUpdating() should trigger callback.
       {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
       {STOP_UPDATING, NO_SIGNAL},
@@ -267,11 +270,32 @@ TEST_F(FilteringNetworkManagerTest, BlockMultipleRoutesByPermissionsDenied) {
 
   TestEntry tests[] = {
       {START_UPDATING, NO_SIGNAL},
-      {MIC_DENIED, NO_SIGNAL},
-      // Once camera is denied, no need to wait for networkchanged event from
-      // network_manager_.
-      {CAMERA_DENIED, SIGNAL_ENUMERATION_BLOCKED},
       {MOCK_NETWORKS_CHANGED, NO_SIGNAL},
+      {MIC_DENIED, NO_SIGNAL},
+      // The last permission check being denied should immediately trigger the
+      // networks changed signal, since we already have an updated network list.
+      {CAMERA_DENIED, SIGNAL_ENUMERATION_BLOCKED},
+      {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
+      {STOP_UPDATING, NO_SIGNAL},
+      {STOP_UPDATING, NO_SIGNAL},
+      {MOCK_NETWORKS_CHANGED, NO_SIGNAL},
+  };
+
+  RunTests(tests, arraysize(tests));
+}
+
+// Test that after permissions have been denied, a network change signal from
+// the internal NetworkManager is still needed before signaling a network
+// change outwards. This is because even if network enumeration is blocked,
+// we still want to give time to obtain the default IP addresses.
+TEST_F(FilteringNetworkManagerTest, BlockMultipleRoutesByNetworksChanged) {
+  SetupNetworkManager(true);
+
+  TestEntry tests[] = {
+      {START_UPDATING, NO_SIGNAL},
+      {MIC_DENIED, NO_SIGNAL},
+      {CAMERA_DENIED, NO_SIGNAL},
+      {MOCK_NETWORKS_CHANGED, SIGNAL_ENUMERATION_BLOCKED},
       {START_UPDATING, SIGNAL_ENUMERATION_BLOCKED},
       {STOP_UPDATING, NO_SIGNAL},
       {STOP_UPDATING, NO_SIGNAL},

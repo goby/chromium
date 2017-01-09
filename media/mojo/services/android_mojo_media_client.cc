@@ -2,48 +2,52 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "media/mojo/services/mojo_media_client.h"
+#include "media/mojo/services/android_mojo_media_client.h"
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "media/base/android/android_cdm_factory.h"
-#include "media/base/bind_to_current_loop.h"
-#include "media/base/media.h"
+#include "media/base/audio_decoder.h"
+#include "media/base/cdm_factory.h"
+#include "media/filters/android/media_codec_audio_decoder.h"
 #include "media/mojo/interfaces/provision_fetcher.mojom.h"
 #include "media/mojo/services/mojo_provision_fetcher.h"
-#include "mojo/application/public/cpp/connect.h"
+#include "services/service_manager/public/cpp/connect.h"
 
 namespace media {
-namespace internal {
 
 namespace {
 
-scoped_ptr<ProvisionFetcher> CreateProvisionFetcher(
-    mojo::ServiceProvider* service_provider) {
-  interfaces::ProvisionFetcherPtr provision_fetcher_ptr;
-  mojo::ConnectToService(service_provider, &provision_fetcher_ptr);
-  return make_scoped_ptr(
-      new MojoProvisionFetcher(std::move(provision_fetcher_ptr)));
+std::unique_ptr<ProvisionFetcher> CreateProvisionFetcher(
+    service_manager::mojom::InterfaceProvider* host_interfaces) {
+  DCHECK(host_interfaces);
+  mojom::ProvisionFetcherPtr provision_fetcher_ptr;
+  service_manager::GetInterface(host_interfaces, &provision_fetcher_ptr);
+  return base::MakeUnique<MojoProvisionFetcher>(
+      std::move(provision_fetcher_ptr));
 }
 
-}  // namespace (anonymous)
+}  // namespace
 
-class AndroidMojoMediaClient : public PlatformMojoMediaClient {
- public:
-  AndroidMojoMediaClient() {}
+AndroidMojoMediaClient::AndroidMojoMediaClient() {}
 
-  scoped_ptr<CdmFactory> CreateCdmFactory(
-      mojo::ServiceProvider* service_provider) override {
-    return make_scoped_ptr(new AndroidCdmFactory(
-        base::Bind(&CreateProvisionFetcher, service_provider)));
+AndroidMojoMediaClient::~AndroidMojoMediaClient() {}
+
+// MojoMediaClient overrides.
+
+std::unique_ptr<AudioDecoder> AndroidMojoMediaClient::CreateAudioDecoder(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
+  return base::MakeUnique<MediaCodecAudioDecoder>(task_runner);
+}
+
+std::unique_ptr<CdmFactory> AndroidMojoMediaClient::CreateCdmFactory(
+    service_manager::mojom::InterfaceProvider* host_interfaces) {
+  if (!host_interfaces) {
+    NOTREACHED() << "Host interfaces should be provided when using CDM with "
+                 << "AndroidMojoMediaClient";
+    return nullptr;
   }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(AndroidMojoMediaClient);
-};
-
-scoped_ptr<PlatformMojoMediaClient> CreatePlatformMojoMediaClient() {
-  return make_scoped_ptr(new AndroidMojoMediaClient());
+  return base::MakeUnique<AndroidCdmFactory>(
+      base::Bind(&CreateProvisionFetcher, host_interfaces));
 }
 
-}  // namespace internal
 }  // namespace media

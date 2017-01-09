@@ -2,17 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/memory/scoped_ptr.h"
-#include "base/synchronization/spin_wait.h"
-#include "base/synchronization/waitable_event.h"
-#include "base/threading/simple_thread.h"
 #include "net/base/address_tracker_linux.h"
 
 #include <linux/if.h>
 
+#include <memory>
+#include <unordered_set>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/synchronization/spin_wait.h"
+#include "base/synchronization/waitable_event.h"
+#include "base/threading/simple_thread.h"
+#include "net/base/ip_address.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #ifndef IFA_F_HOMEADDRESS
@@ -100,7 +102,7 @@ class AddressTrackerLinuxTest : public testing::Test {
     return tracker_->GetAddressMap();
   }
 
-  const base::hash_set<int> GetOnlineLinks() const {
+  const std::unordered_set<int> GetOnlineLinks() const {
     return tracker_->GetOnlineLinks();
   }
 
@@ -112,8 +114,8 @@ class AddressTrackerLinuxTest : public testing::Test {
     return tracker_->GetThreadsWaitingForConnectionTypeInitForTesting();
   }
 
-  base::hash_set<std::string> ignored_interfaces_;
-  scoped_ptr<AddressTrackerLinux> tracker_;
+  std::unordered_set<std::string> ignored_interfaces_;
+  std::unique_ptr<AddressTrackerLinux> tracker_;
   AddressTrackerLinux::GetInterfaceNameFunction original_get_interface_name_;
 };
 
@@ -175,8 +177,8 @@ void MakeAddrMessageWithCacheInfo(uint16_t type,
                                   uint8_t flags,
                                   uint8_t family,
                                   int index,
-                                  const IPAddressNumber& address,
-                                  const IPAddressNumber& local,
+                                  const IPAddress& address,
+                                  const IPAddress& local,
                                   uint32_t preferred_lifetime,
                                   Buffer* output) {
   NetlinkMessage nlmsg(type);
@@ -186,9 +188,9 @@ void MakeAddrMessageWithCacheInfo(uint16_t type,
   msg.ifa_index = index;
   nlmsg.AddPayload(&msg, sizeof(msg));
   if (address.size())
-    nlmsg.AddAttribute(IFA_ADDRESS, &address[0], address.size());
+    nlmsg.AddAttribute(IFA_ADDRESS, address.bytes().data(), address.size());
   if (local.size())
-    nlmsg.AddAttribute(IFA_LOCAL, &local[0], local.size());
+    nlmsg.AddAttribute(IFA_LOCAL, local.bytes().data(), local.size());
   struct ifa_cacheinfo cache_info = {};
   cache_info.ifa_prefered = preferred_lifetime;
   cache_info.ifa_valid = INFINITY_LIFE_TIME;
@@ -200,8 +202,8 @@ void MakeAddrMessage(uint16_t type,
                      uint8_t flags,
                      uint8_t family,
                      int index,
-                     const IPAddressNumber& address,
-                     const IPAddressNumber& local,
+                     const IPAddress& address,
+                     const IPAddress& local,
                      Buffer* output) {
   MakeAddrMessageWithCacheInfo(type, flags, family, index, address, local,
                                INFINITY_LIFE_TIME, output);
@@ -247,11 +249,11 @@ const unsigned char kAddress3[] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 TEST_F(AddressTrackerLinuxTest, NewAddress) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
-  const IPAddressNumber kAddr1(kAddress1, kAddress1 + arraysize(kAddress1));
-  const IPAddressNumber kAddr2(kAddress2, kAddress2 + arraysize(kAddress2));
-  const IPAddressNumber kAddr3(kAddress3, kAddress3 + arraysize(kAddress3));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
+  const IPAddress kAddr1(kAddress1);
+  const IPAddress kAddr2(kAddress2);
+  const IPAddress kAddr3(kAddress3);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceEth,
@@ -284,8 +286,8 @@ TEST_F(AddressTrackerLinuxTest, NewAddress) {
 TEST_F(AddressTrackerLinuxTest, NewAddressChange) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceEth,
@@ -320,7 +322,7 @@ TEST_F(AddressTrackerLinuxTest, NewAddressChange) {
 TEST_F(AddressTrackerLinuxTest, NewAddressDuplicate) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
+  const IPAddress kAddr0(kAddress0);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceEth,
@@ -340,10 +342,10 @@ TEST_F(AddressTrackerLinuxTest, NewAddressDuplicate) {
 TEST_F(AddressTrackerLinuxTest, DeleteAddress) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
-  const IPAddressNumber kAddr1(kAddress1, kAddress1 + arraysize(kAddress1));
-  const IPAddressNumber kAddr2(kAddress2, kAddress2 + arraysize(kAddress2));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
+  const IPAddress kAddr1(kAddress1);
+  const IPAddress kAddr2(kAddress2);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, 0, AF_INET, kTestInterfaceEth, kAddr0, kEmpty,
@@ -382,8 +384,8 @@ TEST_F(AddressTrackerLinuxTest, DeleteAddress) {
 TEST_F(AddressTrackerLinuxTest, DeprecatedLifetime) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr3(kAddress3, kAddress3 + arraysize(kAddress3));
+  const IPAddress kEmpty;
+  const IPAddress kAddr3(kAddress3);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, 0, AF_INET6, kTestInterfaceEth, kEmpty, kAddr3,
@@ -425,9 +427,9 @@ TEST_F(AddressTrackerLinuxTest, DeprecatedLifetime) {
 TEST_F(AddressTrackerLinuxTest, IgnoredMessage) {
   InitializeAddressTracker(true);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
-  const IPAddressNumber kAddr3(kAddress3, kAddress3 + arraysize(kAddress3));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
+  const IPAddress kAddr3(kAddress3);
 
   Buffer buffer;
   // Ignored family.
@@ -450,7 +452,7 @@ TEST_F(AddressTrackerLinuxTest, IgnoredMessage) {
   // Ignored attribute.
   struct ifa_cacheinfo cache_info = {};
   nlmsg.AddAttribute(IFA_CACHEINFO, &cache_info, sizeof(cache_info));
-  nlmsg.AddAttribute(IFA_ADDRESS, &kAddr0[0], kAddr0.size());
+  nlmsg.AddAttribute(IFA_ADDRESS, kAddr0.bytes().data(), kAddr0.size());
   nlmsg.AppendTo(&buffer);
 
   EXPECT_TRUE(HandleAddressMessage(buffer));
@@ -567,8 +569,8 @@ TEST_F(AddressTrackerLinuxTest, IgnoreInterface) {
   InitializeAddressTracker(true);
 
   Buffer buffer;
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
 
   // Verify online links and address map has been not been updated
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceAp,
@@ -589,8 +591,8 @@ TEST_F(AddressTrackerLinuxTest, IgnoreInterface_NonIgnoredInterface) {
   InitializeAddressTracker(true);
 
   Buffer buffer;
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
 
   // Verify eth0 is not ignored when only uap0 is ignored
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceEth,
@@ -662,8 +664,8 @@ TEST_F(AddressTrackerLinuxTest, GetInterfaceName) {
 TEST_F(AddressTrackerLinuxTest, NonTrackingMode) {
   InitializeAddressTracker(false);
 
-  const IPAddressNumber kEmpty;
-  const IPAddressNumber kAddr0(kAddress0, kAddress0 + arraysize(kAddress0));
+  const IPAddress kEmpty;
+  const IPAddress kAddr0(kAddress0);
 
   Buffer buffer;
   MakeAddrMessage(RTM_NEWADDR, IFA_F_TEMPORARY, AF_INET, kTestInterfaceEth,
@@ -689,9 +691,11 @@ class GetCurrentConnectionTypeRunner
     : public base::DelegateSimpleThread::Delegate {
  public:
   explicit GetCurrentConnectionTypeRunner(AddressTrackerLinux* tracker,
-      const std::string& thread_name)
-      : tracker_(tracker), done_(true, false), thread_(this, thread_name) {
-  }
+                                          const std::string& thread_name)
+      : tracker_(tracker),
+        done_(base::WaitableEvent::ResetPolicy::MANUAL,
+              base::WaitableEvent::InitialState::NOT_SIGNALED),
+        thread_(this, thread_name) {}
   ~GetCurrentConnectionTypeRunner() override {}
 
   void Run() override {

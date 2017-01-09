@@ -7,9 +7,11 @@
 
 #include <set>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
+#include "third_party/WebKit/public/platform/WebAddressSpace.h"
 #include "third_party/WebKit/public/web/WebContentSecurityPolicy.h"
+#include "third_party/WebKit/public/web/WebSharedWorkerCreationContextType.h"
 #include "third_party/WebKit/public/web/WebSharedWorkerRepositoryClient.h"
 
 namespace content {
@@ -29,10 +31,15 @@ class SharedWorkerRepository : public RenderFrameObserver,
       DocumentID document_id,
       const blink::WebString& content_security_policy,
       blink::WebContentSecurityPolicyType,
+      blink::WebAddressSpace,
+      blink::WebSharedWorkerCreationContextType,
       blink::WebWorkerCreationError* error) override;
   void documentDetached(DocumentID document_id) override;
 
  private:
+  // RenderFrameObserver implementation.
+  void OnDestruct() override;
+
   std::set<DocumentID> documents_with_workers_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedWorkerRepository);

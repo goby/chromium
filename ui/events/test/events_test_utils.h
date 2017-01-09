@@ -5,6 +5,7 @@
 #ifndef UI_EVENTS_TEST_EVENTS_TEST_UTILS_H_
 #define UI_EVENTS_TEST_EVENTS_TEST_UTILS_H_
 
+#include "base/macros.h"
 #include "ui/events/event.h"
 #include "ui/events/event_dispatcher.h"
 #include "ui/events/event_target.h"
@@ -18,7 +19,7 @@ class EventTestApi {
   explicit EventTestApi(Event* event);
   virtual ~EventTestApi();
 
-  void set_time_stamp(base::TimeDelta time_stamp) {
+  void set_time_stamp(base::TimeTicks time_stamp) {
     event_->time_stamp_ = time_stamp;
   }
 

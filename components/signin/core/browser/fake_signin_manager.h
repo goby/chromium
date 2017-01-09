@@ -5,10 +5,11 @@
 #ifndef COMPONENTS_SIGNIN_CORE_BROWSER_FAKE_SIGNIN_MANAGER_H_
 #define COMPONENTS_SIGNIN_CORE_BROWSER_FAKE_SIGNIN_MANAGER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "build/build_config.h"
 #include "components/signin/core/browser/signin_manager.h"
 #include "components/signin/core/browser/signin_metrics.h"
 
@@ -22,6 +23,8 @@ class FakeSigninManagerBase : public SigninManagerBase {
   FakeSigninManagerBase(SigninClient* client,
                         AccountTrackerService* account_tracker_service);
   ~FakeSigninManagerBase() override;
+
+  void SignIn(const std::string& account_id);
 };
 
 #if !defined(OS_CHROMEOS)
@@ -57,7 +60,8 @@ class FakeSigninManager : public SigninManager {
       const std::string& password,
       const OAuthTokenFetchedCallback& oauth_fetched_callback) override;
 
-  void SignOut(signin_metrics::ProfileSignout signout_source_metric) override;
+  void SignOut(signin_metrics::ProfileSignout signout_source_metric,
+               signin_metrics::SignoutDelete signout_delete_metric) override;
 
   void CompletePendingSignin() override;
 

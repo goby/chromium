@@ -5,20 +5,16 @@
 #ifndef CRYPTO_SIGNATURE_VERIFIER_H_
 #define CRYPTO_SIGNATURE_VERIFIER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "build/build_config.h"
-#include "base/basictypes.h"
 #include "crypto/crypto_export.h"
 
-#if defined(USE_OPENSSL)
 typedef struct env_md_st EVP_MD;
 typedef struct evp_pkey_ctx_st EVP_PKEY_CTX;
-#else
-typedef struct HASHContextStr HASHContext;
-typedef struct SECKEYPublicKeyStr SECKEYPublicKey;
-typedef struct VFYContextStr VFYContext;
-#endif
 
 namespace crypto {
 
@@ -32,6 +28,13 @@ class CRYPTO_EXPORT SignatureVerifier {
     SHA256,
   };
 
+  // The set of supported signature algorithms. Extend as required.
+  enum SignatureAlgorithm {
+    RSA_PKCS1_SHA1,
+    RSA_PKCS1_SHA256,
+    ECDSA_SHA256,
+  };
+
   SignatureVerifier();
   ~SignatureVerifier();
 
@@ -41,16 +44,7 @@ class CRYPTO_EXPORT SignatureVerifier {
   // by one or more VerifyUpdate calls and a VerifyFinal call.
   // NOTE: for RSA-PSS signatures, use VerifyInitRSAPSS instead.
   //
-  // The signature algorithm is specified as a DER encoded ASN.1
-  // AlgorithmIdentifier structure:
-  //   AlgorithmIdentifier  ::=  SEQUENCE  {
-  //       algorithm               OBJECT IDENTIFIER,
-  //       parameters              ANY DEFINED BY algorithm OPTIONAL  }
-  //
-  // The signature is encoded according to the signature algorithm, but it
-  // must not be further encoded in an ASN.1 BIT STRING.
-  // Note: An RSA signature is actually a big integer.  It must be in
-  // big-endian byte order.
+  // The signature is encoded according to the signature algorithm.
   //
   // The public key is specified as a DER encoded ASN.1 SubjectPublicKeyInfo
   // structure, which contains not only the public key but also its type
@@ -58,11 +52,10 @@ class CRYPTO_EXPORT SignatureVerifier {
   //   SubjectPublicKeyInfo  ::=  SEQUENCE  {
   //       algorithm            AlgorithmIdentifier,
   //       subjectPublicKey     BIT STRING  }
-  bool VerifyInit(const uint8* signature_algorithm,
-                  int signature_algorithm_len,
-                  const uint8* signature,
+  bool VerifyInit(SignatureAlgorithm signature_algorithm,
+                  const uint8_t* signature,
                   int signature_len,
-                  const uint8* public_key_info,
+                  const uint8_t* public_key_info,
                   int public_key_info_len);
 
   // Initiates a RSA-PSS signature verification operation.  This should be
@@ -84,60 +77,34 @@ class CRYPTO_EXPORT SignatureVerifier {
   bool VerifyInitRSAPSS(HashAlgorithm hash_alg,
                         HashAlgorithm mask_hash_alg,
                         int salt_len,
-                        const uint8* signature,
+                        const uint8_t* signature,
                         int signature_len,
-                        const uint8* public_key_info,
+                        const uint8_t* public_key_info,
                         int public_key_info_len);
 
   // Feeds a piece of the data to the signature verifier.
-  void VerifyUpdate(const uint8* data_part, int data_part_len);
+  void VerifyUpdate(const uint8_t* data_part, int data_part_len);
 
   // Concludes a signature verification operation.  Returns true if the
   // signature is valid.  Returns false if the signature is invalid or an
   // error occurred.
   bool VerifyFinal();
 
-  // Note: we can provide a one-shot interface if there is interest:
-  //   bool Verify(const uint8* data,
-  //               int data_len,
-  //               const uint8* signature_algorithm,
-  //               int signature_algorithm_len,
-  //               const uint8* signature,
-  //               int signature_len,
-  //               const uint8* public_key_info,
-  //               int public_key_info_len);
-
  private:
-#if defined(USE_OPENSSL)
-  bool CommonInit(const EVP_MD* digest,
-                  const uint8* signature,
+  bool CommonInit(int pkey_type,
+                  const EVP_MD* digest,
+                  const uint8_t* signature,
                   int signature_len,
-                  const uint8* public_key_info,
+                  const uint8_t* public_key_info,
                   int public_key_info_len,
                   EVP_PKEY_CTX** pkey_ctx);
-#else
-  static SECKEYPublicKey* DecodePublicKeyInfo(const uint8* public_key_info,
-                                              int public_key_info_len);
-#endif
 
   void Reset();
 
-  std::vector<uint8> signature_;
+  std::vector<uint8_t> signature_;
 
-#if defined(USE_OPENSSL)
   struct VerifyContext;
-  VerifyContext* verify_context_;
-#else
-  // Used for all signature types except RSA-PSS.
-  VFYContext* vfy_context_;
-
-  // Used for RSA-PSS signatures.
-  HashAlgorithm hash_alg_;
-  HashAlgorithm mask_hash_alg_;
-  unsigned int salt_len_;
-  SECKEYPublicKey* public_key_;
-  HASHContext* hash_context_;
-#endif
+  std::unique_ptr<VerifyContext> verify_context_;
 };
 
 }  // namespace crypto

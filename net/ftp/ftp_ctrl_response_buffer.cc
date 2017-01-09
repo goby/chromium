@@ -4,12 +4,15 @@
 
 #include "net/ftp/ftp_ctrl_response_buffer.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
-#include "base/strings/string_number_conversions.h"
+#include "net/base/parse_number.h"
 #include "base/strings/string_piece.h"
 #include "base/values.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_event_type.h"
 
 namespace net {
 
@@ -18,12 +21,12 @@ const int FtpCtrlResponse::kInvalidStatusCode = -1;
 
 FtpCtrlResponse::FtpCtrlResponse() : status_code(kInvalidStatusCode) {}
 
+FtpCtrlResponse::FtpCtrlResponse(const FtpCtrlResponse& other) = default;
+
 FtpCtrlResponse::~FtpCtrlResponse() {}
 
-FtpCtrlResponseBuffer::FtpCtrlResponseBuffer(const BoundNetLog& net_log)
-    : multiline_(false),
-      net_log_(net_log) {
-}
+FtpCtrlResponseBuffer::FtpCtrlResponseBuffer(const NetLogWithSource& net_log)
+    : multiline_(false), net_log_(net_log) {}
 
 FtpCtrlResponseBuffer::~FtpCtrlResponseBuffer() {}
 
@@ -79,16 +82,16 @@ int FtpCtrlResponseBuffer::ConsumeData(const char* data, int data_length) {
 
 namespace {
 
-scoped_ptr<base::Value> NetLogFtpCtrlResponseCallback(
+std::unique_ptr<base::Value> NetLogFtpCtrlResponseCallback(
     const FtpCtrlResponse* response,
     NetLogCaptureMode capture_mode) {
-  scoped_ptr<base::ListValue> lines(new base::ListValue());
+  std::unique_ptr<base::ListValue> lines(new base::ListValue());
   lines->AppendStrings(response->lines);
 
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetInteger("status_code", response->status_code);
-  dict->Set("lines", lines.Pass());
-  return dict.Pass();
+  dict->Set("lines", std::move(lines));
+  return std::move(dict);
 }
 
 }  // namespace
@@ -97,7 +100,7 @@ FtpCtrlResponse FtpCtrlResponseBuffer::PopResponse() {
   FtpCtrlResponse result = responses_.front();
   responses_.pop();
 
-  net_log_.AddEvent(NetLog::TYPE_FTP_CONTROL_RESPONSE,
+  net_log_.AddEvent(NetLogEventType::FTP_CONTROL_RESPONSE,
                     base::Bind(&NetLogFtpCtrlResponseCallback, &result));
 
   return result;
@@ -110,16 +113,20 @@ FtpCtrlResponseBuffer::ParsedLine::ParsedLine()
       status_code(FtpCtrlResponse::kInvalidStatusCode) {
 }
 
+FtpCtrlResponseBuffer::ParsedLine::ParsedLine(const ParsedLine& other) =
+    default;
+
 // static
 FtpCtrlResponseBuffer::ParsedLine FtpCtrlResponseBuffer::ParseLine(
     const std::string& line) {
   ParsedLine result;
 
   if (line.length() >= 3) {
-    if (base::StringToInt(base::StringPiece(line.begin(), line.begin() + 3),
-                          &result.status_code))
-      result.has_status_code = (100 <= result.status_code &&
-                                result.status_code <= 599);
+    if (ParseInt32(base::StringPiece(line.begin(), line.begin() + 3),
+                   ParseIntFormat::NON_NEGATIVE, &result.status_code)) {
+      result.has_status_code =
+          (100 <= result.status_code && result.status_code <= 599);
+    }
     if (result.has_status_code && line.length() >= 4 && line[3] == ' ') {
       result.is_complete = true;
     } else if (result.has_status_code && line.length() >= 4 && line[3] == '-') {

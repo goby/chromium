@@ -55,7 +55,7 @@ LocationRange CreatePersistentRange(const InputFile& input_file,
                                     const LocationRange& range) {
   InputFile* clone_input_file;
   std::vector<Token>* tokens;  // Don't care about this.
-  scoped_ptr<ParseNode>* parse_root;  // Don't care about this.
+  std::unique_ptr<ParseNode>* parse_root;  // Don't care about this.
 
   g_scheduler->input_file_manager()->AddDynamicInput(
       input_file.name(), &clone_input_file, &tokens, &parse_root);
@@ -63,11 +63,11 @@ LocationRange CreatePersistentRange(const InputFile& input_file,
 
   return LocationRange(Location(clone_input_file,
                                 range.begin().line_number(),
-                                range.begin().char_offset(),
+                                range.begin().column_number(),
                                 -1 /* TODO(scottmg) */),
                        Location(clone_input_file,
                                 range.end().line_number(),
-                                range.end().char_offset(),
+                                range.end().column_number(),
                                 -1 /* TODO(scottmg) */));
 }
 
@@ -129,7 +129,7 @@ HeaderChecker::HeaderChecker(const BuildSettings* build_settings,
                              const std::vector<const Target*>& targets)
     : main_loop_(base::MessageLoop::current()),
       build_settings_(build_settings) {
-  for (const auto& target : targets)
+  for (auto* target : targets)
     AddTargetToFileMap(target, &file_map_);
 }
 
@@ -140,7 +140,7 @@ bool HeaderChecker::Run(const std::vector<const Target*>& to_check,
                         bool force_check,
                         std::vector<Err>* errors) {
   FileMap files_to_check;
-  for (const auto& check : to_check)
+  for (auto* check : to_check)
     AddTargetToFileMap(check, &files_to_check);
   RunCheckOverFiles(files_to_check, force_check);
 
@@ -154,8 +154,8 @@ void HeaderChecker::RunCheckOverFiles(const FileMap& files, bool force_check) {
   if (files.empty())
     return;
 
-  scoped_refptr<base::SequencedWorkerPool> pool(
-      new base::SequencedWorkerPool(16, "HeaderChecker"));
+  scoped_refptr<base::SequencedWorkerPool> pool(new base::SequencedWorkerPool(
+      16, "HeaderChecker", base::TaskPriority::USER_VISIBLE));
   for (const auto& file : files) {
     // Only check C-like source files (RC files also have includes).
     SourceFileType type = GetSourceFileType(file.first);
@@ -298,14 +298,11 @@ bool HeaderChecker::CheckFile(const Target* from_target,
 }
 
 // If the file exists:
-//  - It must be in one or more dependencies of the given target.
-//  - Those dependencies must have visibility from the source file.
-//  - The header must be in the public section of those dependeices.
-//  - Those dependencies must either have no direct dependent configs with
-//    flags that affect the compiler, or those direct dependent configs apply
-//    to the "from_target" (it's one "hop" away). This ensures that if the
-//    include file needs needs compiler settings to compile it, that those
-//    settings are applied to the file including it.
+//  - The header must be in the public section of a target, or it must
+//    be in the sources with no public list (everything is implicitly public).
+//  - The dependency path to the included target must follow only public_deps.
+//  - If there are multiple targets with the header in it, only one need be
+//    valid for the check to pass.
 bool HeaderChecker::CheckInclude(const Target* from_target,
                                  const InputFile& source_file,
                                  const SourceFile& include_file,
@@ -570,9 +567,9 @@ Err HeaderChecker::MakeUnreachableError(
   std::string msg = "It is not in any dependency of\n  " +
       from_target->label().GetUserVisibleName(include_toolchain);
   msg += "\nThe include file is in the target(s):\n";
-  for (const auto& target : targets_with_matching_toolchains)
+  for (auto* target : targets_with_matching_toolchains)
     msg += "  " + target->label().GetUserVisibleName(include_toolchain) + "\n";
-  for (const auto& target : targets_with_other_toolchains)
+  for (auto* target : targets_with_other_toolchains)
     msg += "  " + target->label().GetUserVisibleName(include_toolchain) + "\n";
   if (targets_with_other_toolchains.size() +
       targets_with_matching_toolchains.size() > 1)

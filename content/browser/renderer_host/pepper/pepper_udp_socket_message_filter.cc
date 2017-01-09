@@ -5,10 +5,12 @@
 #include "content/browser/renderer_host/pepper/pepper_udp_socket_message_filter.h"
 
 #include <cstring>
+#include <utility>
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/pepper/browser_ppapi_host_impl.h"
 #include "content/browser/renderer_host/pepper/pepper_socket_utils.h"
 #include "content/public/browser/browser_thread.h"
@@ -19,7 +21,8 @@
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/rand_callback.h"
-#include "net/udp/udp_socket.h"
+#include "net/log/net_log_source.h"
+#include "net/socket/udp_socket.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/c/private/ppb_net_address_private.h"
 #include "ppapi/host/dispatch_host_message.h"
@@ -51,12 +54,14 @@ size_t g_num_instances = 0;
 namespace content {
 
 PepperUDPSocketMessageFilter::PendingSend::PendingSend(
-    const net::IPAddressNumber& address,
+    const net::IPAddress& address,
     int port,
     const scoped_refptr<net::IOBufferWithSize>& buffer,
     const ppapi::host::ReplyMessageContext& context)
-    : address(address), port(port), buffer(buffer), context(context) {
-}
+    : address(address), port(port), buffer(buffer), context(context) {}
+
+PepperUDPSocketMessageFilter::PendingSend::PendingSend(
+    const PendingSend& other) = default;
 
 PepperUDPSocketMessageFilter::PendingSend::~PendingSend() {
 }
@@ -65,8 +70,7 @@ PepperUDPSocketMessageFilter::PepperUDPSocketMessageFilter(
     BrowserPpapiHostImpl* host,
     PP_Instance instance,
     bool private_api)
-    : host_(host),
-      socket_options_(0),
+    : socket_options_(0),
       rcvbuf_size_(0),
       sndbuf_size_(0),
       multicast_ttl_(0),
@@ -105,12 +109,12 @@ PepperUDPSocketMessageFilter::OverrideTaskRunnerForMessage(
     case PpapiHostMsg_UDPSocket_SetOption::ID:
     case PpapiHostMsg_UDPSocket_Close::ID:
     case PpapiHostMsg_UDPSocket_RecvSlotAvailable::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::IO);
     case PpapiHostMsg_UDPSocket_Bind::ID:
     case PpapiHostMsg_UDPSocket_SendTo::ID:
     case PpapiHostMsg_UDPSocket_JoinGroup::ID:
     case PpapiHostMsg_UDPSocket_LeaveGroup::ID:
-      return BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
+      return BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
   }
   return NULL;
 }
@@ -360,13 +364,13 @@ int32_t PepperUDPSocketMessageFilter::OnMsgJoinGroup(
   if (!socket_)
     return PP_ERROR_FAILED;
 
-  net::IPAddressNumber group;
-  uint16 port;
+  std::vector<uint8_t> group;
+  uint16_t port;
 
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &group, &port))
     return PP_ERROR_ADDRESS_INVALID;
 
-  return NetErrorToPepperError(socket_->JoinGroup(group));
+  return NetErrorToPepperError(socket_->JoinGroup(net::IPAddress(group)));
 }
 
 int32_t PepperUDPSocketMessageFilter::OnMsgLeaveGroup(
@@ -381,13 +385,13 @@ int32_t PepperUDPSocketMessageFilter::OnMsgLeaveGroup(
   if (!socket_)
     return PP_ERROR_FAILED;
 
-  net::IPAddressNumber group;
-  uint16 port;
+  std::vector<uint8_t> group;
+  uint16_t port;
 
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &group, &port))
     return PP_ERROR_ADDRESS_INVALID;
 
-  return NetErrorToPepperError(socket_->LeaveGroup(group));
+  return NetErrorToPepperError(socket_->LeaveGroup(net::IPAddress(group)));
 }
 
 void PepperUDPSocketMessageFilter::DoBind(
@@ -400,17 +404,17 @@ void PepperUDPSocketMessageFilter::DoBind(
     return;
   }
 
-  scoped_ptr<net::UDPSocket> socket(new net::UDPSocket(
-      net::DatagramSocket::DEFAULT_BIND, net::RandIntCallback(),
-      NULL, net::NetLog::Source()));
+  std::unique_ptr<net::UDPSocket> socket(
+      new net::UDPSocket(net::DatagramSocket::DEFAULT_BIND,
+                         net::RandIntCallback(), NULL, net::NetLogSource()));
 
-  net::IPAddressNumber address;
-  uint16 port;
+  std::vector<uint8_t> address;
+  uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {
     SendBindError(context, PP_ERROR_ADDRESS_INVALID);
     return;
   }
-  net::IPEndPoint end_point(address, port);
+  net::IPEndPoint end_point(net::IPAddress(address), port);
   {
     int net_result = socket->Open(end_point.GetFamily());
     if (net_result != net::OK) {
@@ -491,7 +495,8 @@ void PepperUDPSocketMessageFilter::DoBind(
 
   PP_NetAddress_Private net_address = NetAddressPrivateImpl::kInvalidNetAddress;
   if (!NetAddressPrivateImpl::IPEndPointToNetAddress(
-          bound_address.address(), bound_address.port(), &net_address)) {
+          bound_address.address().bytes(), bound_address.port(),
+          &net_address)) {
     SendBindError(context, PP_ERROR_ADDRESS_INVALID);
     return;
   }
@@ -502,12 +507,12 @@ void PepperUDPSocketMessageFilter::DoBind(
       base::Bind(&PepperUDPSocketMessageFilter::OnBindComplete, this,
                  base::Passed(&socket), context, net_address));
 #else
-  OnBindComplete(socket.Pass(), context, net_address);
+  OnBindComplete(std::move(socket), context, net_address);
 #endif
 }
 
 void PepperUDPSocketMessageFilter::OnBindComplete(
-    scoped_ptr<net::UDPSocket> socket,
+    std::unique_ptr<net::UDPSocket> socket,
     const ppapi::host::ReplyMessageContext& context,
     const PP_NetAddress_Private& net_address) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
@@ -531,7 +536,7 @@ void PepperUDPSocketMessageFilter::OpenFirewallHole(
 
 void PepperUDPSocketMessageFilter::OnFirewallHoleOpened(
     base::Closure bind_complete,
-    scoped_ptr<chromeos::FirewallHole> hole) {
+    std::unique_ptr<chromeos::FirewallHole> hole) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   LOG_IF(WARNING, !hole.get()) << "Firewall hole could not be opened.";
@@ -584,8 +589,8 @@ void PepperUDPSocketMessageFilter::DoSendTo(
     return;
   }
 
-  net::IPAddressNumber address;
-  uint16 port;
+  std::vector<uint8_t> address;
+  uint16_t port;
   if (!NetAddressPrivateImpl::NetAddressToIPEndPoint(addr, &address, &port)) {
     SendSendToError(context, PP_ERROR_ADDRESS_INVALID);
     return;
@@ -602,7 +607,8 @@ void PepperUDPSocketMessageFilter::DoSendTo(
     return;
   }
 
-  pending_sends_.push(PendingSend(address, port, buffer, context));
+  pending_sends_.push(
+      PendingSend(net::IPAddress(address), port, buffer, context));
   // If there are other sends pending, we can't start yet.
   if (num_pending_sends)
     return;
@@ -643,7 +649,8 @@ void PepperUDPSocketMessageFilter::OnRecvFromCompleted(int net_result) {
   PP_NetAddress_Private addr = NetAddressPrivateImpl::kInvalidNetAddress;
   if (pp_result >= 0 &&
       !NetAddressPrivateImpl::IPEndPointToNetAddress(
-          recvfrom_address_.address(), recvfrom_address_.port(), &addr)) {
+          recvfrom_address_.address().bytes(), recvfrom_address_.port(),
+          &addr)) {
     pp_result = PP_ERROR_ADDRESS_INVALID;
   }
 

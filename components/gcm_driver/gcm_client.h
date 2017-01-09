@@ -5,20 +5,20 @@
 #ifndef COMPONENTS_GCM_DRIVER_GCM_CLIENT_H_
 #define COMPONENTS_GCM_DRIVER_GCM_CLIENT_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/gcm_driver/common/gcm_messages.h"
+#include "components/gcm_driver/crypto/gcm_encryption_provider.h"
 #include "components/gcm_driver/gcm_activity.h"
 #include "components/gcm_driver/registration_info.h"
 
 template <class T> class scoped_refptr;
-
-class GURL;
 
 namespace base {
 class FilePath;
@@ -96,11 +96,13 @@ class GCMClient {
     ChromePlatform platform;
     ChromeChannel channel;
     std::string version;
+    std::string product_category_for_subtypes;
   };
 
   // Detailed information of the Send Error event.
   struct SendErrorDetails {
     SendErrorDetails();
+    SendErrorDetails(const SendErrorDetails& other);
     ~SendErrorDetails();
 
     std::string message_id;
@@ -112,6 +114,7 @@ class GCMClient {
   struct GCMStatistics {
    public:
     GCMStatistics();
+    GCMStatistics(const GCMStatistics& other);
     ~GCMStatistics();
 
     bool is_recording;
@@ -119,7 +122,9 @@ class GCMClient {
     std::string gcm_client_state;
     bool connection_client_created;
     std::string connection_state;
-    uint64 android_id;
+    base::Time last_checkin;
+    base::Time next_checkin;
+    uint64_t android_id;
     std::vector<std::string> registered_app_ids;
     int send_queue_size;
     int resend_queue_size;
@@ -207,6 +212,10 @@ class GCMClient {
 
     // Called when the connection is interrupted.
     virtual void OnDisconnected() = 0;
+
+    // Called when the GCM store is reset (e.g. due to corruption), which
+    // changes the device ID, invalidating all prior registrations.
+    virtual void OnStoreReset() = 0;
   };
 
   GCMClient();
@@ -227,7 +236,7 @@ class GCMClient {
       const scoped_refptr<base::SequencedTaskRunner>& blocking_task_runner,
       const scoped_refptr<net::URLRequestContextGetter>&
           url_request_context_getter,
-      scoped_ptr<Encryptor> encryptor,
+      std::unique_ptr<Encryptor> encryptor,
       Delegate* delegate) = 0;
 
   // This will initiate the GCM connection only if |start_mode| means to start
@@ -267,6 +276,11 @@ class GCMClient {
                     const std::string& receiver_id,
                     const OutgoingMessage& message) = 0;
 
+  // Records a decryption failure due to |result| for the |app_id|.
+  virtual void RecordDecryptionFailure(
+      const std::string& app_id,
+      GCMEncryptionProvider::DecryptionResult result) = 0;
+
   // Enables or disables internal activity recording.
   virtual void SetRecording(bool recording) = 0;
 
@@ -293,7 +307,7 @@ class GCMClient {
   virtual void SetLastTokenFetchTime(const base::Time& time) = 0;
 
   // Updates the timer used by the HeartbeatManager for sending heartbeats.
-  virtual void UpdateHeartbeatTimer(scoped_ptr<base::Timer> timer) = 0;
+  virtual void UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer) = 0;
 
   // Adds the Instance ID data for a specific app to the persistent store.
   virtual void AddInstanceIDData(const std::string& app_id,

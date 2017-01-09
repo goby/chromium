@@ -45,15 +45,17 @@ void OmniboxPopupModel::ComputeMatchMaxWidths(int contents_width,
                                               int separator_width,
                                               int description_width,
                                               int available_width,
+                                              bool description_on_separate_line,
                                               bool allow_shrinking_contents,
                                               int* contents_max_width,
                                               int* description_max_width) {
   available_width = std::max(available_width, 0);
   *contents_max_width = std::min(contents_width, available_width);
-  *description_max_width = description_width;
+  *description_max_width = std::min(description_width, available_width);
 
-  // If the description is empty, the contents can get the full width.
-  if (!description_width)
+  // If the description is empty, or the contents and description are on
+  // separate lines, each can get the full available width.
+  if (!description_width || description_on_separate_line)
     return;
 
   // If we want to display the description, we need to reserve enough space for
@@ -75,8 +77,9 @@ void OmniboxPopupModel::ComputeMatchMaxWidths(int contents_width,
           (available_width + 1) / 2, available_width - description_width);
 
       const int kMinimumContentsWidth = 300;
-      *contents_max_width = std::min(std::min(
-          std::max(*contents_max_width, kMinimumContentsWidth), contents_width),
+      *contents_max_width = std::min(
+          std::min(std::max(*contents_max_width, kMinimumContentsWidth),
+                   contents_width),
           available_width);
     }
 
@@ -108,13 +111,16 @@ void OmniboxPopupModel::SetHoveredLine(size_t line) {
   if (line == hovered_line_)
     return;  // Nothing to do
 
+  // We need to update |hovered_line_| before calling InvalidateLine(), since it
+  // will check it to determine how to draw.
+  const size_t prev_hovered_line = hovered_line_;
+  hovered_line_ = line;
+
   // Make sure the old hovered line is redrawn.  No need to redraw the selected
   // line since selection overrides hover so the appearance won't change.
-  if ((hovered_line_ != kNoMatch) && (hovered_line_ != selected_line_))
-    view_->InvalidateLine(hovered_line_);
+  if ((prev_hovered_line != kNoMatch) && (prev_hovered_line != selected_line_))
+    view_->InvalidateLine(prev_hovered_line);
 
-  // Change the hover to the new line.
-  hovered_line_ = line;
   if (!is_disabling && (hovered_line_ != selected_line_))
     view_->InvalidateLine(hovered_line_);
 }
@@ -278,8 +284,8 @@ void OmniboxPopupModel::OnResultChanged() {
   view_->UpdatePopupAppearance();
   // If popup has just been shown or hidden, notify observers.
   if (view_->IsOpen() != popup_was_open) {
-    FOR_EACH_OBSERVER(OmniboxPopupModelObserver, observers_,
-                      OnOmniboxPopupShownOrHidden());
+    for (OmniboxPopupModelObserver& observer : observers_)
+      observer.OnOmniboxPopupShownOrHidden();
   }
 }
 

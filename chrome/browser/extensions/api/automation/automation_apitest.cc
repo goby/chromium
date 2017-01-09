@@ -7,7 +7,8 @@
 #include "base/path_service.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/extension_apitest.h"
@@ -32,8 +33,8 @@
 #include "ui/accessibility/tree_generator.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/accelerators/accelerator_controller.h"
-#include "ash/shell.h"
+#include "ash/common/accelerators/accelerator_controller.h"
+#include "ash/common/wm_shell.h"
 #include "chrome/browser/ui/aura/accessibility/automation_manager_aura.h"
 #endif
 
@@ -124,10 +125,29 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, Location) {
       << message_;
 }
 
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, Location2) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "location2.html"))
+      << message_;
+}
+
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, BoundsForRange) {
   StartEmbeddedTestServer();
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs",
                                   "bounds_for_range.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, LineStartOffsets) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/tabs", "line_start_offsets.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, ImageData) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs", "image_data.html"))
       << message_;
 }
 
@@ -153,10 +173,44 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, TabsAutomationHostsPermissions) {
 }
 
 #if defined(USE_AURA)
-IN_PROC_BROWSER_TEST_F(AutomationApiTest, Desktop) {
+// Flaky, see http://crbug.com/637525
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_Desktop) {
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "desktop.html"))
       << message_;
 }
+
+#if defined(OS_CHROMEOS)
+// TODO(crbug.com/615908): Flaky on CrOS sanitizers.
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DISABLED_DesktopInitialFocus) {
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "initial_focus.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusWeb) {
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "focus_web.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusIframe) {
+  StartEmbeddedTestServer();
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "focus_iframe.html"))
+      << message_;
+}
+
+IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopFocusViews) {
+  AutomationManagerAura::GetInstance()->Enable(browser()->profile());
+  // Trigger the shelf subtree to be computed.
+  ash::WmShell::Get()->accelerator_controller()->PerformActionIfEnabled(
+      ash::FOCUS_SHELF);
+
+  ASSERT_TRUE(
+      RunExtensionSubtest("automation/tests/desktop", "focus_views.html"))
+      << message_;
+}
+#endif
 
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopNotRequested) {
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/tabs",
@@ -167,7 +221,7 @@ IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopNotRequested) {
 IN_PROC_BROWSER_TEST_F(AutomationApiTest, DesktopActions) {
   AutomationManagerAura::GetInstance()->Enable(browser()->profile());
   // Trigger the shelf subtree to be computed.
-  ash::Shell::GetInstance()->accelerator_controller()->PerformActionIfEnabled(
+  ash::WmShell::Get()->accelerator_controller()->PerformActionIfEnabled(
       ash::FOCUS_SHELF);
 
   ASSERT_TRUE(RunExtensionSubtest("automation/tests/desktop", "actions.html"))

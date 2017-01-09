@@ -2,29 +2,42 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//chromecast/chromecast.gni")
+import("//mojo/public/tools/bindings/mojom.gni")
+
 source_set("media") {
   sources = [
-    "cast_message_generator.cc",
-    "cast_message_generator.h",
-    "cast_messages.h",
-    "cma_ipc_common.h",
-    "cma_message_generator.cc",
-    "cma_message_generator.h",
-    "cma_messages.h",
-    "cma_param_traits.cc",
-    "cma_param_traits.h",
-    "cma_param_traits_macros.h",
-    "shared_memory_chunk.cc",
-    "shared_memory_chunk.h",
+    "cast_media_client.cc",
+    "cast_media_client.h",
   ]
 
   deps = [
     "//base",
-    "//chromecast/media",
-    "//content/public/common",
-    "//ipc",
+    "//chromecast/media/base",
+    "//chromecast/media/cdm",
+    "//chromecast/public:public",
     "//media",
-    "//media:shared_memory_support",
-    "//ui/gfx/ipc",
+  ]
+
+  if (is_android) {
+    sources += [
+      "cast_media_client_android.cc",
+      "cast_media_client_android.h",
+    ]
+    deps += [
+      "//chromecast/media/base",
+      "//components/cdm/common",
+      "//media/base/android",
+    ]
+  }
+
+  if (use_playready) {
+    public_configs = [ "//chromecast:playready_config" ]
+  }
+}
+
+mojom("interfaces") {
+  sources = [
+    "media_caps.mojom",
   ]
 }

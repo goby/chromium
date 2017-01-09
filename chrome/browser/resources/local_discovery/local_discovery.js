@@ -416,6 +416,13 @@ cr.define('local_discovery', function() {
       $('register-login-promo').hidden = isUserLoggedIn ||
         isUserSupervisedOrOffTheRecord;
     }
+    if (!($('register-login-promo').hidden) ||
+      !($('cloud-devices-login-promo').hidden) ||
+      !($('register-overlay-login-promo').hidden)) {
+      chrome.send(
+        'metricsHandler:recordAction',
+        ['Signin_Impression_FromDevicesPage']);
+    }
   }
 
   /**
@@ -600,14 +607,6 @@ cr.define('local_discovery', function() {
     }
   }
 
-  function removeCloudPrintConnectorSection() {
-    if (!cr.isChromeOS) {
-       var connectorSectionElm = $('cloud-print-connector-section');
-       if (connectorSectionElm)
-          connectorSectionElm.parentNode.removeChild(connectorSectionElm);
-     }
-  }
-
   function getOverlayIDFromPath() {
     if (document.location.pathname == '/register') {
       var params = parseQueryParams(document.location);
@@ -686,6 +685,5 @@ cr.define('local_discovery', function() {
     onRegistrationTimeout: onRegistrationTimeout,
     setUserLoggedIn: setUserLoggedIn,
     setupCloudPrintConnectorSection: setupCloudPrintConnectorSection,
-    removeCloudPrintConnectorSection: removeCloudPrintConnectorSection
   };
 });

@@ -4,30 +4,35 @@
 
 #include "chrome/browser/ui/webui/chromeos/keyboard_overlay_ui.h"
 
-#include "ash/display/display_manager.h"
+#include <stddef.h>
+
 #include "ash/shell.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/chromeos_switches.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 #include "ui/base/ime/chromeos/ime_keyboard.h"
 #include "ui/base/ime/chromeos/input_method_manager.h"
+#include "ui/display/manager/display_manager.h"
 
 using chromeos::input_method::ModifierKey;
 using content::WebUIMessageHandler;
@@ -38,7 +43,7 @@ namespace {
 const char kLearnMoreURL[] =
 #if defined(OFFICIAL_BUILD)
     "chrome-extension://honijodknafkokifofgiaalefdiedpko/"
-    "main.html?answer=188743";
+    "main.html?answer=1047364";
 #else
     "https://support.google.com/chromebook/answer/183101";
 #endif
@@ -53,6 +58,7 @@ struct ModifierToLabel {
   {chromeos::input_method::kVoidKey, "disabled"},
   {chromeos::input_method::kCapsLockKey, "caps lock"},
   {chromeos::input_method::kEscapeKey, "esc"},
+  {chromeos::input_method::kBackspaceKey, "backspace"},
 };
 
 struct I18nContentToMessage {
@@ -132,6 +138,7 @@ struct I18nContentToMessage {
     IDS_KEYBOARD_OVERLAY_CLEAR_BROWSING_DATA_DIALOG },
   { "keyboardOverlayCloseTab", IDS_KEYBOARD_OVERLAY_CLOSE_TAB },
   { "keyboardOverlayCloseWindow", IDS_KEYBOARD_OVERLAY_CLOSE_WINDOW },
+  { "keyboardOverlayContextMenu", IDS_KEYBOARD_OVERLAY_CONTEXT_MENU },
   { "keyboardOverlayCopy", IDS_KEYBOARD_OVERLAY_COPY },
   { "keyboardOverlayCut", IDS_KEYBOARD_OVERLAY_CUT },
   { "keyboardOverlayCycleThroughInputMethods",
@@ -205,8 +212,6 @@ struct I18nContentToMessage {
   { "keyboardOverlayOpenAddressInNewTab",
     IDS_KEYBOARD_OVERLAY_OPEN_ADDRESS_IN_NEW_TAB },
   { "keyboardOverlayOpenFileManager", IDS_KEYBOARD_OVERLAY_OPEN_FILE_MANAGER },
-  { "keyboardOverlayOpenGoogleCloudPrint",
-    IDS_KEYBOARD_OVERLAY_OPEN_GOOGLE_CLOUD_PRINT },
   { "keyboardOverlayPageDown", IDS_KEYBOARD_OVERLAY_PAGE_DOWN },
   { "keyboardOverlayPageUp", IDS_KEYBOARD_OVERLAY_PAGE_UP },
   { "keyboardOverlayPaste", IDS_KEYBOARD_OVERLAY_PASTE },
@@ -218,8 +223,8 @@ struct I18nContentToMessage {
   { "keyboardOverlayPrint", IDS_KEYBOARD_OVERLAY_PRINT },
   { "keyboardOverlayReloadCurrentPage",
     IDS_KEYBOARD_OVERLAY_RELOAD_CURRENT_PAGE },
-  { "keyboardOverlayReloadIgnoringCache",
-    IDS_KEYBOARD_OVERLAY_RELOAD_IGNORING_CACHE },
+  { "keyboardOverlayReloadBypassingCache",
+    IDS_KEYBOARD_OVERLAY_RELOAD_BYPASSING_CACHE },
   { "keyboardOverlayReopenLastClosedTab",
     IDS_KEYBOARD_OVERLAY_REOPEN_LAST_CLOSED_TAB },
   { "keyboardOverlayReportIssue", IDS_KEYBOARD_OVERLAY_REPORT_ISSUE },
@@ -229,6 +234,8 @@ struct I18nContentToMessage {
   { "keyboardOverlaySave", IDS_KEYBOARD_OVERLAY_SAVE },
   { "keyboardOverlayScreenshotRegion",
     IDS_KEYBOARD_OVERLAY_SCREENSHOT_REGION },
+  { "keyboardOverlayScreenshotWindow",
+    IDS_KEYBOARD_OVERLAY_SCREENSHOT_WINDOW },
   { "keyboardOverlayScrollUpOnePage",
     IDS_KEYBOARD_OVERLAY_SCROLL_UP_ONE_PAGE },
   { "keyboardOverlaySelectAll", IDS_KEYBOARD_OVERLAY_SELECT_ALL },
@@ -241,6 +248,7 @@ struct I18nContentToMessage {
   { "keyboardOverlayShowStatusMenu", IDS_KEYBOARD_OVERLAY_SHOW_STATUS_MENU },
   { "keyboardOverlayShowWrenchMenu", IDS_KEYBOARD_OVERLAY_SHOW_WRENCH_MENU },
   { "keyboardOverlaySignOut", IDS_KEYBOARD_OVERLAY_SIGN_OUT },
+  { "keyboardOverlaySuspend", IDS_KEYBOARD_OVERLAY_SUSPEND },
   { "keyboardOverlaySwapPrimaryMonitor",
     IDS_KEYBOARD_OVERLAY_SWAP_PRIMARY_MONITOR },
   { "keyboardOverlayTakeScreenshot", IDS_KEYBOARD_OVERLAY_TAKE_SCREENSHOT },
@@ -264,6 +272,14 @@ struct I18nContentToMessage {
   { "keyboardOverlayZoomScreenOut", IDS_KEYBOARD_OVERLAY_ZOOM_SCREEN_OUT },
 };
 
+bool TopRowKeysAreFunctionKeys(Profile* profile) {
+  if (!profile)
+    return false;
+
+  const PrefService* prefs = profile->GetPrefs();
+  return prefs ? prefs->GetBoolean(prefs::kLanguageSendFunctionKeys) : false;
+}
+
 std::string ModifierKeyToLabel(ModifierKey modifier) {
   for (size_t i = 0; i < arraysize(kModifierToLabels); ++i) {
     if (modifier == kModifierToLabels[i].modifier) {
@@ -273,7 +289,7 @@ std::string ModifierKeyToLabel(ModifierKey modifier) {
   return "";
 }
 
-content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource() {
+content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource(Profile* profile) {
   content::WebUIDataSource* source =
       content::WebUIDataSource::Create(chrome::kChromeUIKeyboardOverlayHost);
 
@@ -287,10 +303,15 @@ content::WebUIDataSource* CreateKeyboardOverlayUIHTMLSource() {
   source->AddBoolean("keyboardOverlayHasChromeOSDiamondKey",
                      base::CommandLine::ForCurrentProcess()->HasSwitch(
                          chromeos::switches::kHasChromeOSDiamondKey));
+  source->AddBoolean("keyboardOverlayTopRowKeysAreFunctionKeys",
+                     TopRowKeysAreFunctionKeys(profile));
   ash::Shell* shell = ash::Shell::GetInstance();
-  ash::DisplayManager* display_manager = shell->display_manager();
+  display::DisplayManager* display_manager = shell->display_manager();
   source->AddBoolean("keyboardOverlayIsDisplayUIScalingEnabled",
                      display_manager->IsDisplayUIScalingEnabled());
+  source->AddBoolean(
+      "backspaceGoesBackFeatureEnabled",
+      base::FeatureList::IsEnabled(features::kBackspaceGoesBackFeature));
   source->SetJsonPath("strings.js");
   source->AddResourcePath("keyboard_overlay.js", IDR_KEYBOARD_OVERLAY_JS);
   source->SetDefaultResource(IDR_KEYBOARD_OVERLAY_HTML);
@@ -357,7 +378,7 @@ void KeyboardOverlayHandler::GetInputMethodId(const base::ListValue* args) {
   const chromeos::input_method::InputMethodDescriptor& descriptor =
       manager->GetActiveIMEState()->GetCurrentInputMethod();
   base::StringValue param(descriptor.id());
-  web_ui()->CallJavascriptFunction("initKeyboardOverlayId", param);
+  web_ui()->CallJavascriptFunctionUnsafe("initKeyboardOverlayId", param);
 }
 
 void KeyboardOverlayHandler::GetLabelMap(const base::ListValue* args) {
@@ -380,17 +401,15 @@ void KeyboardOverlayHandler::GetLabelMap(const base::ListValue* args) {
     dict.SetString(ModifierKeyToLabel(i->first), ModifierKeyToLabel(i->second));
   }
 
-  web_ui()->CallJavascriptFunction("initIdentifierMap", dict);
+  web_ui()->CallJavascriptFunctionUnsafe("initIdentifierMap", dict);
 }
 
 void KeyboardOverlayHandler::OpenLearnMorePage(const base::ListValue* args) {
   web_ui()->GetWebContents()->GetDelegate()->OpenURLFromTab(
       web_ui()->GetWebContents(),
-      content::OpenURLParams(GURL(kLearnMoreURL),
-                             content::Referrer(),
-                             NEW_FOREGROUND_TAB,
-                             ui::PAGE_TRANSITION_LINK,
-                             false));
+      content::OpenURLParams(GURL(kLearnMoreURL), content::Referrer(),
+                             WindowOpenDisposition::NEW_FOREGROUND_TAB,
+                             ui::PAGE_TRANSITION_LINK, false));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -406,5 +425,6 @@ KeyboardOverlayUI::KeyboardOverlayUI(content::WebUI* web_ui)
   web_ui->AddMessageHandler(handler);
 
   // Set up the chrome://keyboardoverlay/ source.
-  content::WebUIDataSource::Add(profile, CreateKeyboardOverlayUIHTMLSource());
+  content::WebUIDataSource::Add(profile,
+                                CreateKeyboardOverlayUIHTMLSource(profile));
 }

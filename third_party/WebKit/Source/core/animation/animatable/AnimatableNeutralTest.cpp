@@ -28,16 +28,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/animation/animatable/AnimatableNeutral.h"
 
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace blink {
 
-TEST(AnimationAnimatableNeutralTest, Create)
-{
-    EXPECT_TRUE(AnimatableValue::neutralValue());
+TEST(AnimationAnimatableNeutralTest, Create) {
+  EXPECT_TRUE(AnimatableValue::neutralValue());
 }
 
-} // namespace blink
+}  // namespace blink

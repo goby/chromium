@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_TABLE_TABLE_HEADER_H_
 #define UI_VIEWS_CONTROLS_TABLE_TABLE_HEADER_H_
 
+#include "base/macros.h"
 #include "ui/gfx/font_list.h"
 #include "ui/views/view.h"
 #include "ui/views/views_export.h"
@@ -79,7 +80,7 @@ class VIEWS_EXPORT TableHeader : public views::View {
   TableView* table_;
 
   // If non-null a resize is in progress.
-  scoped_ptr<ColumnResizeDetails> resize_details_;
+  std::unique_ptr<ColumnResizeDetails> resize_details_;
 
   DISALLOW_COPY_AND_ASSIGN(TableHeader);
 };

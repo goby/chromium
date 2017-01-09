@@ -8,18 +8,17 @@
 
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 
 namespace {
 
 const char kJsScreenPath[] = "login.KioskEnableScreen";
-
-// Reset screen id.
-const char kKioskEnableScreen[] = "kiosk-enable";
 
 }  // namespace
 
@@ -59,7 +58,7 @@ void KioskEnableScreenHandler::OnGetConsumerKioskAutoLaunchStatus(
     return;
   }
 
-  ShowScreen(kKioskEnableScreen, NULL);
+  ShowScreen(OobeScreen::SCREEN_KIOSK_ENABLE);
 
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_KIOSK_ENABLE_WARNING_VISIBLE,

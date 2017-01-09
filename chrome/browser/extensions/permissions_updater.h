@@ -5,14 +5,11 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_PERMISSIONS_UPDATER_H__
 #define CHROME_BROWSER_EXTENSIONS_PERMISSIONS_UPDATER_H__
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "extensions/browser/extension_event_histogram_value.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace content {
 class BrowserContext;
@@ -21,7 +18,6 @@ class BrowserContext;
 namespace extensions {
 
 class Extension;
-class ExtensionPrefs;
 class PermissionSet;
 
 // Updates an Extension's active and granted permissions in persistent storage
@@ -69,7 +65,7 @@ class PermissionsUpdater {
                                const PermissionSet& permissions);
 
   // Returns the set of revokable permissions.
-  scoped_ptr<const PermissionSet> GetRevokablePermissions(
+  std::unique_ptr<const PermissionSet> GetRevokablePermissions(
       const Extension* extension) const;
 
   // Adds all permissions in the |extension|'s active permissions to its
@@ -92,8 +88,8 @@ class PermissionsUpdater {
   // withheld permissions to |withheld|. Otherwise, |withheld| permissions are
   // not changed.
   void SetPermissions(const Extension* extension,
-                      scoped_ptr<const PermissionSet> active,
-                      scoped_ptr<const PermissionSet> withheld);
+                      std::unique_ptr<const PermissionSet> active,
+                      std::unique_ptr<const PermissionSet> withheld);
 
   // Dispatches specified event to the extension.
   void DispatchEvent(const std::string& extension_id,

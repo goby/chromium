@@ -5,10 +5,13 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_OPERATION_IMPL_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_OPERATION_IMPL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "storage/browser/blob/scoped_file.h"
 #include "storage/browser/fileapi/file_system_operation.h"
@@ -61,11 +64,11 @@ class STORAGE_EXPORT FileSystemOperationImpl
               bool recursive,
               const StatusCallback& callback) override;
   void Write(const FileSystemURL& url,
-             scoped_ptr<FileWriterDelegate> writer_delegate,
-             scoped_ptr<net::URLRequest> blob_request,
+             std::unique_ptr<FileWriterDelegate> writer_delegate,
+             std::unique_ptr<net::URLRequest> blob_request,
              const WriteCallback& callback) override;
   void Truncate(const FileSystemURL& url,
-                int64 length,
+                int64_t length,
                 const StatusCallback& callback) override;
   void TouchFile(const FileSystemURL& url,
                  const base::Time& last_access_time,
@@ -106,7 +109,7 @@ class STORAGE_EXPORT FileSystemOperationImpl
   FileSystemOperationImpl(
       const FileSystemURL& url,
       FileSystemContext* file_system_context,
-      scoped_ptr<FileSystemOperationContext> operation_context);
+      std::unique_ptr<FileSystemOperationContext> operation_context);
 
   // Queries the quota and usage and then runs the given |task|.
   // If an error occurs during the quota query it runs |error_callback| instead.
@@ -123,8 +126,8 @@ class STORAGE_EXPORT FileSystemOperationImpl
   void DidGetUsageAndQuotaAndRunTask(const base::Closure& task,
                                      const base::Closure& error_callback,
                                      storage::QuotaStatusCode status,
-                                     int64 usage,
-                                     int64 quota);
+                                     int64_t usage,
+                                     int64_t quota);
 
   // The 'body' methods that perform the actual work (i.e. posting the
   // file task on proxy_) after the quota check.
@@ -147,7 +150,8 @@ class STORAGE_EXPORT FileSystemOperationImpl
                            const FileSystemURL& dest,
                            const StatusCallback& callback);
   void DoTruncate(const FileSystemURL& url,
-                  const StatusCallback& callback, int64 length);
+                  const StatusCallback& callback,
+                  int64_t length);
   void DoOpenFile(const FileSystemURL& url,
                   const OpenFileCallback& callback, int file_flags);
 
@@ -175,7 +179,7 @@ class STORAGE_EXPORT FileSystemOperationImpl
   void DidWrite(const FileSystemURL& url,
                 const WriteCallback& callback,
                 base::File::Error rv,
-                int64 bytes,
+                int64_t bytes,
                 FileWriterDelegate::WriteProgressStatus write_status);
 
   // Used only for internal assertions.
@@ -184,11 +188,11 @@ class STORAGE_EXPORT FileSystemOperationImpl
 
   scoped_refptr<FileSystemContext> file_system_context_;
 
-  scoped_ptr<FileSystemOperationContext> operation_context_;
+  std::unique_ptr<FileSystemOperationContext> operation_context_;
   AsyncFileUtil* async_file_util_;  // Not owned.
 
-  scoped_ptr<FileWriterDelegate> file_writer_delegate_;
-  scoped_ptr<RecursiveOperationDelegate> recursive_operation_delegate_;
+  std::unique_ptr<FileWriterDelegate> file_writer_delegate_;
+  std::unique_ptr<RecursiveOperationDelegate> recursive_operation_delegate_;
 
   StatusCallback cancel_callback_;
 

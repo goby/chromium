@@ -1,4 +1,4 @@
-CONSOLE WARNING: The specified value "undefined" does not conform to the required format.  The format is "HH:mm", "HH:mm:ss" or "HH:mm:ss.SSS" where HH is 00-23, mm is 00-59, ss is 00-59, and SSS is 000-999.
+CONSOLE WARNING: line 44: The specified value "undefined" does not conform to the required format.  The format is "HH:mm", "HH:mm:ss" or "HH:mm:ss.SSS" where HH is 00-23, mm is 00-59, ss is 00-59, and SSS is 000-999.
 Multiple fields UI of time input type with keyboard events
 
 On success, you will see a series of "PASS" messages, followed by "TEST COMPLETE".
@@ -44,8 +44,8 @@ PASS document.activeElement.id is "another"
 == Tab navigation should not skip readonly inputs, but editing operations should be ignored. ==
 PASS document.activeElement.id is "input"
 PASS shadowPseudoIdOfFocusedSubField(input) is "-webkit-datetime-edit-hour-field"
-PASS keyDown("upArrow"); input.value is "01:01"
-PASS keyDown("downArrow"); input.value is "01:01"
+PASS keyDown("ArrowUp"); input.value is "01:01"
+PASS keyDown("ArrowDown"); input.value is "01:01"
 PASS shadowPseudoIdOfFocusedSubField(input) is "-webkit-datetime-edit-minute-field"
 PASS keyDown("3"); input.value is "01:01"
 PASS shadowPseudoIdOfFocusedSubField(input) is "-webkit-datetime-edit-ampm-field"

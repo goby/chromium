@@ -14,8 +14,10 @@ import optparse
 import os
 import sys
 
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..',
-                             'tools', 'grit'))
+# Prepend the grit module from the source tree so it takes precedence over other
+# grit versions that might present in the search path.
+sys.path.insert(1, os.path.join(os.path.dirname(__file__), '..', '..', '..',
+                                'tools', 'grit'))
 from grit.format import data_pack
 
 # The gyp "branding" variable.
@@ -33,7 +35,6 @@ OS = None
 CHROMEOS = False
 
 USE_ASH = False
-ENABLE_AUTOFILL_DIALOG = False
 ENABLE_EXTENSIONS = False
 
 WHITELIST = None
@@ -79,6 +80,11 @@ def calc_inputs(locale):
                 'platform_locale_settings_%s.pak' % locale))
 
   #e.g. '<(SHARED_INTERMEDIATE_DIR)/components/strings/
+  # components_locale_settings_da.pak',
+  inputs.append(os.path.join(SHARE_INT_DIR, 'components', 'strings',
+                'components_locale_settings_%s.pak' % locale))
+
+  #e.g. '<(SHARED_INTERMEDIATE_DIR)/components/strings/
   # components_strings_da.pak',
   inputs.append(os.path.join(SHARE_INT_DIR, 'components', 'strings',
                 'components_strings_%s.pak' % locale))
@@ -92,8 +98,8 @@ def calc_inputs(locale):
                 'components_%s_strings_%s.pak' % (BRANDING, locale)))
 
   if USE_ASH:
-    #e.g. '<(SHARED_INTERMEDIATE_DIR)/ash/strings/ash_strings_da.pak',
-    inputs.append(os.path.join(SHARE_INT_DIR, 'ash', 'strings',
+    #e.g. '<(SHARED_INTERMEDIATE_DIR)/ash/common/strings/ash_strings_da.pak',
+    inputs.append(os.path.join(SHARE_INT_DIR, 'ash', 'common', 'strings',
                   'ash_strings_%s.pak' % locale))
 
   if CHROMEOS:
@@ -121,6 +127,11 @@ def calc_inputs(locale):
     inputs.append(os.path.join(SHARE_INT_DIR, 'ui', 'strings',
                   'app_locale_settings_%s.pak' % locale))
 
+    #e.g. '<(SHARED_INTERMEDIATE_DIR)/third_party/libaddressinput/
+    # address_input_strings_da.pak',
+    inputs.append(os.path.join(SHARE_INT_DIR, 'third_party', 'libaddressinput',
+                               'address_input_strings_%s.pak' % locale))
+
   else:
     #e.g. '<(SHARED_INTERMEDIATE_DIR)/ios/chrome/ios_locale_settings_da.pak'
     inputs.append(os.path.join(SHARE_INT_DIR, 'ios', 'chrome',
@@ -135,12 +146,6 @@ def calc_inputs(locale):
     # ios_google_chrome_strings_da.pak'
     inputs.append(os.path.join(SHARE_INT_DIR, 'ios', 'chrome',
                   'ios_%s_strings_%s.pak' % (BRANDING, locale)))
-
-  if ENABLE_AUTOFILL_DIALOG:
-    #e.g. '<(SHARED_INTERMEDIATE_DIR)/third_party/libaddressinput/
-    # address_input_strings_da.pak',
-    inputs.append(os.path.join(SHARE_INT_DIR, 'third_party', 'libaddressinput',
-                               'address_input_strings_%s.pak' % locale))
 
   if ENABLE_EXTENSIONS:
     # For example:

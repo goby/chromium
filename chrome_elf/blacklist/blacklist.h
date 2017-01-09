@@ -9,6 +9,8 @@
 #include "sandbox/win/src/sandbox_nt_types.h"
 #endif
 
+#include <stddef.h>
+
 namespace blacklist {
 
 // Max size of the DLL blacklist.
@@ -63,10 +65,6 @@ extern "C" bool RemoveDllFromBlacklist(const wchar_t* dll_name);
 // strings won't be hanging unless RemoveDllFromBlacklist is called, but it
 // is only exposed in tests (and should stay that way).
 extern "C" void SuccessfullyBlocked(const wchar_t** blocked_dlls, int* size);
-
-// Add the dlls, originally passed in through finch, from the registry to the
-// blacklist so that they will be blocked identically to those hard coded in.
-extern "C" void AddDllsFromRegistryToBlacklist();
 
 // Record that the dll at the given index was blocked.
 extern "C" void BlockedDll(size_t blocked_index);

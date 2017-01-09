@@ -6,15 +6,22 @@
 #define CONTENT_BROWSER_DOM_STORAGE_DOM_STORAGE_DATABASE_H_
 
 #include <map>
+#include <memory>
+#include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/nullable_string16.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
 #include "content/common/dom_storage/dom_storage_types.h"
 #include "sql/connection.h"
+
+namespace base {
+namespace trace_event {
+class ProcessMemoryDump;
+}
+}
 
 namespace content {
 
@@ -39,6 +46,10 @@ class CONTENT_EXPORT DOMStorageDatabase {
   // |changes| will be examined - keys mapped to a null NullableString16
   // will be removed and all others will be inserted/updated as appropriate.
   bool CommitChanges(bool clear_all_first, const DOMStorageValuesMap& changes);
+
+  // Adds memory statistics of the database to |pmd| for tracing.
+  void ReportMemoryUsage(base::trace_event::ProcessMemoryDump* pmd,
+                         const std::string& name);
 
   // Simple getter for the path we were constructed with.
   const base::FilePath& file_path() const { return file_path_; }
@@ -108,7 +119,7 @@ class CONTENT_EXPORT DOMStorageDatabase {
 
   // Path to the database on disk.
   const base::FilePath file_path_;
-  scoped_ptr<sql::Connection> db_;
+  std::unique_ptr<sql::Connection> db_;
   bool failed_to_open_;
   bool tried_to_recreate_;
   bool known_to_be_empty_;

@@ -5,6 +5,7 @@
 #include "ui/ozone/platform/cast/client_native_pixmap_factory_cast.h"
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/ozone/public/client_native_pixmap.h"
 #include "ui/ozone/public/client_native_pixmap_factory.h"
@@ -18,30 +19,35 @@ namespace {
 class ClientNativePixmapCast : public ClientNativePixmap {
  public:
   // ClientNativePixmap implementation:
-  void* Map() override {
+  bool Map() override {
+    NOTREACHED();
+    return false;
+  }
+  void* GetMemoryAddress(size_t plane) const override {
     NOTREACHED();
     return nullptr;
-  }
+  };
   void Unmap() override { NOTREACHED(); }
-  void GetStride(int* stride) const override { NOTREACHED(); }
+  int GetStride(size_t plane) const override {
+    NOTREACHED();
+    return 0;
+  }
 };
 
 class ClientNativePixmapFactoryCast : public ClientNativePixmapFactory {
  public:
   // ClientNativePixmapFactoryCast implementation:
-  void Initialize(base::ScopedFD device_fd) override {}
-
   bool IsConfigurationSupported(gfx::BufferFormat format,
                                 gfx::BufferUsage usage) const override {
     return format == gfx::BufferFormat::RGBA_8888 &&
            usage == gfx::BufferUsage::SCANOUT;
   }
 
-  scoped_ptr<ClientNativePixmap> ImportFromHandle(
+  std::unique_ptr<ClientNativePixmap> ImportFromHandle(
       const gfx::NativePixmapHandle& handle,
       const gfx::Size& size,
       gfx::BufferUsage usage) override {
-    return make_scoped_ptr(new ClientNativePixmapCast());
+    return base::MakeUnique<ClientNativePixmapCast>();
   }
 };
 

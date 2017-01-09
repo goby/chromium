@@ -4,22 +4,26 @@
 
 #include "content/renderer/media/webrtc_audio_renderer.h"
 
+#include <utility>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/location.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "content/renderer/media/audio_device_factory.h"
-#include "content/renderer/media/media_stream_dispatcher.h"
-#include "content/renderer/media/media_stream_track.h"
-#include "content/renderer/media/webrtc_audio_device_impl.h"
+#include "content/renderer/media/media_stream_audio_track.h"
+#include "content/renderer/media/webrtc/peer_connection_remote_audio_source.h"
 #include "content/renderer/media/webrtc_logging.h"
-#include "content/renderer/render_frame_impl.h"
-#include "media/audio/audio_output_device.h"
-#include "media/audio/audio_parameters.h"
 #include "media/audio/sample_rates.h"
+#include "media/base/audio_capturer_source.h"
+#include "media/base/audio_latency.h"
+#include "media/base/audio_parameters.h"
 #include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/libjingle/source/talk/app/webrtc/mediastreaminterface.h"
-#include "third_party/libjingle/source/talk/media/base/audiorenderer.h"
+#include "third_party/webrtc/api/mediastreaminterface.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
@@ -30,10 +34,16 @@ namespace content {
 
 namespace {
 
-// We add a UMA histogram measuring the execution time of the Render() method
-// every |kNumCallbacksBetweenRenderTimeHistograms| callback. Assuming 10ms
-// between each callback leads to one UMA update each 100ms.
-const int kNumCallbacksBetweenRenderTimeHistograms = 10;
+// Audio parameters that don't change.
+const media::AudioParameters::Format kFormat =
+    media::AudioParameters::AUDIO_PCM_LOW_LATENCY;
+const media::ChannelLayout kChannelLayout = media::CHANNEL_LAYOUT_STEREO;
+const int kChannels = 2;
+const int kBitsPerSample = 16;
+
+// Used for UMA histograms.
+const int kRenderTimeHistogramMinMicroseconds = 100;
+const int kRenderTimeHistogramMaxMicroseconds = 1 * 1000 * 1000;  // 1 second
 
 // This is a simple wrapper class that's handed out to users of a shared
 // WebRtcAudioRenderer instance.  This class maintains the per-user 'playing'
@@ -62,7 +72,7 @@ class SharedAudioRenderer : public MediaStreamAudioRenderer {
  protected:
   ~SharedAudioRenderer() override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    DVLOG(1) << __FUNCTION__;
+    DVLOG(1) << __func__;
     Stop();
   }
 
@@ -108,9 +118,17 @@ class SharedAudioRenderer : public MediaStreamAudioRenderer {
     on_play_state_changed_.Run(media_stream_, &playing_state_);
   }
 
-  media::OutputDevice* GetOutputDevice() override {
+  media::OutputDeviceInfo GetOutputDeviceInfo() override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    return delegate_->GetOutputDevice();
+    return delegate_->GetOutputDeviceInfo();
+  }
+
+  void SwitchOutputDevice(
+      const std::string& device_id,
+      const url::Origin& security_origin,
+      const media::OutputDeviceStatusCB& callback) override {
+    DCHECK(thread_checker_.CalledOnValidThread());
+    return delegate_->SwitchOutputDevice(device_id, security_origin, callback);
   }
 
   base::TimeDelta GetCurrentRenderTime() const override {
@@ -134,39 +152,6 @@ class SharedAudioRenderer : public MediaStreamAudioRenderer {
 
 }  // namespace
 
-int WebRtcAudioRenderer::GetOptimalBufferSize(int sample_rate,
-                                              int hardware_buffer_size) {
-  // Use native hardware buffer size as default. On Windows, we strive to open
-  // up using this native hardware buffer size to achieve best
-  // possible performance and to ensure that no FIFO is needed on the browser
-  // side to match the client request. That is why there is no #if case for
-  // Windows below.
-  int frames_per_buffer = hardware_buffer_size;
-
-#if defined(OS_LINUX) || defined(OS_MACOSX)
-  // On Linux and MacOS, the low level IO implementations on the browser side
-  // supports all buffer size the clients want. We use the native peer
-  // connection buffer size (10ms) to achieve best possible performance.
-  frames_per_buffer = sample_rate / 100;
-#elif defined(OS_ANDROID)
-  // TODO(henrika): Keep tuning this scheme and espcicially for low-latency
-  // cases. Might not be possible to come up with the perfect solution using
-  // the render side only.
-  int frames_per_10ms = sample_rate / 100;
-  if (frames_per_buffer < 2 * frames_per_10ms) {
-    // Examples of low-latency frame sizes and the resulting |buffer_size|:
-    //  Nexus 7     : 240 audio frames => 2*480 = 960
-    //  Nexus 10    : 256              => 2*441 = 882
-    //  Galaxy Nexus: 144              => 2*441 = 882
-    frames_per_buffer = 2 * frames_per_10ms;
-    DVLOG(1) << "Low-latency output detected on Android";
-  }
-#endif
-
-  DVLOG(1) << "Using sink output buffer size: " << frames_per_buffer;
-  return frames_per_buffer;
-}
-
 WebRtcAudioRenderer::WebRtcAudioRenderer(
     const scoped_refptr<base::SingleThreadTaskRunner>& signaling_thread,
     const blink::WebMediaStream& media_stream,
@@ -182,20 +167,12 @@ WebRtcAudioRenderer::WebRtcAudioRenderer(
       source_(NULL),
       play_ref_count_(0),
       start_ref_count_(0),
-      audio_delay_milliseconds_(0),
-      fifo_delay_milliseconds_(0),
-      sink_params_(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-                   media::CHANNEL_LAYOUT_STEREO,
-                   0,
-                   16,
-                   0),
+      sink_params_(kFormat, kChannelLayout, 0, kBitsPerSample, 0),
       output_device_id_(device_id),
-      security_origin_(security_origin),
-      render_callback_count_(0) {
+      security_origin_(security_origin) {
   WebRtcLogMessage(base::StringPrintf(
       "WAR::WAR. source_render_frame_id=%d, session_id=%d, effects=%i",
       source_render_frame_id, session_id, sink_params_.effects()));
-  audio_renderer_thread_checker_.DetachFromThread();
 }
 
 WebRtcAudioRenderer::~WebRtcAudioRenderer() {
@@ -215,16 +192,19 @@ bool WebRtcAudioRenderer::Initialize(WebRtcAudioRendererSource* source) {
     DCHECK(!source_);
   }
 
-  sink_ =
-      AudioDeviceFactory::NewOutputDevice(source_render_frame_id_, session_id_,
-                                          output_device_id_, security_origin_);
-  if (sink_->GetDeviceStatus() != media::OUTPUT_DEVICE_STATUS_OK)
+  sink_ = AudioDeviceFactory::NewAudioRendererSink(
+      AudioDeviceFactory::kSourceWebRtc, source_render_frame_id_, session_id_,
+      output_device_id_, security_origin_);
+
+  if (sink_->GetOutputDeviceInfo().device_status() !=
+      media::OUTPUT_DEVICE_STATUS_OK) {
     return false;
+  }
 
   PrepareSink();
   {
     // No need to reassert the preconditions because the other thread accessing
-    // the fields (checked by |audio_renderer_thread_checker_|) only reads them.
+    // the fields only reads them.
     base::AutoLock auto_lock(lock_);
     source_ = source;
 
@@ -232,6 +212,7 @@ bool WebRtcAudioRenderer::Initialize(WebRtcAudioRendererSource* source) {
     state_ = PAUSED;
   }
   sink_->Start();
+  sink_->Play();  // Not all the sinks play on start.
 
   return true;
 }
@@ -249,6 +230,10 @@ bool WebRtcAudioRenderer::IsStarted() const {
   return start_ref_count_ != 0;
 }
 
+bool WebRtcAudioRenderer::CurrentThreadIsRenderingThread() {
+  return sink_->CurrentThreadIsRenderingThread();
+}
+
 void WebRtcAudioRenderer::Start() {
   DVLOG(1) << "WebRtcAudioRenderer::Start()";
   DCHECK(thread_checker_.CalledOnValidThread());
@@ -263,7 +248,6 @@ void WebRtcAudioRenderer::Play() {
     return;
 
   playing_state_.set_playing(true);
-  render_callback_count_ = 0;
 
   OnPlayStateChanged(media_stream_, &playing_state_);
 }
@@ -283,7 +267,7 @@ void WebRtcAudioRenderer::EnterPlayState() {
     state_ = PLAYING;
 
     if (audio_fifo_) {
-      audio_delay_milliseconds_ = 0;
+      audio_delay_ = base::TimeDelta();
       audio_fifo_->Clear();
     }
   }
@@ -332,6 +316,19 @@ void WebRtcAudioRenderer::Stop() {
     state_ = UNINITIALIZED;
   }
 
+  // Apart from here, |max_render_time_| is only accessed in SourceCallback(),
+  // which is guaranteed to not run after |source_| has been set to null, and
+  // not before this function has returned.
+  // If |max_render_time_| is zero, no render call has been made.
+  if (!max_render_time_.is_zero()) {
+    UMA_HISTOGRAM_CUSTOM_COUNTS(
+        "Media.Audio.Render.GetSourceDataTimeMax.WebRTC",
+        max_render_time_.InMicroseconds(),
+        kRenderTimeHistogramMinMicroseconds,
+        kRenderTimeHistogramMaxMicroseconds, 50);
+    max_render_time_ = base::TimeDelta();
+  }
+
   // Make sure to stop the sink while _not_ holding the lock since the Render()
   // callback may currently be executing and trying to grab the lock while we're
   // stopping the thread on which it runs.
@@ -346,9 +343,9 @@ void WebRtcAudioRenderer::SetVolume(float volume) {
   OnPlayStateChanged(media_stream_, &playing_state_);
 }
 
-media::OutputDevice* WebRtcAudioRenderer::GetOutputDevice() {
+media::OutputDeviceInfo WebRtcAudioRenderer::GetOutputDeviceInfo() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return this;
+  return sink_ ? sink_->GetOutputDeviceInfo() : media::OutputDeviceInfo();
 }
 
 base::TimeDelta WebRtcAudioRenderer::GetCurrentRenderTime() const {
@@ -364,7 +361,7 @@ bool WebRtcAudioRenderer::IsLocalRenderer() const {
 void WebRtcAudioRenderer::SwitchOutputDevice(
     const std::string& device_id,
     const url::Origin& security_origin,
-    const media::SwitchOutputDeviceCB& callback) {
+    const media::OutputDeviceStatusCB& callback) {
   DVLOG(1) << "WebRtcAudioRenderer::SwitchOutputDevice()";
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK_GE(session_id_, 0);
@@ -374,11 +371,14 @@ void WebRtcAudioRenderer::SwitchOutputDevice(
     DCHECK_NE(state_, UNINITIALIZED);
   }
 
-  scoped_refptr<media::AudioOutputDevice> new_sink =
-      AudioDeviceFactory::NewOutputDevice(source_render_frame_id_, session_id_,
-                                          device_id, security_origin);
-  if (new_sink->GetDeviceStatus() != media::OUTPUT_DEVICE_STATUS_OK) {
-    callback.Run(new_sink->GetDeviceStatus());
+  scoped_refptr<media::AudioRendererSink> new_sink =
+      AudioDeviceFactory::NewAudioRendererSink(
+          AudioDeviceFactory::kSourceWebRtc, source_render_frame_id_,
+          session_id_, device_id, security_origin);
+  media::OutputDeviceStatus status =
+      new_sink->GetOutputDeviceInfo().device_status();
+  if (status != media::OUTPUT_DEVICE_STATUS_OK) {
+    callback.Run(status);
     return;
   }
 
@@ -386,7 +386,6 @@ void WebRtcAudioRenderer::SwitchOutputDevice(
   // callback may currently be executing and trying to grab the lock while we're
   // stopping the thread on which it runs.
   sink_->Stop();
-  audio_renderer_thread_checker_.DetachFromThread();
   sink_ = new_sink;
   output_device_id_ = device_id;
   security_origin_ = security_origin;
@@ -396,38 +395,46 @@ void WebRtcAudioRenderer::SwitchOutputDevice(
   }
   PrepareSink();
   sink_->Start();
+  sink_->Play();  // Not all the sinks play on start.
 
   callback.Run(media::OUTPUT_DEVICE_STATUS_OK);
 }
 
-media::AudioParameters WebRtcAudioRenderer::GetOutputParameters() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!sink_.get())
-    return media::AudioParameters();
-
-  return sink_->GetOutputParameters();
-}
-
-media::OutputDeviceStatus WebRtcAudioRenderer::GetDeviceStatus() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (!sink_.get())
-    return media::OUTPUT_DEVICE_STATUS_ERROR_INTERNAL;
-
-  return sink_->GetDeviceStatus();
-}
-
-int WebRtcAudioRenderer::Render(media::AudioBus* audio_bus,
-                                int audio_delay_milliseconds) {
-  DCHECK(audio_renderer_thread_checker_.CalledOnValidThread());
+int WebRtcAudioRenderer::Render(base::TimeDelta delay,
+                                base::TimeTicks delay_timestamp,
+                                int prior_frames_skipped,
+                                media::AudioBus* audio_bus) {
+  DCHECK(sink_->CurrentThreadIsRenderingThread());
   base::AutoLock auto_lock(lock_);
   if (!source_)
     return 0;
 
   DVLOG(2) << "WebRtcAudioRenderer::Render()";
-  DVLOG(2) << "audio_delay_milliseconds: " << audio_delay_milliseconds;
+  DVLOG(2) << "audio_delay: " << delay;
 
-  audio_delay_milliseconds_ = audio_delay_milliseconds;
+  audio_delay_ = delay;
 
+  // If there are skipped frames, pull and throw away the same amount. We always
+  // pull 10 ms of data from the source (see PrepareSink()), so the fifo is only
+  // required if the number of frames to drop doesn't correspond to 10 ms.
+  if (prior_frames_skipped > 0) {
+    const int source_frames_per_buffer = sink_params_.sample_rate() / 100;
+    if (!audio_fifo_ && prior_frames_skipped != source_frames_per_buffer) {
+      audio_fifo_.reset(new media::AudioPullFifo(
+          kChannels, source_frames_per_buffer,
+          base::Bind(&WebRtcAudioRenderer::SourceCallback,
+                     base::Unretained(this))));
+    }
+
+    std::unique_ptr<media::AudioBus> drop_bus =
+        media::AudioBus::Create(audio_bus->channels(), prior_frames_skipped);
+    if (audio_fifo_)
+      audio_fifo_->Consume(drop_bus.get(), drop_bus->frames());
+    else
+      SourceCallback(0, drop_bus.get());
+  }
+
+  // Pull the data we will deliver.
   if (audio_fifo_)
     audio_fifo_->Consume(audio_bus, audio_bus->frames());
   else
@@ -444,14 +451,18 @@ void WebRtcAudioRenderer::OnRenderError() {
 // Called by AudioPullFifo when more data is necessary.
 void WebRtcAudioRenderer::SourceCallback(
     int fifo_frame_delay, media::AudioBus* audio_bus) {
-  DCHECK(audio_renderer_thread_checker_.CalledOnValidThread());
+  DCHECK(sink_->CurrentThreadIsRenderingThread());
   base::TimeTicks start_time = base::TimeTicks::Now();
   DVLOG(2) << "WebRtcAudioRenderer::SourceCallback("
            << fifo_frame_delay << ", "
            << audio_bus->frames() << ")";
 
-  int output_delay_milliseconds = audio_delay_milliseconds_;
-  output_delay_milliseconds += fifo_delay_milliseconds_;
+  int output_delay_milliseconds = audio_delay_.InMilliseconds();
+  // TODO(grunell): This integer division by sample_rate will cause loss of
+  // partial milliseconds, and may cause avsync drift. http://crbug.com/586540
+  output_delay_milliseconds += fifo_frame_delay *
+                               base::Time::kMillisecondsPerSecond /
+                               sink_params_.sample_rate();
   DVLOG(2) << "output_delay_milliseconds: " << output_delay_milliseconds;
 
   // We need to keep render data for the |source_| regardless of |state_|,
@@ -465,10 +476,17 @@ void WebRtcAudioRenderer::SourceCallback(
   if (state_ != PLAYING)
     audio_bus->Zero();
 
-  if (++render_callback_count_ == kNumCallbacksBetweenRenderTimeHistograms) {
+  // Measure the elapsed time for this function and log it to UMA. Store the max
+  // value. Don't do this for low resolution clocks to not skew data.
+  if (base::TimeTicks::IsHighResolution()) {
     base::TimeDelta elapsed = base::TimeTicks::Now() - start_time;
-    render_callback_count_ = 0;
-    UMA_HISTOGRAM_TIMES("WebRTC.AudioRenderTimes", elapsed);
+    UMA_HISTOGRAM_CUSTOM_COUNTS("Media.Audio.Render.GetSourceDataTime.WebRTC",
+                                elapsed.InMicroseconds(),
+                                kRenderTimeHistogramMinMicroseconds,
+                                kRenderTimeHistogramMaxMicroseconds, 50);
+
+    if (elapsed > max_render_time_)
+      max_render_time_ = elapsed;
   }
 }
 
@@ -554,14 +572,16 @@ void WebRtcAudioRenderer::OnPlayStateChanged(
   media_stream.audioTracks(web_tracks);
 
   for (const blink::WebMediaStreamTrack& web_track : web_tracks) {
-    MediaStreamTrack* track = MediaStreamTrack::GetTrack(web_track);
     // WebRtcAudioRenderer can only render audio tracks received from a remote
     // peer. Since the actual MediaStream is mutable from JavaScript, we need
     // to make sure |web_track| is actually a remote track.
-    if (track->is_local_track())
+    PeerConnectionRemoteAudioTrack* const remote_track =
+        PeerConnectionRemoteAudioTrack::From(
+            MediaStreamAudioTrack::From(web_track));
+    if (!remote_track)
       continue;
     webrtc::AudioSourceInterface* source =
-        track->GetAudioAdapter()->GetSource();
+        remote_track->track_interface()->GetSource();
     DCHECK(source);
     if (!state->playing()) {
       if (RemovePlayingState(source, state))
@@ -580,16 +600,20 @@ void WebRtcAudioRenderer::PrepareSink() {
     base::AutoLock lock(lock_);
     new_sink_params = sink_params_;
   }
+
+  const media::OutputDeviceInfo& device_info = sink_->GetOutputDeviceInfo();
+  DCHECK_EQ(device_info.device_status(), media::OUTPUT_DEVICE_STATUS_OK);
+
   // WebRTC does not yet support higher rates than 96000 on the client side
   // and 48000 is the preferred sample rate. Therefore, if 192000 is detected,
   // we change the rate to 48000 instead. The consequence is that the native
   // layer will be opened up at 192kHz but WebRTC will provide data at 48kHz
   // which will then be resampled by the audio converted on the browser side
   // to match the native audio layer.
-  int sample_rate = sink_->GetOutputParameters().sample_rate();
+  int sample_rate = device_info.output_params().sample_rate();
   DVLOG(1) << "Audio output hardware sample rate: " << sample_rate;
-  if (sample_rate == 192000) {
-    DVLOG(1) << "Resampling from 48000 to 192000 is required";
+  if (sample_rate >= 192000) {
+    DVLOG(1) << "Resampling from 48000 to " << sample_rate << " is required";
     sample_rate = 48000;
   }
   media::AudioSampleRate asr;
@@ -600,57 +624,43 @@ void WebRtcAudioRenderer::PrepareSink() {
     UMA_HISTOGRAM_COUNTS("WebRTC.AudioOutputSampleRateUnexpected", sample_rate);
   }
 
-  // Set up audio parameters for the source, i.e., the WebRTC client.
+  // Calculate the frames per buffer for the source, i.e. the WebRTC client. We
+  // use 10 ms of data since the WebRTC client only supports multiples of 10 ms
+  // as buffer size where 10 ms is preferred for lowest possible delay.
+  const int source_frames_per_buffer = (sample_rate / 100);
+  DVLOG(1) << "Using WebRTC output buffer size: " << source_frames_per_buffer;
 
-  // The WebRTC client only supports multiples of 10ms as buffer size where
-  // 10ms is preferred for lowest possible delay.
-  const int frames_per_10ms = (sample_rate / 100);
-  DVLOG(1) << "Using WebRTC output buffer size: " << frames_per_10ms;
-  media::AudioParameters source_params(
-      media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-      new_sink_params.channel_layout(), sample_rate, 16, frames_per_10ms);
-  source_params.set_channels_for_discrete(new_sink_params.channels());
-
-  const int frames_per_buffer = GetOptimalBufferSize(
-      sample_rate, sink_->GetOutputParameters().frames_per_buffer());
-
-  new_sink_params.Reset(
-      new_sink_params.format(), new_sink_params.channel_layout(),
-      sample_rate, 16, frames_per_buffer);
+  // Setup sink parameters.
+  const int sink_frames_per_buffer = media::AudioLatency::GetRtcBufferSize(
+      sample_rate, device_info.output_params().frames_per_buffer());
+  new_sink_params.set_sample_rate(sample_rate);
+  new_sink_params.set_frames_per_buffer(sink_frames_per_buffer);
 
   // Create a FIFO if re-buffering is required to match the source input with
   // the sink request. The source acts as provider here and the sink as
   // consumer.
-  int new_fifo_delay_milliseconds = 0;
-  scoped_ptr<media::AudioPullFifo> new_audio_fifo;
-  if (source_params.frames_per_buffer() !=
-      new_sink_params.frames_per_buffer()) {
-    DVLOG(1) << "Rebuffering from " << source_params.frames_per_buffer()
-             << " to " << new_sink_params.frames_per_buffer();
-    new_audio_fifo.reset(new media::AudioPullFifo(
-        source_params.channels(), source_params.frames_per_buffer(),
-        base::Bind(&WebRtcAudioRenderer::SourceCallback,
-                   base::Unretained(this))));
-
-    if (new_sink_params.frames_per_buffer() >
-        source_params.frames_per_buffer()) {
-      int frame_duration_milliseconds =
-          base::Time::kMillisecondsPerSecond /
-          static_cast<double>(source_params.sample_rate());
-      new_fifo_delay_milliseconds = (new_sink_params.frames_per_buffer() -
-                                     source_params.frames_per_buffer()) *
-                                    frame_duration_milliseconds;
-    }
+  const bool different_source_sink_frames =
+      source_frames_per_buffer != new_sink_params.frames_per_buffer();
+  if (different_source_sink_frames) {
+    DVLOG(1) << "Rebuffering from " << source_frames_per_buffer << " to "
+             << new_sink_params.frames_per_buffer();
   }
-
   {
     base::AutoLock lock(lock_);
+    if ((!audio_fifo_ && different_source_sink_frames) ||
+        (audio_fifo_ &&
+         audio_fifo_->SizeInFrames() != source_frames_per_buffer)) {
+      audio_fifo_.reset(new media::AudioPullFifo(
+          kChannels, source_frames_per_buffer,
+          base::Bind(&WebRtcAudioRenderer::SourceCallback,
+                     base::Unretained(this))));
+    }
     sink_params_ = new_sink_params;
-    fifo_delay_milliseconds_ = new_fifo_delay_milliseconds;
-    if (new_audio_fifo.get())
-      audio_fifo_ = new_audio_fifo.Pass();
   }
 
+  // Specify the latency info to be passed to the browser side.
+  new_sink_params.set_latency_tag(AudioDeviceFactory::GetSourceLatencyType(
+      AudioDeviceFactory::AudioDeviceFactory::kSourceWebRtc));
   sink_->Initialize(new_sink_params, this);
 }
 

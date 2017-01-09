@@ -4,41 +4,42 @@
 
 #include "chrome/browser/extensions/api/idltest/idltest_api.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/values.h"
 
 using base::BinaryValue;
 
 namespace {
 
-base::ListValue* CopyBinaryValueToIntegerList(const BinaryValue* input) {
-  base::ListValue* output = new base::ListValue();
+std::unique_ptr<base::ListValue> CopyBinaryValueToIntegerList(
+    const BinaryValue* input) {
+  std::unique_ptr<base::ListValue> output(new base::ListValue());
   const char* input_buffer = input->GetBuffer();
   for (size_t i = 0; i < input->GetSize(); i++) {
-    output->Append(new base::FundamentalValue(input_buffer[i]));
+    output->AppendInteger(input_buffer[i]);
   }
   return output;
 }
 
 }  // namespace
 
-bool IdltestSendArrayBufferFunction::RunSync() {
+ExtensionFunction::ResponseAction IdltestSendArrayBufferFunction::Run() {
   BinaryValue* input = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_ != NULL && args_->GetBinary(0, &input));
-  SetResult(CopyBinaryValueToIntegerList(input));
-  return true;
+  return RespondNow(OneArgument(CopyBinaryValueToIntegerList(input)));
 }
 
-bool IdltestSendArrayBufferViewFunction::RunSync() {
+ExtensionFunction::ResponseAction IdltestSendArrayBufferViewFunction::Run() {
   BinaryValue* input = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_ != NULL && args_->GetBinary(0, &input));
-  SetResult(CopyBinaryValueToIntegerList(input));
-  return true;
+  return RespondNow(OneArgument(CopyBinaryValueToIntegerList(input)));
 }
 
-bool IdltestGetArrayBufferFunction::RunSync() {
+ExtensionFunction::ResponseAction IdltestGetArrayBufferFunction::Run() {
   std::string hello = "hello world";
-  BinaryValue* output =
-      BinaryValue::CreateWithCopiedBuffer(hello.c_str(), hello.size());
-  SetResult(output);
-  return true;
+  return RespondNow(OneArgument(
+      BinaryValue::CreateWithCopiedBuffer(hello.c_str(), hello.size())));
 }

@@ -23,52 +23,57 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/mediastream/MediaDeviceInfo.h"
 
+#include "bindings/core/v8/ScriptState.h"
+#include "bindings/core/v8/ScriptValue.h"
+#include "bindings/core/v8/V8ObjectBuilder.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
-MediaDeviceInfo* MediaDeviceInfo::create(const WebMediaDeviceInfo& webMediaDeviceInfo)
-{
-    ASSERT(!webMediaDeviceInfo.isNull());
-    return new MediaDeviceInfo(webMediaDeviceInfo);
+MediaDeviceInfo* MediaDeviceInfo::create(
+    const WebMediaDeviceInfo& webMediaDeviceInfo) {
+  DCHECK(!webMediaDeviceInfo.isNull());
+  return new MediaDeviceInfo(webMediaDeviceInfo);
 }
 
 MediaDeviceInfo::MediaDeviceInfo(const WebMediaDeviceInfo& webMediaDeviceInfo)
-    : m_webMediaDeviceInfo(webMediaDeviceInfo)
-{
+    : m_webMediaDeviceInfo(webMediaDeviceInfo) {}
+
+String MediaDeviceInfo::deviceId() const {
+  return m_webMediaDeviceInfo.deviceId();
 }
 
-String MediaDeviceInfo::deviceId() const
-{
-    return m_webMediaDeviceInfo.deviceId();
-}
-
-String MediaDeviceInfo::kind() const
-{
-    switch (m_webMediaDeviceInfo.kind()) {
+String MediaDeviceInfo::kind() const {
+  switch (m_webMediaDeviceInfo.kind()) {
     case WebMediaDeviceInfo::MediaDeviceKindAudioInput:
-        return "audioinput";
+      return "audioinput";
     case WebMediaDeviceInfo::MediaDeviceKindAudioOutput:
-        return "audiooutput";
+      return "audiooutput";
     case WebMediaDeviceInfo::MediaDeviceKindVideoInput:
-        return "videoinput";
-    }
+      return "videoinput";
+  }
 
-    ASSERT_NOT_REACHED();
-    return String();
+  NOTREACHED();
+  return String();
 }
 
-String MediaDeviceInfo::label() const
-{
-    return m_webMediaDeviceInfo.label();
+String MediaDeviceInfo::label() const {
+  return m_webMediaDeviceInfo.label();
 }
 
-String MediaDeviceInfo::groupId() const
-{
-    return m_webMediaDeviceInfo.groupId();
+String MediaDeviceInfo::groupId() const {
+  return m_webMediaDeviceInfo.groupId();
 }
 
-} // namespace blink
+ScriptValue MediaDeviceInfo::toJSONForBinding(ScriptState* scriptState) {
+  V8ObjectBuilder result(scriptState);
+  result.addString("deviceId", deviceId());
+  result.addString("kind", kind());
+  result.addString("label", label());
+  result.addString("groupId", groupId());
+  return result.scriptValue();
+}
+
+}  // namespace blink

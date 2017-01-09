@@ -9,6 +9,7 @@
 
 #include "net/base/completion_callback.h"
 #include "net/base/load_states.h"
+#include "net/base/net_error_details.h"
 #include "net/base/net_export.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_progress.h"
@@ -18,12 +19,12 @@
 namespace net {
 
 class AuthCredentials;
-class BoundNetLog;
 class HttpRequestHeaders;
 struct HttpRequestInfo;
 class HttpResponseInfo;
 class IOBuffer;
 struct LoadTimingInfo;
+class NetLogWithSource;
 class ProxyInfo;
 class QuicServerInfo;
 class SSLPrivateKey;
@@ -38,18 +39,22 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // ResumeNetworkStart is called before establishing a connection.
   typedef base::Callback<void(bool* defer)> BeforeNetworkStartCallback;
 
-  // Provides an opportunity to add proxy-specific request headers. Called after
-  // it is determined that a proxy is being used and before the request headers
-  // are sent. |proxy_info| contains information about the proxy being used,
-  // and additional headers may be added to |request_headers|.
-  typedef base::Callback<void(
-      const ProxyInfo& proxy_info,
-      HttpRequestHeaders* request_headers)> BeforeProxyHeadersSentCallback;
+  // Provides an opportunity to add additional request headers. Called after
+  // a connection is established and before the request headers are sent.
+  // |proxy_info| contains information about any proxies being used, and
+  // additional headers may be added to |request_headers|.
+  typedef base::Callback<void(const ProxyInfo& proxy_info,
+                              HttpRequestHeaders* request_headers)>
+      BeforeHeadersSentCallback;
 
   // Stops any pending IO and destroys the transaction object.
   virtual ~HttpTransaction() {}
 
   // Starts the HTTP transaction (i.e., sends the HTTP request).
+  //
+  // The consumer should ensure that request_info points to a valid value till
+  // final response headers are received; after that point, the HttpTransaction
+  // will not access |*request_info| and it may be deleted.
   //
   // Returns OK if the transaction could be started synchronously, which means
   // that the request was served from the cache.  ERR_IO_PENDING is returned to
@@ -65,7 +70,7 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // Profiling information for the request is saved to |net_log| if non-NULL.
   virtual int Start(const HttpRequestInfo* request_info,
                     const CompletionCallback& callback,
-                    const BoundNetLog& net_log) = 0;
+                    const NetLogWithSource& net_log) = 0;
 
   // Restarts the HTTP transaction, ignoring the last error.  This call can
   // only be made after a call to Start (or RestartIgnoringLastError) failed.
@@ -147,10 +152,6 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // Returns the load state for this transaction.
   virtual LoadState GetLoadState() const = 0;
 
-  // Returns the upload progress in bytes.  If there is no upload data,
-  // zero will be returned.  This does not include the request headers.
-  virtual UploadProgress GetUploadProgress() const = 0;
-
   // SetQuicServerInfo sets a object which reads and writes public information
   // about a QUIC server.
   virtual void SetQuicServerInfo(QuicServerInfo* quic_server_info) = 0;
@@ -168,6 +169,9 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   // unavailable.
   virtual bool GetRemoteEndpoint(IPEndPoint* endpoint) const = 0;
 
+  // Populates network error details for this transaction.
+  virtual void PopulateNetErrorDetails(NetErrorDetails* details) const = 0;
+
   // Called when the priority of the parent job changes.
   virtual void SetPriority(RequestPriority priority) = 0;
 
@@ -177,14 +181,14 @@ class NET_EXPORT_PRIVATE HttpTransaction {
   virtual void SetWebSocketHandshakeStreamCreateHelper(
       WebSocketHandshakeStreamBase::CreateHelper* create_helper) = 0;
 
-  // Set the callback to receive notification just before network use.
+  // Sets the callback to receive notification just before network use.
   virtual void SetBeforeNetworkStartCallback(
       const BeforeNetworkStartCallback& callback) = 0;
 
-  // Set the callback to receive notification just before a proxy request
-  // is to be sent.
-  virtual void SetBeforeProxyHeadersSentCallback(
-      const BeforeProxyHeadersSentCallback& callback) = 0;
+  // Sets the callback to receive notification just before request headers
+  // are to be sent.
+  virtual void SetBeforeHeadersSentCallback(
+      const BeforeHeadersSentCallback& callback) = 0;
 
   // Resumes the transaction after being deferred.
   virtual int ResumeNetworkStart() = 0;

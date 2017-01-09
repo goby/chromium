@@ -5,18 +5,12 @@
 #ifndef CC_OUTPUT_GEOMETRY_BINDING_H_
 #define CC_OUTPUT_GEOMETRY_BINDING_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "gpu/command_buffer/client/gles2_interface.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "third_party/khronos/GLES2/gl2ext.h"
 #include "ui/gfx/geometry/rect_f.h"
-
-namespace gfx {
-class QuadF;
-class Quad;
-class QuadIndex;
-class PointF;
-}
 
 namespace cc {
 
@@ -38,18 +32,15 @@ struct GeometryBindingQuad {
 
 struct GeometryBindingQuadIndex {
   GeometryBindingQuadIndex();
-  GeometryBindingQuadIndex(uint16 index0,
-                           uint16 index1,
-                           uint16 index2,
-                           uint16 index3,
-                           uint16 index4,
-                           uint16 index5);
+  GeometryBindingQuadIndex(uint16_t index0,
+                           uint16_t index1,
+                           uint16_t index2,
+                           uint16_t index3,
+                           uint16_t index4,
+                           uint16_t index5);
 
-  uint16 data[6];
+  uint16_t data[6];
 };
-
-class DrawQuad;
-class DrawPolygon;
 
 struct GeometryBinding {
   // All layer shaders share the same attribute locations for the vertex

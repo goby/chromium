@@ -7,21 +7,26 @@
 
 #import <UIKit/UIKit.h>
 
-#include "ios/web/public/web_state/ui/crw_web_delegate.h"
-
 namespace web {
 class BrowserState;
+class WebState;
 }
 
+// Accessibility label for the back button.
+extern NSString* const kWebShellBackButtonAccessibilityLabel;
+// Accessibility label for the forward button.
+extern NSString* const kWebShellForwardButtonAccessibilityLabel;
+// Accessibility label for the URL address text field.
+extern NSString* const kWebShellAddressFieldAccessibilityLabel;
+
 // Implements the main UI for ios_web_shell, including a toolbar and web view.
-@interface ViewController
-    : UIViewController<CRWWebDelegate, UITextFieldDelegate>
+@interface ViewController : UIViewController
 
-@property(nonatomic, retain) IBOutlet UIView* containerView;
-@property(nonatomic, retain) IBOutlet UIToolbar* toolbarView;
+@property(nonatomic, strong) IBOutlet UIView* containerView;
+@property(nonatomic, strong) IBOutlet UIToolbar* toolbarView;
+@property(nonatomic, assign, readonly) web::WebState* webState;
 
-// Initializes a new ViewController from |MainView.xib| using the given
-// |browserState|.
+// Initializes a new ViewController using the given |browserState|.
 - (instancetype)initWithBrowserState:(web::BrowserState*)browserState;
 
 @end

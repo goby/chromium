@@ -31,30 +31,36 @@
 #ifndef SVGAnimatedString_h
 #define SVGAnimatedString_h
 
+#include "bindings/core/v8/ScriptWrappable.h"
 #include "core/svg/SVGString.h"
 #include "core/svg/properties/SVGAnimatedProperty.h"
 
 namespace blink {
 
-class SVGAnimatedString final : public SVGAnimatedProperty<SVGString> {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedString> create(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGString> initialValue)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedString(contextElement, attributeName, initialValue));
-    }
+class SVGAnimatedString : public SVGAnimatedProperty<SVGString>,
+                          public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    String baseVal();
-    void setBaseVal(String, ExceptionState&);
-    String animVal();
+ public:
+  static SVGAnimatedString* create(SVGElement* contextElement,
+                                   const QualifiedName& attributeName) {
+    return new SVGAnimatedString(contextElement, attributeName);
+  }
 
-protected:
-    SVGAnimatedString(SVGElement* contextElement, const QualifiedName& attributeName, PassRefPtrWillBeRawPtr<SVGString> initialValue)
-        : SVGAnimatedProperty<SVGString>(contextElement, attributeName, initialValue)
-    {
-    }
+  virtual String baseVal();
+  virtual void setBaseVal(const String&, ExceptionState&);
+  virtual String animVal();
+
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ protected:
+  SVGAnimatedString(SVGElement* contextElement,
+                    const QualifiedName& attributeName)
+      : SVGAnimatedProperty<SVGString>(contextElement,
+                                       attributeName,
+                                       SVGString::create()) {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGAnimatedString_h
+#endif  // SVGAnimatedString_h

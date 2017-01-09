@@ -5,12 +5,17 @@
 #ifndef EXTENSIONS_COMMON_FEATURES_FEATURE_PROVIDER_H_
 #define EXTENSIONS_COMMON_FEATURES_FEATURE_PROVIDER_H_
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
+
 
 namespace extensions {
 
 class Feature;
+
+using FeatureMap = std::map<std::string, std::unique_ptr<Feature>>;
 
 // Implemented by classes that can vend features.
 class FeatureProvider {
@@ -34,6 +39,8 @@ class FeatureProvider {
 
   // Directly get Features from the common FeatureProvider types.
   // Each is equivalent to GetByName('featuretype')->GetFeature(name).
+  // NOTE: These functions may return |nullptr| in case corresponding JSON file
+  // got corrupted.
   static const Feature* GetAPIFeature(const std::string& name);
   static const Feature* GetManifestFeature(const std::string& name);
   static const Feature* GetPermissionFeature(const std::string& name);
@@ -52,8 +59,8 @@ class FeatureProvider {
   // Returns the features inside the |parent| namespace, recursively.
   virtual std::vector<Feature*> GetChildren(const Feature& parent) const = 0;
 
-  // Returns all features described by this instance, in asciibetical order.
-  virtual const std::vector<std::string>& GetAllFeatureNames() const = 0;
+  // Returns a map containing all features described by this instance.
+  virtual const FeatureMap& GetAllFeatures() const = 0;
 };
 
 }  // namespace extensions

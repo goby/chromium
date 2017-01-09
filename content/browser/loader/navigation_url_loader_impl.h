@@ -5,9 +5,10 @@
 #ifndef CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_IMPL_H_
 #define CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_IMPL_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "content/browser/loader/navigation_url_loader.h"
@@ -18,23 +19,29 @@ struct RedirectInfo;
 
 namespace content {
 
+class AppCacheNavigationHandle;
 class NavigationURLLoaderImplCore;
+class NavigationData;
 class ServiceWorkerNavigationHandle;
 class StreamHandle;
+struct GlobalRequestID;
 struct ResourceResponse;
+struct SSLStatus;
 
 class NavigationURLLoaderImpl : public NavigationURLLoader {
  public:
   // The caller is responsible for ensuring that |delegate| outlives the loader.
   NavigationURLLoaderImpl(BrowserContext* browser_context,
-                          scoped_ptr<NavigationRequestInfo> request_info,
+                          std::unique_ptr<NavigationRequestInfo> request_info,
+                          std::unique_ptr<NavigationUIData> navigation_ui_data,
                           ServiceWorkerNavigationHandle* service_worker_handle,
+                          AppCacheNavigationHandle* appcache_handle,
                           NavigationURLLoaderDelegate* delegate);
   ~NavigationURLLoaderImpl() override;
 
-  // Called in response to OnRequestRedirected to continue processing the
-  // request.
+  // NavigationURLLoader implementation.
   void FollowRedirect() override;
+  void ProceedWithResponse() override;
 
  private:
   friend class NavigationURLLoaderImplCore;
@@ -45,7 +52,12 @@ class NavigationURLLoaderImpl : public NavigationURLLoader {
 
   // Notifies the delegate that the response has started.
   void NotifyResponseStarted(const scoped_refptr<ResourceResponse>& response,
-                             scoped_ptr<StreamHandle> body);
+                             std::unique_ptr<StreamHandle> body,
+                             const SSLStatus& ssl_status,
+                             std::unique_ptr<NavigationData> navigation_data,
+                             const GlobalRequestID& request_id,
+                             bool is_download,
+                             bool is_stream);
 
   // Notifies the delegate the request failed to return a response.
   void NotifyRequestFailed(bool in_cache, int net_error);

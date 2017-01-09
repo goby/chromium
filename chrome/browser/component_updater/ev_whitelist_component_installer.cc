@@ -4,13 +4,16 @@
 
 #include "chrome/browser/component_updater/ev_whitelist_component_installer.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/version.h"
 #include "components/component_updater/component_updater_paths.h"
@@ -69,16 +72,22 @@ const uint8_t kPublicKeySHA256[32] = {
 
 const char kEVWhitelistManifestName[] = "EV Certs CT whitelist";
 
-bool EVWhitelistComponentInstallerTraits::CanAutoUpdate() const {
-  return true;
+bool EVWhitelistComponentInstallerTraits::
+    SupportsGroupPolicyEnabledComponentUpdates() const {
+  return false;
 }
 
-bool EVWhitelistComponentInstallerTraits::OnCustomInstall(
+bool EVWhitelistComponentInstallerTraits::RequiresNetworkEncryption() const {
+  return false;
+}
+
+update_client::CrxInstaller::Result
+EVWhitelistComponentInstallerTraits::OnCustomInstall(
     const base::DictionaryValue& manifest,
     const base::FilePath& install_dir) {
   VLOG(1) << "Entering EVWhitelistComponentInstallerTraits::OnCustomInstall.";
 
-  return true;  // Nothing custom here.
+  return update_client::CrxInstaller::Result(0);  // Nothing custom here.
 }
 
 base::FilePath EVWhitelistComponentInstallerTraits::GetInstalledPath(
@@ -92,7 +101,7 @@ base::FilePath EVWhitelistComponentInstallerTraits::GetInstalledPath(
 void EVWhitelistComponentInstallerTraits::ComponentReady(
     const base::Version& version,
     const base::FilePath& install_dir,
-    scoped_ptr<base::DictionaryValue> manifest) {
+    std::unique_ptr<base::DictionaryValue> manifest) {
   VLOG(1) << "Component ready, version " << version.GetString() << " in "
           << install_dir.value();
 
@@ -110,10 +119,9 @@ bool EVWhitelistComponentInstallerTraits::VerifyInstallation(
   return base::PathExists(GetInstalledPath(install_dir));
 }
 
-base::FilePath EVWhitelistComponentInstallerTraits::GetBaseDirectory() const {
-  base::FilePath result;
-  PathService::Get(DIR_COMPONENT_EV_WHITELIST, &result);
-  return result;
+base::FilePath EVWhitelistComponentInstallerTraits::GetRelativeInstallDir()
+    const {
+  return base::FilePath(FILE_PATH_LITERAL("EVWhitelist"));
 }
 
 void EVWhitelistComponentInstallerTraits::GetHash(
@@ -126,15 +134,25 @@ std::string EVWhitelistComponentInstallerTraits::GetName() const {
   return kEVWhitelistManifestName;
 }
 
+update_client::InstallerAttributes
+EVWhitelistComponentInstallerTraits::GetInstallerAttributes() const {
+  return update_client::InstallerAttributes();
+}
+
+std::vector<std::string> EVWhitelistComponentInstallerTraits::GetMimeTypes()
+    const {
+  return std::vector<std::string>();
+}
+
 void RegisterEVWhitelistComponent(ComponentUpdateService* cus,
                                   const base::FilePath& user_data_dir) {
   VLOG(1) << "Registering EV whitelist component.";
 
-  scoped_ptr<ComponentInstallerTraits> traits(
+  std::unique_ptr<ComponentInstallerTraits> traits(
       new EVWhitelistComponentInstallerTraits());
   // |cus| will take ownership of |installer| during installer->Register(cus).
   DefaultComponentInstaller* installer =
-      new DefaultComponentInstaller(traits.Pass());
+      new DefaultComponentInstaller(std::move(traits));
   installer->Register(cus, base::Closure());
 
   content::BrowserThread::PostAfterStartupTask(

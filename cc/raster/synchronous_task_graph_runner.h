@@ -18,7 +18,7 @@ class CC_EXPORT SynchronousTaskGraphRunner : public TaskGraphRunner {
   ~SynchronousTaskGraphRunner() override;
 
   // Overridden from TaskGraphRunner:
-  NamespaceToken GetNamespaceToken() override;
+  NamespaceToken GenerateNamespaceToken() override;
   void ScheduleTasks(NamespaceToken token, TaskGraph* graph) override;
   void WaitForTasksToFinishRunning(NamespaceToken token) override;
   void CollectCompletedTasks(NamespaceToken token,
@@ -27,8 +27,12 @@ class CC_EXPORT SynchronousTaskGraphRunner : public TaskGraphRunner {
   // Runs all pending tasks from all namespaces.
   void RunUntilIdle();
 
+  // For test use only.
+  bool RunSingleTaskForTesting() { return RunTask(); }
+
  private:
-  void RunTask();
+  // Returns true if there was a task to run.
+  bool RunTask();
 
   // Stores the actual tasks to be run, sorted by priority.
   TaskGraphWorkQueue work_queue_;

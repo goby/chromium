@@ -4,8 +4,9 @@
 
 #include "chrome/browser/sync_file_system/task_logger.h"
 
+#include <stddef.h>
+
 #include "base/lazy_instance.h"
-#include "base/stl_util.h"
 #include "base/synchronization/lock.h"
 
 namespace sync_file_system {
@@ -35,23 +36,21 @@ TaskLogger::~TaskLogger() {
   ClearLog();
 }
 
-void TaskLogger::RecordLog(scoped_ptr<TaskLog> log) {
+void TaskLogger::RecordLog(std::unique_ptr<TaskLog> log) {
   if (!log)
     return;
 
   if (log_history_.size() >= kMaxLogSize) {
-    delete log_history_.front();
     log_history_.pop_front();
   }
 
-  log_history_.push_back(log.release());
+  log_history_.push_back(std::move(log));
 
-  FOR_EACH_OBSERVER(Observer, observers_,
-                    OnLogRecorded(*log_history_.back()));
+  for (auto& observer : observers_)
+    observer.OnLogRecorded(*log_history_.back());
 }
 
 void TaskLogger::ClearLog() {
-  STLDeleteContainerPointers(log_history_.begin(), log_history_.end());
   log_history_.clear();
 }
 

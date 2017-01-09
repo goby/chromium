@@ -5,11 +5,13 @@
 #include "content/renderer/media/webrtc_local_audio_source_provider.h"
 
 #include "base/logging.h"
-#include "content/renderer/render_thread_impl.h"
-#include "media/audio/audio_parameters.h"
+#include "content/public/renderer/render_frame.h"
+#include "content/renderer/media/audio_device_factory.h"
 #include "media/base/audio_fifo.h"
-#include "media/base/audio_hardware_config.h"
+#include "media/base/audio_parameters.h"
 #include "third_party/WebKit/public/platform/WebAudioSourceProviderClient.h"
+#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
+#include "third_party/WebKit/public/web/WebLocalFrame.h"
 
 using blink::WebVector;
 
@@ -28,17 +30,21 @@ WebRtcLocalAudioSourceProvider::WebRtcLocalAudioSourceProvider(
       track_(track),
       track_stopped_(false) {
   // Get the native audio output hardware sample-rate for the sink.
-  // We need to check if RenderThreadImpl is valid here since the unittests
+  // We need to check if there is a valid frame since the unittests
   // do not have one and they will inject their own |sink_params_| for testing.
-  if (RenderThreadImpl::current()) {
-    media::AudioHardwareConfig* hardware_config =
-        RenderThreadImpl::current()->GetAudioHardwareConfig();
-    int sample_rate = hardware_config->GetOutputSampleRate();
+  blink::WebLocalFrame* const web_frame =
+      blink::WebLocalFrame::frameForCurrentContext();
+  RenderFrame* const render_frame = RenderFrame::FromWebFrame(web_frame);
+  if (render_frame) {
+    int sample_rate = AudioDeviceFactory::GetOutputDeviceInfo(
+                          render_frame->GetRoutingID(), 0, std::string(),
+                          web_frame->getSecurityOrigin())
+                          .output_params()
+                          .sample_rate();
     sink_params_.Reset(media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
                        media::CHANNEL_LAYOUT_STEREO, sample_rate, 16,
                        kWebAudioRenderBufferSize);
   }
-
   // Connect the source provider to the track as a sink.
   MediaStreamAudioSink::AddToAudioTrack(this, track_);
 }
@@ -130,8 +136,8 @@ void WebRtcLocalAudioSourceProvider::provideInput(
   audio_converter_->Convert(output_wrapper_.get());
 }
 
-double WebRtcLocalAudioSourceProvider::ProvideInput(
-    media::AudioBus* audio_bus, base::TimeDelta buffer_delay) {
+double WebRtcLocalAudioSourceProvider::ProvideInput(media::AudioBus* audio_bus,
+                                                    uint32_t frames_delayed) {
   if (fifo_->frames() >= audio_bus->frames()) {
     fifo_->Consume(audio_bus, 0, audio_bus->frames());
   } else {

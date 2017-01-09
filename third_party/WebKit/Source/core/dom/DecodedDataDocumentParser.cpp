@@ -23,82 +23,72 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/dom/DecodedDataDocumentParser.h"
 
 #include "core/dom/Document.h"
 #include "core/dom/DocumentEncodingData.h"
 #include "core/html/parser/TextResourceDecoder.h"
+#include <memory>
 
 namespace blink {
 
 DecodedDataDocumentParser::DecodedDataDocumentParser(Document& document)
-    : DocumentParser(&document)
-    , m_needsDecoder(true)
-{
+    : DocumentParser(&document), m_needsDecoder(true) {}
+
+DecodedDataDocumentParser::~DecodedDataDocumentParser() {}
+
+void DecodedDataDocumentParser::setDecoder(
+    std::unique_ptr<TextResourceDecoder> decoder) {
+  // If the decoder is explicitly unset rather than having ownership
+  // transferred away by takeDecoder(), we need to make sure it's recreated
+  // next time data is appended.
+  m_needsDecoder = !decoder;
+  m_decoder = std::move(decoder);
 }
 
-DecodedDataDocumentParser::~DecodedDataDocumentParser()
-{
+TextResourceDecoder* DecodedDataDocumentParser::decoder() {
+  return m_decoder.get();
 }
 
-void DecodedDataDocumentParser::setDecoder(PassOwnPtr<TextResourceDecoder> decoder)
-{
-    // If the decoder is explicitly unset rather than having ownership
-    // transferred away by takeDecoder(), we need to make sure it's recreated
-    // next time data is appended.
-    m_needsDecoder = !decoder;
-    m_decoder = decoder;
+std::unique_ptr<TextResourceDecoder> DecodedDataDocumentParser::takeDecoder() {
+  return std::move(m_decoder);
 }
 
-TextResourceDecoder* DecodedDataDocumentParser::decoder()
-{
-    return m_decoder.get();
+void DecodedDataDocumentParser::appendBytes(const char* data, size_t length) {
+  if (!length)
+    return;
+
+  // This should be checking isStopped(), but XMLDocumentParser prematurely
+  // stops parsing when handling an XSLT processing instruction and still
+  // needs to receive decoded bytes.
+  if (isDetached())
+    return;
+
+  String decoded = m_decoder->decode(data, length);
+  updateDocument(decoded);
 }
 
-PassOwnPtr<TextResourceDecoder> DecodedDataDocumentParser::takeDecoder()
-{
-    return m_decoder.release();
+void DecodedDataDocumentParser::flush() {
+  // This should be checking isStopped(), but XMLDocumentParser prematurely
+  // stops parsing when handling an XSLT processing instruction and still
+  // needs to receive decoded bytes.
+  if (isDetached())
+    return;
+
+  // null decoder indicates there is no data received.
+  // We have nothing to do in that case.
+  if (!m_decoder)
+    return;
+
+  String remainingData = m_decoder->flush();
+  updateDocument(remainingData);
 }
 
-void DecodedDataDocumentParser::appendBytes(const char* data, size_t length)
-{
-    if (!length)
-        return;
+void DecodedDataDocumentParser::updateDocument(String& decodedData) {
+  document()->setEncodingData(DocumentEncodingData(*m_decoder.get()));
 
-    // This should be checking isStopped(), but XMLDocumentParser prematurely
-    // stops parsing when handling an XSLT processing instruction and still
-    // needs to receive decoded bytes.
-    if (isDetached())
-        return;
-
-    String decoded = m_decoder->decode(data, length);
-    updateDocument(decoded);
+  if (!decodedData.isEmpty())
+    append(decodedData);
 }
 
-void DecodedDataDocumentParser::flush()
-{
-    // This should be checking isStopped(), but XMLDocumentParser prematurely
-    // stops parsing when handling an XSLT processing instruction and still
-    // needs to receive decoded bytes.
-    if (isDetached())
-        return;
-
-    // null decoder indicates there is no data received.
-    // We have nothing to do in that case.
-    if (!m_decoder)
-        return;
-
-    String remainingData = m_decoder->flush();
-    updateDocument(remainingData);
-}
-
-void DecodedDataDocumentParser::updateDocument(String& decodedData)
-{
-    document()->setEncodingData(DocumentEncodingData(*m_decoder.get()));
-
-    if (!decodedData.isEmpty())
-        append(decodedData);
-}
-
-};
+}  // namespace blink

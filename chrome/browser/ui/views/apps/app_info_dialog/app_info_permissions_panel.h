@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/views/apps/app_info_dialog/app_info_panel.h"
 #include "extensions/common/permissions/permission_message_provider.h"
 
@@ -15,15 +16,6 @@ class Profile;
 
 namespace extensions {
 class Extension;
-}
-
-namespace ui {
-class Event;
-}
-
-namespace views {
-class GridLayout;
-class View;
 }
 
 // The summary panel of the app info dialog, which provides basic information

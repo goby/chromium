@@ -4,13 +4,15 @@
 
 #include "chrome/common/extensions/manifest_handlers/ui_overrides_handler.h"
 
+#include <memory>
+
 #include "base/command_line.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "components/version_info/version_info.h"
 #include "extensions/common/error_utils.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/features/feature_channel.h"
 #include "extensions/common/manifest_constants.h"
 #include "extensions/common/manifest_url_handlers.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -53,9 +55,9 @@ TEST_F(UIOverrideTest, ParseManifest) {
   std::string manifest(kManifest);
   JSONStringValueDeserializer json(manifest);
   std::string error;
-  scoped_ptr<base::Value> root(json.Deserialize(NULL, &error));
+  std::unique_ptr<base::Value> root(json.Deserialize(NULL, &error));
   ASSERT_TRUE(root);
-  ASSERT_TRUE(root->IsType(base::Value::TYPE_DICTIONARY));
+  ASSERT_TRUE(root->IsType(base::Value::Type::DICTIONARY));
   scoped_refptr<Extension> extension = Extension::Create(
       base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       Manifest::INVALID_LOCATION,
@@ -81,9 +83,9 @@ TEST_F(UIOverrideTest, ParseBrokenManifest) {
   std::string manifest(kBrokenManifest);
   JSONStringValueDeserializer json(manifest);
   std::string error;
-  scoped_ptr<base::Value> root(json.Deserialize(NULL, &error));
+  std::unique_ptr<base::Value> root(json.Deserialize(NULL, &error));
   ASSERT_TRUE(root);
-  ASSERT_TRUE(root->IsType(base::Value::TYPE_DICTIONARY));
+  ASSERT_TRUE(root->IsType(base::Value::Type::DICTIONARY));
   scoped_refptr<Extension> extension = Extension::Create(
       base::FilePath(FILE_PATH_LITERAL("//nonexistent")),
       Manifest::INVALID_LOCATION,

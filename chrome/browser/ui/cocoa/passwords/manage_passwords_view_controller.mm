@@ -7,11 +7,12 @@
 #include <cmath>
 
 #include "base/strings/sys_string_conversions.h"
-#include "chrome/browser/ui/chrome_style.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
 #import "chrome/browser/ui/cocoa/passwords/passwords_bubble_utils.h"
 #import "chrome/browser/ui/cocoa/passwords/passwords_list_view_controller.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
-#include "grit/generated_resources.h"
+#include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMUILocalizerAndLayoutTweaker.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
@@ -35,24 +36,12 @@
 }
 @end
 
-@interface ManagePasswordsBubbleManageViewController ()
+@interface ManagePasswordsViewController ()
 - (void)onDoneClicked:(id)sender;
 - (void)onManageClicked:(id)sender;
 @end
 
-@implementation ManagePasswordsBubbleManageViewController
-
-- (NSButton*)defaultButton {
-  return doneButton_;
-}
-
-- (id)initWithModel:(ManagePasswordsBubbleModel*)model
-           delegate:(id<ManagePasswordsBubbleContentViewDelegate>)delegate {
-  if (([super initWithDelegate:delegate])) {
-    model_ = model;
-  }
-  return self;
-}
+@implementation ManagePasswordsViewController
 
 - (void)loadView {
   base::scoped_nsobject<NSView> view([[NSView alloc] initWithFrame:NSZeroRect]);
@@ -73,14 +62,14 @@
 
   // Create the elements and add them to the view.
   NSTextField* titleLabel =
-      [self addTitleLabel:base::SysUTF16ToNSString(model_->title())
+      [self addTitleLabel:base::SysUTF16ToNSString(self.model->title())
                    toView:view];
 
   // Content. If we have a list of passwords to store for the current site, we
   // display them to the user for management. Otherwise, we show a "No passwords
   // for this site" message.
   NSView* contentView = nil;
-  if (model_->local_credentials().empty()) {
+  if (self.model->local_credentials().empty()) {
     const CGFloat noPasswordsWidth = std::max(
         kDesiredBubbleWidth - 2 * kFramePadding, NSWidth([titleLabel frame]));
     noPasswordsView_.reset(
@@ -88,8 +77,8 @@
     contentView = noPasswordsView_.get();
   } else {
     passwordsListController_.reset([[PasswordsListViewController alloc]
-        initWithModel:model_
-                forms:model_->local_credentials().get()]);
+        initWithModelAndForms:self.model
+                        forms:&self.model->local_credentials()]);
     contentView = [passwordsListController_ view];
   }
   [view addSubview:contentView];
@@ -109,11 +98,9 @@
   // Manage button.
   manageButton_.reset([[NSButton alloc] initWithFrame:NSZeroRect]);
   base::scoped_nsobject<HyperlinkButtonCell> cell([[HyperlinkButtonCell alloc]
-      initTextCell:base::SysUTF16ToNSString(model_->manage_link())]);
+      initTextCell:base::SysUTF16ToNSString(self.model->manage_link())]);
   [cell setControlSize:NSSmallControlSize];
-  [cell setShouldUnderline:NO];
-  [cell setUnderlineOnHover:NO];
-  [cell setTextColor:gfx::SkColorToCalibratedNSColor(
+  [cell setTextColor:skia::SkColorToCalibratedNSColor(
       chrome_style::GetLinkColor())];
   [manageButton_ setCell:cell.get()];
   [manageButton_ sizeToFit];
@@ -154,18 +141,28 @@
 }
 
 - (void)onDoneClicked:(id)sender {
-  model_->OnDoneClicked();
-  [delegate_ viewShouldDismiss];
+  if (self.model)
+    self.model->OnDoneClicked();
+  [self.delegate viewShouldDismiss];
 }
 
 - (void)onManageClicked:(id)sender {
-  model_->OnManageLinkClicked();
-  [delegate_ viewShouldDismiss];
+  if (self.model)
+    self.model->OnManageLinkClicked();
+  [self.delegate viewShouldDismiss];
+}
+
+- (ManagePasswordsBubbleModel*)model {
+  return [self.delegate model];
+}
+
+- (NSButton*)defaultButton {
+  return doneButton_;
 }
 
 @end
 
-@implementation ManagePasswordsBubbleManageViewController (Testing)
+@implementation ManagePasswordsViewController (Testing)
 
 - (NSButton*)doneButton {
   return doneButton_.get();

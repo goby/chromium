@@ -71,11 +71,34 @@ remoting.tryShare = function() {
 };
 
 /**
+ * Returns the info of the local It2Me host.
+ *
+ * @param {remoting.It2MeHostFacade} hostFacade
+ * @return {remoting.Host}
+ */
+function getHostInfo(hostFacade) {
+  var hostInfo = new remoting.Host('it2me');
+  var systemInfo = remoting.getSystemInfo();
+  hostInfo.hostVersion = hostFacade.getHostVersion();
+  hostInfo.hostOsVersion = systemInfo.osVersion;
+  if (systemInfo.osName === remoting.Os.WINDOWS) {
+    hostInfo.hostOs = remoting.ChromotingEvent.Os.WINDOWS;
+  } else if (systemInfo.osName === remoting.Os.LINUX) {
+    hostInfo.hostOs = remoting.ChromotingEvent.Os.LINUX;
+  } else if (systemInfo.osName === remoting.Os.MAC) {
+    hostInfo.hostOs = remoting.ChromotingEvent.Os.MAC;
+  } else if (systemInfo.osName === remoting.Os.CHROMEOS) {
+    hostInfo.hostOs = remoting.ChromotingEvent.Os.CHROMEOS;
+  }
+  return hostInfo;
+}
+
+/**
  * @param {remoting.It2MeHostFacade} hostFacade An initialized It2MeHostFacade.
  */
 remoting.startHostUsingFacade_ = function(hostFacade) {
   console.log('Attempting to share...');
-  it2meLogger.setHostVersion(hostFacade.getHostVersion());
+  it2meLogger.setHost(getHostInfo(hostFacade));
   remoting.identity.getToken().then(
     remoting.tryShareWithToken_.bind(null, hostFacade),
     remoting.Error.handler(showShareError_));
@@ -146,6 +169,11 @@ function onHostStateChanged_(state) {
       console.error('Access code already invalid on receipt!');
       remoting.cancelShare();
     }
+
+  } else if (state == remoting.HostSession.State.CONNECTING) {
+    console.log('Host state: CONNECTING');
+    remoting.setMode(remoting.AppMode.HOST_WAITING_FOR_ACCEPT);
+    disableTimeoutCountdown_();
 
   } else if (state == remoting.HostSession.State.CONNECTED) {
     console.log('Host state: CONNECTED');

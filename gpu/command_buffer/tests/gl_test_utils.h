@@ -8,11 +8,17 @@
 #define GPU_COMMAND_BUFFER_TESTS_GL_TEST_UTILS_H_
 
 #include <GLES2/gl2.h>
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <vector>
+
+namespace gfx {
+class Size;
+}  // namespace gfx
 
 class GLTestHelper {
  public:
-  static const uint8 kCheckClearValue = 123u;
+  static const uint8_t kCheckClearValue = 123u;
 
   static bool HasExtension(const char* extension);
   static bool CheckGLError(const char* msg, int line);
@@ -43,18 +49,27 @@ class GLTestHelper {
   // Returns the created buffer.
   static GLuint SetupUnitQuad(GLint position_location);
 
+  // Returns a vector of size 2. The first is the array buffer object,
+  // the second is the element array buffer object.
+  static std::vector<GLuint> SetupIndexedUnitQuad(GLint position_location);
+
   // Make a 6 vertex colors.
   // Returns the created buffer.
   static GLuint SetupColorsForUnitQuad(
       GLint location, const GLfloat color[4], GLenum usage);
 
   // Checks an area of pixels for a color.
-  static bool CheckPixels(
-      GLint x, GLint y, GLsizei width, GLsizei height, GLint tolerance,
-      const uint8* color);
+  static bool CheckPixels(GLint x,
+                          GLint y,
+                          GLsizei width,
+                          GLsizei height,
+                          GLint tolerance,
+                          const uint8_t* color);
 
   // Uses ReadPixels to save an area of the current FBO/Backbuffer.
   static bool SaveBackbufferAsBMP(const char* filename, int width, int height);
+
+  static void DrawTextureQuad(GLenum target, const gfx::Size& size);
 };
 
 #endif  // GPU_COMMAND_BUFFER_TESTS_GL_TEST_UTILS_H_

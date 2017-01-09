@@ -4,18 +4,23 @@
 
 #include "components/dom_distiller/core/dom_distiller_store.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/dom_distiller_test_util.h"
 #include "components/leveldb_proto/testing/fake_db.h"
-#include "sync/api/attachments/attachment_id.h"
-#include "sync/internal_api/public/attachments/attachment_service_proxy_for_test.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/attachments/attachment_id.h"
+#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
+#include "components/sync/protocol/sync.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -151,8 +156,8 @@ class DomDistillerStoreTest : public testing::Test {
 
     store_->MergeDataAndStartSyncing(
         kDomDistillerModelType, SyncDataFromEntryMap(sync_model_),
-        make_scoped_ptr<SyncChangeProcessor>(fake_sync_processor_),
-        scoped_ptr<SyncErrorFactory>(new FakeSyncErrorFactory()));
+        base::WrapUnique<SyncChangeProcessor>(fake_sync_processor_),
+        std::unique_ptr<SyncErrorFactory>(new FakeSyncErrorFactory()));
   }
 
  protected:
@@ -178,13 +183,13 @@ class DomDistillerStoreTest : public testing::Test {
   EntryMap sync_model_;
   FakeDB<ArticleEntry>::EntryMap store_model_;
 
-  scoped_ptr<DomDistillerStore> store_;
+  std::unique_ptr<DomDistillerStore> store_;
 
   // Both owned by |store_|.
   FakeDB<ArticleEntry>* fake_db_;
   FakeSyncChangeProcessor* fake_sync_processor_;
 
-  int64 next_sync_id_;
+  int64_t next_sync_id_;
 };
 
 AssertionResult AreEntriesEqual(const DomDistillerStore::EntryVector& entries,
@@ -313,7 +318,8 @@ class MockAttachmentsCallbacks {
   MOCK_METHOD2(Get, void(bool, ArticleAttachmentsData*));
   MOCK_METHOD1(Update, void(bool));
 
-  void GetImpl(bool success, scoped_ptr<ArticleAttachmentsData> attachments) {
+  void GetImpl(bool success,
+               std::unique_ptr<ArticleAttachmentsData> attachments) {
     Get(success, attachments.get());
   }
 
@@ -347,8 +353,7 @@ TEST_F(DomDistillerStoreTest, TestAttachments) {
   article_proto.set_title("A title");
   attachments.set_distilled_article(article_proto);
   store_->UpdateAttachments(
-      entry.entry_id(),
-      make_scoped_ptr(new ArticleAttachmentsData(attachments)),
+      entry.entry_id(), base::MakeUnique<ArticleAttachmentsData>(attachments),
       callbacks.UpdateCallback());
   EXPECT_CALL(callbacks, Update(true));
   base::RunLoop().RunUntilIdle();
@@ -506,8 +511,9 @@ TEST_F(DomDistillerStoreTest, TestSyncMergeWithSecondDomDistillerStore) {
 
   FakeDB<ArticleEntry>* other_fake_db =
       new FakeDB<ArticleEntry>(&other_db_model);
-  scoped_ptr<DomDistillerStore> owned_other_store(new DomDistillerStore(
-      scoped_ptr<leveldb_proto::ProtoDatabase<ArticleEntry> >(other_fake_db),
+  std::unique_ptr<DomDistillerStore> owned_other_store(new DomDistillerStore(
+      std::unique_ptr<leveldb_proto::ProtoDatabase<ArticleEntry>>(
+          other_fake_db),
       std::vector<ArticleEntry>(),
       base::FilePath(FILE_PATH_LITERAL("/fake/other/path"))));
   DomDistillerStore* other_store = owned_other_store.get();
@@ -520,10 +526,9 @@ TEST_F(DomDistillerStoreTest, TestSyncMergeWithSecondDomDistillerStore) {
 
   FakeSyncErrorFactory* other_error_factory = new FakeSyncErrorFactory();
   store_->MergeDataAndStartSyncing(
-      kDomDistillerModelType,
-      SyncDataFromEntryMap(other_db_model),
-      owned_other_store.Pass(),
-      make_scoped_ptr<SyncErrorFactory>(other_error_factory));
+      kDomDistillerModelType, SyncDataFromEntryMap(other_db_model),
+      std::move(owned_other_store),
+      base::WrapUnique<SyncErrorFactory>(other_error_factory));
 
   EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
   EXPECT_TRUE(AreEntriesEqual(other_store->GetEntries(), expected_model));
@@ -583,8 +588,8 @@ TEST_F(DomDistillerStoreTest, TestObserver) {
       new FakeSyncChangeProcessor(&fake_model);
   store_->MergeDataAndStartSyncing(
       kDomDistillerModelType, change_data,
-      make_scoped_ptr<SyncChangeProcessor>(fake_sync_change_processor),
-      make_scoped_ptr<SyncErrorFactory>(fake_error_factory));
+      base::WrapUnique<SyncChangeProcessor>(fake_sync_change_processor),
+      base::WrapUnique<SyncErrorFactory>(fake_error_factory));
 }
 
 }  // namespace dom_distiller

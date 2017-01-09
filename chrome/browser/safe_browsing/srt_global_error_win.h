@@ -7,8 +7,9 @@
 
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "chrome/browser/safe_browsing/srt_field_trial_win.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 
 class GlobalErrorService;
@@ -59,8 +60,11 @@ class SRTGlobalError : public GlobalErrorWithStandardBubble {
   // download and execute the SRT.
   void FallbackToDownloadPage();
 
-  // Destroys this instance.
-  void DestroySelf();
+  // Called when user interaction has started.
+  void OnUserinteractionStarted(SRTPromptHistogramValue histogram_value);
+
+  // Called when user interaction is done.
+  void OnUserinteractionDone();
 
   // Used to dismiss the GlobalError, then set to NULL.
   GlobalErrorService* global_error_service_;
@@ -68,8 +72,8 @@ class SRTGlobalError : public GlobalErrorWithStandardBubble {
   // The path to the downloaded executable.
   base::FilePath downloaded_path_;
 
-  // Identifies whether the Dismiss button should be shown or not.
-  bool show_dismiss_button_ = false;
+  // Identifies whether the bubble was shown from the menu.
+  bool bubble_shown_from_menu_ = false;
 
   // Identifies whether the user interacted with the bubble buttons or not.
   bool interacted_ = false;

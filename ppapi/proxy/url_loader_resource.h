@@ -5,10 +5,13 @@
 #ifndef PPAPI_PROXY_URL_LOADER_RESOURCE_H_
 #define PPAPI_PROXY_URL_LOADER_RESOURCE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <deque>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ppapi/c/trusted/ppb_url_loader_trusted.h"
 #include "ppapi/proxy/plugin_resource.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
@@ -16,6 +19,9 @@
 #include "ppapi/thunk/ppb_url_loader_api.h"
 
 namespace ppapi {
+
+struct URLResponseInfoData;
+
 namespace proxy {
 
 class URLResponseInfoResource;

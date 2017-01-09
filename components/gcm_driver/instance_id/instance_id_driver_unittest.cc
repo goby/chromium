@@ -4,14 +4,23 @@
 
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
 
+#include <stddef.h>
+
 #include <cmath>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_util.h"
 #include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
 #include "components/gcm_driver/instance_id/instance_id.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_ANDROID)
+#include "components/gcm_driver/instance_id/instance_id_android.h"
+#include "components/gcm_driver/instance_id/scoped_use_fake_instance_id_android.h"
+#endif  // OS_ANDROID
 
 namespace instance_id {
 
@@ -48,6 +57,7 @@ class InstanceIDDriverTest : public testing::Test {
 
   // testing::Test:
   void SetUp() override;
+  void TearDown() override;
 
   void WaitForAsyncOperation();
 
@@ -78,8 +88,13 @@ class InstanceIDDriverTest : public testing::Test {
   void DeleteTokenCompleted(InstanceID::Result result);
 
   base::MessageLoopForUI message_loop_;
-  scoped_ptr<FakeGCMDriverForInstanceID> gcm_driver_;
-  scoped_ptr<InstanceIDDriver> driver_;
+  std::unique_ptr<FakeGCMDriverForInstanceID> gcm_driver_;
+  std::unique_ptr<InstanceIDDriver> driver_;
+
+#if defined(OS_ANDROID)
+  InstanceIDAndroid::ScopedBlockOnAsyncTasksForTesting block_async_;
+  ScopedUseFakeInstanceIDAndroid use_fake_;
+#endif  // OS_ANDROID
 
   std::string id_;
   base::Time creation_time_;
@@ -103,6 +118,14 @@ InstanceIDDriverTest::~InstanceIDDriverTest() {
 void InstanceIDDriverTest::SetUp() {
   gcm_driver_.reset(new FakeGCMDriverForInstanceID);
   RecreateInstanceIDDriver();
+}
+
+void InstanceIDDriverTest::TearDown() {
+  driver_.reset();
+  gcm_driver_.reset();
+  // |gcm_driver_| owns a GCMKeyStore that owns a ProtoDatabaseImpl whose
+  // destructor deletes the underlying LevelDB on the task runner.
+  base::RunLoop().RunUntilIdle();
 }
 
 void InstanceIDDriverTest::RecreateInstanceIDDriver() {
@@ -139,7 +162,7 @@ base::Time InstanceIDDriverTest::GetCreationTime(InstanceID* instance_id) {
 
 InstanceID::Result InstanceIDDriverTest::DeleteID(InstanceID* instance_id) {
   async_operation_completed_ = false;
-  result_ = InstanceID::UNKNOWN_ERROR;;
+  result_ = InstanceID::UNKNOWN_ERROR;
   instance_id->DeleteID(base::Bind(&InstanceIDDriverTest::DeleteIDCompleted,
                         base::Unretained(this)));
   WaitForAsyncOperation();
@@ -153,7 +176,7 @@ std::string InstanceIDDriverTest::GetToken(
     const std::map<std::string, std::string>& options) {
   async_operation_completed_ = false;
   token_.clear();
-  result_ = InstanceID::UNKNOWN_ERROR;;
+  result_ = InstanceID::UNKNOWN_ERROR;
   instance_id->GetToken(
       authorized_entity,
       scope,
@@ -169,7 +192,7 @@ InstanceID::Result InstanceIDDriverTest::DeleteToken(
     const std::string& authorized_entity,
     const std::string& scope) {
   async_operation_completed_ = false;
-  result_ = InstanceID::UNKNOWN_ERROR;;
+  result_ = InstanceID::UNKNOWN_ERROR;
   instance_id->DeleteToken(
       authorized_entity,
       scope,
@@ -205,7 +228,7 @@ void InstanceIDDriverTest::DeleteIDCompleted(InstanceID::Result result) {
 }
 
 void InstanceIDDriverTest::GetTokenCompleted(
-    const std::string& token, InstanceID::Result result){
+    const std::string& token, InstanceID::Result result) {
   DCHECK(!async_operation_completed_);
   async_operation_completed_ = true;
   token_ = token;
@@ -353,4 +376,4 @@ TEST_F(InstanceIDDriverTest, DeleteToken) {
             GetToken(instance_id, kAuthorizedEntity2, kScope1, options));
 }
 
-}  // instance_id
+}  // namespace instance_id

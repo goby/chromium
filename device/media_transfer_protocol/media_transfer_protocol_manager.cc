@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <queue>
 #include <set>
 #include <utility>
@@ -13,11 +14,13 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/sequenced_task_runner.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 #include "dbus/bus.h"
 #include "device/media_transfer_protocol/media_transfer_protocol_daemon_client.h"
 #include "device/media_transfer_protocol/mtp_file_entry.pb.h"
@@ -128,7 +131,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
       const std::string& storage_name,
       const GetStorageInfoFromDeviceCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
+    if (!base::ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
       MtpStorageInfo info;
       callback.Run(info, true /* error */);
       return;
@@ -149,7 +152,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
                    const std::string& mode,
                    const OpenStorageCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
+    if (!base::ContainsKey(storage_info_map_, storage_name) || !mtp_client_) {
       callback.Run(std::string(), true);
       return;
     }
@@ -167,7 +170,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   void CloseStorage(const std::string& storage_handle,
                     const CloseStorageCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(true);
       return;
     }
@@ -181,11 +184,11 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   void CreateDirectory(const std::string& storage_handle,
-                       const uint32 parent_id,
+                       const uint32_t parent_id,
                        const std::string& directory_name,
                        const CreateDirectoryCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(true /* error */);
       return;
     }
@@ -200,11 +203,11 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
 
   // MediaTransferProtocolManager override.
   void ReadDirectory(const std::string& storage_handle,
-                     const uint32 file_id,
+                     const uint32_t file_id,
                      const size_t max_size,
                      const ReadDirectoryCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(std::vector<MtpFileEntry>(),
                    false /* no more entries */,
                    true /* error */);
@@ -222,12 +225,12 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
 
   // MediaTransferProtocolManager override.
   void ReadFileChunk(const std::string& storage_handle,
-                     uint32 file_id,
-                     uint32 offset,
-                     uint32 count,
+                     uint32_t file_id,
+                     uint32_t offset,
+                     uint32_t count,
                      const ReadFileCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(std::string(), true);
       return;
     }
@@ -241,14 +244,14 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   void GetFileInfo(const std::string& storage_handle,
-                   uint32 file_id,
+                   uint32_t file_id,
                    const GetFileInfoCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(MtpFileEntry(), true);
       return;
     }
-    std::vector<uint32> file_ids;
+    std::vector<uint32_t> file_ids;
     file_ids.push_back(file_id);
     get_file_info_callbacks_.push(callback);
     mtp_client_->GetFileInfo(
@@ -263,11 +266,11 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   void RenameObject(const std::string& storage_handle,
-                    const uint32 object_id,
+                    const uint32_t object_id,
                     const std::string& new_name,
                     const RenameObjectCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(true /* error */);
       return;
     }
@@ -282,11 +285,11 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
 
   void CopyFileFromLocal(const std::string& storage_handle,
                          const int source_file_descriptor,
-                         const uint32 parent_id,
+                         const uint32_t parent_id,
                          const std::string& file_name,
                          const CopyFileFromLocalCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(true /* error */);
       return;
     }
@@ -300,10 +303,10 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   void DeleteObject(const std::string& storage_handle,
-                    const uint32 object_id,
+                    const uint32_t object_id,
                     const DeleteObjectCallback& callback) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, storage_handle) || !mtp_client_) {
+    if (!base::ContainsKey(handles_, storage_handle) || !mtp_client_) {
       callback.Run(true /* error */);
       return;
     }
@@ -352,9 +355,8 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
       // Return to avoid giving observers phantom detach events.
       return;
     }
-    FOR_EACH_OBSERVER(Observer,
-                      observers_,
-                      StorageChanged(false /* detach */, storage_name));
+    for (auto& observer : observers_)
+      observer.StorageChanged(false /* detach */, storage_name);
   }
 
   void OnStorageChanged(bool is_attach, const std::string& storage_name) {
@@ -370,7 +372,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
     DCHECK(thread_checker_.CalledOnValidThread());
     DCHECK(mtp_client_);
     for (size_t i = 0; i < storage_names.size(); ++i) {
-      if (ContainsKey(storage_info_map_, storage_names[i])) {
+      if (base::ContainsKey(storage_info_map_, storage_names[i])) {
         // OnStorageChanged() might have gotten called first.
         continue;
       }
@@ -381,7 +383,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   void OnGetStorageInfo(const MtpStorageInfo& storage_info) {
     DCHECK(thread_checker_.CalledOnValidThread());
     const std::string& storage_name = storage_info.storage_name();
-    if (ContainsKey(storage_info_map_, storage_name)) {
+    if (base::ContainsKey(storage_info_map_, storage_name)) {
       // This should not happen, since MediaTransferProtocolManagerImpl should
       // only call EnumerateStorages() once, which populates |storage_info_map_|
       // with the already-attached devices.
@@ -395,9 +397,8 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
 
     // New storage. Add it and let the observers know.
     storage_info_map_.insert(std::make_pair(storage_name, storage_info));
-    FOR_EACH_OBSERVER(Observer,
-                      observers_,
-                      StorageChanged(true /* is attach */, storage_name));
+    for (auto& observer : observers_)
+      observer.StorageChanged(true /* is attach */, storage_name);
   }
 
   void OnGetStorageInfoFromDevice(const MtpStorageInfo& storage_info) {
@@ -414,7 +415,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
 
   void OnOpenStorage(const std::string& handle) {
     DCHECK(thread_checker_.CalledOnValidThread());
-    if (!ContainsKey(handles_, handle)) {
+    if (!base::ContainsKey(handles_, handle)) {
       handles_.insert(handle);
       open_storage_callbacks_.front().Run(handle, false);
     } else {
@@ -432,7 +433,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   void OnCloseStorage() {
     DCHECK(thread_checker_.CalledOnValidThread());
     const std::string& handle = close_storage_callbacks_.front().second;
-    if (ContainsKey(handles_, handle)) {
+    if (base::ContainsKey(handles_, handle)) {
       handles_.erase(handle);
       close_storage_callbacks_.front().first.Run(false);
     } else {
@@ -463,7 +464,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   void OnReadDirectoryEntryIdsToReadDirectory(
       const std::string& storage_handle,
       const size_t max_size,
-      const std::vector<uint32>& file_ids) {
+      const std::vector<uint32_t>& file_ids) {
     DCHECK(thread_checker_.CalledOnValidThread());
 
     if (file_ids.empty()) {
@@ -472,7 +473,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
       return;
     }
 
-    std::vector<uint32> sorted_file_ids = file_ids;
+    std::vector<uint32_t> sorted_file_ids = file_ids;
     std::sort(sorted_file_ids.begin(), sorted_file_ids.end());
 
     const size_t chunk_size =
@@ -489,10 +490,10 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   void OnGotDirectoryEntries(const std::string& storage_handle,
-                             const std::vector<uint32>& file_ids,
+                             const std::vector<uint32_t>& file_ids,
                              const size_t offset,
                              const size_t max_size,
-                             const std::vector<uint32>& sorted_file_ids,
+                             const std::vector<uint32_t>& sorted_file_ids,
                              const std::vector<MtpFileEntry>& file_entries) {
     DCHECK(thread_checker_.CalledOnValidThread());
     DCHECK_EQ(file_ids.size(), sorted_file_ids.size());
@@ -500,9 +501,8 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
     // Use |sorted_file_ids| to sanity check and make sure the results are a
     // subset of the requested file ids.
     for (size_t i = 0; i < file_entries.size(); ++i) {
-      std::vector<uint32>::const_iterator it =
-          std::lower_bound(sorted_file_ids.begin(),
-                           sorted_file_ids.end(),
+      std::vector<uint32_t>::const_iterator it =
+          std::lower_bound(sorted_file_ids.begin(), sorted_file_ids.end(),
                            file_entries[i].item_id());
       if (it == sorted_file_ids.end()) {
         OnReadDirectoryError();
@@ -663,7 +663,7 @@ class MediaTransferProtocolManagerImpl : public MediaTransferProtocolManager {
   }
 
   // Mtpd DBus client.
-  scoped_ptr<MediaTransferProtocolDaemonClient> mtp_client_;
+  std::unique_ptr<MediaTransferProtocolDaemonClient> mtp_client_;
 
 #if !defined(OS_CHROMEOS)
   // And a D-Bus session for talking to mtpd.

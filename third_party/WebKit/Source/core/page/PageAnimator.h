@@ -14,29 +14,28 @@ namespace blink {
 class LocalFrame;
 class Page;
 
-class CORE_EXPORT PageAnimator final : public RefCountedWillBeGarbageCollected<PageAnimator> {
-public:
-    static PassRefPtrWillBeRawPtr<PageAnimator> create(Page&);
-    DECLARE_TRACE();
-    void scheduleVisualUpdate(LocalFrame* = 0);
-    void serviceScriptedAnimations(double monotonicAnimationStartTime);
+class CORE_EXPORT PageAnimator final : public GarbageCollected<PageAnimator> {
+ public:
+  static PageAnimator* create(Page&);
+  DECLARE_TRACE();
+  void scheduleVisualUpdate(LocalFrame*);
+  void serviceScriptedAnimations(double monotonicAnimationStartTime);
 
-    bool isServicingAnimations() const { return m_servicingAnimations; }
+  bool isServicingAnimations() const { return m_servicingAnimations; }
 
-    // See documents of methods with the same names in FrameView class.
-    void updateLifecycleToCompositingCleanPlusScrolling(LocalFrame& rootFrame);
-    void updateAllLifecyclePhases(LocalFrame& rootFrame);
-    AnimationClock& clock() { return m_animationClock; }
+  // See documents of methods with the same names in FrameView class.
+  void updateAllLifecyclePhases(LocalFrame& rootFrame);
+  AnimationClock& clock() { return m_animationClock; }
 
-private:
-    explicit PageAnimator(Page&);
+ private:
+  explicit PageAnimator(Page&);
 
-    RawPtrWillBeMember<Page> m_page;
-    bool m_servicingAnimations;
-    bool m_updatingLayoutAndStyleForPainting;
-    AnimationClock m_animationClock;
+  Member<Page> m_page;
+  bool m_servicingAnimations;
+  bool m_updatingLayoutAndStyleForPainting;
+  AnimationClock m_animationClock;
 };
 
-}
+}  // namespace blink
 
-#endif // PageAnimator_h
+#endif  // PageAnimator_h

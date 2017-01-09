@@ -5,15 +5,14 @@
 #ifndef ANDROID_WEBVIEW_BROWSER_AW_CONTENTS_IO_THREAD_CLIENT_H_
 #define ANDROID_WEBVIEW_BROWSER_AW_CONTENTS_IO_THREAD_CLIENT_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
-
-class GURL;
 
 namespace net {
-class HttpResponseHeaders;
 class URLRequest;
 }
 
@@ -61,8 +60,13 @@ class AwContentsIoThreadClient {
   // |render_process_id|, |render_frame_id| pair.
   // This method can be called from any thread.
   // An empty scoped_ptr is a valid return value.
-  static scoped_ptr<AwContentsIoThreadClient> FromID(int render_process_id,
-                                                     int render_frame_id);
+  static std::unique_ptr<AwContentsIoThreadClient> FromID(int render_process_id,
+                                                          int render_frame_id);
+
+  // Returns the global thread client for service worker related callbacks.
+  // An empty scoped_ptr is a valid return value.
+  static std::unique_ptr<AwContentsIoThreadClient>
+  GetServiceWorkerIoThreadClient();
 
   // Called on the IO thread when a subframe is created.
   static void SubFrameCreated(int render_process_id,
@@ -70,7 +74,7 @@ class AwContentsIoThreadClient {
                               int child_render_frame_id);
 
   // This method is called on the IO thread only.
-  typedef base::Callback<void(scoped_ptr<AwWebResourceResponse>)>
+  typedef base::Callback<void(std::unique_ptr<AwWebResourceResponse>)>
       ShouldInterceptRequestResultCallback;
   virtual void ShouldInterceptRequestAsync(
       const net::URLRequest* request,
@@ -90,31 +94,6 @@ class AwContentsIoThreadClient {
 
   // Retrieve the AcceptThirdPartyCookies setting value of this AwContents.
   virtual bool ShouldAcceptThirdPartyCookies() const = 0;
-
-  // Called when ResourceDispathcerHost detects a download request.
-  // The download is already cancelled when this is called, since
-  // relevant for DownloadListener is already extracted.
-  virtual void NewDownload(const GURL& url,
-                           const std::string& user_agent,
-                           const std::string& content_disposition,
-                           const std::string& mime_type,
-                           int64 content_length) = 0;
-
-  // Called when a new login request is detected. See the documentation for
-  // WebViewClient.onReceivedLoginRequest for arguments. Note that |account|
-  // may be empty.
-  virtual void NewLoginRequest(const std::string& realm,
-                               const std::string& account,
-                               const std::string& args) = 0;
-
-  // Called when a resource loading error has occured (e.g. an I/O error,
-  // host name lookup failure etc.)
-  virtual void OnReceivedError(const net::URLRequest* request) = 0;
-
-  // Called when a response from the server is received with status code >= 400.
-  virtual void OnReceivedHttpError(
-      const net::URLRequest* request,
-      const net::HttpResponseHeaders* response_headers) = 0;
 };
 
 } // namespace android_webview

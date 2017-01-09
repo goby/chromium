@@ -5,12 +5,13 @@
 """Base classes for a test and validator which upload results
 (reference images, error images) to cloud storage."""
 
+import logging
 import os
 import re
 import tempfile
 
-from catapult_base import cloud_storage
-from telemetry.page import page_test
+from py_utils import cloud_storage
+from telemetry.page import legacy_page_test
 from telemetry.util import image_util
 from telemetry.util import rgba_color
 
@@ -23,8 +24,39 @@ default_generated_data_dir = os.path.join(test_data_dir, 'generated')
 
 error_image_cloud_storage_bucket = 'chromium-browser-gpu-tests'
 
-def _CompareScreenshotSamples(screenshot, expectations, device_pixel_ratio):
+def _CompareScreenshotSamples(tab, screenshot, expectations, device_pixel_ratio,
+                              test_machine_name):
+  # First scan through the expectations and see if there are any scale
+  # factor overrides that would preempt the device pixel ratio. This
+  # is mainly a workaround for complex tests like the Maps test.
   for expectation in expectations:
+    if 'scale_factor_overrides' in expectation:
+      for override in expectation['scale_factor_overrides']:
+        # Require exact matches to avoid confusion, because some
+        # machine models and names might be subsets of others
+        # (e.g. Nexus 5 vs Nexus 5X).
+        if ('device_type' in override and
+            (tab.browser.platform.GetDeviceTypeName() ==
+             override['device_type'])):
+          logging.warning('Overriding device_pixel_ratio ' +
+                          str(device_pixel_ratio) + ' with scale factor ' +
+                          str(override['scale_factor']) + ' for device type ' +
+                          override['device_type'])
+          device_pixel_ratio = override['scale_factor']
+          break
+        if (test_machine_name and 'machine_name' in override and
+            override["machine_name"] == test_machine_name):
+          logging.warning('Overriding device_pixel_ratio ' +
+                          str(device_pixel_ratio) + ' with scale factor ' +
+                          str(override['scale_factor']) + ' for machine name ' +
+                          test_machine_name)
+          device_pixel_ratio = override['scale_factor']
+          break
+      # Only support one "scale_factor_overrides" in the expectation format.
+      break
+  for expectation in expectations:
+    if "scale_factor_overrides" in expectation:
+      continue
     location = expectation["location"]
     size = expectation["size"]
     x0 = int(location[0] * device_pixel_ratio)
@@ -35,7 +67,7 @@ def _CompareScreenshotSamples(screenshot, expectations, device_pixel_ratio):
       for y in range(y0, y1):
         if (x < 0 or y < 0 or x >= image_util.Width(screenshot) or
             y >= image_util.Height(screenshot)):
-          raise page_test.Failure(
+          raise legacy_page_test.Failure(
               ('Expected pixel location [%d, %d] is out of range on ' +
                '[%d, %d] image') %
               (x, y, image_util.Width(screenshot),
@@ -47,7 +79,8 @@ def _CompareScreenshotSamples(screenshot, expectations, device_pixel_ratio):
             expectation["color"][1],
             expectation["color"][2])
         if not actual_color.IsEqual(expected_color, expectation["tolerance"]):
-          raise page_test.Failure('Expected pixel at ' + str(location) +
+          raise legacy_page_test.Failure('Expected pixel at ' + str(location) +
+              ' (actual pixel (' + str(x) + ', ' + str(y) + ')) ' +
               ' to be ' +
               str(expectation["color"]) + " but got [" +
               str(actual_color.r) + ", " +
@@ -63,6 +96,7 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
     self.vendor_string = None
     self.device_string = None
     self.msaa = False
+    self.model_name = None
 
   ###
   ### Routines working with the local disk (only used for local
@@ -132,6 +166,7 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
           system_info.gpu.driver_bug_workarounds) or
         ('disable_multisample_render_to_texture' in
           system_info.gpu.driver_bug_workarounds))
+    self.model_name = system_info.model_name
 
   def _FormatGpuInfo(self, tab):
     self._ComputeGpuInfo(tab)
@@ -140,9 +175,14 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
       return '%s_%04x_%04x%s' % (
         self.options.os_type, self.vendor_id, self.device_id, msaa_string)
     else:
-      return '%s_%s_%s%s' % (
+      # This is the code path for Android devices. Include the model
+      # name (e.g. "Nexus 9") in the GPU string to disambiguate
+      # multiple devices on the waterfall which might have the same
+      # device string ("NVIDIA Tegra") but different screen
+      # resolutions and device pixel ratios.
+      return '%s_%s_%s_%s%s' % (
         self.options.os_type, self.vendor_string, self.device_string,
-        msaa_string)
+        self.model_name, msaa_string)
 
   def _FormatReferenceImageName(self, img_name, page, tab):
     return '%s_v%s_%s.png' % (
@@ -211,7 +251,7 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
            'view_test_results.html?%s for this run\'s test results') % (
       error_image_cloud_storage_bucket, upload_dir)
 
-  def _ValidateScreenshotSamples(self, url,
+  def _ValidateScreenshotSamples(self, tab, url,
                                  screenshot, expectations, device_pixel_ratio):
     """Samples the given screenshot and verifies pixel color values.
        The sample locations and expected color values are given in expectations.
@@ -219,8 +259,10 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
        a Failure and dumps the screenshot locally or cloud storage depending on
        what machine the test is being run."""
     try:
-      _CompareScreenshotSamples(screenshot, expectations, device_pixel_ratio)
-    except page_test.Failure:
+      _CompareScreenshotSamples(tab, screenshot, expectations,
+                                device_pixel_ratio,
+                                self.options.test_machine_name)
+    except legacy_page_test.Failure:
       image_name = self._UrlToImageName(url)
       if self.options.test_machine_name:
         self._UploadErrorImagesToCloudStorage(image_name, screenshot, None)
@@ -230,7 +272,7 @@ class ValidatorBase(gpu_test_base.ValidatorBase):
       raise
 
 
-class TestBase(gpu_test_base.TestBase):
+class CloudStorageTestBase(gpu_test_base.TestBase):
   @classmethod
   def AddBenchmarkCommandLineArgs(cls, group):
     group.add_option('--build-revision',

@@ -5,13 +5,15 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_ITEM_MODEL_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_ITEM_MODEL_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
-
-class SavePackage;
+#include "chrome/browser/download/download_target_info.h"
+#include "chrome/common/safe_browsing/download_file_types.pb.h"
 
 namespace content {
 class DownloadItem;
@@ -68,11 +70,11 @@ class DownloadItemModel {
   base::string16 GetWarningConfirmButtonText() const;
 
   // Get the number of bytes that has completed so far. Virtual for testing.
-  int64 GetCompletedBytes() const;
+  int64_t GetCompletedBytes() const;
 
   // Get the total number of bytes for this download. Should return 0 if the
   // total size of the download is not known. Virual for testing.
-  int64 GetTotalBytes() const;
+  int64_t GetTotalBytes() const;
 
   // Rough percent complete. Returns -1 if the progress is unknown.
   int PercentComplete() const;
@@ -86,6 +88,10 @@ class DownloadItemModel {
   // Is this considered a malicious download with very high confidence?
   // Implies IsDangerous() and MightBeMalicious().
   bool IsMalicious() const;
+
+  // Does this download have a MIME type (either explicit or inferred from its
+  // extension) suggesting that it is a supported image type?
+  bool HasSupportedImageMimeType() const;
 
   // Is safe browsing download feedback feature available for this download?
   bool ShouldAllowDownloadFeedback() const;
@@ -137,15 +143,14 @@ class DownloadItemModel {
   // Change what's returned by ShouldPreferOpeningInBrowser to |preference|.
   void SetShouldPreferOpeningInBrowser(bool preference);
 
-  // Mark that the download should be considered dangerous based on the file
-  // type. This value may differ from the download's danger type in cases where
-  // the SafeBrowsing service hasn't returned a verdict about the download. If
-  // SafeBrowsing fails to return a decision, then the download should be
-  // considered dangerous based on this flag. Defaults to false.
-  bool IsDangerousFileBasedOnType() const;
+  // Return the danger level determined during download target determination.
+  // The value returned here is independent of the danger level as determined by
+  // the Safe Browsing.
+  safe_browsing::DownloadFileType::DangerLevel GetDangerLevel() const;
 
-  // Change what's returned by IsDangerousFileBasedOnType().
-  void SetIsDangerousFileBasedOnType(bool dangerous);
+  // Change what's returned by GetDangerLevel().
+  void SetDangerLevel(
+      safe_browsing::DownloadFileType::DangerLevel danger_level);
 
   // Open the download using the platform handler for the download. The behavior
   // of this method will be different from DownloadItem::OpenDownload() if

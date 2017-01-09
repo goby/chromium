@@ -4,6 +4,8 @@
 
 #include "chromeos/network/policy_util.h"
 
+#include <utility>
+
 #include "base/logging.h"
 #include "base/values.h"
 #include "chromeos/network/network_profile.h"
@@ -23,7 +25,7 @@ namespace policy_util {
 
 namespace {
 
-// This fake credential contains a random postfix which is extremly unlikely to
+// This fake credential contains a random postfix which is extremely unlikely to
 // be used by any user.
 const char kFakeCredential[] = "FAKE_CREDENTIAL_VPaJDV9x";
 
@@ -51,7 +53,7 @@ void RemoveFakeCredentials(
       if (field_signature)
         RemoveFakeCredentials(*field_signature->value_signature, nested_object);
       else
-        LOG(ERROR) << "ONC has unrecoginzed field: " << field_name;
+        LOG(ERROR) << "ONC has unrecognized field: " << field_name;
       continue;
     }
 
@@ -218,7 +220,7 @@ void ApplyGlobalAutoconnectPolicy(
 
 }  // namespace
 
-scoped_ptr<base::DictionaryValue> CreateManagedONC(
+std::unique_ptr<base::DictionaryValue> CreateManagedONC(
     const base::DictionaryValue* global_policy,
     const base::DictionaryValue* network_policy,
     const base::DictionaryValue* user_settings,
@@ -242,14 +244,10 @@ scoped_ptr<base::DictionaryValue> CreateManagedONC(
   }
 
   // This call also removes credentials from policies.
-  scoped_ptr<base::DictionaryValue> augmented_onc_network =
+  std::unique_ptr<base::DictionaryValue> augmented_onc_network =
       onc::MergeSettingsAndPoliciesToAugmented(
-          onc::kNetworkConfigurationSignature,
-          user_policy,
-          device_policy,
-          nonshared_user_settings,
-          shared_user_settings,
-          active_settings);
+          onc::kNetworkConfigurationSignature, user_policy, device_policy,
+          nonshared_user_settings, shared_user_settings, active_settings);
 
   // If present, apply the Autoconnect policy only to networks that are not
   // managed by policy.
@@ -264,7 +262,7 @@ scoped_ptr<base::DictionaryValue> CreateManagedONC(
     }
   }
 
-  return augmented_onc_network.Pass();
+  return augmented_onc_network;
 }
 
 void SetShillPropertiesForGlobalPolicy(
@@ -290,23 +288,23 @@ void SetShillPropertiesForGlobalPolicy(
   if (shill_dictionary.GetBooleanWithoutPathExpansion(
           shill::kAutoConnectProperty, &old_autoconnect) &&
       !old_autoconnect) {
-    // Autoconnect is already explictly disabled. No need to set it again.
+    // Autoconnect is already explicitly disabled. No need to set it again.
     return;
   }
 
-  // If autconnect is not explicitly set yet, it might automatically be enabled
+  // If autoconnect is not explicitly set yet, it might automatically be enabled
   // by Shill. To prevent that, disable it explicitly.
   shill_properties_to_update->SetBooleanWithoutPathExpansion(
       shill::kAutoConnectProperty, false);
 }
 
-scoped_ptr<base::DictionaryValue> CreateShillConfiguration(
+std::unique_ptr<base::DictionaryValue> CreateShillConfiguration(
     const NetworkProfile& profile,
     const std::string& guid,
     const base::DictionaryValue* global_policy,
     const base::DictionaryValue* network_policy,
     const base::DictionaryValue* user_settings) {
-  scoped_ptr<base::DictionaryValue> effective;
+  std::unique_ptr<base::DictionaryValue> effective;
   ::onc::ONCSource onc_source = ::onc::ONC_SOURCE_NONE;
   if (network_policy) {
     if (profile.type() == NetworkProfile::TYPE_SHARED) {
@@ -345,7 +343,7 @@ scoped_ptr<base::DictionaryValue> CreateShillConfiguration(
   effective = normalizer.NormalizeObject(&onc::kNetworkConfigurationSignature,
                                          *effective);
 
-  scoped_ptr<base::DictionaryValue> shill_dictionary(
+  std::unique_ptr<base::DictionaryValue> shill_dictionary(
       onc::TranslateONCObjectToShill(&onc::kNetworkConfigurationSignature,
                                      *effective));
 
@@ -373,7 +371,8 @@ scoped_ptr<base::DictionaryValue> CreateShillConfiguration(
         *shill_dictionary, *global_policy, shill_dictionary.get());
   }
 
-  scoped_ptr<NetworkUIData> ui_data(NetworkUIData::CreateFromONC(onc_source));
+  std::unique_ptr<NetworkUIData> ui_data(
+      NetworkUIData::CreateFromONC(onc_source));
 
   if (user_settings) {
     // Shill doesn't know that sensitive data is contained in the UIData
@@ -383,27 +382,25 @@ scoped_ptr<base::DictionaryValue> CreateShillConfiguration(
     // Shill's GetProperties doesn't return credentials. Masking credentials
     // instead of just removing them, allows remembering if a credential is set
     // or not.
-    scoped_ptr<base::DictionaryValue> sanitized_user_settings(
+    std::unique_ptr<base::DictionaryValue> sanitized_user_settings(
         onc::MaskCredentialsInOncObject(onc::kNetworkConfigurationSignature,
-                                        *user_settings,
-                                        kFakeCredential));
-    ui_data->set_user_settings(sanitized_user_settings.Pass());
+                                        *user_settings, kFakeCredential));
+    ui_data->set_user_settings(std::move(sanitized_user_settings));
   }
 
   shill_property_util::SetUIData(*ui_data, shill_dictionary.get());
 
   VLOG(2) << "Created Shill properties: " << *shill_dictionary;
 
-  return shill_dictionary.Pass();
+  return shill_dictionary;
 }
 
 const base::DictionaryValue* FindMatchingPolicy(
     const GuidToPolicyMap& policies,
     const base::DictionaryValue& actual_network) {
-  for (GuidToPolicyMap::const_iterator it = policies.begin();
-       it != policies.end(); ++it) {
+  for (auto it = policies.begin(); it != policies.end(); ++it) {
     if (IsPolicyMatching(*it->second, actual_network))
-      return it->second;
+      return it->second.get();
   }
   return NULL;
 }

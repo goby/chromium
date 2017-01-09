@@ -19,7 +19,7 @@ static const int kMaxBytesPerSample = 4;
 // Maximum audio sampling rate.
 static const int kMaxSampleRate = 192000;
 
-enum AudioCodec {
+enum AudioCodec : int {
   kAudioCodecUnknown = 0,
   kCodecAAC,
   kCodecMP3,
@@ -36,7 +36,7 @@ enum AudioCodec {
   kAudioCodecMax = kCodecFLAC,
 };
 
-enum SampleFormat {
+enum SampleFormat : int {
   kUnknownSampleFormat = 0,
   kSampleFormatU8,         // Unsigned 8-bit w/ bias of 128.
   kSampleFormatS16,        // Signed 16-bit.
@@ -51,7 +51,7 @@ enum SampleFormat {
   kSampleFormatMax = kSampleFormatS24,
 };
 
-enum VideoCodec {
+enum VideoCodec : int {
   kVideoCodecUnknown = 0,
   kCodecH264,
   kCodecVC1,
@@ -61,13 +61,15 @@ enum VideoCodec {
   kCodecVP8,
   kCodecVP9,
   kCodecHEVC,
+  kCodecDolbyVisionH264,
+  kCodecDolbyVisionHEVC,
 
   kVideoCodecMin = kVideoCodecUnknown,
-  kVideoCodecMax = kCodecHEVC,
+  kVideoCodecMax = kCodecDolbyVisionHEVC,
 };
 
 // Profile for Video codec.
-enum VideoProfile {
+enum VideoProfile : int {
   kVideoProfileUnknown = 0,
   kH264Baseline,
   kH264Main,
@@ -81,18 +83,228 @@ enum VideoProfile {
   kH264Stereohigh,
   kH264MultiviewHigh,
   kVP8ProfileAny,
-  kVP9ProfileAny,
+  kVP9Profile0,
+  kVP9Profile1,
+  kVP9Profile2,
+  kVP9Profile3,
+  kDolbyVisionCompatible_EL_MD,
+  kDolbyVisionCompatible_BL_EL_MD,
+  kDolbyVisionNonCompatible_BL_MD,
+  kDolbyVisionNonCompatible_BL_EL_MD,
+  kHEVCMain,
+  kHEVCMain10,
+  kHEVCMainStillPicture,
 
   kVideoProfileMin = kVideoProfileUnknown,
-  kVideoProfileMax = kVP9ProfileAny,
+  kVideoProfileMax = kHEVCMainStillPicture,
 };
 
-// TODO(erickung): Remove constructor once CMA backend implementation does't
+// Specification of whether and how the stream is encrypted (in whole or part).
+struct EncryptionScheme {
+  // Algorithm and mode that was used to encrypt the stream.
+  enum CipherMode {
+    CIPHER_MODE_UNENCRYPTED,
+    CIPHER_MODE_AES_CTR,
+    CIPHER_MODE_AES_CBC
+  };
+
+  // CENC 3rd Edition adds pattern encryption, through two new protection
+  // schemes: 'cens' (with AES-CTR) and 'cbcs' (with AES-CBC).
+  // The pattern applies independently to each 'encrypted' part of the frame (as
+  // defined by the relevant subsample entries), and reduces further the
+  // actual encryption applied through a repeating pattern of (encrypt:skip)
+  // 16 byte blocks. For example, in a (1:9) pattern, the first block is
+  // encrypted, and the next nine are skipped. This pattern is applied
+  // repeatedly until the end of the last 16-byte block in the subsample.
+  // Any remaining bytes are left clear.
+  // If either of encrypt_blocks or skip_blocks is 0, pattern encryption is
+  // disabled.
+  struct Pattern {
+    Pattern() {}
+    Pattern(uint32_t encrypt_blocks, uint32_t skip_blocks);
+    ~Pattern() {}
+    bool IsInEffect() const;
+
+    uint32_t encrypt_blocks = 0;
+    uint32_t skip_blocks = 0;
+  };
+
+  EncryptionScheme() {}
+  EncryptionScheme(CipherMode mode, const Pattern& pattern);
+  ~EncryptionScheme() {}
+  bool is_encrypted() const { return mode != CIPHER_MODE_UNENCRYPTED; }
+
+  CipherMode mode = CIPHER_MODE_UNENCRYPTED;
+  Pattern pattern;
+};
+
+inline EncryptionScheme::Pattern::Pattern(uint32_t encrypt_blocks,
+                                          uint32_t skip_blocks)
+    : encrypt_blocks(encrypt_blocks), skip_blocks(skip_blocks) {
+}
+
+inline bool EncryptionScheme::Pattern::IsInEffect() const {
+  return encrypt_blocks != 0 && skip_blocks != 0;
+}
+
+inline EncryptionScheme::EncryptionScheme(CipherMode mode,
+                                          const Pattern& pattern)
+    : mode(mode), pattern(pattern) {
+}
+
+inline EncryptionScheme Unencrypted() {
+  return EncryptionScheme();
+}
+
+inline EncryptionScheme AesCtrEncryptionScheme() {
+  return EncryptionScheme(EncryptionScheme::CIPHER_MODE_AES_CTR,
+                          EncryptionScheme::Pattern());
+}
+
+// ---- Begin copy/paste from ui/gfx/color_space.h ----
+enum class PrimaryID : uint16_t {
+  // The first 0-255 values should match the H264 specification.
+  RESERVED0 = 0,
+  BT709 = 1,
+  UNSPECIFIED = 2,
+  RESERVED = 3,
+  BT470M = 4,
+  BT470BG = 5,
+  SMPTE170M = 6,
+  SMPTE240M = 7,
+  FILM = 8,
+  BT2020 = 9,
+  SMPTEST428_1 = 10,
+  SMPTEST431_2 = 11,
+  SMPTEST432_1 = 12,
+
+  // Chrome-specific values start at 1000.
+  XYZ_D50 = 1000,
+  // TODO(hubbe): We need to store the primaries.
+  CUSTOM = 1001,
+  LAST = CUSTOM
+};
+
+enum class TransferID : uint16_t {
+  // The first 0-255 values should match the H264 specification.
+  RESERVED0 = 0,
+  BT709 = 1,
+  UNSPECIFIED = 2,
+  RESERVED = 3,
+  GAMMA22 = 4,
+  GAMMA28 = 5,
+  SMPTE170M = 6,
+  SMPTE240M = 7,
+  LINEAR = 8,
+  LOG = 9,
+  LOG_SQRT = 10,
+  IEC61966_2_4 = 11,
+  BT1361_ECG = 12,
+  IEC61966_2_1 = 13,
+  BT2020_10 = 14,
+  BT2020_12 = 15,
+  SMPTEST2084 = 16,
+  SMPTEST428_1 = 17,
+  ARIB_STD_B67 = 18,  // AKA hybrid-log gamma, HLG
+
+  // Chrome-specific values start at 1000.
+  GAMMA24 = 1000,
+
+  // This is an ad-hoc transfer function that decodes SMPTE 2084 content
+  // into a 0-1 range more or less suitable for viewing on a non-hdr
+  // display.
+  SMPTEST2084_NON_HDR,
+
+  // TODO(hubbe): Need to store an approximation of the gamma function(s).
+  CUSTOM,
+  LAST = CUSTOM,
+};
+
+enum class MatrixID : int16_t {
+  // The first 0-255 values should match the H264 specification.
+  RGB = 0,
+  BT709 = 1,
+  UNSPECIFIED = 2,
+  RESERVED = 3,
+  FCC = 4,
+  BT470BG = 5,
+  SMPTE170M = 6,
+  SMPTE240M = 7,
+  YCOCG = 8,
+  BT2020_NCL = 9,
+  BT2020_CL = 10,
+  YDZDX = 11,
+
+  // Chrome-specific values start at 1000
+  LAST = YDZDX,
+};
+
+// This corresponds to the WebM Range enum which is part of WebM color data
+// (see http://www.webmproject.org/docs/container/#Range).
+// H.264 only uses a bool, which corresponds to the LIMITED/FULL values.
+// Chrome-specific values start at 1000.
+enum class RangeID : int8_t {
+  // Range is not explicitly specified / unknown.
+  UNSPECIFIED = 0,
+
+  // Limited Rec. 709 color range with RGB values ranging from 16 to 235.
+  LIMITED = 1,
+
+  // Full RGB color range with RGB valees from 0 to 255.
+  FULL = 2,
+
+  // Range is defined by TransferID/MatrixID.
+  DERIVED = 3,
+
+  LAST = DERIVED
+};
+// ---- End copy/pasted from ui/gfx/color_space.h ----
+
+// ---- Begin copy/paste from media/base/hdr_metadata.h ----
+// SMPTE ST 2086 mastering metadata.
+struct MasteringMetadata {
+  float primary_r_chromaticity_x = 0;
+  float primary_r_chromaticity_y = 0;
+  float primary_g_chromaticity_x = 0;
+  float primary_g_chromaticity_y = 0;
+  float primary_b_chromaticity_x = 0;
+  float primary_b_chromaticity_y = 0;
+  float white_point_chromaticity_x = 0;
+  float white_point_chromaticity_y = 0;
+  float luminance_max = 0;
+  float luminance_min = 0;
+
+  MasteringMetadata();
+  MasteringMetadata(const MasteringMetadata& rhs);
+};
+
+// HDR metadata common for HDR10 and WebM/VP9-based HDR formats.
+struct HDRMetadata {
+  MasteringMetadata mastering_metadata;
+  unsigned max_cll = 0;
+  unsigned max_fall = 0;
+
+  HDRMetadata();
+  HDRMetadata(const HDRMetadata& rhs);
+};
+
+inline MasteringMetadata::MasteringMetadata() {}
+inline MasteringMetadata::MasteringMetadata(const MasteringMetadata& rhs) =
+    default;
+
+inline HDRMetadata::HDRMetadata() {}
+inline HDRMetadata::HDRMetadata(const HDRMetadata& rhs) = default;
+// ---- End copy/paste from media/base/hdr_metadata.h ----
+
+// TODO(erickung): Remove constructor once CMA backend implementation doesn't
 // create a new object to reset the configuration and use IsValidConfig() to
 // determine if the configuration is still valid or not.
 struct AudioConfig {
   AudioConfig();
+  AudioConfig(const AudioConfig& other);
   ~AudioConfig();
+
+  bool is_encrypted() const { return encryption_scheme.is_encrypted(); }
 
   // Stream id.
   StreamId id;
@@ -108,8 +320,8 @@ struct AudioConfig {
   int samples_per_second;
   // Extra data buffer for certain codec initialization.
   std::vector<uint8_t> extra_data;
-  // content is encrypted or not.
-  bool is_encrypted;
+  // Encryption scheme (if any) used for the content.
+  EncryptionScheme encryption_scheme;
 };
 
 inline AudioConfig::AudioConfig()
@@ -118,10 +330,9 @@ inline AudioConfig::AudioConfig()
       sample_format(kUnknownSampleFormat),
       bytes_per_channel(0),
       channel_number(0),
-      samples_per_second(0),
-      is_encrypted(false) {
+      samples_per_second(0) {
 }
-
+inline AudioConfig::AudioConfig(const AudioConfig& other) = default;
 inline AudioConfig::~AudioConfig() {
 }
 
@@ -130,7 +341,10 @@ inline AudioConfig::~AudioConfig() {
 // determine if the configuration is still valid or not.
 struct VideoConfig {
   VideoConfig();
+  VideoConfig(const VideoConfig& other);
   ~VideoConfig();
+
+  bool is_encrypted() const { return encryption_scheme.is_encrypted(); }
 
   // Stream Id.
   StreamId id;
@@ -144,17 +358,27 @@ struct VideoConfig {
   VideoConfig* additional_config;
   // Extra data buffer for certain codec initialization.
   std::vector<uint8_t> extra_data;
-  // content is encrypted or not.
-  bool is_encrypted;
+  // Encryption scheme (if any) used for the content.
+  EncryptionScheme encryption_scheme;
+
+  // ColorSpace info
+  PrimaryID primaries = PrimaryID::UNSPECIFIED;
+  TransferID transfer = TransferID::UNSPECIFIED;
+  MatrixID matrix = MatrixID::UNSPECIFIED;
+  RangeID range = RangeID::UNSPECIFIED;
+
+  bool have_hdr_metadata = false;
+  HDRMetadata hdr_metadata;
 };
 
 inline VideoConfig::VideoConfig()
     : id(kPrimary),
       codec(kVideoCodecUnknown),
       profile(kVideoProfileUnknown),
-      additional_config(nullptr),
-      is_encrypted(false) {
+      additional_config(nullptr) {
 }
+
+inline VideoConfig::VideoConfig(const VideoConfig& other) = default;
 
 inline VideoConfig::~VideoConfig() {
 }

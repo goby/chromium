@@ -4,13 +4,18 @@
 
 #include "chrome/browser/safe_browsing/incident_reporting/module_integrity_verifier_win.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <functional>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/memory_mapped_file.h"
+#include "base/macros.h"
 #include "base/native_library.h"
 #include "base/scoped_native_library.h"
 #include "base/strings/utf_string_conversions.h"
@@ -111,8 +116,8 @@ class SafeBrowsingModuleVerifierWinTest : public testing::Test {
   }
 
   void GetDiskModuleHandle(HMODULE* disk_handle) {
-    *disk_handle =
-        reinterpret_cast<HMODULE>(const_cast<uint8*>(disk_dll_handle_.data()));
+    *disk_handle = reinterpret_cast<HMODULE>(
+        const_cast<uint8_t*>(disk_dll_handle_.data()));
   }
 
   // Returns the address of the named function exported by the test dll.
@@ -152,8 +157,8 @@ class SafeBrowsingModuleVerifierWinTest : public testing::Test {
 
   base::ScopedNativeLibrary mem_dll_handle_;
   base::MemoryMappedFile disk_dll_handle_;
-  scoped_ptr<base::win::PEImageAsData> disk_peimage_ptr_;
-  scoped_ptr<base::win::PEImage> mem_peimage_ptr_;
+  std::unique_ptr<base::win::PEImageAsData> disk_peimage_ptr_;
+  std::unique_ptr<base::win::PEImage> mem_peimage_ptr_;
 };
 
 // Don't run these tests under AddressSanitizer as it patches the modules on
@@ -229,10 +234,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleModified) {
             (uint8_t)state.modification(1).modified_bytes()[0]);
 }
 
-// Disabled because it fails about 80% of the time on XP.
-// http://crbug.com/549564
-TEST_F(SafeBrowsingModuleVerifierWinTest,
-       DISABLED_VerifyModuleLongModification) {
+TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleLongModification) {
   ModuleState state;
   int num_bytes_different = 0;
 
@@ -250,7 +252,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest,
                                   &disk_code_addr,
                                   &code_size));
 
-  const size_t kModificationSize = 256;
+  const int kModificationSize = 256;
   // Write the modification at the end so it's not overlapping relocations
   const size_t modification_offset = code_size - kModificationSize;
   ScopedModuleModifier<kModificationSize> mod(
@@ -278,9 +280,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest,
       state.modification(0).modified_bytes());
 }
 
-// Disabled because it fails about 80% of the time on XP.
-// http://crbug.com/549564
-TEST_F(SafeBrowsingModuleVerifierWinTest, DISABLED_VerifyModuleRelocOverlap) {
+TEST_F(SafeBrowsingModuleVerifierWinTest, VerifyModuleRelocOverlap) {
   int num_bytes_different = 0;
   ModuleState state;
 
@@ -299,7 +299,7 @@ TEST_F(SafeBrowsingModuleVerifierWinTest, DISABLED_VerifyModuleRelocOverlap) {
                                   &code_size));
 
   // Modify the first hunk of the code, which contains many relocs.
-  const size_t kModificationSize = 256;
+  const int kModificationSize = 256;
   ScopedModuleModifier<kModificationSize> mod(mem_code_addr);
 
   state.Clear();
@@ -314,7 +314,8 @@ TEST_F(SafeBrowsingModuleVerifierWinTest, DISABLED_VerifyModuleRelocOverlap) {
   // Modifications across the relocs should have been coalesced into one.
   ASSERT_EQ(1, state.modification_size());
   ASSERT_EQ(kModificationSize, state.modification(0).byte_count());
-  ASSERT_EQ(kModificationSize, state.modification(0).modified_bytes().size());
+  ASSERT_EQ(static_cast<size_t>(kModificationSize),
+            state.modification(0).modified_bytes().size());
   EXPECT_EQ(std::string(mem_code_addr, mem_code_addr + kModificationSize),
             state.modification(0).modified_bytes());
 }

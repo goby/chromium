@@ -7,33 +7,34 @@
 
 #include "bindings/core/v8/ScriptWrappable.h"
 #include "platform/heap/Handle.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
 
 namespace blink {
 
 class Document;
 
-class PrivateScriptTest : public GarbageCollectedFinalized<PrivateScriptTest>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PrivateScriptTest* create(Document* document)
-    {
-        return new PrivateScriptTest(document);
-    }
+class PrivateScriptTest final
+    : public GarbageCollectedFinalized<PrivateScriptTest>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    int addIntegerImplementedInCPPForPrivateScriptOnly(int value1, int value2);
-    String stringAttributeImplementedInCPPForPrivateScriptOnly();
-    void setStringAttributeImplementedInCPPForPrivateScriptOnly(String);
+ public:
+  static PrivateScriptTest* create(Document* document) {
+    return new PrivateScriptTest(document);
+  }
 
-    DEFINE_INLINE_TRACE() { }
+  int addIntegerImplementedInCPPForPrivateScriptOnly(int value1, int value2);
+  String stringAttributeImplementedInCPPForPrivateScriptOnly();
+  void setStringAttributeImplementedInCPPForPrivateScriptOnly(String);
 
-private:
-    explicit PrivateScriptTest(Document*);
+  DEFINE_INLINE_TRACE() {}
 
-    String m_stringAttributeImplementedInCPPForPrivateSriptOnly;
+ private:
+  explicit PrivateScriptTest(Document*);
+
+  String m_stringAttributeImplementedInCPPForPrivateSriptOnly;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // PrivateScriptTest_h
+#endif  // PrivateScriptTest_h

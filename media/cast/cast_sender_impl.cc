@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "media/base/video_frame.h"
 #include "media/cast/sender/video_frame_factory.h"
@@ -55,7 +56,7 @@ class LocalVideoFrameInput : public VideoFrameInput {
 
   const scoped_refptr<CastEnvironment> cast_environment_;
   const base::WeakPtr<VideoSender> video_sender_;
-  const scoped_ptr<VideoFrameFactory> video_frame_factory_;
+  const std::unique_ptr<VideoFrameFactory> video_frame_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(LocalVideoFrameInput);
 };
@@ -68,7 +69,7 @@ class LocalAudioFrameInput : public AudioFrameInput {
                        base::WeakPtr<AudioSender> audio_sender)
       : cast_environment_(cast_environment), audio_sender_(audio_sender) {}
 
-  void InsertAudio(scoped_ptr<AudioBus> audio_bus,
+  void InsertAudio(std::unique_ptr<AudioBus> audio_bus,
                    const base::TimeTicks& recorded_time) final {
     cast_environment_->PostTask(CastEnvironment::MAIN,
                                 FROM_HERE,
@@ -90,17 +91,16 @@ class LocalAudioFrameInput : public AudioFrameInput {
   DISALLOW_COPY_AND_ASSIGN(LocalAudioFrameInput);
 };
 
-scoped_ptr<CastSender> CastSender::Create(
+std::unique_ptr<CastSender> CastSender::Create(
     scoped_refptr<CastEnvironment> cast_environment,
-    CastTransportSender* const transport_sender) {
+    CastTransport* const transport_sender) {
   CHECK(cast_environment.get());
-  return scoped_ptr<CastSender>(
+  return std::unique_ptr<CastSender>(
       new CastSenderImpl(cast_environment, transport_sender));
 }
 
-CastSenderImpl::CastSenderImpl(
-    scoped_refptr<CastEnvironment> cast_environment,
-    CastTransportSender* const transport_sender)
+CastSenderImpl::CastSenderImpl(scoped_refptr<CastEnvironment> cast_environment,
+                               CastTransport* const transport_sender)
     : cast_environment_(cast_environment),
       transport_sender_(transport_sender),
       weak_factory_(this) {
@@ -108,7 +108,7 @@ CastSenderImpl::CastSenderImpl(
 }
 
 void CastSenderImpl::InitializeAudio(
-    const AudioSenderConfig& audio_config,
+    const FrameSenderConfig& audio_config,
     const StatusChangeCallback& status_change_cb) {
   DCHECK(cast_environment_->CurrentlyOn(CastEnvironment::MAIN));
   CHECK(audio_config.use_external_encoder ||
@@ -130,7 +130,7 @@ void CastSenderImpl::InitializeAudio(
 }
 
 void CastSenderImpl::InitializeVideo(
-    const VideoSenderConfig& video_config,
+    const FrameSenderConfig& video_config,
     const StatusChangeCallback& status_change_cb,
     const CreateVideoEncodeAcceleratorCallback& create_vea_cb,
     const CreateVideoEncodeMemoryCallback& create_video_encode_mem_cb) {

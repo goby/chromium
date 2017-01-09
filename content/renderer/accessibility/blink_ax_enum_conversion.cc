@@ -8,8 +8,8 @@
 
 namespace content {
 
-uint32 AXStateFromBlink(const blink::WebAXObject& o) {
-  uint32 state = 0;
+uint32_t AXStateFromBlink(const blink::WebAXObject& o) {
+  uint32_t state = 0;
   if (o.isChecked())
     state |= (1 << ui::AX_STATE_CHECKED);
 
@@ -23,9 +23,6 @@ uint32 AXStateFromBlink(const blink::WebAXObject& o) {
 
   if (o.canSetFocusAttribute())
     state |= (1 << ui::AX_STATE_FOCUSABLE);
-
-  if (o.isFocused())
-    state |= (1 << ui::AX_STATE_FOCUSED);
 
   if (o.role() == blink::WebAXRolePopUpButton ||
       o.ariaHasPopup())
@@ -67,8 +64,8 @@ uint32 AXStateFromBlink(const blink::WebAXObject& o) {
   if (o.isEditable())
     state |= (1 << ui::AX_STATE_EDITABLE);
 
-  if (o.isEnabled())
-    state |= (1 << ui::AX_STATE_ENABLED);
+  if (!o.isEnabled())
+    state |= (1 << ui::AX_STATE_DISABLED);
 
   if (o.isSelected())
     state |= (1 << ui::AX_STATE_SELECTED);
@@ -92,6 +89,8 @@ uint32 AXStateFromBlink(const blink::WebAXObject& o) {
 
 ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
   switch (role) {
+    case blink::WebAXRoleAbbr:
+      return ui::AX_ROLE_ABBR;
     case blink::WebAXRoleAlert:
       return ui::AX_ROLE_ALERT;
     case blink::WebAXRoleAlertDialog:
@@ -102,6 +101,8 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_APPLICATION;
     case blink::WebAXRoleArticle:
       return ui::AX_ROLE_ARTICLE;
+    case blink::WebAXRoleAudio:
+      return ui::AX_ROLE_AUDIO;
     case blink::WebAXRoleBanner:
       return ui::AX_ROLE_BANNER;
     case blink::WebAXRoleBlockquote:
@@ -324,8 +325,10 @@ ui::AXRole AXRoleFromBlink(blink::WebAXRole role) {
       return ui::AX_ROLE_UNKNOWN;
     case blink::WebAXRoleUserInterfaceTooltip:
       return ui::AX_ROLE_TOOLTIP;
+    case blink::WebAXRoleVideo:
+      return ui::AX_ROLE_VIDEO;
     case blink::WebAXRoleWebArea:
-      return ui::AX_ROLE_WEB_AREA;
+      return ui::AX_ROLE_ROOT_WEB_AREA;
     case blink::WebAXRoleLineBreak:
       return ui::AX_ROLE_LINE_BREAK;
     case blink::WebAXRoleWindow:
@@ -355,8 +358,12 @@ ui::AXEvent AXEventFromBlink(blink::WebAXEvent event) {
       return ui::AX_EVENT_CHECKED_STATE_CHANGED;
     case blink::WebAXEventChildrenChanged:
       return ui::AX_EVENT_CHILDREN_CHANGED;
+    case blink::WebAXEventClicked:
+      return ui::AX_EVENT_CLICKED;
     case blink::WebAXEventDocumentSelectionChanged:
       return ui::AX_EVENT_DOCUMENT_SELECTION_CHANGED;
+    case blink::WebAXEventExpandedChanged:
+      return ui::AX_EVENT_EXPANDED_CHANGED;
     case blink::WebAXEventFocus:
       return ui::AX_EVENT_FOCUS;
     case blink::WebAXEventHover:
@@ -402,6 +409,19 @@ ui::AXEvent AXEventFromBlink(blink::WebAXEvent event) {
   }
 }
 
+ui::AXMarkerType AXMarkerTypeFromBlink(blink::WebAXMarkerType marker_type) {
+  switch (marker_type) {
+    case blink::WebAXMarkerTypeSpelling:
+      return ui::AX_MARKER_TYPE_SPELLING;
+    case blink::WebAXMarkerTypeGrammar:
+      return ui::AX_MARKER_TYPE_GRAMMAR;
+    case blink::WebAXMarkerTypeTextMatch:
+      return ui::AX_MARKER_TYPE_TEXT_MATCH;
+  }
+  NOTREACHED();
+  return ui::AX_MARKER_TYPE_NONE;
+}
+
 ui::AXTextDirection AXTextDirectionFromBlink(
     blink::WebAXTextDirection text_direction) {
   switch (text_direction) {
@@ -413,10 +433,8 @@ ui::AXTextDirection AXTextDirectionFromBlink(
       return ui::AX_TEXT_DIRECTION_TTB;
     case blink::WebAXTextDirectionBT:
       return ui::AX_TEXT_DIRECTION_BTT;
-    default:
-      NOTREACHED();
   }
-
+  NOTREACHED();
   return ui::AX_TEXT_DIRECTION_NONE;
 }
 
@@ -431,6 +449,31 @@ ui::AXTextStyle AXTextStyleFromBlink(blink::WebAXTextStyle text_style) {
   if (text_style & blink::WebAXTextStyleLineThrough)
     browser_text_style |= ui::AX_TEXT_STYLE_LINE_THROUGH;
   return static_cast<ui::AXTextStyle>(browser_text_style);
+}
+
+ui::AXAriaCurrentState AXAriaCurrentStateFromBlink(
+    blink::WebAXAriaCurrentState aria_current_state) {
+  switch (aria_current_state) {
+    case blink::WebAXAriaCurrentStateUndefined:
+      return ui::AX_ARIA_CURRENT_STATE_NONE;
+    case blink::WebAXAriaCurrentStateFalse:
+      return ui::AX_ARIA_CURRENT_STATE_FALSE;
+    case blink::WebAXAriaCurrentStateTrue:
+      return ui::AX_ARIA_CURRENT_STATE_TRUE;
+    case blink::WebAXAriaCurrentStatePage:
+      return ui::AX_ARIA_CURRENT_STATE_PAGE;
+    case blink::WebAXAriaCurrentStateStep:
+      return ui::AX_ARIA_CURRENT_STATE_STEP;
+    case blink::WebAXAriaCurrentStateLocation:
+      return ui::AX_ARIA_CURRENT_STATE_LOCATION;
+    case blink::WebAXAriaCurrentStateDate:
+      return ui::AX_ARIA_CURRENT_STATE_DATE;
+    case blink::WebAXAriaCurrentStateTime:
+      return ui::AX_ARIA_CURRENT_STATE_TIME;
+  }
+
+  NOTREACHED();
+  return ui::AX_ARIA_CURRENT_STATE_NONE;
 }
 
 ui::AXInvalidState AXInvalidStateFromBlink(
@@ -448,10 +491,8 @@ ui::AXInvalidState AXInvalidStateFromBlink(
       return ui::AX_INVALID_STATE_GRAMMAR;
     case blink::WebAXInvalidStateOther:
       return ui::AX_INVALID_STATE_OTHER;
-    default:
-      NOTREACHED();
   }
-
+  NOTREACHED();
   return ui::AX_INVALID_STATE_NONE;
 }
 
@@ -468,10 +509,8 @@ ui::AXSortDirection AXSortDirectionFromBlink(
       return ui::AX_SORT_DIRECTION_DESCENDING;
     case blink::WebAXSortDirectionOther:
       return ui::AX_SORT_DIRECTION_OTHER;
-    default:
-      NOTREACHED();
   }
-
+  NOTREACHED();
   return ui::AX_SORT_DIRECTION_NONE;
 }
 
@@ -493,11 +532,9 @@ ui::AXNameFrom AXNameFromFromBlink(blink::WebAXNameFrom name_from) {
       return ui::AX_NAME_FROM_VALUE;
     case blink::WebAXNameFromTitle:
       return ui::AX_NAME_FROM_ATTRIBUTE;
-    default:
-      NOTREACHED();
   }
-
-  return ui::AX_NAME_FROM_UNINITIALIZED;
+  NOTREACHED();
+  return ui::AX_NAME_FROM_NONE;
 }
 
 ui::AXDescriptionFrom AXDescriptionFromFromBlink(
@@ -509,15 +546,22 @@ ui::AXDescriptionFrom AXDescriptionFromFromBlink(
       return ui::AX_DESCRIPTION_FROM_ATTRIBUTE;
     case blink::WebAXDescriptionFromContents:
       return ui::AX_DESCRIPTION_FROM_CONTENTS;
-    case blink::WebAXDescriptionFromPlaceholder:
-      return ui::AX_DESCRIPTION_FROM_PLACEHOLDER;
     case blink::WebAXDescriptionFromRelatedElement:
       return ui::AX_DESCRIPTION_FROM_RELATED_ELEMENT;
-    default:
-      NOTREACHED();
   }
+  NOTREACHED();
+  return ui::AX_DESCRIPTION_FROM_NONE;
+}
 
-  return ui::AX_DESCRIPTION_FROM_UNINITIALIZED;
+ui::AXTextAffinity AXTextAffinityFromBlink(blink::WebAXTextAffinity affinity) {
+  switch (affinity) {
+    case blink::WebAXTextAffinityUpstream:
+      return ui::AX_TEXT_AFFINITY_UPSTREAM;
+    case blink::WebAXTextAffinityDownstream:
+      return ui::AX_TEXT_AFFINITY_DOWNSTREAM;
+  }
+  NOTREACHED();
+  return ui::AX_TEXT_AFFINITY_DOWNSTREAM;
 }
 
 }  // namespace content.

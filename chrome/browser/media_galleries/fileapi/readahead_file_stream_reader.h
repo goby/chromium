@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_READAHEAD_FILE_STREAM_READER_H_
 #define CHROME_BROWSER_MEDIA_GALLERIES_FILEAPI_READAHEAD_FILE_STREAM_READER_H_
 
+#include <stdint.h>
+
 #include <queue>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "net/base/io_buffer.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
@@ -24,7 +27,7 @@ class ReadaheadFileStreamReader
   int Read(net::IOBuffer* buf,
            int buf_len,
            const net::CompletionCallback& callback) override;
-  int64 GetLength(const net::Int64CompletionCallback& callback) override;
+  int64_t GetLength(const net::Int64CompletionCallback& callback) override;
 
  private:
   // Returns the number of bytes consumed from the internal cache into |sink|.
@@ -38,7 +41,7 @@ class ReadaheadFileStreamReader
   void OnFinishReadFromSource(net::IOBuffer* buffer, int result);
 
   // This is reset to NULL upon encountering a read error or EOF.
-  scoped_ptr<storage::FileStreamReader> source_;
+  std::unique_ptr<storage::FileStreamReader> source_;
 
   // This stores the error or EOF from the source FileStreamReader. Its
   // value is undefined if |source_| is non-NULL.

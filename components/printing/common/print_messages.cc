@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "base/strings/string16.h"
+#include "printing/features/features.h"
 #include "ui/gfx/geometry/size.h"
 
 #define IPC_MESSAGE_IMPL
@@ -16,6 +16,12 @@
 // Generate destructors.
 #include "ipc/struct_destructor_macros.h"
 #include "components/printing/common/print_messages.h"
+
+// Generate param traits size methods.
+#include "ipc/param_traits_size_macros.h"
+namespace IPC {
+#include "components/printing/common/print_messages.h"
+}
 
 // Generate param traits write methods.
 #include "ipc/param_traits_write_macros.h"
@@ -42,8 +48,7 @@ PrintMsg_Print_Params::PrintMsg_Print_Params()
     margin_top(0),
     margin_left(0),
     dpi(0),
-    min_shrink(0),
-    max_shrink(0),
+    scale_factor(1.0f),
     desired_dpi(0),
     document_cookie(0),
     selection_only(false),
@@ -56,8 +61,10 @@ PrintMsg_Print_Params::PrintMsg_Print_Params()
     display_header_footer(false),
     title(),
     url(),
-    should_print_backgrounds(false) {
-}
+    should_print_backgrounds(false) {}
+
+PrintMsg_Print_Params::PrintMsg_Print_Params(
+    const PrintMsg_Print_Params& other) = default;
 
 PrintMsg_Print_Params::~PrintMsg_Print_Params() {}
 
@@ -68,8 +75,7 @@ void PrintMsg_Print_Params::Reset() {
   margin_top = 0;
   margin_left = 0;
   dpi = 0;
-  min_shrink = 0;
-  max_shrink = 0;
+  scale_factor = 1.0f;
   desired_dpi = 0;
   document_cookie = 0;
   selection_only = false;
@@ -89,6 +95,9 @@ PrintMsg_PrintPages_Params::PrintMsg_PrintPages_Params()
   : pages() {
 }
 
+PrintMsg_PrintPages_Params::PrintMsg_PrintPages_Params(
+    const PrintMsg_PrintPages_Params& other) = default;
+
 PrintMsg_PrintPages_Params::~PrintMsg_PrintPages_Params() {}
 
 void PrintMsg_PrintPages_Params::Reset() {
@@ -96,6 +105,7 @@ void PrintMsg_PrintPages_Params::Reset() {
   pages = std::vector<int>();
 }
 
+#if BUILDFLAG(ENABLE_PRINT_PREVIEW)
 PrintHostMsg_RequestPrintPreview_Params::
     PrintHostMsg_RequestPrintPreview_Params()
     : is_modifiable(false),
@@ -117,3 +127,4 @@ PrintHostMsg_SetOptionsFromDocument_Params::
 PrintHostMsg_SetOptionsFromDocument_Params::
     ~PrintHostMsg_SetOptionsFromDocument_Params() {
 }
+#endif  // BUILDFLAG(ENABLE_PRINT_PREVIEW)

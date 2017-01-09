@@ -3,6 +3,9 @@
 // found in the LICENSE file.
 
 #include <GLES2/gl2.h>
+#include <stdint.h>
+
+#include <memory>
 
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
@@ -30,7 +33,7 @@ class GLCubeMapTextureTest : public testing::TestWithParam<GLenum> {
     // workaround.
     command_line.AppendSwitchASCII(switches::kGpuDriverBugWorkarounds,
                                    base::IntToString(gpu::FORCE_CUBE_COMPLETE));
-    gl_.InitializeWithCommandLine(GLManager::Options(), &command_line);
+    gl_.InitializeWithCommandLine(GLManager::Options(), command_line);
     DCHECK(gl_.workarounds().force_cube_complete);
     for (int i = 0; i < 256; i++) {
       pixels_[i * 4] = 255u;
@@ -59,7 +62,7 @@ class GLCubeMapTextureTest : public testing::TestWithParam<GLenum> {
   }
 
   GLManager gl_;
-  uint8 pixels_[256 * 4];
+  uint8_t pixels_[256 * 4];
   const int width_ = 16;
   GLuint texture_;
   GLuint framebuffer_id_;
@@ -78,7 +81,7 @@ TEST_P(GLCubeMapTextureTest, TexImage2DAfterFBOBinding) {
   EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
 
   glBindTexture(GL_TEXTURE_CUBE_MAP, texture_);
-  // force_gl_finish_after_compositing workaround prevents Nexus 5 crash.
+  // force_cube_map_positive_x_allocation workaround prevents Nexus 5 crash.
   // TODO(dshwang): remove the workaround when it's fixed. crbug.com/518889
   glTexImage2D(cube_map_target, 0, GL_RGBA, width_, width_, 0, GL_RGBA,
                GL_UNSIGNED_BYTE, pixels_);
@@ -126,27 +129,18 @@ TEST_P(GLCubeMapTextureTest, ReadPixelsFromIncompleteCubeTexture) {
   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, cube_map_target,
                          texture_, 0);
 
-  // force_gl_finish_after_compositing workaround prevents Nexus 5 crash.
+  // force_cube_map_positive_x_allocation workaround prevents Nexus 5 crash.
   // TODO(dshwang): remove the workaround when it's fixed. crbug.com/518889
   EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
 
-  // Check that FB is complete.
-  EXPECT_EQ(static_cast<GLenum>(GL_FRAMEBUFFER_COMPLETE),
+  // Check that FB is not complete.
+  EXPECT_EQ(static_cast<GLenum>(GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT),
             glCheckFramebufferStatus(GL_FRAMEBUFFER));
-#if defined(OS_ANDROID)
-  // No way to workaround on Android NVIDIA drivers. Users have to texImage2D
-  // by (POSITIVE_X, NEGATIVE_Z) order only once. If users call texImage2D again
-  // after defining all faces, glReadPixels fails.
   GLsizei size = width_ * width_ * 4;
-  scoped_ptr<uint8[]> pixels(new uint8[size]);
+  std::unique_ptr<uint8_t[]> pixels(new uint8_t[size]);
   glReadPixels(0, 0, width_, width_, GL_RGBA, GL_UNSIGNED_BYTE, pixels.get());
-#else
-  // Without force_cube_complete workaround,
-  // 1. ANGLE crashes on glReadPixels() from incomplete cube texture.
-  // 2. NVidia fails on glReadPixels() from incomplete cube texture.
-  GLTestHelper::CheckPixels(0, 0, width_, width_, 0, pixels_);
-#endif
-  EXPECT_EQ(static_cast<GLenum>(GL_NO_ERROR), glGetError());
+  EXPECT_EQ(static_cast<GLenum>(GL_INVALID_FRAMEBUFFER_OPERATION),
+            glGetError());
 }
 
 }  // namespace gpu

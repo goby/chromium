@@ -16,13 +16,13 @@ var bitmapHeight;
 var newImage;
 var newImageBitmap;
 var image = new ImageData(new Uint8ClampedArray(
-			[255, 0, 0, 255,
-                        0, 255, 0, 255,
-			255, 255, 255, 127,
-			0, 0, 0, 64,
-			12, 34, 56, 64,
-			12, 34, 56, 127]),
-		        imageWidth, imageHeight);
+                    [255, 0, 0, 255,
+                    0, 255, 0, 255,
+                    255, 255, 255, 127,
+                    0, 0, 0, 64,
+                    12, 34, 56, 64,
+                    12, 34, 56, 127]),
+                    imageWidth, imageHeight);
 var context = document.getElementById("canvas").getContext("2d");
 
 createImageBitmap(image).then(imageBitmap => {
@@ -33,12 +33,28 @@ createImageBitmap(image).then(imageBitmap => {
 
   worker.postMessage({data: imageBitmap}, [imageBitmap]);
 
-  // ImageBitmap has been transfered to worker, main thread loses ownership
+  // ImageBitmap has been transferred to worker, main thread loses ownership
   // of it, so the width and height should be 0 now.
   bitmapWidth = imageBitmap.width;
   bitmapHeight = imageBitmap.height;
   shouldBe("bitmapWidth", "0");
   shouldBe("bitmapHeight", "0");
+
+  newImageBitmap = imageBitmap;
+  // Test createImageBitmap from neutered ImageBitmap
+  createImageBitmap(imageBitmap).then(function() {
+      testFailed("Promise accepted, expected to be rejected");
+      finishJSTest();
+  }, () => {
+      testPassed("createImageBitmap from a neutered ImageBitmap was rejected");
+  });
+
+  try {
+    worker.postMessage({data:imageBitmap});
+    testFailed("Apply structured cloning succeed, expected to fail");
+  } catch(e) {
+    testPassed("Apply structured cloning to a neutered ImageBitmap should throw an exception: " + e);
+  }
 });
 
 worker.onmessage = function(e) {

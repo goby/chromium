@@ -15,8 +15,8 @@
 #include <limits>
 #include <ostream>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
+#include "base/numerics/safe_math.h"
 #include "build/build_config.h"
 
 #if defined(OS_ANDROID)
@@ -80,11 +80,20 @@ void SysTimeToTimeStruct(SysTime t, struct tm* timestruct, bool is_local) {
 }
 #endif  // OS_ANDROID
 
-int64 ConvertTimespecToMicros(const struct timespec& ts) {
-  base::CheckedNumeric<int64> result(ts.tv_sec);
-  result *= base::Time::kMicrosecondsPerSecond;
-  result += (ts.tv_nsec / base::Time::kNanosecondsPerMicrosecond);
-  return result.ValueOrDie();
+int64_t ConvertTimespecToMicros(const struct timespec& ts) {
+  // On 32-bit systems, the calculation cannot overflow int64_t.
+  // 2**32 * 1000000 + 2**64 / 1000 < 2**63
+  if (sizeof(ts.tv_sec) <= 4 && sizeof(ts.tv_nsec) <= 8) {
+    int64_t result = ts.tv_sec;
+    result *= base::Time::kMicrosecondsPerSecond;
+    result += (ts.tv_nsec / base::Time::kNanosecondsPerMicrosecond);
+    return result;
+  } else {
+    base::CheckedNumeric<int64_t> result(ts.tv_sec);
+    result *= base::Time::kMicrosecondsPerSecond;
+    result += (ts.tv_nsec / base::Time::kNanosecondsPerMicrosecond);
+    return result.ValueOrDie();
+  }
 }
 
 // Helper function to get results from clock_gettime() and convert to a
@@ -94,7 +103,7 @@ int64 ConvertTimespecToMicros(const struct timespec& ts) {
 #if (defined(OS_POSIX) &&                                               \
      defined(_POSIX_MONOTONIC_CLOCK) && _POSIX_MONOTONIC_CLOCK >= 0) || \
     defined(OS_BSD) || defined(OS_ANDROID)
-int64 ClockNow(clockid_t clk_id) {
+int64_t ClockNow(clockid_t clk_id) {
   struct timespec ts;
   if (clock_gettime(clk_id, &ts) != 0) {
     NOTREACHED() << "clock_gettime(" << clk_id << ") failed.";
@@ -111,8 +120,14 @@ int64 ClockNow(clockid_t clk_id) {
 
 namespace base {
 
+// static
+TimeDelta TimeDelta::FromTimeSpec(const timespec& ts) {
+  return TimeDelta(ts.tv_sec * Time::kMicrosecondsPerSecond +
+                   ts.tv_nsec / Time::kNanosecondsPerMicrosecond);
+}
+
 struct timespec TimeDelta::ToTimeSpec() const {
-  int64 microseconds = InMicroseconds();
+  int64_t microseconds = InMicroseconds();
   time_t seconds = 0;
   if (microseconds >= Time::kMicrosecondsPerSecond) {
     seconds = InSeconds();
@@ -137,16 +152,16 @@ struct timespec TimeDelta::ToTimeSpec() const {
 //   => Thu Jan 01 00:00:00 UTC 1970
 //   irb(main):011:0> Time.at(-11644473600).getutc()
 //   => Mon Jan 01 00:00:00 UTC 1601
-static const int64 kWindowsEpochDeltaSeconds = INT64_C(11644473600);
+static const int64_t kWindowsEpochDeltaSeconds = INT64_C(11644473600);
 
 // static
-const int64 Time::kWindowsEpochDeltaMicroseconds =
+const int64_t Time::kWindowsEpochDeltaMicroseconds =
     kWindowsEpochDeltaSeconds * Time::kMicrosecondsPerSecond;
 
 // Some functions in time.cc use time_t directly, so we provide an offset
 // to convert from time_t (Unix epoch) and internal (Windows epoch).
 // static
-const int64 Time::kTimeTToMicrosecondsOffset = kWindowsEpochDeltaMicroseconds;
+const int64_t Time::kTimeTToMicrosecondsOffset = kWindowsEpochDeltaMicroseconds;
 
 // static
 Time Time::Now() {
@@ -176,9 +191,9 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
   // Time stores times with microsecond resolution, but Exploded only carries
   // millisecond resolution, so begin by being lossy.  Adjust from Windows
   // epoch (1601) to Unix epoch (1970);
-  int64 microseconds = us_ - kWindowsEpochDeltaMicroseconds;
+  int64_t microseconds = us_ - kWindowsEpochDeltaMicroseconds;
   // The following values are all rounded towards -infinity.
-  int64 milliseconds;  // Milliseconds since epoch.
+  int64_t milliseconds;  // Milliseconds since epoch.
   SysTime seconds;  // Seconds since epoch.
   int millisecond;  // Exploded millisecond value (0-999).
   if (microseconds >= 0) {
@@ -212,24 +227,31 @@ void Time::Explode(bool is_local, Exploded* exploded) const {
 }
 
 // static
-Time Time::FromExploded(bool is_local, const Exploded& exploded) {
+bool Time::FromExploded(bool is_local, const Exploded& exploded, Time* time) {
+  CheckedNumeric<int> month = exploded.month;
+  month--;
+  CheckedNumeric<int> year = exploded.year;
+  year -= 1900;
+  if (!month.IsValid() || !year.IsValid()) {
+    *time = Time(0);
+    return false;
+  }
+
   struct tm timestruct;
-  timestruct.tm_sec    = exploded.second;
-  timestruct.tm_min    = exploded.minute;
-  timestruct.tm_hour   = exploded.hour;
-  timestruct.tm_mday   = exploded.day_of_month;
-  timestruct.tm_mon    = exploded.month - 1;
-  timestruct.tm_year   = exploded.year - 1900;
-  timestruct.tm_wday   = exploded.day_of_week;  // mktime/timegm ignore this
-  timestruct.tm_yday   = 0;     // mktime/timegm ignore this
-  timestruct.tm_isdst  = -1;    // attempt to figure it out
+  timestruct.tm_sec = exploded.second;
+  timestruct.tm_min = exploded.minute;
+  timestruct.tm_hour = exploded.hour;
+  timestruct.tm_mday = exploded.day_of_month;
+  timestruct.tm_mon = month.ValueOrDie();
+  timestruct.tm_year = year.ValueOrDie();
+  timestruct.tm_wday = exploded.day_of_week;  // mktime/timegm ignore this
+  timestruct.tm_yday = 0;                     // mktime/timegm ignore this
+  timestruct.tm_isdst = -1;                   // attempt to figure it out
 #if !defined(OS_NACL) && !defined(OS_SOLARIS)
-  timestruct.tm_gmtoff = 0;     // not a POSIX field, so mktime/timegm ignore
-  timestruct.tm_zone   = NULL;  // not a POSIX field, so mktime/timegm ignore
+  timestruct.tm_gmtoff = 0;   // not a POSIX field, so mktime/timegm ignore
+  timestruct.tm_zone = NULL;  // not a POSIX field, so mktime/timegm ignore
 #endif
 
-
-  int64 milliseconds;
   SysTime seconds;
 
   // Certain exploded dates do not really exist due to daylight saving times,
@@ -247,11 +269,11 @@ Time Time::FromExploded(bool is_local, const Exploded& exploded) {
     // to UTC 00:00:00 that isn't -1.
     timestruct = timestruct0;
     timestruct.tm_isdst = 0;
-    int64 seconds_isdst0 = SysTimeFromTimeStruct(&timestruct, is_local);
+    int64_t seconds_isdst0 = SysTimeFromTimeStruct(&timestruct, is_local);
 
     timestruct = timestruct0;
     timestruct.tm_isdst = 1;
-    int64 seconds_isdst1 = SysTimeFromTimeStruct(&timestruct, is_local);
+    int64_t seconds_isdst1 = SysTimeFromTimeStruct(&timestruct, is_local);
 
     // seconds_isdst0 or seconds_isdst1 can be -1 for some timezones.
     // E.g. "CLST" (Chile Summer Time) returns -1 for 'tm_isdt == 1'.
@@ -267,6 +289,7 @@ Time Time::FromExploded(bool is_local, const Exploded& exploded) {
   // return is the best that can be done here.  It's not ideal, but it's better
   // than failing here or ignoring the overflow case and treating each time
   // overflow as one second prior to the epoch.
+  int64_t milliseconds = 0;
   if (seconds == -1 &&
       (exploded.year < 1969 || exploded.year > 1970)) {
     // If exploded.year is 1969 or 1970, take -1 as correct, with the
@@ -284,14 +307,14 @@ Time Time::FromExploded(bool is_local, const Exploded& exploded) {
     // 999ms to avoid the time being less than any other possible value that
     // this function can return.
 
-    // On Android, SysTime is int64, special care must be taken to avoid
+    // On Android, SysTime is int64_t, special care must be taken to avoid
     // overflows.
-    const int64 min_seconds = (sizeof(SysTime) < sizeof(int64))
-                                  ? std::numeric_limits<SysTime>::min()
-                                  : std::numeric_limits<int32_t>::min();
-    const int64 max_seconds = (sizeof(SysTime) < sizeof(int64))
-                                  ? std::numeric_limits<SysTime>::max()
-                                  : std::numeric_limits<int32_t>::max();
+    const int64_t min_seconds = (sizeof(SysTime) < sizeof(int64_t))
+                                    ? std::numeric_limits<SysTime>::min()
+                                    : std::numeric_limits<int32_t>::min();
+    const int64_t max_seconds = (sizeof(SysTime) < sizeof(int64_t))
+                                    ? std::numeric_limits<SysTime>::max()
+                                    : std::numeric_limits<int32_t>::max();
     if (exploded.year < 1969) {
       milliseconds = min_seconds * kMillisecondsPerSecond;
     } else {
@@ -299,12 +322,42 @@ Time Time::FromExploded(bool is_local, const Exploded& exploded) {
       milliseconds += (kMillisecondsPerSecond - 1);
     }
   } else {
-    milliseconds = seconds * kMillisecondsPerSecond + exploded.millisecond;
+    base::CheckedNumeric<int64_t> checked_millis = seconds;
+    checked_millis *= kMillisecondsPerSecond;
+    checked_millis += exploded.millisecond;
+    if (!checked_millis.IsValid()) {
+      *time = base::Time(0);
+      return false;
+    }
+    milliseconds = checked_millis.ValueOrDie();
   }
 
-  // Adjust from Unix (1970) to Windows (1601) epoch.
-  return Time((milliseconds * kMicrosecondsPerMillisecond) +
-      kWindowsEpochDeltaMicroseconds);
+  // Adjust from Unix (1970) to Windows (1601) epoch avoiding overflows.
+  base::CheckedNumeric<int64_t> checked_microseconds_win_epoch = milliseconds;
+  checked_microseconds_win_epoch *= kMicrosecondsPerMillisecond;
+  checked_microseconds_win_epoch += kWindowsEpochDeltaMicroseconds;
+  if (!checked_microseconds_win_epoch.IsValid()) {
+    *time = base::Time(0);
+    return false;
+  }
+  base::Time converted_time(checked_microseconds_win_epoch.ValueOrDie());
+
+  // If |exploded.day_of_month| is set to 31 on a 28-30 day month, it will
+  // return the first day of the next month. Thus round-trip the time and
+  // compare the initial |exploded| with |utc_to_exploded| time.
+  base::Time::Exploded to_exploded;
+  if (!is_local)
+    converted_time.UTCExplode(&to_exploded);
+  else
+    converted_time.LocalExplode(&to_exploded);
+
+  if (ExplodedMostlyEquals(to_exploded, exploded)) {
+    *time = converted_time;
+    return true;
+  }
+
+  *time = Time(0);
+  return false;
 }
 
 // TimeTicks ------------------------------------------------------------------
@@ -314,7 +367,17 @@ TimeTicks TimeTicks::Now() {
 }
 
 // static
+TimeTicks::Clock TimeTicks::GetClock() {
+  return Clock::LINUX_CLOCK_MONOTONIC;
+}
+
+// static
 bool TimeTicks::IsHighResolution() {
+  return true;
+}
+
+// static
+bool TimeTicks::IsConsistentAcrossProcesses() {
   return true;
 }
 
@@ -340,10 +403,8 @@ Time Time::FromTimeVal(struct timeval t) {
   if (t.tv_usec == static_cast<suseconds_t>(Time::kMicrosecondsPerSecond) - 1 &&
       t.tv_sec == std::numeric_limits<time_t>::max())
     return Max();
-  return Time(
-      (static_cast<int64>(t.tv_sec) * Time::kMicrosecondsPerSecond) +
-      t.tv_usec +
-      kTimeTToMicrosecondsOffset);
+  return Time((static_cast<int64_t>(t.tv_sec) * Time::kMicrosecondsPerSecond) +
+              t.tv_usec + kTimeTToMicrosecondsOffset);
 }
 
 struct timeval Time::ToTimeVal() const {
@@ -358,7 +419,7 @@ struct timeval Time::ToTimeVal() const {
     result.tv_usec = static_cast<suseconds_t>(Time::kMicrosecondsPerSecond) - 1;
     return result;
   }
-  int64 us = us_ - kTimeTToMicrosecondsOffset;
+  int64_t us = us_ - kTimeTToMicrosecondsOffset;
   result.tv_sec = us / Time::kMicrosecondsPerSecond;
   result.tv_usec = us % Time::kMicrosecondsPerSecond;
   return result;

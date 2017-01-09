@@ -4,6 +4,8 @@
 
 #include "content/renderer/media/media_stream.h"
 
+#include <algorithm>
+
 #include "base/logging.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 
@@ -12,7 +14,7 @@ namespace content {
 // static
 MediaStream* MediaStream::GetMediaStream(
     const blink::WebMediaStream& stream) {
-  return static_cast<MediaStream*>(stream.extraData());
+  return static_cast<MediaStream*>(stream.getExtraData());
 }
 
 MediaStream::MediaStream() {

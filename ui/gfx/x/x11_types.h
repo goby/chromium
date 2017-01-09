@@ -5,12 +5,17 @@
 #ifndef UI_GFX_X_X11_UTIL_H_
 #define UI_GFX_X_X11_UTIL_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "ui/gfx/gfx_export.h"
 
 typedef unsigned long XAtom;
 typedef unsigned long XID;
+typedef unsigned long VisualID;
+typedef struct _XcursorImage XcursorImage;
+typedef union _XEvent XEvent;
 typedef struct _XImage XImage;
 typedef struct _XGC *GC;
 typedef struct _XDisplay XDisplay;
@@ -30,7 +35,7 @@ struct XObjectDeleter {
 };
 
 template <class T, class D = XObjectDeleter<void, int, XFree>>
-using XScopedPtr = scoped_ptr<T, D>;
+using XScopedPtr = std::unique_ptr<T, D>;
 
 // TODO(oshima|evan): This assume there is one display and doesn't work
 // undef multiple displays/monitor environment. Remove this and change the
@@ -48,25 +53,33 @@ GFX_EXPORT int BitsPerPixelForPixmapDepth(XDisplay* display, int depth);
 // dimensions as |data| or larger.  |data| is also assumed to be in row order
 // with each line being exactly |width| * 4 bytes long.
 GFX_EXPORT void PutARGBImage(XDisplay* display,
-                             void* visual, int depth,
-                             XID pixmap, void* pixmap_gc,
-                             const uint8* data,
-                             int width, int height);
+                             void* visual,
+                             int depth,
+                             XID pixmap,
+                             void* pixmap_gc,
+                             const uint8_t* data,
+                             int width,
+                             int height);
 
 // Same as above only more general:
 // - |data_width| and |data_height| refer to the data image
 // - |src_x|, |src_y|, |copy_width| and |copy_height| define source region
 // - |dst_x|, |dst_y|, |copy_width| and |copy_height| define destination region
 GFX_EXPORT void PutARGBImage(XDisplay* display,
-                             void* visual, int depth,
-                             XID pixmap, void* pixmap_gc,
-                             const uint8* data,
-                             int data_width, int data_height,
-                             int src_x, int src_y,
-                             int dst_x, int dst_y,
-                             int copy_width, int copy_height);
+                             void* visual,
+                             int depth,
+                             XID pixmap,
+                             void* pixmap_gc,
+                             const uint8_t* data,
+                             int data_width,
+                             int data_height,
+                             int src_x,
+                             int src_y,
+                             int dst_x,
+                             int dst_y,
+                             int copy_width,
+                             int copy_height);
 
 }  // namespace gfx
 
 #endif  // UI_GFX_X_X11_UTIL_H_
-

@@ -6,11 +6,13 @@
 #define CONTENT_BROWSER_STORAGE_PARTITION_IMPL_MAP_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
 #include "base/containers/hash_tables.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/supports_user_data.h"
 #include "content/browser/storage_partition_impl.h"
 #include "content/public/browser/browser_context.h"
@@ -51,8 +53,9 @@ class CONTENT_EXPORT StoragePartitionImplMap
   //
   // The |done| closure is executed on the calling thread when garbage
   // collection is complete.
-  void GarbageCollect(scoped_ptr<base::hash_set<base::FilePath> > active_paths,
-                      const base::Closure& done);
+  void GarbageCollect(
+      std::unique_ptr<base::hash_set<base::FilePath>> active_paths,
+      const base::Closure& done);
 
   void ForEach(const BrowserContext::StoragePartitionCallback& callback);
 
@@ -100,7 +103,7 @@ class CONTENT_EXPORT StoragePartitionImplMap
   };
 
   typedef std::map<StoragePartitionConfig,
-                   StoragePartitionImpl*,
+                   std::unique_ptr<StoragePartitionImpl>,
                    StoragePartitionConfigLess>
       PartitionMap;
 
@@ -127,6 +130,8 @@ class CONTENT_EXPORT StoragePartitionImplMap
   // Set to true when the ResourceContext for the associated |browser_context_|
   // is initialized. Can never return to false.
   bool resource_context_initialized_;
+
+  DISALLOW_COPY_AND_ASSIGN(StoragePartitionImplMap);
 };
 
 }  // namespace content

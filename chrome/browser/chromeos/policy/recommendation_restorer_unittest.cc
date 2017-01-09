@@ -4,12 +4,14 @@
 
 #include "chrome/browser/chromeos/policy/recommendation_restorer.h"
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_notifier_impl.h"
-#include "base/prefs/testing_pref_store.h"
+#include <memory>
+#include <utility>
+
+#include "ash/common/accessibility_types.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/test_simple_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -21,13 +23,16 @@
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
 #include "components/pref_registry/pref_registry_syncable.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/prefs/pref_notifier_impl.h"
+#include "components/prefs/testing_pref_store.h"
+#include "components/sync_preferences/pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "content/public/browser/notification_details.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "extensions/browser/quota_service.h"
 #include "testing/gtest/include/gtest/gtest.h"
-#include "ui/chromeos/accessibility_types.h"
 
 namespace policy {
 
@@ -66,15 +71,18 @@ class RecommendationRestorerTest : public testing::Test {
   void VerifyTimerIsStopped() const;
   void VerifyTimerIsRunning() const;
 
+  content::TestBrowserThreadBundle thread_bundle_;
+  extensions::QuotaService::ScopedDisablePurgeForTesting
+      disable_purge_for_testing_;
+
   TestingPrefStore* recommended_prefs_;  // Not owned.
-  syncable_prefs::TestingPrefServiceSyncable* prefs_;  // Not owned.
+  sync_preferences::TestingPrefServiceSyncable* prefs_;  // Not owned.
   RecommendationRestorer* restorer_;     // Not owned.
 
   scoped_refptr<base::TestSimpleTaskRunner> runner_;
-  base::ThreadTaskRunnerHandle runner_handler_;
 
  private:
-  scoped_ptr<syncable_prefs::PrefServiceSyncable> prefs_owner_;
+  std::unique_ptr<sync_preferences::PrefServiceSyncable> prefs_owner_;
 
   TestingProfileManager profile_manager_;
 
@@ -83,7 +91,7 @@ class RecommendationRestorerTest : public testing::Test {
 
 RecommendationRestorerTest::RecommendationRestorerTest()
     : recommended_prefs_(new TestingPrefStore),
-      prefs_(new syncable_prefs::TestingPrefServiceSyncable(
+      prefs_(new sync_preferences::TestingPrefServiceSyncable(
           new TestingPrefStore,
           new TestingPrefStore,
           recommended_prefs_,
@@ -91,12 +99,12 @@ RecommendationRestorerTest::RecommendationRestorerTest()
           new PrefNotifierImpl)),
       restorer_(NULL),
       runner_(new base::TestSimpleTaskRunner),
-      runner_handler_(runner_),
       prefs_owner_(prefs_),
       profile_manager_(TestingBrowserProcess::GetGlobal()) {}
 
 void RecommendationRestorerTest::SetUp() {
   testing::Test::SetUp();
+  base::MessageLoop::current()->SetTaskRunner(runner_);
   ASSERT_TRUE(profile_manager_.SetUp());
 }
 
@@ -128,14 +136,14 @@ void RecommendationRestorerTest::SetUserSettings() {
   prefs_->SetBoolean(prefs::kAccessibilityHighContrastEnabled, true);
   prefs_->SetBoolean(prefs::kAccessibilityScreenMagnifierEnabled, true);
   prefs_->SetInteger(prefs::kAccessibilityScreenMagnifierType,
-                     ui::MAGNIFIER_FULL);
+                     ash::MAGNIFIER_FULL);
   prefs_->SetBoolean(prefs::kAccessibilityVirtualKeyboardEnabled, true);
 }
 
 void RecommendationRestorerTest::CreateLoginProfile() {
   ASSERT_FALSE(restorer_);
   TestingProfile* profile = profile_manager_.CreateTestingProfile(
-      chrome::kInitialProfile, prefs_owner_.Pass(),
+      chrome::kInitialProfile, std::move(prefs_owner_),
       base::UTF8ToUTF16(chrome::kInitialProfile), 0, std::string(),
       TestingProfile::TestingFactories());
   restorer_ = RecommendationRestorerFactory::GetForProfile(profile);
@@ -145,8 +153,8 @@ void RecommendationRestorerTest::CreateLoginProfile() {
 void RecommendationRestorerTest::CreateUserProfile() {
   ASSERT_FALSE(restorer_);
   TestingProfile* profile = profile_manager_.CreateTestingProfile(
-      "user", prefs_owner_.Pass(), base::UTF8ToUTF16("user"), 0, std::string(),
-      TestingProfile::TestingFactories());
+      "user", std::move(prefs_owner_), base::UTF8ToUTF16("user"), 0,
+      std::string(), TestingProfile::TestingFactories());
   restorer_ = RecommendationRestorerFactory::GetForProfile(profile);
   EXPECT_TRUE(restorer_);
 }
@@ -166,7 +174,7 @@ void RecommendationRestorerTest::NotifyOfUserActivity() {
 void RecommendationRestorerTest::VerifyPrefFollowsUser(
     const char* pref_name,
     const base::Value& expected_value) const {
-  const syncable_prefs::PrefServiceSyncable::Preference* pref =
+  const sync_preferences::PrefServiceSyncable::Preference* pref =
       prefs_->FindPreference(pref_name);
   ASSERT_TRUE(pref);
   EXPECT_TRUE(pref->HasUserSetting());
@@ -185,7 +193,7 @@ void RecommendationRestorerTest::VerifyPrefsFollowUser() const {
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierEnabled,
                         base::FundamentalValue(true));
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierType,
-                        base::FundamentalValue(ui::MAGNIFIER_FULL));
+                        base::FundamentalValue(ash::MAGNIFIER_FULL));
   VerifyPrefFollowsUser(prefs::kAccessibilityVirtualKeyboardEnabled,
                         base::FundamentalValue(true));
 }
@@ -193,7 +201,7 @@ void RecommendationRestorerTest::VerifyPrefsFollowUser() const {
 void RecommendationRestorerTest::VerifyPrefFollowsRecommendation(
     const char* pref_name,
     const base::Value& expected_value) const {
-  const syncable_prefs::PrefServiceSyncable::Preference* pref =
+  const sync_preferences::PrefServiceSyncable::Preference* pref =
       prefs_->FindPreference(pref_name);
   ASSERT_TRUE(pref);
   EXPECT_TRUE(pref->IsRecommended());
@@ -322,7 +330,7 @@ TEST_F(RecommendationRestorerTest, RestoreOnRecommendationChangeOnLoginScreen) {
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierEnabled,
                         base::FundamentalValue(true));
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierType,
-                        base::FundamentalValue(ui::MAGNIFIER_FULL));
+                        base::FundamentalValue(ash::MAGNIFIER_FULL));
   VerifyTimerIsRunning();
   runner_->RunUntilIdle();
   VerifyPrefFollowsRecommendation(prefs::kAccessibilityScreenMagnifierEnabled,
@@ -377,7 +385,7 @@ TEST_F(RecommendationRestorerTest, RestoreOnRecommendationChangeInUserSession) {
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierEnabled,
                         base::FundamentalValue(true));
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierType,
-                        base::FundamentalValue(ui::MAGNIFIER_FULL));
+                        base::FundamentalValue(ash::MAGNIFIER_FULL));
   recommended_prefs_->SetBoolean(prefs::kAccessibilityScreenMagnifierEnabled,
                                  false);
   recommended_prefs_->SetInteger(prefs::kAccessibilityScreenMagnifierType, 0);
@@ -425,11 +433,11 @@ TEST_F(RecommendationRestorerTest, DoNothingOnUserChange) {
 
   prefs_->SetBoolean(prefs::kAccessibilityScreenMagnifierEnabled, true);
   prefs_->SetInteger(prefs::kAccessibilityScreenMagnifierType,
-                     ui::MAGNIFIER_FULL);
+                     ash::MAGNIFIER_FULL);
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierEnabled,
                         base::FundamentalValue(true));
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierType,
-                        base::FundamentalValue(ui::MAGNIFIER_FULL));
+                        base::FundamentalValue(ash::MAGNIFIER_FULL));
   VerifyTimerIsStopped();
 
   prefs_->SetBoolean(prefs::kAccessibilityVirtualKeyboardEnabled, true);
@@ -477,11 +485,11 @@ TEST_F(RecommendationRestorerTest, RestoreOnUserChange) {
   VerifyTimerIsStopped();
   prefs_->SetBoolean(prefs::kAccessibilityScreenMagnifierEnabled, true);
   prefs_->SetInteger(prefs::kAccessibilityScreenMagnifierType,
-                     ui::MAGNIFIER_FULL);
+                     ash::MAGNIFIER_FULL);
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierEnabled,
                         base::FundamentalValue(true));
   VerifyPrefFollowsUser(prefs::kAccessibilityScreenMagnifierType,
-                        base::FundamentalValue(ui::MAGNIFIER_FULL));
+                        base::FundamentalValue(ash::MAGNIFIER_FULL));
   VerifyTimerIsRunning();
   runner_->RunUntilIdle();
   VerifyPrefFollowsRecommendation(prefs::kAccessibilityScreenMagnifierEnabled,

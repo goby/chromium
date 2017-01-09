@@ -57,7 +57,7 @@ cvox.TtsBackground = function(opt_enableMath) {
   // specified.
   if (this.ttsProperties['lang'] == undefined) {
     this.ttsProperties['lang'] =
-        chrome.i18n.getMessage('@@ui_locale').replace('_', '-');
+        chrome.i18n.getUILanguage();
   }
 
   this.lastEventType = 'end';
@@ -253,28 +253,6 @@ cvox.TtsBackground.prototype.speak = function(
   // pattern causes ChromeVox to read numbers as digits rather than words.
   textString = this.getNumberAsDigits_(textString);
 
-  // TODO(dtseng): Google TTS flushes the queue when encountering strings of
-  // this pattern which stops ChromeVox speech.
-  if (!textString || !textString.match(/\w+/g)) {
-    // We still want to callback for listeners in our content script.
-    if (properties['startCallback']) {
-      try {
-        properties['startCallback']();
-      } catch (e) {
-      }
-    }
-    if (properties['endCallback']) {
-      try {
-        properties['endCallback']();
-      } catch (e) {
-      }
-    }
-    if (queueMode === cvox.QueueMode.FLUSH) {
-      this.stop();
-    }
-    return this;
-  }
-
   var mergedProperties = this.mergeProperties(properties);
 
   if (this.currentVoice) {
@@ -288,6 +266,7 @@ cvox.TtsBackground.prototype.speak = function(
 
   var utterance = new cvox.Utterance(textString, mergedProperties);
   this.speakUsingQueue_(utterance, queueMode);
+  return this;
 };
 
 /**
@@ -473,6 +452,7 @@ cvox.TtsBackground.prototype.shouldCancel_ =
       return (utteranceToCancel.properties['category'] ==
           newUtterance.properties['category']);
   }
+  return false;
 };
 
 /**
@@ -533,17 +513,6 @@ cvox.TtsBackground.prototype.addCapturingEventListener = function(listener) {
 cvox.TtsBackground.prototype.onError_ = function(errorMessage) {
   this.updateVoice_(this.currentVoice);
 };
-
-/**
- * Converts an engine property value to a percentage from 0.00 to 1.00.
- * @param {string} property The property to convert.
- * @return {?number} The percentage of the property.
- */
-cvox.TtsBackground.prototype.propertyToPercentage = function(property) {
-  return (this.ttsProperties[property] - this.propertyMin[property]) /
-         Math.abs(this.propertyMax[property] - this.propertyMin[property]);
-};
-
 
 /**
  * @override
@@ -711,24 +680,30 @@ cvox.TtsBackground.prototype.clearTimeout_ = function() {
  * Update the current voice used to speak based upon values in storage. If that
  * does not succeed, fallback to use system locale when picking a voice.
  * @param {string} voiceName Voice name to set.
+ * @param {function(string) : void=} opt_callback Called when the voice is
+ * determined.
  * @private
  */
-cvox.TtsBackground.prototype.updateVoice_ = function(voiceName) {
+cvox.TtsBackground.prototype.updateVoice_ = function(voiceName, opt_callback) {
   chrome.tts.getVoices(goog.bind(function(voices) {
-    var currentLocale = chrome.i18n.getMessage('@@ui_locale').replace('_', '-');
+    chrome.i18n.getAcceptLanguages(goog.bind(function(acceptLanguages) {
+      var currentLocale = acceptLanguages[0] ||
+          chrome.i18n.getUILanguage() || '';
+      var match = voices.find.bind(voices);
+      var newVoice =
+          match(function(v) { return v.voiceName == voiceName; }) ||
+          match(function(v) { return v.lang === currentLocale; }) ||
+          match(function(v) { return currentLocale.startsWith(v.lang); }) ||
+          match(function(v) { return v.lang &&
+              v.lang.startsWith(currentLocale); }) ||
+          voices[0];
 
-    // TODO(dtseng): Prefer voices having the default property once we switch to
-    // web speech. See crbug.com/544139.
-
-    var newVoice = voices.find(
-            function(v) { return v.voiceName == voiceName; }) ||
-        voices.find(function(v) { return v.lang === currentLocale; }) ||
-        voices.find(function(v) { return currentLocale.startsWith(v.lang); }) ||
-        voices[0];
-
-    if (newVoice) {
-      this.currentVoice = newVoice.voiceName;
-      this.startSpeakingNextItemInQueue_();
-    }
+      if (newVoice) {
+        this.currentVoice = newVoice.voiceName;
+        this.startSpeakingNextItemInQueue_();
+      }
+      if (opt_callback)
+        opt_callback(this.currentVoice);
+    }, this));
   }, this));
 };

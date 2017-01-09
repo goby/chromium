@@ -4,15 +4,16 @@
 
 #include "cc/debug/rasterize_and_record_benchmark_impl.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <limits>
 
-#include "base/basictypes.h"
 #include "base/values.h"
 #include "cc/debug/lap_timer.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/layers/picture_layer_impl.h"
-#include "cc/raster/tile_task_worker_pool.h"
+#include "cc/raster/raster_buffer_provider.h"
 #include "cc/trees/layer_tree_host_common.h"
 #include "cc/trees/layer_tree_host_impl.h"
 #include "cc/trees/layer_tree_impl.h"
@@ -24,9 +25,9 @@ namespace {
 
 const int kDefaultRasterizeRepeatCount = 100;
 
-void RunBenchmark(DisplayListRasterSource* raster_source,
+void RunBenchmark(RasterSource* raster_source,
                   const gfx::Rect& content_rect,
-                  float contents_scale,
+                  const gfx::SizeF& raster_scales,
                   size_t repeat_count,
                   base::TimeDelta* min_time,
                   bool* is_solid_color) {
@@ -42,19 +43,19 @@ void RunBenchmark(DisplayListRasterSource* raster_source,
     LapTimer timer(kWarmupRuns,
                    base::TimeDelta::FromMilliseconds(kTimeLimitMillis),
                    kTimeCheckInterval);
+    SkColor color = SK_ColorTRANSPARENT;
+    *is_solid_color = raster_source->PerformSolidColorAnalysis(
+        content_rect, raster_scales, &color);
+
     do {
       SkBitmap bitmap;
       bitmap.allocPixels(SkImageInfo::MakeN32Premul(content_rect.width(),
                                                     content_rect.height()));
       SkCanvas canvas(bitmap);
-      DisplayListRasterSource::SolidColorAnalysis analysis;
 
-      raster_source->PerformSolidColorAnalysis(content_rect, contents_scale,
-                                               &analysis);
       raster_source->PlaybackToCanvas(&canvas, content_rect, content_rect,
-                                      contents_scale);
-
-      *is_solid_color = analysis.is_solid_color;
+                                      raster_scales,
+                                      RasterSource::PlaybackSettings());
 
       timer.NextLap();
     } while (!timer.HasTimeLimitExpired());
@@ -124,13 +125,13 @@ RasterizeAndRecordBenchmarkImpl::~RasterizeAndRecordBenchmarkImpl() {}
 
 void RasterizeAndRecordBenchmarkImpl::DidCompleteCommit(
     LayerTreeHostImpl* host) {
-  LayerTreeHostCommon::CallFunctionForSubtree(
-      host->RootLayer(), [this](LayerImpl* layer) {
+  LayerTreeHostCommon::CallFunctionForEveryLayer(
+      host->active_tree(), [this](LayerImpl* layer) {
         rasterize_results_.total_layers++;
         layer->RunMicroBenchmark(this);
       });
 
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->SetDouble("rasterize_time_ms",
                     rasterize_results_.total_best_time.InMillisecondsF());
   result->SetDouble("total_pictures_in_pile_size",
@@ -169,27 +170,29 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
   // it takes to rasterize content. As such, the actual settings used here don't
   // really matter.
   const LayerTreeSettings& settings = layer->layer_tree_impl()->settings();
-  scoped_ptr<PictureLayerTilingSet> tiling_set = PictureLayerTilingSet::Create(
-      layer->GetTree(), &client, settings.tiling_interest_area_padding,
-      settings.skewport_target_time_in_seconds,
-      settings.skewport_extrapolation_limit_in_content_pixels);
+  std::unique_ptr<PictureLayerTilingSet> tiling_set =
+      PictureLayerTilingSet::Create(
+          layer->GetTree(), &client, settings.tiling_interest_area_padding,
+          settings.skewport_target_time_in_seconds,
+          settings.skewport_extrapolation_limit_in_screen_pixels,
+          settings.max_preraster_distance_in_screen_pixels);
 
   PictureLayerTiling* tiling =
       tiling_set->AddTiling(1.f, layer->GetRasterSource());
   tiling->set_resolution(HIGH_RESOLUTION);
   tiling->CreateAllTilesForTesting();
-  DisplayListRasterSource* raster_source = tiling->raster_source();
+  RasterSource* raster_source = tiling->raster_source().get();
   for (PictureLayerTiling::CoverageIterator it(tiling, 1.f,
                                                layer->visible_layer_rect());
        it; ++it) {
     DCHECK(*it);
 
     gfx::Rect content_rect = (*it)->content_rect();
-    float contents_scale = (*it)->contents_scale();
+    const gfx::SizeF& raster_scales = (*it)->raster_scales();
 
     base::TimeDelta min_time;
     bool is_solid_color = false;
-    RunBenchmark(raster_source, content_rect, contents_scale,
+    RunBenchmark(raster_source, content_rect, raster_scales,
                  rasterize_repeat_count_, &min_time, &is_solid_color);
 
     int tile_size = content_rect.width() * content_rect.height();
@@ -203,7 +206,7 @@ void RasterizeAndRecordBenchmarkImpl::RunOnLayer(PictureLayerImpl* layer) {
     rasterize_results_.total_best_time += min_time;
   }
 
-  const DisplayListRasterSource* layer_raster_source = layer->GetRasterSource();
+  const RasterSource* layer_raster_source = layer->GetRasterSource();
   rasterize_results_.total_memory_usage +=
       layer_raster_source->GetPictureMemoryUsage();
 }

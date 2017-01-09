@@ -7,11 +7,12 @@
 // here might indicate that WebKit changed the calls our glue layer gets in
 // the case of redirects. It may also mean problems with the history system.
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
@@ -19,8 +20,8 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/test/test_timeouts.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/platform_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -135,8 +136,8 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, ClientEmptyReferer) {
   base::ScopedTempDir temp_directory;
   ASSERT_TRUE(temp_directory.CreateUniqueTempDir());
   base::FilePath temp_file;
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_directory.path(),
-                                             &temp_file));
+  ASSERT_TRUE(
+      base::CreateTemporaryFileInDir(temp_directory.GetPath(), &temp_file));
   ASSERT_EQ(static_cast<int>(file_redirect_contents.size()),
             base::WriteFile(temp_file,
                             file_redirect_contents.data(),
@@ -170,7 +171,7 @@ IN_PROC_BROWSER_TEST_F(RedirectTest, ClientCancelled) {
   // as client redirect and the redirect will be recoreded, which can cause
   // this test failed.
   content::SimulateMouseClick(web_contents, 0,
-      blink::WebMouseEvent::ButtonLeft);
+      blink::WebMouseEvent::Button::Left);
   navigation_observer.Wait();
 
   std::vector<GURL> redirects = GetRedirects(first_url);
@@ -281,13 +282,15 @@ IN_PROC_BROWSER_TEST_F(RedirectTest,
   content::TestNavigationObserver observer(web_contents, 2);
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), first_url, CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);
+      browser(), first_url, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_NONE);
   // We don't sleep here - the first navigation won't have been committed yet
   // because we told the server to wait a minute. This means the browser has
   // started it's provisional load for the client redirect destination page but
   // hasn't completed. Our time is now!
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), final_url, CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);
+      browser(), final_url, WindowOpenDisposition::CURRENT_TAB,
+      ui_test_utils::BROWSER_TEST_NONE);
   observer.Wait();
 
   // Check to make sure the navigation did in fact take place and we are

@@ -6,29 +6,38 @@
 #define IOS_WEB_WEB_STATE_UI_WEB_VIEW_JS_UTILS_H_
 
 #import <Foundation/Foundation.h>
+#include <memory>
 
 #include "ios/web/public/block_types.h"
 
-@class UIWebView;
 @class WKWebView;
 
-// This file contains functions that asynchronously evaluate JavaScript on
-// WKWebView/UIWebView and provide result in the same format. Call
-// |completion_handler| with results of the evaluation or an NSError if there is
-// an error. The |completion_handler| can be nil.
+namespace base {
+class Value;
+}  // namespace base
+
 namespace web {
 
-// Asynchronous adaptor to evaluate JavaScript on UIWebView. Provides evaluation
-// result as it is, without modifications.
-void EvaluateJavaScript(UIWebView* web_view,
-                        NSString* script,
-                        JavaScriptCompletion completion_handler);
+// The domain for JS evaluation NSErrors in web.
+extern NSString* const kJSEvaluationErrorDomain;
 
-// Evaluates JavaScript on WKWebView. Provides evaluation result is the same
-// format as UIWebView.
-void EvaluateJavaScript(WKWebView* web_view,
-                        NSString* script,
-                        JavaScriptCompletion completion_handler);
+// The maximum recursion depth when parsing JS results.
+extern int const kMaximumParsingRecursionDepth;
+
+// The type of errors that can occur while evaluating JS.
+enum JSEvaluationErrorCode {
+  // No web view present to evaluate JS.
+  JS_EVALUATION_ERROR_CODE_NO_WEB_VIEW = 1,
+};
+
+// Converts result of WKWebView script evaluation to base::Value.
+std::unique_ptr<base::Value> ValueResultFromWKResult(id result);
+
+// Executes JavaScript on WKWebView. If the web view cannot execute JS at the
+// moment, |completion_handler| is called with an NSError.
+void ExecuteJavaScript(WKWebView* web_view,
+                       NSString* script,
+                       JavaScriptResultBlock completion_handler);
 
 }  // namespace web
 

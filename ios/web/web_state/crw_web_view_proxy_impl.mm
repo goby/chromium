@@ -4,12 +4,14 @@
 
 #import "ios/web/web_state/crw_web_view_proxy_impl.h"
 
-#include "base/ios/ios_util.h"
-#include "base/ios/weak_nsobject.h"
 #include "base/mac/scoped_nsobject.h"
 #import "ios/web/public/web_state/crw_web_view_scroll_view_proxy.h"
 #import "ios/web/public/web_state/ui/crw_content_view.h"
 #import "ios/web/web_state/ui/crw_web_controller.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 namespace {
 
@@ -66,20 +68,20 @@ UIView* GetFirstResponderSubview(UIView* view) {
 @end
 
 @implementation CRWWebViewProxyImpl {
-  base::WeakNSObject<CRWContentView> _contentView;
-  base::WeakNSObject<CRWWebController> _webController;
+  __weak CRWWebController* _webController;
   base::scoped_nsobject<NSMutableDictionary> _registeredInsets;
   // The WebViewScrollViewProxy is a wrapper around the web view's
   // UIScrollView to give components access in a limited and controlled manner.
   base::scoped_nsobject<CRWWebViewScrollViewProxy> _contentViewScrollViewProxy;
 }
+@synthesize contentView = _contentView;
 
 - (instancetype)initWithWebController:(CRWWebController*)webController {
   self = [super init];
   if (self) {
     DCHECK(webController);
     _registeredInsets.reset([[NSMutableDictionary alloc] init]);
-    _webController.reset(webController);
+    _webController = webController;
     _contentViewScrollViewProxy.reset([[CRWWebViewScrollViewProxy alloc] init]);
   }
   return self;
@@ -97,12 +99,37 @@ UIView* GetFirstResponderSubview(UIView* view) {
   return [_contentView frame];
 }
 
+- (CGFloat)topContentPadding {
+  return [_contentView topContentPadding];
+}
+
+- (void)setTopContentPadding:(CGFloat)newTopContentPadding {
+  [_contentView setTopContentPadding:newTopContentPadding];
+}
+
 - (NSArray*)gestureRecognizers {
   return [_contentView gestureRecognizers];
 }
 
-- (web::WebViewType)webViewType {
-  return [_webController webViewType];
+- (void)addGestureRecognizer:(UIGestureRecognizer*)gestureRecognizer {
+  [_contentView addGestureRecognizer:gestureRecognizer];
+}
+
+- (void)removeGestureRecognizer:(UIGestureRecognizer*)gestureRecognizer {
+  [_contentView removeGestureRecognizer:gestureRecognizer];
+}
+
+- (BOOL)shouldUseInsetForTopPadding {
+  SEL shouldUseInsetSelector = @selector(shouldUseInsetForTopPadding);
+  return [_contentView respondsToSelector:shouldUseInsetSelector] &&
+         [_contentView shouldUseInsetForTopPadding];
+}
+
+- (void)setShouldUseInsetForTopPadding:(BOOL)shouldUseInsetForTopPadding {
+  if ([_contentView
+          respondsToSelector:@selector(setShouldUseInsetForTopPadding:)]) {
+    [_contentView setShouldUseInsetForTopPadding:shouldUseInsetForTopPadding];
+  }
 }
 
 - (void)registerInsets:(UIEdgeInsets)insets forCaller:(id)caller {
@@ -121,12 +148,8 @@ UIView* GetFirstResponderSubview(UIView* view) {
   [_registeredInsets removeObjectForKey:callerValue];
 }
 
-- (CRWContentView*)contentView {
-  return _contentView.get();
-}
-
 - (void)setContentView:(CRWContentView*)contentView {
-  _contentView.reset(contentView);
+  _contentView = contentView;
   [_contentViewScrollViewProxy setScrollView:contentView.scrollView];
 }
 
@@ -145,25 +168,15 @@ UIView* GetFirstResponderSubview(UIView* view) {
   return firstResponder.inputAccessoryView;
 }
 
-#if defined(__IPHONE_9_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_9_0
 - (UITextInputAssistantItem*)inputAssistantItem {
-  DCHECK(base::ios::IsRunningOnIOS9OrLater())
-      << "Cannot retrieve inputAssistantItem on iOS versions earlier than 9.";
   if (!_contentView)
     return nil;
   UIView* firstResponder = GetFirstResponderSubview(_contentView);
   return firstResponder.inputAssistantItem;
 }
-#endif
 
-- (BOOL)keyboardDisplayRequiresUserAction {
-  return [_webController keyboardDisplayRequiresUserAction];
-}
-
-- (void)setKeyboardDisplayRequiresUserAction:
-        (BOOL)keyboardDisplayRequiresUserAction {
-  [_webController
-      setKeyboardDisplayRequiresUserAction:keyboardDisplayRequiresUserAction];
+- (BOOL)becomeFirstResponder {
+  return [_contentView becomeFirstResponder];
 }
 
 @end

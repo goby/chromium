@@ -5,6 +5,10 @@
 #include "ui/gfx/font_render_params.h"
 
 #include <fontconfig/fontconfig.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 
 #include "base/command_line.h"
 #include "base/containers/mru_cache.h"
@@ -12,25 +16,59 @@
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
-#include "ui/gfx/display.h"
+#include "build/build_config.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/linux_font_delegate.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/switches.h"
 
 namespace gfx {
 
 namespace {
 
-#if defined(OS_CHROMEOS)
-// A device scale factor for an internal display (if any)
-// that is used to determine if subpixel positioning should be used.
-float device_scale_factor_for_internal_display = 1.0f;
-#endif
+int FontWeightToFCWeight(Font::Weight weight) {
+  const int weight_number = static_cast<int>(weight);
+  if (weight_number <= (static_cast<int>(Font::Weight::THIN) +
+                        static_cast<int>(Font::Weight::EXTRA_LIGHT)) /
+                           2)
+    return FC_WEIGHT_THIN;
+  else if (weight_number <= (static_cast<int>(Font::Weight::EXTRA_LIGHT) +
+                             static_cast<int>(Font::Weight::LIGHT)) /
+                                2)
+    return FC_WEIGHT_ULTRALIGHT;
+  else if (weight_number <= (static_cast<int>(Font::Weight::LIGHT) +
+                             static_cast<int>(Font::Weight::NORMAL)) /
+                                2)
+    return FC_WEIGHT_LIGHT;
+  else if (weight_number <= (static_cast<int>(Font::Weight::NORMAL) +
+                             static_cast<int>(Font::Weight::MEDIUM)) /
+                                2)
+    return FC_WEIGHT_NORMAL;
+  else if (weight_number <= (static_cast<int>(Font::Weight::MEDIUM) +
+                             static_cast<int>(Font::Weight::SEMIBOLD)) /
+                                2)
+    return FC_WEIGHT_MEDIUM;
+  else if (weight_number <= (static_cast<int>(Font::Weight::SEMIBOLD) +
+                             static_cast<int>(Font::Weight::BOLD)) /
+                                2)
+    return FC_WEIGHT_DEMIBOLD;
+  else if (weight_number <= (static_cast<int>(Font::Weight::BOLD) +
+                             static_cast<int>(Font::Weight::EXTRA_BOLD)) /
+                                2)
+    return FC_WEIGHT_BOLD;
+  else if (weight_number <= (static_cast<int>(Font::Weight::EXTRA_BOLD) +
+                             static_cast<int>(Font::Weight::BLACK)) /
+                                2)
+    return FC_WEIGHT_ULTRABOLD;
+  else
+    return FC_WEIGHT_BLACK;
+}
+
+// A device scale factor used to determine if subpixel positioning
+// should be used.
+float device_scale_factor_ = 1.0f;
 
 // Number of recent GetFontRenderParams() results to cache.
 const size_t kCacheSize = 256;
@@ -49,7 +87,7 @@ struct QueryResult {
 
 // Keyed by hashes of FontRenderParamQuery structs from
 // HashFontRenderParamsQuery().
-typedef base::MRUCache<uint32, QueryResult> Cache;
+typedef base::MRUCache<uint32_t, QueryResult> Cache;
 
 // A cache and the lock that must be held while accessing it.
 // GetFontRenderParams() is called by both the UI thread and the sandbox IPC
@@ -93,7 +131,7 @@ bool QueryFontconfig(const FontRenderParamsQuery& query,
   struct FcPatternDeleter {
     void operator()(FcPattern* ptr) const { FcPatternDestroy(ptr); }
   };
-  typedef scoped_ptr<FcPattern, FcPatternDeleter> ScopedFcPattern;
+  typedef std::unique_ptr<FcPattern, FcPatternDeleter> ScopedFcPattern;
 
   ScopedFcPattern query_pattern(FcPatternCreate());
   CHECK(query_pattern);
@@ -112,8 +150,10 @@ bool QueryFontconfig(const FontRenderParamsQuery& query,
   if (query.style >= 0) {
     FcPatternAddInteger(query_pattern.get(), FC_SLANT,
         (query.style & Font::ITALIC) ? FC_SLANT_ITALIC : FC_SLANT_ROMAN);
+  }
+  if (query.weight != Font::Weight::INVALID) {
     FcPatternAddInteger(query_pattern.get(), FC_WEIGHT,
-        (query.style & Font::BOLD) ? FC_WEIGHT_BOLD : FC_WEIGHT_NORMAL);
+                        FontWeightToFCWeight(query.weight));
   }
 
   FcConfigSubstitute(NULL, query_pattern.get(), FcMatchPattern);
@@ -189,9 +229,10 @@ bool QueryFontconfig(const FontRenderParamsQuery& query,
 
 // Serialize |query| into a string and hash it to a value suitable for use as a
 // cache key.
-uint32 HashFontRenderParamsQuery(const FontRenderParamsQuery& query) {
+uint32_t HashFontRenderParamsQuery(const FontRenderParamsQuery& query) {
   return base::Hash(base::StringPrintf(
-      "%d|%d|%d|%s|%f", query.pixel_size, query.point_size, query.style,
+      "%d|%d|%d|%d|%s|%f", query.pixel_size, query.point_size, query.style,
+      static_cast<int>(query.weight),
       base::JoinString(query.families, ",").c_str(),
       query.device_scale_factor));
 }
@@ -201,20 +242,10 @@ uint32 HashFontRenderParamsQuery(const FontRenderParamsQuery& query) {
 FontRenderParams GetFontRenderParams(const FontRenderParamsQuery& query,
                                      std::string* family_out) {
   FontRenderParamsQuery actual_query(query);
-  if (actual_query.device_scale_factor == 0) {
-#if defined(OS_CHROMEOS)
-    actual_query.device_scale_factor = device_scale_factor_for_internal_display;
-#else
-    // Linux does not support per-display DPI, so we use a slightly simpler
-    // code path than on Chrome OS to figure out the device scale factor.
-    gfx::Screen* screen = gfx::Screen::GetScreenByType(gfx::SCREEN_TYPE_NATIVE);
-    if (screen) {
-      gfx::Display display = screen->GetPrimaryDisplay();
-      actual_query.device_scale_factor = display.device_scale_factor();
-    }
-#endif
-  }
-  const uint32 hash = HashFontRenderParamsQuery(actual_query);
+  if (actual_query.device_scale_factor == 0)
+    actual_query.device_scale_factor = device_scale_factor_;
+
+  const uint32_t hash = HashFontRenderParamsQuery(actual_query);
   SynchronizedCache* synchronized_cache = g_synchronized_cache.Pointer();
 
   {
@@ -276,14 +307,12 @@ void ClearFontRenderParamsCacheForTest() {
   synchronized_cache->cache.Clear();
 }
 
-#if defined(OS_CHROMEOS)
 float GetFontRenderParamsDeviceScaleFactor() {
-  return device_scale_factor_for_internal_display;
+  return device_scale_factor_;
 }
 
 void SetFontRenderParamsDeviceScaleFactor(float device_scale_factor) {
-  device_scale_factor_for_internal_display = device_scale_factor;
+  device_scale_factor_ = device_scale_factor;
 }
-#endif
 
 }  // namespace gfx

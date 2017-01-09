@@ -6,11 +6,16 @@
 
 #include <algorithm>
 
+#include "build/build_config.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 #include "ui/views/background.h"
 #include "ui/views/controls/button/blue_button.h"
+#include "ui/views/controls/button/custom_button.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/layout/layout_constants.h"
+#include "ui/views/views_delegate.h"
 #include "ui/views/widget/widget.h"
 #include "ui/views/window/dialog_delegate.h"
 
@@ -35,15 +40,24 @@ bool ShouldShow(View* view) {
 }
 
 // Do the layout for a button.
-void LayoutButton(LabelButton* button, gfx::Rect* row_bounds) {
+void LayoutButton(LabelButton* button,
+                  gfx::Rect* row_bounds,
+                  int button_height) {
   if (!button)
     return;
 
   const gfx::Size size = button->GetPreferredSize();
   row_bounds->set_width(row_bounds->width() - size.width());
-  button->SetBounds(row_bounds->right(), row_bounds->y(),
-                    size.width(), row_bounds->height());
-  row_bounds->set_width(row_bounds->width() - kRelatedButtonHSpacing);
+  DCHECK_LE(button_height, row_bounds->height());
+  button->SetBounds(
+      row_bounds->right(),
+      row_bounds->y() + (row_bounds->height() - button_height) / 2,
+      size.width(), button_height);
+  int spacing = ViewsDelegate::GetInstance()
+                    ? ViewsDelegate::GetInstance()
+                          ->GetDialogRelatedButtonHorizontalSpacing()
+                    : kRelatedButtonHSpacing;
+  row_bounds->set_width(row_bounds->width() - spacing);
 }
 
 }  // namespace
@@ -53,90 +67,80 @@ void LayoutButton(LabelButton* button, gfx::Rect* row_bounds) {
 
 DialogClientView::DialogClientView(Widget* owner, View* contents_view)
     : ClientView(owner, contents_view),
-      ok_button_(NULL),
-      cancel_button_(NULL),
-      default_button_(NULL),
-      focus_manager_(NULL),
-      extra_view_(NULL),
-      footnote_view_(NULL),
-      notified_delegate_(false) {
+      button_row_insets_(0,
+                         kButtonHEdgeMarginNew,
+                         kButtonVEdgeMarginNew,
+                         kButtonHEdgeMarginNew),
+      ok_button_(nullptr),
+      cancel_button_(nullptr),
+      extra_view_(nullptr),
+      delegate_allowed_close_(false) {
+  // Doing this now ensures this accelerator will have lower priority than
+  // one set by the contents view.
+  AddAccelerator(ui::Accelerator(ui::VKEY_ESCAPE, ui::EF_NONE));
+
+  if (ViewsDelegate::GetInstance())
+    button_row_insets_ = ViewsDelegate::GetInstance()->GetDialogButtonInsets();
 }
 
 DialogClientView::~DialogClientView() {
 }
 
 void DialogClientView::AcceptWindow() {
-  // Only notify the delegate once. See |notified_delegate_|'s comment.
-  if (!notified_delegate_ && GetDialogDelegate()->Accept(false)) {
-    notified_delegate_ = true;
-    Close();
+  // Only notify the delegate once. See |delegate_allowed_close_|'s comment.
+  if (!delegate_allowed_close_ && GetDialogDelegate()->Accept()) {
+    delegate_allowed_close_ = true;
+    GetWidget()->Close();
   }
 }
 
 void DialogClientView::CancelWindow() {
-  // Only notify the delegate once. See |notified_delegate_|'s comment.
-  if (!notified_delegate_ && GetDialogDelegate()->Cancel()) {
-    notified_delegate_ = true;
-    Close();
+  // Only notify the delegate once. See |delegate_allowed_close_|'s comment.
+  if (!delegate_allowed_close_ && GetDialogDelegate()->Cancel()) {
+    delegate_allowed_close_ = true;
+    GetWidget()->Close();
   }
 }
 
 void DialogClientView::UpdateDialogButtons() {
   const int buttons = GetDialogDelegate()->GetDialogButtons();
-  ui::Accelerator escape(ui::VKEY_ESCAPE, ui::EF_NONE);
-  if (default_button_)
-    default_button_->SetIsDefault(false);
-  default_button_ = NULL;
 
   if (buttons & ui::DIALOG_BUTTON_OK) {
     if (!ok_button_) {
       ok_button_ = CreateDialogButton(ui::DIALOG_BUTTON_OK);
-      if (!(buttons & ui::DIALOG_BUTTON_CANCEL))
-        ok_button_->AddAccelerator(escape);
       AddChildView(ok_button_);
     }
 
-    UpdateButton(ok_button_, ui::DIALOG_BUTTON_OK);
+    GetDialogDelegate()->UpdateButton(ok_button_, ui::DIALOG_BUTTON_OK);
   } else if (ok_button_) {
     delete ok_button_;
-    ok_button_ = NULL;
+    ok_button_ = nullptr;
   }
 
   if (buttons & ui::DIALOG_BUTTON_CANCEL) {
     if (!cancel_button_) {
       cancel_button_ = CreateDialogButton(ui::DIALOG_BUTTON_CANCEL);
-      cancel_button_->AddAccelerator(escape);
       AddChildView(cancel_button_);
     }
 
-    UpdateButton(cancel_button_, ui::DIALOG_BUTTON_CANCEL);
+    GetDialogDelegate()->UpdateButton(cancel_button_, ui::DIALOG_BUTTON_CANCEL);
   } else if (cancel_button_) {
     delete cancel_button_;
-    cancel_button_ = NULL;
+    cancel_button_ = nullptr;
   }
 
-  // Use the escape key to close the window if there are no dialog buttons.
-  if (!has_dialog_buttons())
-    AddAccelerator(escape);
-  else
-    ResetAccelerators();
+  SetupFocusChain();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 // DialogClientView, ClientView overrides:
 
 bool DialogClientView::CanClose() {
-  if (notified_delegate_)
-    return true;
-
-  // The dialog is closing but no Accept or Cancel action has been performed
-  // before: it's a Close action.
-  if (GetDialogDelegate()->Close()) {
-    notified_delegate_ = true;
-    GetDialogDelegate()->OnClosed();
-    return true;
-  }
-  return false;
+  // If the dialog is closing but no Accept or Cancel action has been performed
+  // before, it's a Close action.
+  if (!delegate_allowed_close_)
+    delegate_allowed_close_ = GetDialogDelegate()->Close();
+  return delegate_allowed_close_;
 }
 
 DialogClientView* DialogClientView::AsDialogClientView() {
@@ -145,31 +149,6 @@ DialogClientView* DialogClientView::AsDialogClientView() {
 
 const DialogClientView* DialogClientView::AsDialogClientView() const {
   return this;
-}
-
-void DialogClientView::OnWillChangeFocus(View* focused_before,
-                                         View* focused_now) {
-  // Make the newly focused button default or restore the dialog's default.
-  const int default_button = GetDialogDelegate()->GetDefaultDialogButton();
-  LabelButton* new_default_button = NULL;
-  if (focused_now &&
-      !strcmp(focused_now->GetClassName(), LabelButton::kViewClassName)) {
-    new_default_button = static_cast<LabelButton*>(focused_now);
-  } else if (default_button == ui::DIALOG_BUTTON_OK && ok_button_) {
-    new_default_button = ok_button_;
-  } else if (default_button == ui::DIALOG_BUTTON_CANCEL && cancel_button_) {
-    new_default_button = cancel_button_;
-  }
-
-  if (default_button_ && default_button_ != new_default_button)
-    default_button_->SetIsDefault(false);
-  default_button_ = new_default_button;
-  if (default_button_ && !default_button_->is_default())
-    default_button_->SetIsDefault(true);
-}
-
-void DialogClientView::OnDidChangeFocus(View* focused_before,
-                                        View* focused_now) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -191,7 +170,7 @@ gfx::Size DialogClientView::GetPreferredSize() const {
 
   int buttons_height = GetButtonsAndExtraViewRowHeight();
   if (buttons_height != 0) {
-    size.Enlarge(0, buttons_height + kRelatedControlVerticalSpacing);
+    size.Enlarge(0, buttons_height + GetButtonsAndExtraViewRowTopPadding());
     // Inset the buttons and extra view.
     const gfx::Insets insets = GetButtonRowInsets();
     size.Enlarge(insets.width(), insets.height());
@@ -203,30 +182,11 @@ gfx::Size DialogClientView::GetPreferredSize() const {
   size.Enlarge(0, contents_size.height());
   size.set_width(std::max(size.width(), contents_size.width()));
 
-  // Increase the size as needed to fit the footnote view.
-  if (ShouldShow(footnote_view_)) {
-    gfx::Size footnote_size = footnote_view_->GetPreferredSize();
-    if (!footnote_size.IsEmpty())
-      size.set_width(std::max(size.width(), footnote_size.width()));
-
-    int footnote_height = footnote_view_->GetHeightForWidth(size.width());
-    size.Enlarge(0, footnote_height);
-  }
-
   return size;
 }
 
 void DialogClientView::Layout() {
   gfx::Rect bounds = GetContentsBounds();
-
-  // Layout the footnote view.
-  if (ShouldShow(footnote_view_)) {
-    const int height = footnote_view_->GetHeightForWidth(bounds.width());
-    footnote_view_->SetBounds(bounds.x(), bounds.bottom() - height,
-                              bounds.width(), height);
-    if (height != 0)
-      bounds.Inset(0, 0, 0, height);
-  }
 
   // Layout the row containing the buttons and the extra view.
   if (has_dialog_buttons() || ShouldShow(extra_view_)) {
@@ -234,12 +194,17 @@ void DialogClientView::Layout() {
     const int height = GetButtonsAndExtraViewRowHeight();
     gfx::Rect row_bounds(bounds.x(), bounds.bottom() - height,
                          bounds.width(), height);
+    // If the |extra_view_| is a also button, then the |button_height| is the
+    // maximum height of the three buttons, otherwise it is the maximum height
+    // of the ok and cancel buttons.
+    const int button_height =
+        CustomButton::AsCustomButton(extra_view_) ? height : GetButtonHeight();
     if (kIsOkButtonOnLeftSide) {
-      LayoutButton(cancel_button_, &row_bounds);
-      LayoutButton(ok_button_, &row_bounds);
+      LayoutButton(cancel_button_, &row_bounds, button_height);
+      LayoutButton(ok_button_, &row_bounds, button_height);
     } else {
-      LayoutButton(ok_button_, &row_bounds);
-      LayoutButton(cancel_button_, &row_bounds);
+      LayoutButton(ok_button_, &row_bounds, button_height);
+      LayoutButton(cancel_button_, &row_bounds, button_height);
     }
     if (extra_view_) {
       int custom_padding = 0;
@@ -247,7 +212,7 @@ void DialogClientView::Layout() {
           GetDialogDelegate()->GetExtraViewPadding(&custom_padding)) {
         // The call to LayoutButton() will already have accounted for some of
         // the padding.
-        custom_padding -= kRelatedButtonHSpacing;
+        custom_padding -= GetButtonsAndExtraViewRowTopPadding();
         row_bounds.set_width(row_bounds.width() - custom_padding);
       }
       row_bounds.set_width(std::min(row_bounds.width(),
@@ -256,7 +221,7 @@ void DialogClientView::Layout() {
     }
 
     if (height > 0)
-      bounds.Inset(0, 0, 0, height + kRelatedControlVerticalSpacing);
+      bounds.Inset(0, 0, 0, height + GetButtonsAndExtraViewRowTopPadding());
   }
 
   // Layout the contents view to the top and side edges of the contents bounds.
@@ -268,7 +233,8 @@ void DialogClientView::Layout() {
 
 bool DialogClientView::AcceleratorPressed(const ui::Accelerator& accelerator) {
   DCHECK_EQ(accelerator.key_code(), ui::VKEY_ESCAPE);
-  Close();
+
+  GetWidget()->Close();
   return true;
 }
 
@@ -276,35 +242,15 @@ void DialogClientView::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
   ClientView::ViewHierarchyChanged(details);
   if (details.is_add && details.child == this) {
-    focus_manager_ = GetFocusManager();
-    if (focus_manager_)
-      GetFocusManager()->AddFocusChangeListener(this);
-
     UpdateDialogButtons();
     CreateExtraView();
-    CreateFootnoteView();
-  } else if (!details.is_add && details.child == this) {
-    if (focus_manager_)
-      focus_manager_->RemoveFocusChangeListener(this);
-    focus_manager_ = NULL;
-  } else if (!details.is_add) {
-    if (details.child == default_button_)
-      default_button_ = NULL;
+  } else if (!details.is_add && details.child != this) {
     if (details.child == ok_button_)
-      ok_button_ = NULL;
-    if (details.child == cancel_button_)
-      cancel_button_ = NULL;
-  }
-}
-
-void DialogClientView::NativeViewHierarchyChanged() {
-  FocusManager* focus_manager = GetFocusManager();
-  if (focus_manager_ != focus_manager) {
-    if (focus_manager_)
-      focus_manager_->RemoveFocusChangeListener(this);
-    focus_manager_ = focus_manager;
-    if (focus_manager_)
-      focus_manager_->AddFocusChangeListener(this);
+      ok_button_ = nullptr;
+    else if (details.child == cancel_button_)
+      cancel_button_ = nullptr;
+    else if (details.child == extra_view_)
+      extra_view_ = nullptr;
   }
 }
 
@@ -313,7 +259,7 @@ void DialogClientView::OnNativeThemeChanged(const ui::NativeTheme* theme) {
   // dialog style simply inherits the bubble's frame view color.
   const DialogDelegate* dialog = GetDialogDelegate();
 
-  if (dialog && !dialog->UseNewStyleForThisDialog()) {
+  if (dialog && !dialog->ShouldUseCustomFrame()) {
     set_background(views::Background::CreateSolidBackground(GetNativeTheme()->
         GetSystemColor(ui::NativeTheme::kColorId_DialogBackground)));
   }
@@ -339,14 +285,11 @@ void DialogClientView::ButtonPressed(Button* sender, const ui::Event& event) {
 // DialogClientView, protected:
 
 DialogClientView::DialogClientView(View* contents_view)
-    : ClientView(NULL, contents_view),
-      ok_button_(NULL),
-      cancel_button_(NULL),
-      default_button_(NULL),
-      focus_manager_(NULL),
-      extra_view_(NULL),
-      footnote_view_(NULL),
-      notified_delegate_(false) {}
+    : ClientView(nullptr, contents_view),
+      ok_button_(nullptr),
+      cancel_button_(nullptr),
+      extra_view_(nullptr),
+      delegate_allowed_close_(false) {}
 
 DialogDelegate* DialogClientView::GetDialogDelegate() const {
   return GetWidget()->widget_delegate()->AsDialogDelegate();
@@ -360,20 +303,12 @@ void DialogClientView::CreateExtraView() {
   if (extra_view_) {
     extra_view_->SetGroup(kButtonGroup);
     AddChildView(extra_view_);
+    SetupFocusChain();
   }
 }
 
-void DialogClientView::CreateFootnoteView() {
-  if (footnote_view_)
-    return;
-
-  footnote_view_ = GetDialogDelegate()->CreateFootnoteView();
-  if (footnote_view_)
-    AddChildView(footnote_view_);
-}
-
 void DialogClientView::ChildPreferredSizeChanged(View* child) {
-  if (child == footnote_view_ || child == extra_view_)
+  if (child == extra_view_)
     Layout();
 }
 
@@ -386,16 +321,15 @@ void DialogClientView::ChildVisibilityChanged(View* child) {
 
 LabelButton* DialogClientView::CreateDialogButton(ui::DialogButton type) {
   const base::string16 title = GetDialogDelegate()->GetDialogButtonLabel(type);
-  LabelButton* button = NULL;
-  if (GetDialogDelegate()->UseNewStyleForThisDialog() &&
-      GetDialogDelegate()->GetDefaultDialogButton() == type &&
-      GetDialogDelegate()->ShouldDefaultButtonBeBlue()) {
-    button = new BlueButton(this, title);
+  LabelButton* button = nullptr;
+  // The default button is always blue in Harmony.
+  if (GetDialogDelegate()->GetDefaultDialogButton() == type &&
+      (ui::MaterialDesignController::IsSecondaryUiMaterial() ||
+       GetDialogDelegate()->ShouldDefaultButtonBeBlue())) {
+    button = MdTextButton::CreateSecondaryUiBlueButton(this, title);
   } else {
-    button = new LabelButton(this, title);
-    button->SetStyle(Button::STYLE_BUTTON);
+    button = MdTextButton::CreateSecondaryUiButton(this, title);
   }
-  button->SetFocusable(true);
 
   const int kDialogMinButtonWidth = 75;
   button->SetMinSize(gfx::Size(kDialogMinButtonWidth, 0));
@@ -403,37 +337,59 @@ LabelButton* DialogClientView::CreateDialogButton(ui::DialogButton type) {
   return button;
 }
 
-void DialogClientView::UpdateButton(LabelButton* button,
-                                    ui::DialogButton type) {
-  DialogDelegate* dialog = GetDialogDelegate();
-  button->SetText(dialog->GetDialogButtonLabel(type));
-  button->SetEnabled(dialog->IsDialogButtonEnabled(type));
+int DialogClientView::GetButtonHeight() const {
+  return std::max(
+      ok_button_ ? ok_button_->GetPreferredSize().height() : 0,
+      cancel_button_ ? cancel_button_->GetPreferredSize().height() : 0);
+}
 
-  if (type == dialog->GetDefaultDialogButton()) {
-    default_button_ = button;
-    button->SetIsDefault(true);
-  }
+int DialogClientView::GetExtraViewHeight() const {
+  return ShouldShow(extra_view_) ? extra_view_->GetPreferredSize().height() : 0;
 }
 
 int DialogClientView::GetButtonsAndExtraViewRowHeight() const {
-  int extra_view_height = ShouldShow(extra_view_) ?
-      extra_view_->GetPreferredSize().height() : 0;
-  int buttons_height = std::max(
-      ok_button_ ? ok_button_->GetPreferredSize().height() : 0,
-      cancel_button_ ? cancel_button_->GetPreferredSize().height() : 0);
-  return std::max(extra_view_height, buttons_height);
+  return std::max(GetExtraViewHeight(), GetButtonHeight());
 }
 
 gfx::Insets DialogClientView::GetButtonRowInsets() const {
-  // NOTE: The insets only apply to the buttons, extra view, and footnote view.
-  return GetButtonsAndExtraViewRowHeight() == 0 ? gfx::Insets() :
-      gfx::Insets(0, kButtonHEdgeMarginNew,
-                  kButtonVEdgeMarginNew, kButtonHEdgeMarginNew);
+  return GetButtonsAndExtraViewRowHeight() == 0 ? gfx::Insets()
+                                                : button_row_insets_;
 }
 
-void DialogClientView::Close() {
-  GetWidget()->Close();
-  GetDialogDelegate()->OnClosed();
+int DialogClientView::GetButtonsAndExtraViewRowTopPadding() const {
+  int spacing = button_row_insets_.top();
+  // Some subclasses of DialogClientView, in order to do their own layout, set
+  // button_row_insets_ to gfx::Insets(). To avoid breaking behavior of those
+  // dialogs, supplying 0 for the top inset of the row falls back to
+  // kRelatedControlVerticalSpacing.
+  // TODO(ellyjones): Figure out a more principled way to approach that issue.
+  if (!spacing)
+    spacing = kRelatedControlVerticalSpacing;
+  return spacing;
+}
+
+void DialogClientView::SetupFocusChain() {
+  // Create a vector of child views in the order of intended focus.
+  std::vector<View*> child_views;
+  child_views.push_back(contents_view());
+  child_views.push_back(extra_view_);
+  if (kIsOkButtonOnLeftSide) {
+    child_views.push_back(ok_button_);
+    child_views.push_back(cancel_button_);
+  } else {
+    child_views.push_back(cancel_button_);
+    child_views.push_back(ok_button_);
+  }
+
+  // Remove all null views from the vector.
+  child_views.erase(
+      std::remove(child_views.begin(), child_views.end(), nullptr),
+      child_views.end());
+
+  // Setup focus by reordering views. It is not safe to use SetNextFocusableView
+  // since child views may be added externally to this view.
+  for (size_t i = 0; i < child_views.size(); i++)
+    ReorderChildView(child_views[i], i);
 }
 
 }  // namespace views

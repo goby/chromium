@@ -12,6 +12,7 @@ action
 align
 alink
 allowfullscreen
+allowpaymentrequest
 alt
 archive
 aria-activedescendant
@@ -20,6 +21,7 @@ aria-autocomplete
 aria-busy
 aria-checked
 aria-controls
+aria-current
 aria-describedby
 aria-disabled
 aria-dropeffect
@@ -39,6 +41,7 @@ aria-multiline
 aria-multiselectable
 aria-orientation
 aria-owns
+aria-placeholder
 aria-posinset
 aria-pressed
 aria-readonly
@@ -55,6 +58,7 @@ as
 async
 autocapitalize
 autocomplete
+autocorrect
 autofocus
 autoplay
 axis
@@ -88,6 +92,7 @@ contextmenu
 controls
 coords
 crossorigin
+csp
 data
 datetime
 declare
@@ -97,6 +102,7 @@ dir
 direction
 dirname
 disabled
+disableremoteplayback
 download
 draggable
 webkitdropzone
@@ -164,8 +170,7 @@ onabort
 onanimationstart
 onanimationiteration
 onanimationend
-onautocomplete
-onautocompleteerror
+onauxclick
 onbeforecopy
 onbeforecut
 onbeforepaste
@@ -196,6 +201,7 @@ onerror
 onfocus
 onfocusin
 onfocusout
+ongotpointercapture
 onhashchange
 oninput
 oninvalid
@@ -207,6 +213,7 @@ onload
 onloadeddata
 onloadedmetadata
 onloadstart
+onlostpointercapture
 onmessage
 onmousedown
 onmouseenter
@@ -225,6 +232,14 @@ onpaste
 onpause
 onplay
 onplaying
+onpointercancel
+onpointerdown
+onpointerenter
+onpointerleave
+onpointermove
+onpointerout
+onpointerover
+onpointerup
 onpopstate
 onprogress
 onratechange
@@ -273,7 +288,6 @@ readonly
 referrerpolicy
 rel
 required
-results
 rev
 reversed
 role
@@ -291,6 +305,7 @@ selected
 shape
 size
 sizes
+slot
 span
 spellcheck
 src

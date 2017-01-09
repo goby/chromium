@@ -4,13 +4,19 @@
 
 #include "components/suggestions/suggestions_store.h"
 
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
 #include "components/suggestions/proto/suggestions.pb.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
-using user_prefs::TestingPrefServiceSyncable;
+using sync_preferences::TestingPrefServiceSyncable;
 
 namespace suggestions {
 
@@ -19,8 +25,10 @@ namespace {
 const char kTestTitle[] = "Foo site";
 const char kTestUrl[] = "http://foo.com/";
 
-void AddSuggestion(SuggestionsProfile* suggestions, const char *title,
-                   const char *url, int64 expiry_ts) {
+void AddSuggestion(SuggestionsProfile* suggestions,
+                   const char* title,
+                   const char* url,
+                   int64_t expiry_ts) {
   ChromeSuggestion* suggestion = suggestions->add_suggestions();
   suggestion->set_url(title);
   suggestion->set_title(url);
@@ -39,9 +47,9 @@ SuggestionsProfile CreateTestSuggestionsProfileWithExpiry(
     base::Time current_time,
     int expired_count,
     int valid_count) {
-  int64 current_time_usec =
+  int64_t current_time_usec =
       (current_time - base::Time::UnixEpoch()).ToInternalValue();
-  int64 offset_usec = 5 * base::Time::kMicrosecondsPerMinute;
+  int64_t offset_usec = 5 * base::Time::kMicrosecondsPerMinute;
 
   SuggestionsProfile suggestions;
   for (int i = 1; i <= valid_count; i++)
@@ -74,7 +82,7 @@ void ValidateSuggestions(const SuggestionsProfile& expected,
 class SuggestionsStoreTest : public testing::Test {
  public:
   SuggestionsStoreTest()
-    : pref_service_(new user_prefs::TestingPrefServiceSyncable) {}
+      : pref_service_(new sync_preferences::TestingPrefServiceSyncable) {}
 
   void SetUp() override {
     SuggestionsStore::RegisterProfilePrefs(pref_service_->registry());
@@ -83,12 +91,12 @@ class SuggestionsStoreTest : public testing::Test {
     base::SimpleTestClock* test_clock(new base::SimpleTestClock());
     current_time = base::Time::FromInternalValue(13063394337546738);
     test_clock->SetNow(current_time);
-    suggestions_store_->SetClockForTesting(scoped_ptr<base::Clock>(test_clock));
+    suggestions_store_->SetClockForTesting(base::WrapUnique(test_clock));
   }
 
  protected:
-  scoped_ptr<user_prefs::TestingPrefServiceSyncable> pref_service_;
-  scoped_ptr<SuggestionsStore> suggestions_store_;
+  std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> pref_service_;
+  std::unique_ptr<SuggestionsStore> suggestions_store_;
   base::Time current_time;
 
   DISALLOW_COPY_AND_ASSIGN(SuggestionsStoreTest);

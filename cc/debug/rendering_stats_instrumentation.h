@@ -5,7 +5,11 @@
 #ifndef CC_DEBUG_RENDERING_STATS_INSTRUMENTATION_H_
 #define CC_DEBUG_RENDERING_STATS_INSTRUMENTATION_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "cc/debug/rendering_stats.h"
 
@@ -15,7 +19,7 @@ namespace cc {
 // recording of rendering stats into a private RenderingStats instance.
 class CC_EXPORT RenderingStatsInstrumentation {
  public:
-  static scoped_ptr<RenderingStatsInstrumentation> Create();
+  static std::unique_ptr<RenderingStatsInstrumentation> Create();
   virtual ~RenderingStatsInstrumentation();
 
   // Return copy of current impl thread rendering stats.
@@ -37,17 +41,16 @@ class CC_EXPORT RenderingStatsInstrumentation {
       record_rendering_stats_ = record_rendering_stats;
   }
 
-  void IncrementFrameCount(int64 count);
-  void AddVisibleContentArea(int64 area);
-  void AddApproximatedVisibleContentArea(int64 area);
-  void AddCheckerboardedVisibleContentArea(int64 area);
-  void AddCheckerboardedNoRecordingContentArea(int64 area);
-  void AddCheckerboardedNeedsRasterContentArea(int64 area);
+  void IncrementFrameCount(int64_t count);
+  void AddVisibleContentArea(int64_t area);
+  void AddApproximatedVisibleContentArea(int64_t area);
+  void AddCheckerboardedVisibleContentArea(int64_t area);
+  void AddCheckerboardedNoRecordingContentArea(int64_t area);
+  void AddCheckerboardedNeedsRasterContentArea(int64_t area);
   void AddDrawDuration(base::TimeDelta draw_duration,
                        base::TimeDelta draw_duration_estimate);
   void AddBeginMainFrameToCommitDuration(
-      base::TimeDelta begin_main_frame_to_commit_duration,
-      base::TimeDelta begin_main_frame_to_commit_duration_estimate);
+      base::TimeDelta begin_main_frame_to_commit_duration);
   void AddCommitToActivateDuration(
       base::TimeDelta commit_to_activate_duration,
       base::TimeDelta commit_to_activate_duration_estimate);

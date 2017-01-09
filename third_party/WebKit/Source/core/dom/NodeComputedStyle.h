@@ -30,41 +30,37 @@
 #include "core/dom/shadow/InsertionPoint.h"
 #include "core/html/HTMLOptGroupElement.h"
 #include "core/layout/LayoutObject.h"
-#include "core/style/ComputedStyle.h"
 
 namespace blink {
 
-inline const ComputedStyle* Node::computedStyle() const
-{
-    return mutableComputedStyle();
+inline const ComputedStyle* Node::computedStyle() const {
+  return mutableComputedStyle();
 }
 
-inline ComputedStyle* Node::mutableComputedStyle() const
-{
-    if (LayoutObject* layoutObject = this->layoutObject())
-        return layoutObject->mutableStyle();
-    // <option> and <optgroup> can be styled even if they don't get layout objects,
-    // so they store their style internally and return it through nonLayoutObjectComputedStyle().
-    // We check here explicitly to avoid the virtual call in the common case.
-    if (isHTMLOptGroupElement(*this) || isHTMLOptionElement(this))
-        return nonLayoutObjectComputedStyle();
+inline ComputedStyle* Node::mutableComputedStyle() const {
+  if (LayoutObject* layoutObject = this->layoutObject())
+    return layoutObject->mutableStyle();
+  // <option> and <optgroup> can be styled even if they don't get layout
+  // objects, so they store their style internally and return it through
+  // nonLayoutObjectComputedStyle().  We check here explicitly to avoid the
+  // virtual call in the common case.
+  if (isHTMLOptGroupElement(*this) || isHTMLOptionElement(this))
+    return nonLayoutObjectComputedStyle();
+  return 0;
+}
+
+inline const ComputedStyle* Node::parentComputedStyle() const {
+  if (isActiveSlotOrActiveInsertionPoint())
     return 0;
+  ContainerNode* parent = LayoutTreeBuilderTraversal::parent(*this);
+  return parent ? parent->computedStyle() : 0;
 }
 
-inline const ComputedStyle* Node::parentComputedStyle() const
-{
-    if (isActiveInsertionPoint(*this))
-        return 0;
-    ContainerNode* parent = LayoutTreeBuilderTraversal::parent(*this);
-    return parent ? parent->computedStyle() : 0;
+inline const ComputedStyle& Node::computedStyleRef() const {
+  const ComputedStyle* style = computedStyle();
+  DCHECK(style);
+  return *style;
 }
 
-inline const ComputedStyle& Node::computedStyleRef() const
-{
-    const ComputedStyle* style = computedStyle();
-    ASSERT(style);
-    return *style;
-}
-
-}
-#endif // NodeComputedStyle_h
+}  // namespace blink
+#endif  // NodeComputedStyle_h

@@ -9,6 +9,8 @@
 #include <string>
 #include <tuple>
 
+#include "base/numerics/saturated_arithmetic.h"
+#include "build/build_config.h"
 #include "ui/gfx/geometry/vector2d.h"
 #include "ui/gfx/gfx_export.h"
 
@@ -24,8 +26,8 @@ namespace gfx {
 // A point has an x and y coordinate.
 class GFX_EXPORT Point {
  public:
-  Point() : x_(0), y_(0) {}
-  Point(int x, int y) : x_(x), y_(y) {}
+  constexpr Point() : x_(0), y_(0) {}
+  constexpr Point(int x, int y) : x_(x), y_(y) {}
 #if defined(OS_WIN)
   // |point| is a DWORD value that contains a coordinate.  The x-coordinate is
   // the low-order short and the y-coordinate is the high-order short.  This
@@ -37,16 +39,14 @@ class GFX_EXPORT Point {
   explicit Point(const CGPoint& point);
 #endif
 
-  ~Point() {}
-
 #if defined(OS_WIN)
   POINT ToPOINT() const;
 #elif defined(OS_MACOSX)
   CGPoint ToCGPoint() const;
 #endif
 
-  int x() const { return x_; }
-  int y() const { return y_; }
+  constexpr int x() const { return x_; }
+  constexpr int y() const { return y_; }
   void set_x(int x) { x_ = x; }
   void set_y(int y) { y_ = y; }
 
@@ -56,18 +56,18 @@ class GFX_EXPORT Point {
   }
 
   void Offset(int delta_x, int delta_y) {
-    x_ += delta_x;
-    y_ += delta_y;
+    x_ = base::SaturatedAddition(x_, delta_x);
+    y_ = base::SaturatedAddition(y_, delta_y);
   }
 
   void operator+=(const Vector2d& vector) {
-    x_ += vector.x();
-    y_ += vector.y();
+    x_ = base::SaturatedAddition(x_, vector.x());
+    y_ = base::SaturatedAddition(y_, vector.y());
   }
 
   void operator-=(const Vector2d& vector) {
-    x_ -= vector.x();
-    y_ -= vector.y();
+    x_ = base::SaturatedSubtraction(x_, vector.x());
+    y_ = base::SaturatedSubtraction(y_, vector.y());
   }
 
   void SetToMin(const Point& other);
@@ -116,7 +116,8 @@ inline Point operator-(const Point& lhs, const Vector2d& rhs) {
 }
 
 inline Vector2d operator-(const Point& lhs, const Point& rhs) {
-  return Vector2d(lhs.x() - rhs.x(), lhs.y() - rhs.y());
+  return Vector2d(base::SaturatedSubtraction(lhs.x(), rhs.x()),
+                  base::SaturatedSubtraction(lhs.y(), rhs.y()));
 }
 
 inline Point PointAtOffsetFromOrigin(const Vector2d& offset_from_origin) {
@@ -124,8 +125,8 @@ inline Point PointAtOffsetFromOrigin(const Vector2d& offset_from_origin) {
 }
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const Point& point, ::std::ostream* os);
 
 // Helper methods to scale a gfx::Point to a new gfx::Point.

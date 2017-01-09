@@ -4,12 +4,16 @@
 
 #include "chrome/browser/chromeos/extensions/info_private_api.h"
 
-#include "base/basictypes.h"
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+
+#include <utility>
+
+#include "base/command_line.h"
 #include "base/sys_info.h"
 #include "base/values.h"
 #include "chrome/browser/app_mode/app_mode_utils.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/chromeos/arc/arc_session_manager.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/policy/browser_policy_connector_chromeos.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
@@ -21,8 +25,11 @@
 #include "chromeos/network/network_state_handler.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "chromeos/system/statistics_provider.h"
+#include "components/arc/arc_bridge_service.h"
 #include "components/metrics/metrics_service.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user_manager.h"
+#include "extensions/browser/extensions_browser_client.h"
 #include "extensions/common/error_utils.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -80,27 +87,78 @@ const char kPropertyAutoclickEnabled[] = "a11yAutoClickEnabled";
 // Key which corresponds to the auto click A11Y property in JS.
 const char kPropertyVirtualKeyboardEnabled[] = "a11yVirtualKeyboardEnabled";
 
+// Key which corresponds to the caret highlight A11Y property in JS.
+const char kPropertyCaretHighlightEnabled[] = "a11yCaretHighlightEnabled";
+
+// Key which corresponds to the cursor highlight A11Y property in JS.
+const char kPropertyCursorHighlightEnabled[] = "a11yCursorHighlightEnabled";
+
+// Key which corresponds to the focus highlight A11Y property in JS.
+const char kPropertyFocusHighlightEnabled[] = "a11yFocusHighlightEnabled";
+
+// Key which corresponds to the select-to-speak A11Y property in JS.
+const char kPropertySelectToSpeakEnabled[] = "a11ySelectToSpeakEnabled";
+
+// Key which corresponds to the switch access A11Y property in JS.
+const char kPropertySwitchAccessEnabled[] = "a11ySwitchAccessEnabled";
+
 // Key which corresponds to the send-function-keys property in JS.
 const char kPropertySendFunctionsKeys[] = "sendFunctionKeys";
 
 // Property not found error message.
 const char kPropertyNotFound[] = "Property '*' does not exist.";
 
+// Key which corresponds to the sessionType property in JS.
+const char kPropertySessionType[] = "sessionType";
+
+// Key which corresponds to the "kiosk" value of the SessionType enum in JS.
+const char kSessionTypeKiosk[] = "kiosk";
+
+// Key which corresponds to the "public session" value of the SessionType enum
+// in JS.
+const char kSessionTypePublicSession[] = "public session";
+
+// Key which corresponds to the "normal" value of the SessionType enum in JS.
+const char kSessionTypeNormal[] = "normal";
+
+// Key which corresponds to the playStoreStatus property in JS.
+const char kPropertyPlayStoreStatus[] = "playStoreStatus";
+
+// Key which corresponds to the "not available" value of the PlayStoreStatus
+// enum in JS.
+const char kPlayStoreStatusNotAvailable[] = "not available";
+
+// Key which corresponds to the "available" value of the PlayStoreStatus enum in
+// JS.
+const char kPlayStoreStatusAvailable[] = "available";
+
+// Key which corresponds to the "enabled" value of the PlayStoreStatus enum in
+// JS.
+const char kPlayStoreStatusEnabled[] = "enabled";
+
 const struct {
   const char* api_name;
   const char* preference_name;
 } kPreferencesMap[] = {
-      {kPropertyLargeCursorEnabled, prefs::kAccessibilityLargeCursorEnabled},
-      {kPropertyStickyKeysEnabled, prefs::kAccessibilityStickyKeysEnabled},
-      {kPropertySpokenFeedbackEnabled,
-       prefs::kAccessibilitySpokenFeedbackEnabled},
-      {kPropertyHighContrastEnabled, prefs::kAccessibilityHighContrastEnabled},
-      {kPropertyScreenMagnifierEnabled,
-       prefs::kAccessibilityScreenMagnifierEnabled},
-      {kPropertyAutoclickEnabled, prefs::kAccessibilityAutoclickEnabled},
-      {kPropertyVirtualKeyboardEnabled,
-       prefs::kAccessibilityVirtualKeyboardEnabled},
-      {kPropertySendFunctionsKeys, prefs::kLanguageSendFunctionKeys}};
+    {kPropertyLargeCursorEnabled, prefs::kAccessibilityLargeCursorEnabled},
+    {kPropertyStickyKeysEnabled, prefs::kAccessibilityStickyKeysEnabled},
+    {kPropertySpokenFeedbackEnabled,
+     prefs::kAccessibilitySpokenFeedbackEnabled},
+    {kPropertyHighContrastEnabled, prefs::kAccessibilityHighContrastEnabled},
+    {kPropertyScreenMagnifierEnabled,
+     prefs::kAccessibilityScreenMagnifierEnabled},
+    {kPropertyAutoclickEnabled, prefs::kAccessibilityAutoclickEnabled},
+    {kPropertyVirtualKeyboardEnabled,
+     prefs::kAccessibilityVirtualKeyboardEnabled},
+    {kPropertyCaretHighlightEnabled,
+     prefs::kAccessibilityCaretHighlightEnabled},
+    {kPropertyCursorHighlightEnabled,
+     prefs::kAccessibilityCursorHighlightEnabled},
+    {kPropertyFocusHighlightEnabled,
+     prefs::kAccessibilityFocusHighlightEnabled},
+    {kPropertySelectToSpeakEnabled, prefs::kAccessibilitySelectToSpeakEnabled},
+    {kPropertySwitchAccessEnabled, prefs::kAccessibilitySwitchAccessEnabled},
+    {kPropertySendFunctionsKeys, prefs::kLanguageSendFunctionKeys}};
 
 const char* GetBoolPrefNameForApiProperty(const char* api_name) {
   for (size_t i = 0;
@@ -139,7 +197,7 @@ ChromeosInfoPrivateGetFunction::~ChromeosInfoPrivateGetFunction() {
 bool ChromeosInfoPrivateGetFunction::RunAsync() {
   base::ListValue* list = NULL;
   EXTENSION_FUNCTION_VALIDATE(args_->GetList(0, &list));
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   for (size_t i = 0; i < list->GetSize(); ++i) {
     std::string property_name;
     EXTENSION_FUNCTION_VALIDATE(list->GetString(i, &property_name));
@@ -147,7 +205,7 @@ bool ChromeosInfoPrivateGetFunction::RunAsync() {
     if (value)
       result->Set(property_name, value);
   }
-  SetResult(result.release());
+  SetResult(std::move(result));
   SendResponse(true);
   return true;
 }
@@ -160,14 +218,18 @@ base::Value* ChromeosInfoPrivateGetFunction::GetValue(
         chromeos::system::StatisticsProvider::GetInstance();
     provider->GetMachineStatistic(chromeos::system::kHardwareClassKey, &hwid);
     return new base::StringValue(hwid);
-  } else if (property_name == kPropertyCustomizationID) {
+  }
+
+  if (property_name == kPropertyCustomizationID) {
     std::string customization_id;
     chromeos::system::StatisticsProvider* provider =
         chromeos::system::StatisticsProvider::GetInstance();
     provider->GetMachineStatistic(chromeos::system::kCustomizationIdKey,
                                   &customization_id);
     return new base::StringValue(customization_id);
-  } else if (property_name == kPropertyHomeProvider) {
+  }
+
+  if (property_name == kPropertyHomeProvider) {
     const chromeos::DeviceState* cellular_device =
         NetworkHandler::Get()->network_state_handler()->GetDeviceStateByType(
             chromeos::NetworkTypePattern::Cellular());
@@ -175,30 +237,62 @@ base::Value* ChromeosInfoPrivateGetFunction::GetValue(
     if (cellular_device)
       home_provider_id = cellular_device->home_provider_id();
     return new base::StringValue(home_provider_id);
-  } else if (property_name == kPropertyInitialLocale) {
+  }
+
+  if (property_name == kPropertyInitialLocale) {
     return new base::StringValue(
         chromeos::StartupUtils::GetInitialLocale());
-  } else if (property_name == kPropertyBoard) {
+  }
+
+  if (property_name == kPropertyBoard) {
     return new base::StringValue(base::SysInfo::GetLsbReleaseBoard());
-  } else if (property_name == kPropertyOwner) {
+  }
+
+  if (property_name == kPropertyOwner) {
     return new base::FundamentalValue(
         user_manager::UserManager::Get()->IsCurrentUserOwner());
-  } else if (property_name == kPropertyClientId) {
+  }
+
+  if (property_name == kPropertySessionType) {
+    if (ExtensionsBrowserClient::Get()->IsRunningInForcedAppMode())
+      return new base::StringValue(kSessionTypeKiosk);
+    if (ExtensionsBrowserClient::Get()->IsLoggedInAsPublicAccount())
+      return new base::StringValue(kSessionTypePublicSession);
+    return new base::StringValue(kSessionTypeNormal);
+  }
+
+  if (property_name == kPropertyPlayStoreStatus) {
+    if (arc::ArcSessionManager::IsAllowedForProfile(
+            Profile::FromBrowserContext(context_))) {
+      return new base::StringValue(kPlayStoreStatusEnabled);
+    }
+    if (arc::ArcBridgeService::GetAvailable(
+            base::CommandLine::ForCurrentProcess())) {
+      return new base::StringValue(kPlayStoreStatusAvailable);
+    }
+    return new base::StringValue(kPlayStoreStatusNotAvailable);
+  }
+
+  if (property_name == kPropertyClientId) {
     return new base::StringValue(GetClientId());
-  } else if (property_name == kPropertyTimezone) {
+  }
+
+  if (property_name == kPropertyTimezone) {
     return chromeos::CrosSettings::Get()->GetPref(
             chromeos::kSystemTimezone)->DeepCopy();
-  } else if (property_name == kPropertySupportedTimezones) {
-    scoped_ptr<base::ListValue> values = chromeos::system::GetTimezoneList();
+  }
+
+  if (property_name == kPropertySupportedTimezones) {
+    std::unique_ptr<base::ListValue> values =
+        chromeos::system::GetTimezoneList();
     return values.release();
-  } else {
-    const char* pref_name =
-        GetBoolPrefNameForApiProperty(property_name.c_str());
-    if (pref_name) {
-      return new base::FundamentalValue(
-          Profile::FromBrowserContext(context_)->GetPrefs()->GetBoolean(
-              pref_name));
-    }
+  }
+
+  const char* pref_name = GetBoolPrefNameForApiProperty(property_name.c_str());
+  if (pref_name) {
+    return new base::FundamentalValue(
+        Profile::FromBrowserContext(context_)->GetPrefs()->GetBoolean(
+            pref_name));
   }
 
   DLOG(ERROR) << "Unknown property request: " << property_name;
@@ -211,7 +305,7 @@ ChromeosInfoPrivateSetFunction::ChromeosInfoPrivateSetFunction() {
 ChromeosInfoPrivateSetFunction::~ChromeosInfoPrivateSetFunction() {
 }
 
-bool ChromeosInfoPrivateSetFunction::RunSync() {
+ExtensionFunction::ResponseAction ChromeosInfoPrivateSetFunction::Run() {
   std::string param_name;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &param_name));
   if (param_name == kPropertyTimezone) {
@@ -228,12 +322,11 @@ bool ChromeosInfoPrivateSetFunction::RunSync() {
           pref_name,
           param_value);
     } else {
-      error_ = ErrorUtils::FormatErrorMessage(kPropertyNotFound, param_name);
-      return false;
+      return RespondNow(Error(kPropertyNotFound, param_name));
     }
   }
 
-  return true;
+  return RespondNow(NoArguments());
 }
 
 }  // namespace extensions

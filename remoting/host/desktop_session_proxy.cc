@@ -4,11 +4,18 @@
 
 #include "remoting/host/desktop_session_proxy.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/compiler_specific.h"
 #include "base/logging.h"
-#include "base/process/process_handle.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/shared_memory.h"
+#include "base/process/process_handle.h"
 #include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_message_macros.h"
 #include "remoting/base/capabilities.h"
@@ -43,23 +50,12 @@ class DesktopSessionProxy::IpcSharedBufferCore
  public:
   IpcSharedBufferCore(int id,
                       base::SharedMemoryHandle handle,
-                      base::ProcessHandle process,
                       size_t size)
       : id_(id),
-#if defined(OS_WIN)
-        shared_memory_(handle, kReadOnly, process),
-#else  // !defined(OS_WIN)
         shared_memory_(handle, kReadOnly),
-#endif  // !defined(OS_WIN)
         size_(size) {
     if (!shared_memory_.Map(size)) {
       LOG(ERROR) << "Failed to map a shared buffer: id=" << id
-#if defined(OS_WIN)
-                 << ", handle=" << handle.GetHandle()
-#else
-                 << ", handle.fd="
-                 << base::SharedMemory::GetFdFromSharedMemoryHandle(handle)
-#endif
                  << ", size=" << size;
     }
   }
@@ -67,14 +63,6 @@ class DesktopSessionProxy::IpcSharedBufferCore
   int id() { return id_; }
   size_t size() { return size_; }
   void* memory() { return shared_memory_.memory(); }
-  webrtc::SharedMemory::Handle handle() {
-#if defined(OS_WIN)
-    return shared_memory_.handle().GetHandle();
-#else
-    return base::SharedMemory::GetFdFromSharedMemoryHandle(
-        shared_memory_.handle());
-#endif
-  }
 
  private:
   virtual ~IpcSharedBufferCore() {}
@@ -90,10 +78,8 @@ class DesktopSessionProxy::IpcSharedBufferCore
 class DesktopSessionProxy::IpcSharedBuffer : public webrtc::SharedMemory {
  public:
   IpcSharedBuffer(scoped_refptr<IpcSharedBufferCore> core)
-      : SharedMemory(core->memory(), core->size(),
-                     core->handle(), core->id()),
-        core_(core) {
-  }
+      : SharedMemory(core->memory(), core->size(), 0, core->id()),
+        core_(core) {}
 
  private:
   scoped_refptr<IpcSharedBufferCore> core_;
@@ -105,61 +91,62 @@ DesktopSessionProxy::DesktopSessionProxy(
     scoped_refptr<base::SingleThreadTaskRunner> audio_capture_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> caller_task_runner,
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    scoped_refptr<base::SingleThreadTaskRunner> video_capture_task_runner,
     base::WeakPtr<ClientSessionControl> client_session_control,
     base::WeakPtr<DesktopSessionConnector> desktop_session_connector,
-    bool virtual_terminal,
-    bool supports_touch_events)
+    const DesktopEnvironmentOptions& options)
     : audio_capture_task_runner_(audio_capture_task_runner),
       caller_task_runner_(caller_task_runner),
       io_task_runner_(io_task_runner),
-      video_capture_task_runner_(video_capture_task_runner),
       client_session_control_(client_session_control),
       desktop_session_connector_(desktop_session_connector),
       pending_capture_frame_requests_(0),
       is_desktop_session_connected_(false),
-      virtual_terminal_(virtual_terminal),
-      supports_touch_events_(supports_touch_events) {
+      options_(options) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 }
 
-scoped_ptr<AudioCapturer> DesktopSessionProxy::CreateAudioCapturer() {
+std::unique_ptr<AudioCapturer> DesktopSessionProxy::CreateAudioCapturer() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new IpcAudioCapturer(this));
+  return base::MakeUnique<IpcAudioCapturer>(this);
 }
 
-scoped_ptr<InputInjector> DesktopSessionProxy::CreateInputInjector() {
+std::unique_ptr<InputInjector> DesktopSessionProxy::CreateInputInjector() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new IpcInputInjector(this));
+  return base::MakeUnique<IpcInputInjector>(this);
 }
 
-scoped_ptr<ScreenControls> DesktopSessionProxy::CreateScreenControls() {
+std::unique_ptr<ScreenControls> DesktopSessionProxy::CreateScreenControls() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new IpcScreenControls(this));
+  return base::MakeUnique<IpcScreenControls>(this);
 }
 
-scoped_ptr<webrtc::DesktopCapturer> DesktopSessionProxy::CreateVideoCapturer() {
+std::unique_ptr<webrtc::DesktopCapturer>
+DesktopSessionProxy::CreateVideoCapturer() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  return make_scoped_ptr(new IpcVideoFrameCapturer(this));
+  return base::MakeUnique<IpcVideoFrameCapturer>(this);
 }
 
-scoped_ptr<webrtc::MouseCursorMonitor>
-    DesktopSessionProxy::CreateMouseCursorMonitor() {
-  return make_scoped_ptr(new IpcMouseCursorMonitor(this));
+std::unique_ptr<webrtc::MouseCursorMonitor>
+DesktopSessionProxy::CreateMouseCursorMonitor() {
+  return base::MakeUnique<IpcMouseCursorMonitor>(this);
 }
 
 std::string DesktopSessionProxy::GetCapabilities() const {
   std::string result = protocol::kRateLimitResizeRequests;
   // Ask the client to send its resolution unconditionally.
-  if (virtual_terminal_)
-    result = result + " " + protocol::kSendInitialResolution;
+  if (options_.enable_curtaining()) {
+    result += " ";
+    result += protocol::kSendInitialResolution;
+  }
 
-  if (supports_touch_events_)
-    result = result + " "  + protocol::kTouchEventsCapability;
+  if (InputInjector::SupportsTouchEvents()) {
+    result += " ";
+    result += protocol::kTouchEventsCapability;
+  }
 
   return result;
 }
@@ -167,10 +154,10 @@ std::string DesktopSessionProxy::GetCapabilities() const {
 void DesktopSessionProxy::SetCapabilities(const std::string& capabilities) {
   // Delay creation of the desktop session until the client screen resolution is
   // received if the desktop session requires the initial screen resolution
-  // (when |virtual_terminal_| is true) and the client is expected to
+  // (when enable_curtaining() is true) and the client is expected to
   // sent its screen resolution (the 'sendInitialResolution' capability is
   // supported).
-  if (virtual_terminal_ &&
+  if (options_.enable_curtaining() &&
       HasCapability(capabilities, protocol::kSendInitialResolution)) {
     VLOG(1) << "Waiting for the client screen resolution.";
     return;
@@ -180,8 +167,8 @@ void DesktopSessionProxy::SetCapabilities(const std::string& capabilities) {
   if (!is_desktop_session_connected_) {
     is_desktop_session_connected_ = true;
     if (desktop_session_connector_.get()) {
-      desktop_session_connector_->ConnectTerminal(
-          this, screen_resolution_, virtual_terminal_);
+      desktop_session_connector_->ConnectTerminal(this, screen_resolution_,
+                                                  options_.enable_curtaining());
     }
   }
 }
@@ -193,8 +180,8 @@ bool DesktopSessionProxy::OnMessageReceived(const IPC::Message& message) {
   IPC_BEGIN_MESSAGE_MAP(DesktopSessionProxy, message)
     IPC_MESSAGE_HANDLER(ChromotingDesktopNetworkMsg_AudioPacket,
                         OnAudioPacket)
-    IPC_MESSAGE_HANDLER(ChromotingDesktopNetworkMsg_CaptureCompleted,
-                        OnCaptureCompleted)
+    IPC_MESSAGE_HANDLER(ChromotingDesktopNetworkMsg_CaptureResult,
+                        OnCaptureResult)
     IPC_MESSAGE_HANDLER(ChromotingDesktopNetworkMsg_MouseCursor,
                         OnMouseCursor)
     IPC_MESSAGE_HANDLER(ChromotingDesktopNetworkMsg_CreateSharedBuffer,
@@ -211,7 +198,7 @@ bool DesktopSessionProxy::OnMessageReceived(const IPC::Message& message) {
   return handled;
 }
 
-void DesktopSessionProxy::OnChannelConnected(int32 peer_pid) {
+void DesktopSessionProxy::OnChannelConnected(int32_t peer_pid) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   VLOG(1) << "IPC: network <- desktop (" << peer_pid << ")";
@@ -224,56 +211,27 @@ void DesktopSessionProxy::OnChannelError() {
 }
 
 bool DesktopSessionProxy::AttachToDesktop(
-    base::Process desktop_process,
-    IPC::PlatformFileForTransit desktop_pipe) {
+    const IPC::ChannelHandle& desktop_pipe,
+    int session_id) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
   DCHECK(!desktop_channel_);
-  DCHECK(!desktop_process_.IsValid());
 
   // Ignore the attach notification if the client session has been disconnected
   // already.
   if (!client_session_control_.get())
     return false;
 
-  desktop_process_ = desktop_process.Pass();
-
-#if defined(OS_WIN)
-  // On Windows: |desktop_process| is a valid handle, but |desktop_pipe| needs
-  // to be duplicated from the desktop process.
-  HANDLE temp_handle;
-  if (!DuplicateHandle(desktop_process_.Handle(), desktop_pipe,
-                       GetCurrentProcess(), &temp_handle, 0,
-                       FALSE, DUPLICATE_SAME_ACCESS)) {
-    PLOG(ERROR) << "Failed to duplicate the desktop-to-network pipe handle";
-
-    desktop_process_.Close();
-    return false;
-  }
-  base::win::ScopedHandle pipe(temp_handle);
-
-  IPC::ChannelHandle desktop_channel_handle(pipe.Get());
-
-#elif defined(OS_POSIX)
-  // On posix: |desktop_pipe| is a valid file descriptor.
-  DCHECK(desktop_pipe.auto_close);
-
-  IPC::ChannelHandle desktop_channel_handle(std::string(), desktop_pipe);
-
-#else
-#error Unsupported platform.
-#endif
-
   // Connect to the desktop process.
-  desktop_channel_ = IPC::ChannelProxy::Create(desktop_channel_handle,
+  desktop_channel_ = IPC::ChannelProxy::Create(desktop_pipe,
                                                IPC::Channel::MODE_CLIENT, this,
                                                io_task_runner_.get());
 
   // Pass ID of the client (which is authenticated at this point) to the desktop
   // session agent and start the agent.
   SendToDesktop(new ChromotingNetworkDesktopMsg_StartSessionAgent(
-      client_session_control_->client_jid(),
-      screen_resolution_,
-      virtual_terminal_));
+      client_session_control_->client_jid(), screen_resolution_, options_));
+
+  desktop_session_id_ = session_id;
 
   return true;
 }
@@ -282,16 +240,15 @@ void DesktopSessionProxy::DetachFromDesktop() {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   desktop_channel_.reset();
-
-  if (desktop_process_.IsValid())
-    desktop_process_.Close();
+  desktop_session_id_ = UINT32_MAX;
 
   shared_buffers_.clear();
 
   // Generate fake responses to keep the video capturer in sync.
   while (pending_capture_frame_requests_) {
     --pending_capture_frame_requests_;
-    PostCaptureCompleted(nullptr);
+    video_capturer_->OnCaptureResult(
+        webrtc::DesktopCapturer::Result::ERROR_PERMANENT, nullptr);
   }
 }
 
@@ -303,30 +260,27 @@ void DesktopSessionProxy::SetAudioCapturer(
 }
 
 void DesktopSessionProxy::CaptureFrame() {
-  if (!caller_task_runner_->BelongsToCurrentThread()) {
-    caller_task_runner_->PostTask(
-        FROM_HERE, base::Bind(&DesktopSessionProxy::CaptureFrame, this));
-    return;
-  }
+  DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   if (desktop_channel_) {
     ++pending_capture_frame_requests_;
     SendToDesktop(new ChromotingNetworkDesktopMsg_CaptureFrame());
   } else {
-    PostCaptureCompleted(nullptr);
+    video_capturer_->OnCaptureResult(
+        webrtc::DesktopCapturer::Result::ERROR_PERMANENT, nullptr);
   }
 }
 
 void DesktopSessionProxy::SetVideoCapturer(
     const base::WeakPtr<IpcVideoFrameCapturer> video_capturer) {
-  DCHECK(video_capture_task_runner_->BelongsToCurrentThread());
+  DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   video_capturer_ = video_capturer;
 }
 
 void DesktopSessionProxy::SetMouseCursorMonitor(
     const base::WeakPtr<IpcMouseCursorMonitor>& mouse_cursor_monitor) {
-  DCHECK(video_capture_task_runner_->BelongsToCurrentThread());
+  DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
   mouse_cursor_monitor_ = mouse_cursor_monitor;
 }
@@ -406,10 +360,10 @@ void DesktopSessionProxy::InjectTouchEvent(const protocol::TouchEvent& event) {
 }
 
 void DesktopSessionProxy::StartInputInjector(
-    scoped_ptr<protocol::ClipboardStub> client_clipboard) {
+    std::unique_ptr<protocol::ClipboardStub> client_clipboard) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-  client_clipboard_ = client_clipboard.Pass();
+  client_clipboard_ = std::move(client_clipboard);
 }
 
 void DesktopSessionProxy::SetScreenResolution(
@@ -425,8 +379,8 @@ void DesktopSessionProxy::SetScreenResolution(
   if (!is_desktop_session_connected_) {
     is_desktop_session_connected_ = true;
     if (desktop_session_connector_.get()) {
-      desktop_session_connector_->ConnectTerminal(
-          this, screen_resolution_, virtual_terminal_);
+      desktop_session_connector_->ConnectTerminal(this, screen_resolution_,
+                                                  options_.enable_curtaining());
     }
     return;
   }
@@ -466,7 +420,7 @@ void DesktopSessionProxy::OnAudioPacket(const std::string& serialized_packet) {
 
   // Parse a serialized audio packet. No further validation is done since
   // the message was sent by more privileged process.
-  scoped_ptr<AudioPacket> packet(new AudioPacket());
+  std::unique_ptr<AudioPacket> packet(new AudioPacket());
   if (!packet->ParseFromString(serialized_packet)) {
     LOG(ERROR) << "Failed to parse AudioPacket.";
     return;
@@ -480,18 +434,12 @@ void DesktopSessionProxy::OnAudioPacket(const std::string& serialized_packet) {
 
 void DesktopSessionProxy::OnCreateSharedBuffer(
     int id,
-    IPC::PlatformFileForTransit handle,
-    uint32 size) {
+    base::SharedMemoryHandle handle,
+    uint32_t size) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
 
-#if defined(OS_WIN)
-  base::SharedMemoryHandle shm_handle =
-      base::SharedMemoryHandle(handle, base::GetCurrentProcId());
-#else
-  base::SharedMemoryHandle shm_handle = base::SharedMemoryHandle(handle);
-#endif
   scoped_refptr<IpcSharedBufferCore> shared_buffer =
-      new IpcSharedBufferCore(id, shm_handle, desktop_process_.Handle(), size);
+      new IpcSharedBufferCore(id, handle, size);
 
   if (shared_buffer->memory() != nullptr &&
       !shared_buffers_.insert(std::make_pair(id, shared_buffer)).second) {
@@ -506,9 +454,21 @@ void DesktopSessionProxy::OnReleaseSharedBuffer(int id) {
   shared_buffers_.erase(id);
 }
 
-void DesktopSessionProxy::OnCaptureCompleted(
+void DesktopSessionProxy::OnCaptureResult(
+    webrtc::DesktopCapturer::Result result,
     const SerializedDesktopFrame& serialized_frame) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
+
+  --pending_capture_frame_requests_;
+
+  if (!video_capturer_) {
+    return;
+  }
+
+  if (result != webrtc::DesktopCapturer::Result::SUCCESS) {
+    video_capturer_->OnCaptureResult(result, nullptr);
+    return;
+  }
 
   // Assume that |serialized_frame| is well-formed because it was received from
   // a more privileged process.
@@ -516,25 +476,29 @@ void DesktopSessionProxy::OnCaptureCompleted(
       GetSharedBufferCore(serialized_frame.shared_buffer_id);
   CHECK(shared_buffer_core.get());
 
-  scoped_ptr<webrtc::DesktopFrame> frame(
+  std::unique_ptr<webrtc::DesktopFrame> frame(
       new webrtc::SharedMemoryDesktopFrame(
           serialized_frame.dimensions, serialized_frame.bytes_per_row,
           new IpcSharedBuffer(shared_buffer_core)));
   frame->set_capture_time_ms(serialized_frame.capture_time_ms);
   frame->set_dpi(serialized_frame.dpi);
 
-  for (size_t i = 0; i < serialized_frame.dirty_region.size(); ++i) {
-    frame->mutable_updated_region()->AddRect(serialized_frame.dirty_region[i]);
+  for (const auto& rect : serialized_frame.dirty_region) {
+    frame->mutable_updated_region()->AddRect(rect);
   }
 
-  --pending_capture_frame_requests_;
-  PostCaptureCompleted(frame.Pass());
+  video_capturer_->OnCaptureResult(webrtc::DesktopCapturer::Result::SUCCESS,
+                                   std::move(frame));
 }
 
 void DesktopSessionProxy::OnMouseCursor(
     const webrtc::MouseCursor& mouse_cursor) {
   DCHECK(caller_task_runner_->BelongsToCurrentThread());
-  PostMouseCursor(make_scoped_ptr(webrtc::MouseCursor::CopyOf(mouse_cursor)));
+
+  if (mouse_cursor_monitor_) {
+    mouse_cursor_monitor_->OnMouseCursor(
+        base::WrapUnique(webrtc::MouseCursor::CopyOf(mouse_cursor)));
+  }
 }
 
 void DesktopSessionProxy::OnInjectClipboardEvent(
@@ -550,26 +514,6 @@ void DesktopSessionProxy::OnInjectClipboardEvent(
 
     client_clipboard_->InjectClipboardEvent(event);
   }
-}
-
-void DesktopSessionProxy::PostCaptureCompleted(
-    scoped_ptr<webrtc::DesktopFrame> frame) {
-  DCHECK(caller_task_runner_->BelongsToCurrentThread());
-
-  video_capture_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&IpcVideoFrameCapturer::OnCaptureCompleted, video_capturer_,
-                 base::Passed(&frame)));
-}
-
-void DesktopSessionProxy::PostMouseCursor(
-    scoped_ptr<webrtc::MouseCursor> mouse_cursor) {
-  DCHECK(caller_task_runner_->BelongsToCurrentThread());
-
-  video_capture_task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(&IpcMouseCursorMonitor::OnMouseCursor, mouse_cursor_monitor_,
-                 base::Passed(&mouse_cursor)));
 }
 
 void DesktopSessionProxy::SendToDesktop(IPC::Message* message) {

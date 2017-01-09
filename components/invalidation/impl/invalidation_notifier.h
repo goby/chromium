@@ -12,12 +12,12 @@
 #ifndef COMPONENTS_INVALIDATION_IMPL_INVALIDATION_NOTIFIER_H_
 #define COMPONENTS_INVALIDATION_IMPL_INVALIDATION_NOTIFIER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "base/threading/non_thread_safe.h"
@@ -26,10 +26,6 @@
 #include "components/invalidation/impl/invalidator_registrar.h"
 #include "components/invalidation/impl/sync_invalidation_listener.h"
 #include "components/invalidation/public/invalidation_export.h"
-
-namespace notifier {
-class PushClient;
-}  // namespace notifier
 
 namespace syncer {
 
@@ -41,7 +37,7 @@ class INVALIDATION_EXPORT InvalidationNotifier
  public:
   // |invalidation_state_tracker| must be initialized.
   InvalidationNotifier(
-      scoped_ptr<SyncNetworkChannel> network_channel,
+      std::unique_ptr<SyncNetworkChannel> network_channel,
       const std::string& invalidator_client_id,
       const UnackedInvalidationsMap& saved_invalidations,
       const std::string& invalidation_bootstrap_data,

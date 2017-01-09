@@ -4,16 +4,19 @@
 
 #include "chrome/browser/themes/browser_theme_pack.h"
 
+#include <stddef.h>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/themes/theme_properties.h"
 #include "chrome/common/chrome_paths.h"
+#include "chrome/grit/theme_resources.h"
 #include "content/public/test/test_browser_thread.h"
-#include "grit/theme_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/image/image.h"
@@ -51,11 +54,10 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void GenerateDefaultFrameColor(std::map<int, SkColor>* colors,
-                                 int color, int tint) {
+                                 int color, int tint, bool otr) {
     (*colors)[color] = HSLShift(
-        ThemeProperties::GetDefaultColor(
-            ThemeProperties::COLOR_FRAME),
-        ThemeProperties::GetDefaultTint(tint));
+        ThemeProperties::GetDefaultColor(ThemeProperties::COLOR_FRAME, false),
+        ThemeProperties::GetDefaultTint(tint, otr));
   }
 
   // Returns a mapping from each COLOR_* constant to the default value for this
@@ -63,23 +65,24 @@ class BrowserThemePackTest : public ::testing::Test {
   // run the resulting thing through VerifyColorMap().
   std::map<int, SkColor> GetDefaultColorMap() {
     std::map<int, SkColor> colors;
-    for (int i = ThemeProperties::COLOR_FRAME;
-         i <= ThemeProperties::COLOR_BUTTON_BACKGROUND; ++i) {
-      colors[i] = ThemeProperties::GetDefaultColor(i);
-    }
-
     GenerateDefaultFrameColor(&colors, ThemeProperties::COLOR_FRAME,
-                              ThemeProperties::TINT_FRAME);
+                              ThemeProperties::TINT_FRAME, false);
     GenerateDefaultFrameColor(&colors,
                               ThemeProperties::COLOR_FRAME_INACTIVE,
-                              ThemeProperties::TINT_FRAME_INACTIVE);
+                              ThemeProperties::TINT_FRAME_INACTIVE, false);
     GenerateDefaultFrameColor(&colors,
                               ThemeProperties::COLOR_FRAME_INCOGNITO,
-                              ThemeProperties::TINT_FRAME_INCOGNITO);
+                              ThemeProperties::TINT_FRAME, true);
     GenerateDefaultFrameColor(
         &colors,
         ThemeProperties::COLOR_FRAME_INCOGNITO_INACTIVE,
-        ThemeProperties::TINT_FRAME_INCOGNITO_INACTIVE);
+        ThemeProperties::TINT_FRAME_INACTIVE, true);
+
+    // For the rest, use default colors.
+    for (int i = ThemeProperties::COLOR_FRAME_INCOGNITO_INACTIVE + 1;
+         i <= ThemeProperties::COLOR_BUTTON_BACKGROUND; ++i) {
+      colors[i] = ThemeProperties::GetDefaultColor(i, false);
+    }
 
     return colors;
   }
@@ -87,15 +90,16 @@ class BrowserThemePackTest : public ::testing::Test {
   void VerifyColorMap(const std::map<int, SkColor>& color_map) {
     for (std::map<int, SkColor>::const_iterator it = color_map.begin();
          it != color_map.end(); ++it) {
-      SkColor color = ThemeProperties::GetDefaultColor(it->first);
-      theme_pack_->GetColor(it->first, &color);
+      SkColor color;
+      if (!theme_pack_->GetColor(it->first, &color))
+        color = ThemeProperties::GetDefaultColor(it->first, false);
       EXPECT_EQ(it->second, color) << "Color id = " << it->first;
     }
   }
 
   void LoadColorJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
-    ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
+    ASSERT_TRUE(value->IsType(base::Value::Type::DICTIONARY));
     LoadColorDictionary(static_cast<base::DictionaryValue*>(value.get()));
   }
 
@@ -104,8 +108,8 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void LoadTintJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
-    ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
+    ASSERT_TRUE(value->IsType(base::Value::Type::DICTIONARY));
     LoadTintDictionary(static_cast<base::DictionaryValue*>(value.get()));
   }
 
@@ -114,8 +118,8 @@ class BrowserThemePackTest : public ::testing::Test {
   }
 
   void LoadDisplayPropertiesJSON(const std::string& json) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
-    ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
+    ASSERT_TRUE(value->IsType(base::Value::Type::DICTIONARY));
     LoadDisplayPropertiesDictionary(
         static_cast<base::DictionaryValue*>(value.get()));
   }
@@ -126,8 +130,8 @@ class BrowserThemePackTest : public ::testing::Test {
 
   void ParseImageNamesJSON(const std::string& json,
                            TestFilePathMap* out_file_paths) {
-    scoped_ptr<base::Value> value = base::JSONReader::Read(json);
-    ASSERT_TRUE(value->IsType(base::Value::TYPE_DICTIONARY));
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(json);
+    ASSERT_TRUE(value->IsType(base::Value::Type::DICTIONARY));
     ParseImageNamesDictionary(static_cast<base::DictionaryValue*>(value.get()),
                               out_file_paths);
   }
@@ -155,7 +159,7 @@ class BrowserThemePackTest : public ::testing::Test {
         extension_path.AppendASCII("manifest.json");
     std::string error;
     JSONFileValueDeserializer deserializer(manifest_path);
-    scoped_ptr<base::DictionaryValue> valid_value =
+    std::unique_ptr<base::DictionaryValue> valid_value =
         base::DictionaryValue::From(deserializer.Deserialize(NULL, &error));
     EXPECT_EQ("", error);
     ASSERT_TRUE(valid_value.get());
@@ -284,11 +288,11 @@ class BrowserThemePackTest : public ::testing::Test {
     EXPECT_EQ(80, rep1.sk_bitmap().width());
     EXPECT_EQ(80, rep1.sk_bitmap().height());
     rep1.sk_bitmap().lockPixels();
-    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep1.sk_bitmap().getColor( 4,  4));
-    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep1.sk_bitmap().getColor( 8,  8));
-    EXPECT_EQ(SkColorSetRGB(  0, 241, 237), rep1.sk_bitmap().getColor(16, 16));
+    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep1.sk_bitmap().getColor(4, 4));
+    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep1.sk_bitmap().getColor(8, 8));
+    EXPECT_EQ(SkColorSetRGB(0, 241, 237), rep1.sk_bitmap().getColor(16, 16));
     EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep1.sk_bitmap().getColor(24, 24));
-    EXPECT_EQ(SkColorSetRGB(  0, 241, 237), rep1.sk_bitmap().getColor(32, 32));
+    EXPECT_EQ(SkColorSetRGB(0, 241, 237), rep1.sk_bitmap().getColor(32, 32));
     rep1.sk_bitmap().unlockPixels();
     // Scale 200%.
     const gfx::ImageSkiaRep& rep2 = image_skia->GetRepresentation(2.0f);
@@ -296,10 +300,10 @@ class BrowserThemePackTest : public ::testing::Test {
     EXPECT_EQ(160, rep2.sk_bitmap().width());
     EXPECT_EQ(160, rep2.sk_bitmap().height());
     rep2.sk_bitmap().lockPixels();
-    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep2.sk_bitmap().getColor( 4,  4));
-    EXPECT_EQ(SkColorSetRGB(223,  42,   0), rep2.sk_bitmap().getColor( 8,  8));
-    EXPECT_EQ(SkColorSetRGB(223,  42,   0), rep2.sk_bitmap().getColor(16, 16));
-    EXPECT_EQ(SkColorSetRGB(223,  42,   0), rep2.sk_bitmap().getColor(24, 24));
+    EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep2.sk_bitmap().getColor(4, 4));
+    EXPECT_EQ(SkColorSetRGB(223, 42, 0), rep2.sk_bitmap().getColor(8, 8));
+    EXPECT_EQ(SkColorSetRGB(223, 42, 0), rep2.sk_bitmap().getColor(16, 16));
+    EXPECT_EQ(SkColorSetRGB(223, 42, 0), rep2.sk_bitmap().getColor(24, 24));
     EXPECT_EQ(SkColorSetRGB(255, 255, 255), rep2.sk_bitmap().getColor(32, 32));
     rep2.sk_bitmap().unlockPixels();
 
@@ -360,7 +364,7 @@ class BrowserThemePackTest : public ::testing::Test {
   content::TestBrowserThread fake_ui_thread;
   content::TestBrowserThread fake_file_thread;
 
-  typedef scoped_ptr<ui::test::ScopedSetSupportedScaleFactors>
+  typedef std::unique_ptr<ui::test::ScopedSetSupportedScaleFactors>
       ScopedSetSupportedScaleFactors;
   ScopedSetSupportedScaleFactors scoped_set_supported_scale_factors_;
   scoped_refptr<BrowserThemePack> theme_pack_;
@@ -424,11 +428,43 @@ TEST_F(BrowserThemePackTest, ProvideNtpHeaderColor) {
   LoadColorJSON(color_json);
 
   std::map<int, SkColor> colors = GetDefaultColorMap();
-  SkColor ntp_header = SkColorSetRGB(120, 120, 120);
-  SkColor ntp_section = SkColorSetRGB(190, 190, 190);
-  colors[ThemeProperties::COLOR_NTP_HEADER] = ntp_header;
-  colors[ThemeProperties::COLOR_NTP_SECTION] = ntp_section;
+  colors[ThemeProperties::COLOR_NTP_HEADER] = SkColorSetRGB(120, 120, 120);
+  colors[ThemeProperties::COLOR_NTP_SECTION] = SkColorSetRGB(190, 190, 190);
   VerifyColorMap(colors);
+}
+
+TEST_F(BrowserThemePackTest, SupportsAlpha) {
+  std::string color_json =
+      "{ \"toolbar\": [0, 20, 40, 1], "
+      "  \"tab_text\": [60, 80, 100, 1], "
+      "  \"tab_background_text\": [120, 140, 160, 0.0], "
+      "  \"bookmark_text\": [180, 200, 220, 1.0], "
+      "  \"ntp_text\": [240, 255, 0, 0.5] }";
+  LoadColorJSON(color_json);
+
+  std::map<int, SkColor> colors = GetDefaultColorMap();
+  // Verify that valid alpha values are parsed correctly.
+  // The toolbar color's alpha value is intentionally ignored by theme provider.
+  colors[ThemeProperties::COLOR_TOOLBAR] = SkColorSetARGB(255, 0, 20, 40);
+  colors[ThemeProperties::COLOR_TAB_TEXT] = SkColorSetARGB(255, 60, 80, 100);
+  colors[ThemeProperties::COLOR_BACKGROUND_TAB_TEXT] =
+      SkColorSetARGB(0, 120, 140, 160);
+  colors[ThemeProperties::COLOR_BOOKMARK_TEXT] =
+      SkColorSetARGB(255, 180, 200, 220);
+  colors[ThemeProperties::COLOR_NTP_TEXT] = SkColorSetARGB(128, 240, 255, 0);
+  VerifyColorMap(colors);
+}
+
+TEST_F(BrowserThemePackTest, OutOfRangeColors) {
+  // Ensure colors with out-of-range values are simply ignored.
+  std::string color_json = "{ \"toolbar\": [0, 20, 40, -1], "
+                           "  \"tab_text\": [60, 80, 100, 2], "
+                           "  \"tab_background_text\": [120, 140, 160, 47.6], "
+                           "  \"bookmark_text\": [256, 0, 0], "
+                           "  \"ntp_text\": [0, -100, 100] }";
+  LoadColorJSON(color_json);
+
+  VerifyColorMap(GetDefaultColorMap());
 }
 
 TEST_F(BrowserThemePackTest, CanReadTints) {
@@ -471,11 +507,6 @@ TEST_F(BrowserThemePackTest, CanParsePaths) {
   ParseImageNamesJSON(path_json, &out_file_paths);
 
   size_t expected_file_paths = 2u;
-#if defined(USE_ASH) && !defined(OS_CHROMEOS)
-  // On desktop builds with ash, additional theme paths are generated to map to
-  // the special resource ids like IDR_THEME_FRAME_DESKTOP, etc
-  expected_file_paths = 3u;
-#endif
   EXPECT_EQ(expected_file_paths, out_file_paths.size());
   // "12" and "5" are internal constants to BrowserThemePack and are
   // PRS_THEME_BUTTON_BACKGROUND and PRS_THEME_TOOLBAR, but they are
@@ -585,7 +616,7 @@ TEST_F(BrowserThemePackTest, TestNonExistantImages) {
 TEST_F(BrowserThemePackTest, CanBuildAndReadPack) {
   base::ScopedTempDir dir;
   ASSERT_TRUE(dir.CreateUniqueTempDir());
-  base::FilePath file = dir.path().AppendASCII("data.pak");
+  base::FilePath file = dir.GetPath().AppendASCII("data.pak");
 
   // Part 1: Build the pack from an extension.
   {
@@ -609,7 +640,7 @@ TEST_F(BrowserThemePackTest, CanBuildAndReadPack) {
 TEST_F(BrowserThemePackTest, HiDpiThemeTest) {
   base::ScopedTempDir dir;
   ASSERT_TRUE(dir.CreateUniqueTempDir());
-  base::FilePath file = dir.path().AppendASCII("theme_data.pak");
+  base::FilePath file = dir.GetPath().AppendASCII("theme_data.pak");
 
   // Part 1: Build the pack from an extension.
   {

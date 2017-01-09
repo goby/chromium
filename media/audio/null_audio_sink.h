@@ -5,9 +5,10 @@
 #ifndef MEDIA_AUDIO_NULL_AUDIO_SINK_H_
 #define MEDIA_AUDIO_NULL_AUDIO_SINK_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/audio_renderer_sink.h"
 
 namespace base {
@@ -18,10 +19,9 @@ namespace media {
 class AudioBus;
 class AudioHash;
 class FakeAudioWorker;
-class OutputDevice;
 
 class MEDIA_EXPORT NullAudioSink
-    : NON_EXPORTED_BASE(public RestartableAudioRendererSink) {
+    : NON_EXPORTED_BASE(public SwitchableAudioRendererSink) {
  public:
   NullAudioSink(const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
 
@@ -33,7 +33,11 @@ class MEDIA_EXPORT NullAudioSink
   void Pause() override;
   void Play() override;
   bool SetVolume(double volume) override;
-  OutputDevice* GetOutputDevice() override;
+  OutputDeviceInfo GetOutputDeviceInfo() override;
+  bool CurrentThreadIsRenderingThread() override;
+  void SwitchOutputDevice(const std::string& device_id,
+                          const url::Origin& security_origin,
+                          const OutputDeviceStatusCB& callback) override;
 
   // Enables audio frame hashing.  Must be called prior to Initialize().
   void StartAudioHashForTesting();
@@ -54,11 +58,11 @@ class MEDIA_EXPORT NullAudioSink
   RenderCallback* callback_;
 
   // Controls whether or not a running hash is computed for audio frames.
-  scoped_ptr<AudioHash> audio_hash_;
+  std::unique_ptr<AudioHash> audio_hash_;
 
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  scoped_ptr<FakeAudioWorker> fake_worker_;
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<FakeAudioWorker> fake_worker_;
+  std::unique_ptr<AudioBus> audio_bus_;
 
   DISALLOW_COPY_AND_ASSIGN(NullAudioSink);
 };

@@ -93,6 +93,13 @@ differences can be subtle.  We won't even go into how the `targets` and
 The `-b/--builder`, `-c/--config`, `-f/--config-file`, `-m/--master`,
 `-q/--quiet`, and `-v/--verbose` flags work as documented for `mb gen`.
 
+### `mb audit`
+
+`mb audit` is used to track the progress of the GYP->GN migration. You can
+use it to check a single master, or all the masters we care about. See
+`mb help audit` for more details (most people are not expected to care about
+this).
+
 ### `mb gen`
 
 `mb gen` is responsible for generating the Ninja files by invoking either GYP
@@ -105,7 +112,9 @@ a directory, then runs GYP or GN as appropriate:
 ```
 
 Either the `-c/--config` flag or the `-m/--master` and `-b/--builder` flags
-must be specified so that `mb` can figure out which config to use.
+must be specified so that `mb` can figure out which config to use. The
+`--phase` flag must also be used with builders that have multiple
+build/compile steps (and only with those builders).
 
 By default, MB will look for a bot config file under `//ios/build/bots` (see
 [design_spec.md](the design spec) for details of how the bot config files
@@ -128,6 +137,8 @@ incorporated into the appropriate flags for GYP or GN as needed.
 
 If gen ends up using GYP, the path must have a valid GYP configuration as the
 last component of the path (i.e., specify `//out/Release_x64`, not `//out`).
+The gyp script defaults to `//build/gyp_chromium`, but can be overridden with
+the `--gyp-script` flag, e.g. `--gyp-script=gypfiles/gyp_v8`.
 
 ### `mb help`
 
@@ -139,7 +150,8 @@ Prints what command will be run by `mb gen` (like `mb gen -n` but does
 not require you to specify a path).
 
 The `-b/--builder`, `-c/--config`, `-f/--config-file`, `-m/--master`,
-`-q/--quiet`, and `-v/--verbose` flags work as documented for `mb gen`.
+`--phase`, `-q/--quiet`, and `-v/--verbose` flags work as documented for
+`mb gen`.
 
 ### `mb validate`
 
@@ -191,10 +203,14 @@ expression: a dictionary with three main keys, `masters`, `configs` and
 
 The `masters` key contains a nested series of dicts containing mappings
 of master -> builder -> config . This allows us to isolate the buildbot
-recipes from the actual details of the configs.
+recipes from the actual details of the configs. The config should either
+be a single string value representing a key in the `configs` dictionary,
+or a list of strings, each of which is a key in the `configs` dictionary;
+the latter case is for builders that do multiple compiles with different
+arguments in a single build, and must *only* be used for such builders
+(where a --phase argument must be supplied in each lookup or gen call).
 
-The `configs` key points to a dictionary of named build
-configurations.
+The `configs` key points to a dictionary of named build configurations.
 
 There should be an key in this dict for every supported configuration
 of Chromium, meaning every configuration we have a bot for, and every

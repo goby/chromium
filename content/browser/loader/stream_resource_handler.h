@@ -5,8 +5,10 @@
 #ifndef CONTENT_BROWSER_LOADER_STREAM_RESOURCE_HANDLER_H_
 #define CONTENT_BROWSER_LOADER_STREAM_RESOURCE_HANDLER_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/browser/loader/resource_handler.h"
 #include "content/browser/loader/stream_writer.h"
 
@@ -40,8 +42,6 @@ class StreamResourceHandler : public ResourceHandler {
 
   bool OnWillStart(const GURL& url, bool* defer) override;
 
-  bool OnBeforeNetworkStart(const GURL& url, bool* defer) override;
-
   // Create a new buffer to store received data.
   bool OnWillRead(scoped_refptr<net::IOBuffer>* buf,
                   int* buf_size,
@@ -51,7 +51,6 @@ class StreamResourceHandler : public ResourceHandler {
   bool OnReadCompleted(int bytes_read, bool* defer) override;
 
   void OnResponseCompleted(const net::URLRequestStatus& status,
-                           const std::string& sec_info,
                            bool* defer) override;
 
   void OnDataDownloaded(int bytes_downloaded) override;

@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/format_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
@@ -22,8 +25,8 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
+#include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/search_test_utils.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/metrics/proto/omnibox_event.pb.h"
@@ -32,6 +35,7 @@
 #include "components/omnibox/browser/autocomplete_provider.h"
 #include "components/omnibox/browser/omnibox_popup_model.h"
 #include "components/omnibox/browser/omnibox_view.h"
+#include "components/search_engines/template_url_service.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -66,16 +70,22 @@ class AutocompleteBrowserTest : public ExtensionBrowserTest {
     return GetLocationBar()->GetOmniboxView()->model()->popup_model()->
         autocomplete_controller();
   }
+
+  void FocusSearchCheckPreconditions() const {
+    LocationBar* location_bar = GetLocationBar();
+    OmniboxView* omnibox_view = location_bar->GetOmniboxView();
+    OmniboxEditModel* omnibox_model = omnibox_view->model();
+
+    EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
+    EXPECT_EQ(base::UTF8ToUTF16(url::kAboutBlankURL),
+              omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_FALSE(omnibox_model->is_keyword_selected());
+  }
 };
 
 IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, Basic) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   WaitForTemplateURLServiceToLoad();
   LocationBar* location_bar = GetLocationBar();
   OmniboxView* omnibox_view = location_bar->GetOmniboxView();
@@ -120,13 +130,6 @@ IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, Basic) {
 #endif
 
 IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, MAYBE_Autocomplete) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   WaitForTemplateURLServiceToLoad();
   // The results depend on the history backend being loaded. Make sure it is
   // loaded so that the autocomplete results are consistent.
@@ -166,13 +169,6 @@ IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, MAYBE_Autocomplete) {
 }
 
 IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, TabAwayRevertSelect) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   WaitForTemplateURLServiceToLoad();
   // http://code.google.com/p/chromium/issues/detail?id=38385
   // Make sure that tabbing away from an empty omnibox causes a revert
@@ -195,95 +191,160 @@ IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, TabAwayRevertSelect) {
 }
 
 IN_PROC_BROWSER_TEST_F(AutocompleteBrowserTest, FocusSearch) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   WaitForTemplateURLServiceToLoad();
   LocationBar* location_bar = GetLocationBar();
   OmniboxView* omnibox_view = location_bar->GetOmniboxView();
+  OmniboxEditModel* omnibox_model = omnibox_view->model();
 
-  // Focus search when omnibox is blank
+  TemplateURLService* template_url_service =
+      TemplateURLServiceFactory::GetForProfile(browser()->profile());
+  base::string16 default_search_keyword =
+      template_url_service->GetDefaultSearchProvider()->keyword();
+
+  base::string16 query_text = base::ASCIIToUTF16("foo");
+
+  size_t selection_start, selection_end;
+
+  // Focus search when omnibox is blank.
   {
-    EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::UTF8ToUTF16(url::kAboutBlankURL), omnibox_view->GetText());
+    FocusSearchCheckPreconditions();
 
     location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
 
-    size_t selection_start, selection_end;
     omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
-    EXPECT_EQ(1U, selection_start);
-    EXPECT_EQ(1U, selection_end);
+    EXPECT_EQ(0U, selection_start);
+    EXPECT_EQ(0U, selection_end);
+
+    omnibox_view->RevertAll();
   }
 
-  // Focus search when omnibox is _not_ alread in forced query mode.
+  // Focus search when omnibox is _not_ already in keyword mode.
   {
-    omnibox_view->SetUserText(base::ASCIIToUTF16("foo"));
+    FocusSearchCheckPreconditions();
+
+    omnibox_view->SetUserText(query_text);
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("foo"), omnibox_view->GetText());
+    EXPECT_EQ(query_text, omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_FALSE(omnibox_model->is_keyword_selected());
 
     location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+    EXPECT_EQ(query_text, omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
 
-    size_t selection_start, selection_end;
     omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
-    EXPECT_EQ(1U, selection_start);
-    EXPECT_EQ(1U, selection_end);
+    EXPECT_EQ(0U, std::min(selection_start, selection_end));
+    EXPECT_EQ(query_text.length(), std::max(selection_start, selection_end));
+
+    omnibox_view->RevertAll();
   }
 
-  // Focus search when omnibox _is_ already in forced query mode, but no query
+  // Focus search when omnibox _is_ already in keyword mode, but no query
   // has been typed.
   {
-    omnibox_view->SetUserText(base::ASCIIToUTF16("?"));
-    EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+    FocusSearchCheckPreconditions();
 
     location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?"), omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
 
-    size_t selection_start, selection_end;
     omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
-    EXPECT_EQ(1U, selection_start);
-    EXPECT_EQ(1U, selection_end);
+    EXPECT_EQ(0U, selection_start);
+    EXPECT_EQ(0U, selection_end);
+
+    location_bar->FocusSearch();
+    EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
+    EXPECT_EQ(base::string16(), omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
+
+    omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
+    EXPECT_EQ(0U, selection_start);
+    EXPECT_EQ(0U, selection_end);
+
+    omnibox_view->RevertAll();
   }
 
-  // Focus search when omnibox _is_ already in forced query mode, and some query
+  // Focus search when omnibox _is_ already in keyword mode, and some query
   // has been typed.
   {
-    omnibox_view->SetUserText(base::ASCIIToUTF16("?foo"));
+    FocusSearchCheckPreconditions();
+
+    omnibox_view->SetUserText(query_text);
+    location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?foo"), omnibox_view->GetText());
+    EXPECT_EQ(query_text, omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
+
+    omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
+    EXPECT_EQ(0U, std::min(selection_start, selection_end));
+    EXPECT_EQ(query_text.length(), std::max(selection_start, selection_end));
 
     location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("?foo"), omnibox_view->GetText());
+    EXPECT_EQ(query_text, omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
 
-    size_t selection_start, selection_end;
     omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
-    EXPECT_EQ(1U, std::min(selection_start, selection_end));
-    EXPECT_EQ(4U, std::max(selection_start, selection_end));
+    EXPECT_EQ(0U, std::min(selection_start, selection_end));
+    EXPECT_EQ(query_text.length(), std::max(selection_start, selection_end));
+
+    omnibox_view->RevertAll();
   }
 
-  // Focus search when omnibox is in forced query mode with leading whitespace.
+  // If the user gets into keyword mode using a keyboard shortcut, and presses
+  // backspace, they should be left with their original query without their dsp
+  // keyword.
   {
-    omnibox_view->SetUserText(base::ASCIIToUTF16("   ?foo"));
+    FocusSearchCheckPreconditions();
+
+    omnibox_view->SetUserText(query_text);
+    // The user presses Ctrl-K.
+    location_bar->FocusSearch();
+    // The user presses backspace.
+    omnibox_model->ClearKeyword();
+
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("   ?foo"), omnibox_view->GetText());
+    EXPECT_EQ(query_text, omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_FALSE(omnibox_model->is_keyword_selected());
+
+    omnibox_view->RevertAll();
+  }
+
+  // Calling FocusSearch() when the permanent URL is showing should result in an
+  // empty query string.
+  {
+    FocusSearchCheckPreconditions();
+
+    omnibox_model->UpdatePermanentText();
+    EXPECT_EQ(base::ASCIIToUTF16(url::kAboutBlankURL), omnibox_view->GetText());
 
     location_bar->FocusSearch();
     EXPECT_FALSE(location_bar->GetDestinationURL().is_valid());
-    EXPECT_EQ(base::ASCIIToUTF16("   ?foo"), omnibox_view->GetText());
+    EXPECT_EQ(base::string16(), omnibox_view->GetText());
+    EXPECT_EQ(default_search_keyword, omnibox_model->keyword());
+    EXPECT_FALSE(omnibox_model->is_keyword_hint());
+    EXPECT_TRUE(omnibox_model->is_keyword_selected());
 
-    size_t selection_start, selection_end;
-    omnibox_view->GetSelectionBounds(&selection_start, &selection_end);
-    EXPECT_EQ(4U, std::min(selection_start, selection_end));
-    EXPECT_EQ(7U, std::max(selection_start, selection_end));
+    omnibox_view->RevertAll();
   }
 }

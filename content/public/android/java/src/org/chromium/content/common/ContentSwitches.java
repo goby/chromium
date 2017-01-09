@@ -27,31 +27,20 @@ public abstract class ContentSwitches {
     // Change the url of the JavaScript that gets injected when accessibility mode is enabled.
     public static final String ACCESSIBILITY_JAVASCRIPT_URL = "accessibility-js-url";
 
-    // Indicates Chrome is running for performance benchmark.
-    public static final String RUNNING_PERFORMANCE_BENCHMARK =
-            "running-performance-benchmark";
-
     // Sets the ISO country code that will be used for phone number detection.
     public static final String NETWORK_COUNTRY_ISO = "network-country-iso";
 
-    // How much of the top controls need to be shown before they will auto show.
+    // How much of the browser controls need to be shown before they will auto show.
     public static final String TOP_CONTROLS_SHOW_THRESHOLD = "top-controls-show-threshold";
 
-    // How much of the top controls need to be hidden before they will auto hide.
+    // How much of the browser controls need to be hidden before they will auto hide.
     public static final String TOP_CONTROLS_HIDE_THRESHOLD = "top-controls-hide-threshold";
-
-    // Native switch - chrome_switches::kEnableInstantExtendedAPI
-    public static final String ENABLE_INSTANT_EXTENDED_API = "enable-instant-extended-api";
 
     // Native switch - shell_switches::kRunLayoutTest
     public static final String RUN_LAYOUT_TEST = "run-layout-test";
 
     // Native switch - chrome_switches::kDisablePopupBlocking
     public static final String DISABLE_POPUP_BLOCKING = "disable-popup-blocking";
-
-    // Native switch - gfx_switches::kForceDeviceScaleFactor
-    public static final String FORCE_DEVICE_SCALE_FACTOR =
-            "force-device-scale-factor";
 
     // Enable mouse hover emulation by holding your finger just over the screen.
     public static final String ENABLE_TOUCH_HOVER = "enable-touch-hover";
@@ -63,15 +52,45 @@ public abstract class ContentSwitches {
     public static final String DISABLE_GESTURE_REQUIREMENT_FOR_MEDIA_PLAYBACK =
             "disable-gesture-requirement-for-media-playback";
 
+    // Native switch kDisableGestureRequirementForPresentation
+    public static final String DISABLE_GESTURE_REQUIREMENT_FOR_PRESENTATION =
+            "disable-gesture-requirement-for-presentation";
+
     // Native switch kRendererProcessLimit
     public static final String RENDER_PROCESS_LIMIT = "renderer-process-limit";
 
     // Native switch kInProcessGPU
     public static final String IN_PROCESS_GPU = "in-process-gpu";
 
-    // Native switch kIPCSyncCompositing
-    public static final String IPC_SYNC_COMPOSITING = "ipc-sync-compositing";
+    // Native switch kProcessType
+    public static final String SWITCH_PROCESS_TYPE = "type";
+
+    // Native switch kRendererProcess
+    public static final String SWITCH_RENDERER_PROCESS = "renderer";
+
+    // Native switch kUtilityProcess
+    public static final String SWITCH_UTILITY_PROCESS = "utility";
+
+    // Native switch kGPUProcess
+    public static final String SWITCH_GPU_PROCESS = "gpu-process";
+
+    // Enable content intent detection in the renderer
+    public static final String ENABLE_CONTENT_INTENT_DETECTION = "enable-content-intent-detection";
 
     // Prevent instantiation.
     private ContentSwitches() {}
+
+    public static String getSwitchValue(final String[] commandLine, String switchKey) {
+        if (commandLine == null || switchKey == null) {
+            return null;
+        }
+        // This format should be matched with the one defined in command_line.h.
+        final String switchKeyPrefix = "--" + switchKey + "=";
+        for (String command : commandLine) {
+            if (command != null && command.startsWith(switchKeyPrefix)) {
+                return command.substring(switchKeyPrefix.length());
+            }
+        }
+        return null;
+    }
 }

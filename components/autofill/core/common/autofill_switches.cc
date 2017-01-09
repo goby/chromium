@@ -2,21 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "components/autofill/core/common/autofill_switches.h"
 
 namespace autofill {
 namespace switches {
-
-// Disables using device's camera to scan a new credit card when filling out a
-// credit card form.
-const char kDisableCreditCardScan[]         = "disable-credit-card-scan";
-
-// Disables the experiment for the password manager to only fill on account
-// selection, rather than autofilling on page load.
-const char kDisableFillOnAccountSelect[]    = "disable-fill-on-account-select";
-
-// Disables the experimental Full Form Autofill on iOS feature.
-const char kDisableFullFormAutofillIOS[]    = "disable-full-form-autofill-ios";
 
 // Force hiding the local save checkbox in the autofill dialog box for getting
 // the full credit card number for a wallet card. The card will never be stored
@@ -34,23 +24,6 @@ const char kDisablePasswordGeneration[]     = "disable-password-generation";
 
 // The "disable" flag for kEnableSingleClickAutofill.
 const char kDisableSingleClickAutofill[]    = "disable-single-click-autofill";
-
-// Enables using device's camera to scan a new credit card when filling out a
-// credit card form.
-const char kEnableCreditCardScan[]          = "enable-credit-card-scan";
-
-// Enables the experiment for the password manager to only fill on account
-// selection, rather than autofilling on page load, with highlighting of fields.
-const char kEnableFillOnAccountSelect[]     = "enable-fill-on-account-select";
-
-// Enables the experiment for the password manager to only fill on account
-// selection, rather than autofilling on page load, with no highlighting of
-// fields.
-const char kEnableFillOnAccountSelectNoHighlighting[] =
-    "enable-fill-on-account-select-no-highlighting";
-
-// Enables the experimental Full Form Autofill on iOS feature.
-const char kEnableFullFormAutofillIOS[]     = "enable-full-form-autofill-ios";
 
 // Force showing the local save checkbox in the autofill dialog box for getting
 // the full credit card number for a wallet card.
@@ -82,14 +55,6 @@ const char kLocalHeuristicsOnlyForPasswordGeneration[] =
 
 // Annotates forms with Autofill field type predictions.
 const char kShowAutofillTypePredictions[]   = "show-autofill-type-predictions";
-
-// Secure service URL for Online Wallet service. Used as the base url to escrow
-// credit card numbers.
-const char kWalletSecureServiceUrl[]        = "wallet-secure-service-url";
-
-// Service URL for Online Wallet service. Used as the base url for Online Wallet
-// API calls.
-const char kWalletServiceUrl[]              = "wallet-service-url";
 
 // Use the sandbox Online Wallet service URL (for developer testing).
 const char kWalletServiceUseSandbox[]       = "wallet-service-use-sandbox";

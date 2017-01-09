@@ -8,7 +8,6 @@
 #include "ui/views/views_export.h"
 
 namespace gfx {
-class Canvas;
 class Insets;
 class Path;
 class Point;
@@ -24,26 +23,43 @@ class TouchEvent;
 
 namespace views {
 
-class InputMethod;
+enum class FrameMode {
+  SYSTEM_DRAWN,              // "glass" frame
+  SYSTEM_DRAWN_NO_CONTROLS,  // "glass" frame but with custom window controls
+  CUSTOM_DRAWN               // "opaque" frame
+};
 
 // Implemented by the object that uses the HWNDMessageHandler to handle
 // notifications from the underlying HWND and service requests for data.
 class VIEWS_EXPORT HWNDMessageHandlerDelegate {
  public:
-  virtual bool IsWidgetWindow() const = 0;
+  // True if the widget associated with this window has a non-client view.
+  virtual bool HasNonClientView() const = 0;
 
-  // TODO(beng): resolve this more satisfactorily vis-a-vis ShouldUseNativeFrame
-  //             to avoid confusion.
-  virtual bool IsUsingCustomFrame() const = 0;
+  // Returns who we want to be drawing the frame. Either the system (Windows)
+  // will handle it or Chrome will custom draw it.
+  virtual FrameMode GetFrameMode() const = 0;
+
+  // True if a frame should be drawn. This will return true for some windows
+  // that don't have a visible frame. Those usually have the WS_POPUP style, for
+  // which Windows will remove the frame automatically if the frame mode is
+  // SYSTEM_DRAWN.
+  // TODO(bsep): Investigate deleting this when v2 Apps support is removed.
+  virtual bool HasFrame() const = 0;
 
   virtual void SchedulePaint() = 0;
-  virtual void EnableInactiveRendering() = 0;
-  virtual bool IsInactiveRenderingDisabled() = 0;
+  virtual void SetAlwaysRenderAsActive(bool always_render_as_active) = 0;
+  virtual bool IsAlwaysRenderAsActive() = 0;
 
   virtual bool CanResize() const = 0;
   virtual bool CanMaximize() const = 0;
   virtual bool CanMinimize() const = 0;
   virtual bool CanActivate() const = 0;
+
+  // Returns true if the delegate wants mouse events when inactive and the
+  // window is clicked and should not become activated. A return value of false
+  // indicates the mouse events will be dropped.
+  virtual bool WantsMouseEventsWhenInactive() const = 0;
 
   virtual bool WidgetSizeIsClientSize() const = 0;
 
@@ -71,6 +87,8 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
 
   // Returns the current size of the RootView.
   virtual gfx::Size GetRootViewSize() const = 0;
+
+  virtual gfx::Size DIPToScreenSize(const gfx::Size& dip_size) const = 0;
 
   virtual void ResetWindowControls() = 0;
 
@@ -220,8 +238,12 @@ class VIEWS_EXPORT HWNDMessageHandlerDelegate {
   // Called when the window size is about to change.
   virtual void HandleWindowSizeChanging() = 0;
 
-  // Called when the window size has finished changing.
-  virtual void HandleWindowSizeChanged() = 0;
+  // Called after HandleWindowSizeChanging() when it's determined the window
+  // size didn't actually change.
+  virtual void HandleWindowSizeUnchanged() = 0;
+
+  // Called when the window scale factor has changed.
+  virtual void HandleWindowScaleFactorChanged(float window_scale_factor) = 0;
 
  protected:
   virtual ~HWNDMessageHandlerDelegate() {}

@@ -30,7 +30,6 @@ import errno
 import json
 import logging
 import re
-import urllib2
 
 from webkitpy.layout_tests.layout_package.json_results_generator import convert_times_trie_to_flat_paths
 from webkitpy.layout_tests.models import test_expectations
@@ -40,6 +39,7 @@ _log = logging.getLogger(__name__)
 
 
 class LayoutTestFinder(object):
+
     def __init__(self, port, options):
         self._port = port
         self._options = options
@@ -138,10 +138,10 @@ class LayoutTestFinder(object):
                     line = self._strip_comments(line)
                     if line:
                         tests.append(line)
-            except IOError, e:
+            except IOError as e:
                 if e.errno == errno.ENOENT:
                     _log.critical('')
-                    _log.critical('--test-list file "%s" not found' % file)
+                    _log.critical('--test-list file "%s" not found', file)
                 raise
         return tests
 
@@ -186,11 +186,11 @@ class LayoutTestFinder(object):
         try:
             (chunk_num, chunk_len) = chunk_value.split(":")
             chunk_num = int(chunk_num)
-            assert(chunk_num >= 0)
+            assert chunk_num >= 0
             test_size = int(chunk_len)
-            assert(test_size > 0)
+            assert test_size > 0
         except AssertionError:
-            _log.critical("invalid chunk '%s'" % chunk_value)
+            _log.critical("invalid chunk '%s'", chunk_value)
             return (None, None)
 
         # Get the number of tests
@@ -204,8 +204,8 @@ class LayoutTestFinder(object):
             slice_start = (chunk_num * chunk_len) % num_tests
         else:
             # Validate the data.
-            assert(test_size <= num_tests)
-            assert(chunk_num <= test_size)
+            assert test_size <= num_tests
+            assert chunk_num <= test_size
 
             # To count the chunk_len, and make sure we don't skip
             # some tests, we round to the next value that fits exactly
@@ -223,13 +223,13 @@ class LayoutTestFinder(object):
 
         tests_to_run = test_names[slice_start:slice_end]
 
-        _log.debug('chunk slice [%d:%d] of %d is %d tests' % (slice_start, slice_end, num_tests, (slice_end - slice_start)))
+        _log.debug('chunk slice [%d:%d] of %d is %d tests', slice_start, slice_end, num_tests, (slice_end - slice_start))
 
         # If we reached the end and we don't have enough tests, we run some
         # from the beginning.
         if slice_end - slice_start < chunk_len:
             extra = chunk_len - (slice_end - slice_start)
-            _log.debug('   last chunk is partial, appending [0:%d]' % extra)
+            _log.debug('   last chunk is partial, appending [0:%d]', extra)
             tests_to_run.extend(test_names[0:extra])
 
         return (tests_to_run, set(test_names) - set(tests_to_run))

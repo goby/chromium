@@ -13,10 +13,6 @@ namespace base {
 class DictionaryValue;
 }
 
-namespace gfx {
-class Rect;
-}
-
 namespace chromeos {
 
 class CoreOobeActor {
@@ -40,12 +36,13 @@ class CoreOobeActor {
   virtual void ClearErrors() = 0;
   virtual void ReloadContent(const base::DictionaryValue& dictionary) = 0;
   virtual void ShowControlBar(bool show) = 0;
+  virtual void ShowPinKeyboard(bool show) = 0;
   virtual void SetClientAreaSize(int width, int height) = 0;
   virtual void ShowDeviceResetScreen() = 0;
   virtual void ShowEnableDebuggingScreen() = 0;
   virtual void InitDemoModeDetection() = 0;
   virtual void StopDemoModeDetection() = 0;
-
+  virtual void UpdateKeyboardState() = 0;
 };
 
 }  // namespace chromeos

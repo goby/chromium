@@ -39,25 +39,36 @@ namespace blink {
 
 class SVGMatrixTearOff;
 
-class SVGPointTearOff : public SVGPropertyTearOff<SVGPoint>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static PassRefPtrWillBeRawPtr<SVGPointTearOff> create(PassRefPtrWillBeRawPtr<SVGPoint> target, SVGElement* contextElement, PropertyIsAnimValType propertyIsAnimVal, const QualifiedName& attributeName = QualifiedName::null())
-    {
-        return adoptRefWillBeNoop(new SVGPointTearOff(target, contextElement, propertyIsAnimVal, attributeName));
-    }
+class SVGPointTearOff : public SVGPropertyTearOff<SVGPoint>,
+                        public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    void setX(float, ExceptionState&);
-    void setY(float, ExceptionState&);
-    float x() { return target()->x(); }
-    float y() { return target()->y(); }
+ public:
+  static SVGPointTearOff* create(
+      SVGPoint* target,
+      SVGElement* contextElement,
+      PropertyIsAnimValType propertyIsAnimVal,
+      const QualifiedName& attributeName = QualifiedName::null()) {
+    return new SVGPointTearOff(target, contextElement, propertyIsAnimVal,
+                               attributeName);
+  }
 
-    PassRefPtrWillBeRawPtr<SVGPointTearOff> matrixTransform(PassRefPtrWillBeRawPtr<SVGMatrixTearOff>);
+  void setX(float, ExceptionState&);
+  void setY(float, ExceptionState&);
+  float x() { return target()->x(); }
+  float y() { return target()->y(); }
 
-protected:
-    SVGPointTearOff(PassRefPtrWillBeRawPtr<SVGPoint>, SVGElement* contextElement, PropertyIsAnimValType, const QualifiedName& attributeName = QualifiedName::null());
+  SVGPointTearOff* matrixTransform(SVGMatrixTearOff*);
+
+  DECLARE_VIRTUAL_TRACE_WRAPPERS();
+
+ protected:
+  SVGPointTearOff(SVGPoint*,
+                  SVGElement* contextElement,
+                  PropertyIsAnimValType,
+                  const QualifiedName& attributeName = QualifiedName::null());
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGPointTearOff_h
+#endif  // SVGPointTearOff_h

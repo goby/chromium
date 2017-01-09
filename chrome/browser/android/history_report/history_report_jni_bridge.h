@@ -6,11 +6,13 @@
 #define CHROME_BROWSER_ANDROID_HISTORY_REPORT_HISTORY_REPORT_JNI_BRIDGE_H_
 
 #include <jni.h>
+
+#include <memory>
 #include <string>
 
 #include "base/android/jni_weak_ref.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 
 namespace bookmarks {
 class BookmarkModel;
@@ -25,7 +27,6 @@ class UsageReportsBufferService;
 
 bool RegisterHistoryReportJniBridge(JNIEnv* env);
 
-// JNI Bridge which connects native and java parts of Icing integration.
 class HistoryReportJniBridge {
  public:
   HistoryReportJniBridge(JNIEnv* env, jobject obj);
@@ -42,8 +43,8 @@ class HistoryReportJniBridge {
       const base::android::JavaParamRef<jobject>& obj,
       jlong last_seq_no,
       jint limit);
-  // Queries usage reports buffer for a batch of reports to be reported to
-  // Icing.
+  // Queries usage reports buffer for a batch of reports to be reported for
+  // local indexing.
   base::android::ScopedJavaLocalRef<jobjectArray> GetUsageReportsBatch(
       JNIEnv* env,
       const base::android::JavaParamRef<jobject>& obj,
@@ -70,11 +71,11 @@ class HistoryReportJniBridge {
 
  private:
   JavaObjectWeakGlobalRef weak_java_provider_;
-  scoped_ptr<DataObserver> data_observer_;
-  scoped_ptr<DataProvider> data_provider_;
-  scoped_ptr<DeltaFileService> delta_file_service_;
-  scoped_ptr<bookmarks::BookmarkModel> bookmark_model_;
-  scoped_ptr<UsageReportsBufferService> usage_reports_buffer_service_;
+  std::unique_ptr<DataObserver> data_observer_;
+  std::unique_ptr<DataProvider> data_provider_;
+  std::unique_ptr<DeltaFileService> delta_file_service_;
+  std::unique_ptr<bookmarks::BookmarkModel> bookmark_model_;
+  std::unique_ptr<UsageReportsBufferService> usage_reports_buffer_service_;
 
   DISALLOW_COPY_AND_ASSIGN(HistoryReportJniBridge);
 };

@@ -20,6 +20,7 @@ import android.view.ViewGroup.LayoutParams;
 import android.view.WindowManager;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
+import android.webkit.GeolocationPermissions;
 import android.webkit.WebChromeClient;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -32,13 +33,13 @@ import org.chromium.android_webview.AwBrowserContext;
 import org.chromium.android_webview.AwBrowserProcess;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsClient;
-import org.chromium.android_webview.AwContentsStatics;
 import org.chromium.android_webview.AwDevToolsServer;
 import org.chromium.android_webview.AwSettings;
 import org.chromium.android_webview.test.AwTestContainerView;
 import org.chromium.android_webview.test.NullContentsClient;
 import org.chromium.base.BaseSwitches;
 import org.chromium.base.CommandLine;
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.TraceEvent;
 import org.chromium.content.app.ContentApplication;
@@ -64,11 +65,6 @@ public class AwShellActivity extends Activity {
     private ImageButton mPrevButton;
     private ImageButton mNextButton;
 
-    // This is the same as data_reduction_proxy::switches::kEnableDataReductionProxy.
-    private static final String ENABLE_DATA_REDUCTION_PROXY = "enable-spdy-proxy-auth";
-    // This is the same as data_reduction_proxy::switches::kDataReductionProxyKey.
-    private static final String DATA_REDUCTION_PROXY_KEY = "spdy-proxy-auth-value";
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -78,7 +74,8 @@ public class AwShellActivity extends Activity {
         ContentApplication.initCommandLine(this);
         waitForDebuggerIfNeeded();
 
-        AwBrowserProcess.loadLibrary(this);
+        ContextUtils.initApplicationContext(getApplicationContext());
+        AwBrowserProcess.loadLibrary();
 
         if (CommandLine.getInstance().hasSwitch(AwShellSwitches.ENABLE_ATRACE)) {
             Log.e(TAG, "Enabling Android trace.");
@@ -108,18 +105,19 @@ public class AwShellActivity extends Activity {
         mAwTestContainerView.getAwContents().loadUrl(startupUrl);
         AwContents.setShouldDownloadFavicons();
         mUrlTextView.setText(startupUrl);
+    }
 
-        if (CommandLine.getInstance().hasSwitch(ENABLE_DATA_REDUCTION_PROXY)) {
-            String key = CommandLine.getInstance().getSwitchValue(DATA_REDUCTION_PROXY_KEY);
-            if (key != null && !key.isEmpty()) {
-                AwContentsStatics.setDataReductionProxyKey(key);
-                AwContentsStatics.setDataReductionProxyEnabled(true);
-            }
+    @Override
+    public void onDestroy() {
+        if (mDevToolsServer != null) {
+            mDevToolsServer.destroy();
+            mDevToolsServer = null;
         }
+        super.onDestroy();
     }
 
     private AwTestContainerView createAwTestContainerView() {
-        AwBrowserProcess.start(this);
+        AwBrowserProcess.start();
         AwTestContainerView testContainerView = new AwTestContainerView(this, true);
         AwContentsClient awContentsClient = new NullContentsClient() {
             private View mCustomView;
@@ -160,6 +158,12 @@ public class AwShellActivity extends Activity {
                 }
                 return false;
             }
+
+            @Override
+            public void onGeolocationPermissionsShowPrompt(String origin,
+                    GeolocationPermissions.Callback callback) {
+                callback.invoke(origin, false, false);
+            }
         };
 
         SharedPreferences sharedPreferences =
@@ -167,8 +171,10 @@ public class AwShellActivity extends Activity {
         if (mBrowserContext == null) {
             mBrowserContext = new AwBrowserContext(sharedPreferences, getApplicationContext());
         }
-        final AwSettings awSettings = new AwSettings(this /*context*/,
-                false /*isAccessFromFileURLsGrantedByDefault*/, false /*supportsLegacyQuirks*/);
+        final AwSettings awSettings = new AwSettings(this /* context */,
+                false /* isAccessFromFileURLsGrantedByDefault */, false /* supportsLegacyQuirks */,
+                false /* allowEmptyDocumentPersistence */,
+                true /* allowGeolocationOnInsecureOrigins */);
         // Required for WebGL conformance tests.
         awSettings.setMediaPlaybackRequiresUserGesture(false);
         // Allow zoom and fit contents to screen
@@ -180,7 +186,7 @@ public class AwShellActivity extends Activity {
 
         testContainerView.initialize(new AwContents(mBrowserContext, testContainerView,
                 testContainerView.getContext(), testContainerView.getInternalAccessDelegate(),
-                testContainerView.getNativeGLDelegate(), awContentsClient, awSettings));
+                testContainerView.getNativeDrawGLFunctorFactory(), awContentsClient, awSettings));
         testContainerView.getAwContents().getSettings().setJavaScriptEnabled(true);
         if (mDevToolsServer == null) {
             mDevToolsServer = new AwDevToolsServer();

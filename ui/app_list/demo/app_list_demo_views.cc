@@ -2,10 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "build/build_config.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/content_switches.h"
 #include "ui/app_list/test/app_list_test_model.h"
@@ -46,7 +52,7 @@ class DemoAppListViewDelegate : public app_list::test::AppListTestViewDelegate {
  private:
   app_list::AppListView* view_;  // Weak. Owns this.
   content::BrowserContext* browser_context_;
-  scoped_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<content::WebContents> web_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(DemoAppListViewDelegate);
 };
@@ -87,7 +93,7 @@ void DemoAppListViewDelegate::Dismiss() {
 
 void DemoAppListViewDelegate::ViewClosing() {
   base::MessageLoop* message_loop = base::MessageLoopForUI::current();
-  message_loop->DeleteSoon(FROM_HERE, this);
+  message_loop->task_runner()->DeleteSoon(FROM_HERE, this);
   message_loop->QuitWhenIdle();
 }
 

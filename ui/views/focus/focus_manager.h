@@ -7,74 +7,76 @@
 
 #include <list>
 #include <map>
+#include <memory>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/accelerators/accelerator_manager.h"
 #include "ui/gfx/native_widget_types.h"
 #include "ui/views/views_export.h"
 
-// The FocusManager class is used to handle focus traversal, store/restore
-// focused views and handle keyboard accelerators.
+// FocusManager handles focus traversal, stores and restores focused views, and
+// handles keyboard accelerators. This class is an implementation detail of
+// views::. Most callers should use methods of views:: classes rather than using
+// FocusManager directly.
 //
 // There are 2 types of focus:
-// - the native focus, which is the focus that an gfx::NativeView has.
-// - the view focus, which is the focus that a views::View has.
 //
-// Each native view must register with their Focus Manager so the focus manager
-// gets notified when they are focused (and keeps track of the native focus) and
-// as well so that the tab key events can be intercepted.
-// They can provide when they register a View that is kept in synch in term of
-// focus. This is used in NativeControl for example, where a View wraps an
-// actual native window.
-// This is already done for you if you subclass the NativeControl class or if
-// you use the NativeViewHost class.
+// - The native focus, which is the focus that a gfx::NativeView has.
+// - The view focus, which is the focus that a views::View has.
 //
-// When creating a top window (derived from views::Widget) that is not a child
-// window, it creates and owns a FocusManager to manage the focus for itself and
-// all its child windows.
+// When registering a view with the FocusManager, the caller can provide a view
+// whose focus will be kept in sync with the view the FocusManager is managing.
 //
-// The FocusTraversable interface exposes the methods a class should implement
-// in order to be able to be focus traversed when tab key is pressed.
-// RootViews implement FocusTraversable.
-// The FocusManager contains a top FocusTraversable instance, which is the top
-// RootView.
+// (Focus registration is already done for you if you subclass the NativeControl
+// class or if you use the NativeViewHost class.)
 //
-// If you just use views, then the focus traversal is handled for you by the
-// RootView. The default traversal order is the order in which the views have
-// been added to their container. You can modify this order by using the View
-// method SetNextFocusableView().
+// When a top window (derived from views::Widget) that is not a child window is
+// created, it creates and owns a FocusManager to manage the focus for itself
+// and all its child windows.
+//
+// To be able to be focus-traversed when the Tab key is pressed, a class should
+// implement the FocusTraversable interface. RootViews implement
+// FocusTraversable. The FocusManager contains a top FocusTraversable instance,
+// which is the top RootView.
+//
+// If you just use Views, then the RootView handles focus traversal for you. The
+// default traversal order is the order in which the views have been added to
+// their container. You can call View::SetNextFocusableView to modify this
+// order.
 //
 // If you are embedding a native view containing a nested RootView (for example
 // by adding a NativeControl that contains a NativeWidgetWin as its native
 // component), then you need to:
-// - override the View::GetFocusTraversable() method in your outer component.
+//
+// - Override the View::GetFocusTraversable method in your outer component.
 //   It should return the RootView of the inner component. This is used when
 //   the focus traversal traverse down the focus hierarchy to enter the nested
 //   RootView. In the example mentioned above, the NativeControl overrides
-//   GetFocusTraversable() and returns hwnd_view_container_->GetRootView().
-// - call Widget::SetFocusTraversableParent() on the nested RootView and point
+//   GetFocusTraversable and returns hwnd_view_container_->GetRootView().
+//
+// - Call Widget::SetFocusTraversableParent on the nested RootView and point
 //   it to the outer RootView. This is used when the focus goes out of the
 //   nested RootView. In the example:
-//   hwnd_view_container_->GetWidget()->SetFocusTraversableParent(
-//      native_control->GetRootView());
-// - call RootView::SetFocusTraversableParentView() on the nested RootView with
+//
+//     hwnd_view_container_->GetWidget()->SetFocusTraversableParent(
+//         native_control->GetRootView());
+//
+// - Call RootView::SetFocusTraversableParentView on the nested RootView with
 //   the parent view that directly contains the native window. This is needed
 //   when traversing up from the nested RootView to know which view to start
-//   with when going to the next/previous view.
-//   In our example:
-//   hwnd_view_container_->GetWidget()->SetFocusTraversableParent(
-//      native_control);
+//   with when going to the next/previous view. In the example:
 //
-// Note that FocusTraversable do not have to be RootViews: AccessibleToolbarView
-// is FocusTraversable.
+//     hwnd_view_container_->GetWidget()->SetFocusTraversableParent(
+//         native_control);
+//
+// Note that FocusTraversable views do not have to be RootViews:
+// AccessibleToolbarView is FocusTraversable.
 
 namespace ui {
 class AcceleratorManager;
 class AcceleratorTarget;
-class EventHandler;
 class KeyEvent;
 }
 
@@ -198,7 +200,8 @@ class VIEWS_EXPORT FocusManager {
 
   // Restore the view saved with a previous call to StoreFocusedView(). Used
   // when the widget becomes active. Returns true when the previous view was
-  // successfully refocused - otherwise false.
+  // successfully refocused. In case the stored view is no longer focusable,
+  // it advances focus and returns false.
   bool RestoreFocusedView();
 
   // Sets the |view| to be restored when calling RestoreFocusView. This is used
@@ -274,12 +277,6 @@ class VIEWS_EXPORT FocusManager {
   void AddFocusChangeListener(FocusChangeListener* listener);
   void RemoveFocusChangeListener(FocusChangeListener* listener);
 
-  // Returns the AcceleratorTarget that should be activated for the specified
-  // keyboard accelerator, or NULL if no view is registered for that keyboard
-  // accelerator.
-  ui::AcceleratorTarget* GetCurrentTargetForAccelerator(
-      const ui::Accelerator& accelerator) const;
-
   // Whether the given |accelerator| has a priority handler associated with it.
   bool HasPriorityHandler(const ui::Accelerator& accelerator) const;
 
@@ -322,6 +319,12 @@ class VIEWS_EXPORT FocusManager {
                              bool reverse,
                              bool dont_loop);
 
+  bool keyboard_accessible() const { return keyboard_accessible_; }
+
+  // Updates |keyboard_accessible_| to the given value and advances focus if
+  // necessary.
+  void SetKeyboardAccessible(bool keyboard_accessible);
+
  private:
   // Returns the focusable view found in the FocusTraversable specified starting
   // at the specified view. This traverses down along the FocusTraversable
@@ -335,6 +338,10 @@ class VIEWS_EXPORT FocusManager {
   // and should not be processed further.
   bool ProcessArrowKeyTraversal(const ui::KeyEvent& event);
 
+  // Whether |view| is currently focusable as per the platform's interpretation
+  // of |keyboard_accesible_|.
+  bool IsFocusable(View* view) const;
+
   // Whether arrow key traversal is enabled.
   static bool arrow_key_traversal_enabled_;
 
@@ -343,13 +350,13 @@ class VIEWS_EXPORT FocusManager {
 
   // The object which handles an accelerator when |accelerator_manager_| doesn't
   // handle it.
-  scoped_ptr<FocusManagerDelegate> delegate_;
+  std::unique_ptr<FocusManagerDelegate> delegate_;
 
   // The view that currently is focused.
   View* focused_view_;
 
   // The AcceleratorManager this FocusManager is associated with.
-  scoped_ptr<ui::AcceleratorManager> accelerator_manager_;
+  std::unique_ptr<ui::AcceleratorManager> accelerator_manager_;
 
   // Keeps track of whether shortcut handling is currently suspended.
   bool shortcut_handling_suspended_;
@@ -366,6 +373,15 @@ class VIEWS_EXPORT FocusManager {
 
   // See description above getter.
   bool is_changing_focus_;
+
+  // This is true if full keyboard accessibility is needed. This causes
+  // IsAccessibilityFocusable() to be checked rather than IsFocusable(). This
+  // can be set depending on platform constraints. FocusSearch uses this in
+  // addition to its own accessibility mode, which handles accessibility at the
+  // FocusTraversable level. Currently only used on Mac, when Full Keyboard
+  // access is enabled.
+  // Default value is false.
+  bool keyboard_accessible_;
 
   DISALLOW_COPY_AND_ASSIGN(FocusManager);
 };

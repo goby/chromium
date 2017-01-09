@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/test/chromedriver/chrome/mobile_device.h"
+
+#include <utility>
+
 #include "base/json/json_reader.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
-#include "chrome/test/chromedriver/chrome/mobile_device.h"
 #include "chrome/test/chromedriver/chrome/mobile_device_list.h"
 #include "chrome/test/chromedriver/chrome/status.h"
 
@@ -14,9 +17,9 @@ MobileDevice::MobileDevice() {}
 MobileDevice::~MobileDevice() {}
 
 Status FindMobileDevice(std::string device_name,
-                        scoped_ptr<MobileDevice>* mobile_device) {
+                        std::unique_ptr<MobileDevice>* mobile_device) {
   base::JSONReader json_reader(base::JSON_ALLOW_TRAILING_COMMAS);
-  scoped_ptr<base::Value> devices_value =
+  std::unique_ptr<base::Value> devices_value =
       json_reader.ReadToValue(kMobileDevices);
   if (!devices_value.get())
     return Status(kUnknownError,
@@ -31,7 +34,7 @@ Status FindMobileDevice(std::string device_name,
   if (!mobile_devices->GetDictionary(device_name, &device))
     return Status(kUnknownError, "must be a valid device");
 
-  scoped_ptr<MobileDevice> tmp_mobile_device(new MobileDevice());
+  std::unique_ptr<MobileDevice> tmp_mobile_device(new MobileDevice());
   std::string device_metrics_string;
   if (!device->GetString("userAgent", &tmp_mobile_device->user_agent)) {
     return Status(kUnknownError,
@@ -65,7 +68,7 @@ Status FindMobileDevice(std::string device_name,
   tmp_mobile_device->device_metrics.reset(
       new DeviceMetrics(width, height, device_scale_factor, touch, mobile));
 
-  *mobile_device = tmp_mobile_device.Pass();
+  *mobile_device = std::move(tmp_mobile_device);
   return Status(kOk);
 
 }

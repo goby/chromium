@@ -2,20 +2,27 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ui/ozone/platform/drm/gpu/drm_window.h"
+
+#include <drm_fourcc.h>
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "third_party/skia/include/core/SkImageInfo.h"
+#include "third_party/skia/include/core/SkSurface.h"
 #include "ui/ozone/platform/drm/gpu/drm_device_generator.h"
 #include "ui/ozone/platform/drm/gpu/drm_device_manager.h"
-#include "ui/ozone/platform/drm/gpu/drm_window.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_controller.h"
-#include "ui/ozone/platform/drm/gpu/mock_buffer_generator.h"
 #include "ui/ozone/platform/drm/gpu/mock_drm_device.h"
+#include "ui/ozone/platform/drm/gpu/mock_dumb_buffer_generator.h"
 #include "ui/ozone/platform/drm/gpu/screen_manager.h"
 #include "ui/ozone/public/surface_ozone_canvas.h"
 
@@ -30,9 +37,9 @@ const uint32_t kDefaultCrtc = 1;
 const uint32_t kDefaultConnector = 2;
 const int kDefaultCursorSize = 64;
 
-std::vector<skia::RefPtr<SkSurface>> GetCursorBuffers(
+std::vector<sk_sp<SkSurface>> GetCursorBuffers(
     const scoped_refptr<ui::MockDrmDevice> drm) {
-  std::vector<skia::RefPtr<SkSurface>> cursor_buffers;
+  std::vector<sk_sp<SkSurface>> cursor_buffers;
   for (const auto& cursor_buffer : drm->buffers()) {
     if (cursor_buffer->width() == kDefaultCursorSize &&
         cursor_buffer->height() == kDefaultCursorSize) {
@@ -67,11 +74,11 @@ class DrmWindowTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   scoped_refptr<ui::MockDrmDevice> drm_;
-  scoped_ptr<ui::MockBufferGenerator> buffer_generator_;
-  scoped_ptr<ui::ScreenManager> screen_manager_;
-  scoped_ptr<ui::DrmDeviceManager> drm_device_manager_;
+  std::unique_ptr<ui::MockDumbBufferGenerator> buffer_generator_;
+  std::unique_ptr<ui::ScreenManager> screen_manager_;
+  std::unique_ptr<ui::DrmDeviceManager> drm_device_manager_;
 
   int on_swap_buffers_count_;
   gfx::SwapResult last_swap_buffers_result_;
@@ -86,7 +93,7 @@ void DrmWindowTest::SetUp() {
 
   message_loop_.reset(new base::MessageLoopForUI);
   drm_ = new ui::MockDrmDevice();
-  buffer_generator_.reset(new ui::MockBufferGenerator());
+  buffer_generator_.reset(new ui::MockDumbBufferGenerator());
   screen_manager_.reset(new ui::ScreenManager(buffer_generator_.get()));
   screen_manager_->AddDisplayController(drm_, kDefaultCrtc, kDefaultConnector);
   screen_manager_->ConfigureDisplayController(
@@ -94,16 +101,16 @@ void DrmWindowTest::SetUp() {
 
   drm_device_manager_.reset(new ui::DrmDeviceManager(nullptr));
 
-  scoped_ptr<ui::DrmWindow> window(new ui::DrmWindow(
+  std::unique_ptr<ui::DrmWindow> window(new ui::DrmWindow(
       kDefaultWidgetHandle, drm_device_manager_.get(), screen_manager_.get()));
-  window->Initialize();
+  window->Initialize(buffer_generator_.get());
   window->SetBounds(
       gfx::Rect(gfx::Size(kDefaultMode.hdisplay, kDefaultMode.vdisplay)));
-  screen_manager_->AddWindow(kDefaultWidgetHandle, window.Pass());
+  screen_manager_->AddWindow(kDefaultWidgetHandle, std::move(window));
 }
 
 void DrmWindowTest::TearDown() {
-  scoped_ptr<ui::DrmWindow> window =
+  std::unique_ptr<ui::DrmWindow> window =
       screen_manager_->RemoveWindow(kDefaultWidgetHandle);
   window->Shutdown();
   message_loop_.reset();
@@ -116,7 +123,7 @@ TEST_F(DrmWindowTest, SetCursorImage) {
                   gfx::Point(4, 2), 0);
 
   SkBitmap cursor;
-  std::vector<skia::RefPtr<SkSurface>> cursor_buffers = GetCursorBuffers(drm_);
+  std::vector<sk_sp<SkSurface>> cursor_buffers = GetCursorBuffers(drm_);
   EXPECT_EQ(2u, cursor_buffers.size());
 
   // Buffers 1 is the cursor backbuffer we just drew in.
@@ -160,10 +167,10 @@ TEST_F(DrmWindowTest, CheckCursorSurfaceAfterChangingDevice) {
 
 TEST_F(DrmWindowTest, CheckCallbackOnFailedSwap) {
   const gfx::Size window_size(6, 4);
-  ui::MockBufferGenerator buffer_generator;
+  ui::MockDumbBufferGenerator buffer_generator;
   ui::DrmWindow* window = screen_manager_->GetWindow(kDefaultWidgetHandle);
   ui::OverlayPlane plane(
-      buffer_generator.Create(drm_, gfx::BufferFormat::BGRX_8888, window_size));
+      buffer_generator.Create(drm_, DRM_FORMAT_XRGB8888, window_size));
 
   drm_->set_page_flip_expectation(false);
 

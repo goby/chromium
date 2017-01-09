@@ -4,12 +4,11 @@
 
 #include "chrome/browser/ui/webui/chromeos/login/terms_of_service_screen_handler.h"
 
+#include <memory>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_split.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
@@ -23,6 +22,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/login/localized_values_builder.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "content/public/browser/web_ui.h"
@@ -140,8 +140,7 @@ void TermsOfServiceScreenHandler::OnLanguageChangedCallback(
     const locale_util::LanguageSwitchResult& result) {
   // Update the screen contents to the new locale.
   base::DictionaryValue localized_strings;
-  static_cast<OobeUI*>(web_ui()->GetController())
-      ->GetLocalizedStrings(&localized_strings);
+  GetOobeUI()->GetLocalizedStrings(&localized_strings);
   core_oobe_actor_->ReloadContent(localized_strings);
 
   DoShow();
@@ -173,7 +172,7 @@ void TermsOfServiceScreenHandler::DoShow() {
   // Update the UI to show an error message or the Terms of Service.
   UpdateTermsOfServiceInUI();
 
-  ShowScreen(OobeUI::kScreenTermsOfService, NULL);
+  ShowScreen(OobeScreen::SCREEN_TERMS_OF_SERVICE);
 }
 
 void TermsOfServiceScreenHandler::UpdateDomainInUI() {

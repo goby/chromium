@@ -1,18 +1,13 @@
 {
     "extensions": [
         {
-            "type": "@WebInspector.ToolbarItem.Provider",
-            "className": "WebInspector.AnimationControlPane.ButtonProvider",
-            "order": 2,
-            "location": "styles-sidebarpane-toolbar"
-        },
-        {
-            "type": "drawer-view",
-            "name": "animations",
+            "type": "view",
+            "location": "drawer-view",
+            "id": "animations",
             "title": "Animations",
             "persistence": "closeable",
             "order": 0,
-            "className": "WebInspector.AnimationTimeline"
+            "className": "Animation.AnimationTimeline"
         }
     ],
     "dependencies": [
@@ -23,8 +18,7 @@
         "AnimationGroupPreviewUI.js",
         "AnimationScreenshotPopover.js",
         "AnimationTimeline.js",
-        "AnimationUI.js",
-        "AnimationControlPane.js"
+        "AnimationUI.js"
     ],
     "resources": [
         "animationScreenshotPopover.css",

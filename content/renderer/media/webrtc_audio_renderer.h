@@ -5,11 +5,15 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_AUDIO_RENDERER_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_AUDIO_RENDERER_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/single_thread_task_runner.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread_checker.h"
@@ -19,12 +23,7 @@
 #include "media/base/audio_pull_fifo.h"
 #include "media/base/audio_renderer_sink.h"
 #include "media/base/channel_layout.h"
-#include "media/base/output_device.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
-
-namespace media {
-class AudioOutputDevice;
-}  // namespace media
 
 namespace webrtc {
 class AudioSourceInterface;
@@ -38,8 +37,7 @@ class WebRtcAudioRendererSource;
 // for connecting WebRtc MediaStream with the audio pipeline.
 class CONTENT_EXPORT WebRtcAudioRenderer
     : NON_EXPORTED_BASE(public media::AudioRendererSink::RenderCallback),
-      NON_EXPORTED_BASE(public MediaStreamAudioRenderer),
-      NON_EXPORTED_BASE(public media::OutputDevice) {
+      NON_EXPORTED_BASE(public MediaStreamAudioRenderer) {
  public:
   // This is a little utility class that holds the configured state of an audio
   // stream.
@@ -75,10 +73,6 @@ class CONTENT_EXPORT WebRtcAudioRenderer
     float volume_;
   };
 
-
-  // Returns platform specific optimal buffer size for rendering audio.
-  static int GetOptimalBufferSize(int sample_rate, int hardware_buffer_size);
-
   WebRtcAudioRenderer(
       const scoped_refptr<base::SingleThreadTaskRunner>& signaling_thread,
       const blink::WebMediaStream& media_stream,
@@ -111,6 +105,9 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   int sample_rate() const { return sink_params_.sample_rate(); }
   int frames_per_buffer() const { return sink_params_.frames_per_buffer(); }
 
+  // Returns true if called on rendering thread, otherwise false.
+  bool CurrentThreadIsRenderingThread();
+
  private:
   // MediaStreamAudioRenderer implementation.  This is private since we want
   // callers to use proxy objects.
@@ -120,16 +117,12 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   void Pause() override;
   void Stop() override;
   void SetVolume(float volume) override;
-  media::OutputDevice* GetOutputDevice() override;
+  media::OutputDeviceInfo GetOutputDeviceInfo() override;
   base::TimeDelta GetCurrentRenderTime() const override;
   bool IsLocalRenderer() const override;
-
-  // media::OutputDevice implementation
   void SwitchOutputDevice(const std::string& device_id,
                           const url::Origin& security_origin,
-                          const media::SwitchOutputDeviceCB& callback) override;
-  media::AudioParameters GetOutputParameters() override;
-  media::OutputDeviceStatus GetDeviceStatus() override;
+                          const media::OutputDeviceStatusCB& callback) override;
 
   // Called when an audio renderer, either the main or a proxy, starts playing.
   // Here we maintain a reference count of how many renderers are currently
@@ -161,14 +154,16 @@ class CONTENT_EXPORT WebRtcAudioRenderer
 
   // Used to DCHECK that we are called on the correct thread.
   base::ThreadChecker thread_checker_;
-  base::ThreadChecker audio_renderer_thread_checker_;
 
   // Flag to keep track the state of the renderer.
   State state_;
 
   // media::AudioRendererSink::RenderCallback implementation.
   // These two methods are called on the AudioOutputDevice worker thread.
-  int Render(media::AudioBus* audio_bus, int audio_delay_milliseconds) override;
+  int Render(base::TimeDelta delay,
+             base::TimeTicks delay_timestamp,
+             int prior_frames_skipped,
+             media::AudioBus* audio_bus) override;
   void OnRenderError() override;
 
   // Called by AudioPullFifo when more data is necessary.
@@ -198,8 +193,8 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   void OnPlayStateChanged(const blink::WebMediaStream& media_stream,
                           PlayingState* state);
 
-  // Updates |sink_params_|, |audio_fifo_| and |fifo_delay_milliseconds_| based
-  // on |sink_|, and initializes |sink_|.
+  // Updates |sink_params_| and |audio_fifo_| based on |sink_|, and initializes
+  // |sink_|.
   void PrepareSink();
 
   // The RenderFrame in which the audio is rendered into |sink_|.
@@ -209,7 +204,7 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   const scoped_refptr<base::SingleThreadTaskRunner> signaling_thread_;
 
   // The sink (destination) for rendered audio.
-  scoped_refptr<media::AudioOutputDevice> sink_;
+  scoped_refptr<media::AudioRendererSink> sink_;
 
   // The media stream that holds the audio tracks that this renderer renders.
   const blink::WebMediaStream media_stream_;
@@ -219,7 +214,7 @@ class CONTENT_EXPORT WebRtcAudioRenderer
 
   // Protects access to |state_|, |source_|, |audio_fifo_|,
   // |audio_delay_milliseconds_|, |fifo_delay_milliseconds_|, |current_time_|,
-  // |sink_params_| and |render_callback_count_|
+  // |sink_params_|, |render_callback_count_| and |max_render_time_|.
   mutable base::Lock lock_;
 
   // Ref count for the MediaPlayers which are playing audio.
@@ -230,14 +225,11 @@ class CONTENT_EXPORT WebRtcAudioRenderer
 
   // Used to buffer data between the client and the output device in cases where
   // the client buffer size is not the same as the output device buffer size.
-  scoped_ptr<media::AudioPullFifo> audio_fifo_;
+  std::unique_ptr<media::AudioPullFifo> audio_fifo_;
 
   // Contains the accumulated delay estimate which is provided to the WebRTC
   // AEC.
-  int audio_delay_milliseconds_;
-
-  // Delay due to the FIFO in milliseconds.
-  int fifo_delay_milliseconds_;
+  base::TimeDelta audio_delay_;
 
   base::TimeDelta current_time_;
 
@@ -259,9 +251,9 @@ class CONTENT_EXPORT WebRtcAudioRenderer
   // before being destructed (PlayingState object goes out of scope).
   SourcePlayingStates source_playing_states_;
 
-  // Used for triggering new UMA histogram. Counts number of render
-  // callbacks modulo |kNumCallbacksBetweenRenderTimeHistograms|.
-  int render_callback_count_;
+  // Stores the maximum time spent waiting for render data from the source. Used
+  // for logging UMA data. Logged and reset when Stop() is called.
+  base::TimeDelta max_render_time_;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(WebRtcAudioRenderer);
 };

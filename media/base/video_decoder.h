@@ -8,29 +8,22 @@
 #include <string>
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "media/base/cdm_context.h"
+#include "media/base/decode_status.h"
 #include "media/base/media_export.h"
 #include "media/base/pipeline_status.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace media {
 
+class CdmContext;
 class DecoderBuffer;
 class VideoDecoderConfig;
 class VideoFrame;
 
 class MEDIA_EXPORT VideoDecoder {
  public:
-  // Status codes for decode operations on VideoDecoder.
-  // TODO(rileya): Now that both AudioDecoder and VideoDecoder Status enums
-  // match, break them into a decoder_status.h.
-  enum Status {
-    kOk,          // Everything went as planned.
-    kAborted,     // Decode was aborted as a result of Reset() being called.
-    kDecodeError  // Decoding error happened.
-  };
-
   // Callback for VideoDecoder initialization.
   typedef base::Callback<void(bool success)> InitCB;
 
@@ -41,7 +34,7 @@ class MEDIA_EXPORT VideoDecoder {
   // Callback type for Decode(). Called after the decoder has completed decoding
   // corresponding DecoderBuffer, indicating that it's ready to accept another
   // buffer to decode.
-  typedef base::Callback<void(Status status)> DecodeCB;
+  typedef base::Callback<void(DecodeStatus)> DecodeCB;
 
   VideoDecoder();
 
@@ -64,18 +57,21 @@ class MEDIA_EXPORT VideoDecoder {
   // Initialization should fail if |low_delay| is true and the decoder cannot
   // satisfy the requirements above.
   //
-  // |set_cdm_ready_cb| can be used to set/cancel a CdmReadyCB with which the
-  // decoder can be notified when a CDM is ready. The decoder can use the CDM to
-  // handle encrypted video stream.
+  // |cdm_context| can be used to handle encrypted buffers. May be null if the
+  // stream is not encrypted.
   //
   // Note:
   // 1) The VideoDecoder will be reinitialized if it was initialized before.
   //    Upon reinitialization, all internal buffered frames will be dropped.
   // 2) This method should not be called during pending decode or reset.
   // 3) No VideoDecoder calls should be made before |init_cb| is executed.
+  // 4) VideoDecoders should take care to run |output_cb| as soon as the frame
+  // is ready (i.e. w/o thread trampolining) since it can strongly affect frame
+  // delivery times with high-frame-rate material.  See Decode() for additional
+  // notes.
   virtual void Initialize(const VideoDecoderConfig& config,
                           bool low_delay,
-                          const SetCdmReadyCB& set_cdm_ready_cb,
+                          CdmContext* cdm_context,
                           const InitCB& init_cb,
                           const OutputCB& output_cb) = 0;
 
@@ -83,18 +79,15 @@ class MEDIA_EXPORT VideoDecoder {
   // frame are returned via the provided callback. Some decoders may allow
   // decoding multiple buffers in parallel. Callers should call
   // GetMaxDecodeRequests() to get number of buffers that may be decoded in
-  // parallel. Decoder must call |decode_cb| in the same order in which Decode()
-  // is called.
+  // parallel.
   //
-  // Implementations guarantee that the callback will not be called from within
-  // this method and that |decode_cb| will not be blocked on the following
-  // Decode() calls (i.e. |decode_cb| will be called even if Decode() is never
-  // called again).
+  // Implementations guarantee that the |decode_cb| will not be called from
+  // within this method, and that it will be called even if Decode() is never
+  // called again.
   //
   // After decoding is finished the decoder calls |output_cb| specified in
-  // Initialize() for each decoded frame. In general |output_cb| may be called
-  // before or after |decode_cb|, but software decoders normally call
-  // |output_cb| before calling |decode_cb|, i.e. while Decode() is pending.
+  // Initialize() for each decoded frame. |output_cb| may be called before or
+  // after |decode_cb|, including before Decode() returns.
   //
   // If |buffer| is an EOS buffer then the decoder must be flushed, i.e.
   // |output_cb| must be called for each frame pending in the queue and

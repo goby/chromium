@@ -5,14 +5,24 @@
 #ifndef UI_EVENTS_TEST_COCOA_TEST_EVENT_UTILS_H_
 #define UI_EVENTS_TEST_COCOA_TEST_EVENT_UTILS_H_
 
-#include <utility>
-
+#import <Cocoa/Cocoa.h>
 #import <objc/objc-class.h>
 
-#include "base/basictypes.h"
+#include <utility>
+
+#include "ui/events/keycodes/dom/dom_key.h"
 #include "ui/events/keycodes/keyboard_codes.h"
 
 namespace cocoa_test_event_utils {
+
+// Converts |window_point| in |window| coordinates (origin at bottom left of
+// window frame) to a point in global display coordinates for a CGEvent (origin
+// at top left of primary screen).
+CGPoint ScreenPointFromWindow(NSPoint window_point, NSWindow* window);
+
+// Converts |event| to an NSEvent with a timestamp from ui::EventTimeForNow(),
+// and attaches |window| to it.
+NSEvent* AttachWindowToCGEvent(CGEventRef event, NSWindow* window);
 
 // Create synthetic mouse events for testing. Currently these are very
 // basic, flesh out as needed.  Points are all in window coordinates;
@@ -40,6 +50,18 @@ std::pair<NSEvent*, NSEvent*> MouseClickInView(NSView* view,
 std::pair<NSEvent*, NSEvent*> RightMouseClickInView(NSView* view,
                                                     NSUInteger clickCount);
 
+// Creates a test scroll event. |has_precise_deltas| determines the value of
+// -[NSEvent hasPreciseScrollingDeltas] - usually NO for a mouse wheel and YES
+// for a trackpad. If |window| is nil, |location| is assumed to be AppKit screen
+// coordinates (origin in bottom left of primary screen).
+NSEvent* TestScrollEvent(NSPoint location,
+                         NSWindow* window,
+                         CGFloat delta_x,
+                         CGFloat delta_y,
+                         bool has_precise_deltas,
+                         NSEventPhase event_phase,
+                         NSEventPhase momentum_phase);
+
 // Returns a key event with the given character.
 NSEvent* KeyEventWithCharacter(unichar c);
 
@@ -51,6 +73,13 @@ NSEvent* KeyEventWithKeyCode(unsigned short key_code,
                              unichar c,
                              NSEventType event_type,
                              NSUInteger modifiers);
+
+// Returns a key event for pressing or releasing a modifier key (aka
+// NSFlagsChanged). For example |key_code| == kVK_Shift with (|modifiers| &
+// NSShiftKeyMask) != 0 means Shift is pressed and |key_code| == kVK_Shift
+// with (|modifiers| & NSShiftKeyMask) == 0 means Shift is released.
+NSEvent* KeyEventWithModifierOnly(unsigned short key_code,
+                                  NSUInteger modifiers);
 
 // Returns a mouse enter event.
 NSEvent* EnterEvent();
@@ -68,7 +97,8 @@ NSTimeInterval TimeIntervalSinceSystemStartup();
 NSEvent* SynthesizeKeyEvent(NSWindow* window,
                             bool keyDown,
                             ui::KeyboardCode keycode,
-                            NSUInteger flags);
+                            NSUInteger flags,
+                            ui::DomKey dom_key = ui::DomKey::NONE);
 
 }  // namespace cocoa_test_event_utils
 

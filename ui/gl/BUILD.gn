@@ -2,17 +2,40 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import("//build/buildflag_header.gni")
+import("//build/config/chrome_build.gni")
+import("//build/config/linux/pkg_config.gni")
 import("//build/config/ui.gni")
+import("//ui/ozone/ozone.gni")
 import("//testing/test.gni")
+
+declare_args() {
+  enable_swiftshader = is_chrome_branded && is_win
+}
+
+use_egl = is_win || is_android || is_linux
+use_glx = use_x11 || ozone_platform_x11
 
 if (is_android) {
   import("//build/config/android/config.gni")
   import("//build/config/android/rules.gni")
 }
 
+buildflag_header("gl_features") {
+  header = "gl_features.h"
+  flags = [ "ENABLE_SWIFTSHADER=$enable_swiftshader" ]
+}
+
 config("gl_config") {
-  if (use_x11) {
-    defines = [ "GL_GLEXT_PROTOTYPES" ]
+  defines = []
+  if (use_glx) {
+    defines += [
+      "GL_GLEXT_PROTOTYPES",
+      "USE_GLX",
+    ]
+  }
+  if (use_egl) {
+    defines += [ "USE_EGL" ]
   }
 }
 
@@ -28,25 +51,22 @@ component("gl") {
     "android/surface_texture.h",
     "android/surface_texture_listener.cc",
     "android/surface_texture_listener.h",
+    "ca_renderer_layer_params.cc",
+    "ca_renderer_layer_params.h",
     "gl_bindings.cc",
     "gl_bindings.h",
     "gl_bindings_autogen_gl.cc",
     "gl_bindings_autogen_gl.h",
     "gl_bindings_autogen_osmesa.cc",
     "gl_bindings_autogen_osmesa.h",
-    "gl_bindings_skia_in_process.cc",
-    "gl_bindings_skia_in_process.h",
     "gl_context.cc",
     "gl_context.h",
-    "gl_context_android.cc",
-    "gl_context_mac.mm",
     "gl_context_osmesa.cc",
     "gl_context_osmesa.h",
     "gl_context_stub.cc",
     "gl_context_stub.h",
     "gl_context_stub_with_extensions.cc",
     "gl_context_stub_with_extensions.h",
-    "gl_context_win.cc",
     "gl_enums.cc",
     "gl_enums.h",
     "gl_enums_implementation_autogen.h",
@@ -61,6 +81,7 @@ component("gl") {
     "gl_gl_api_implementation.h",
     "gl_helper.cc",
     "gl_helper.h",
+    "gl_image.cc",
     "gl_image.h",
     "gl_image_memory.cc",
     "gl_image_memory.h",
@@ -72,26 +93,25 @@ component("gl") {
     "gl_image_stub.h",
     "gl_implementation.cc",
     "gl_implementation.h",
-    "gl_implementation_android.cc",
-    "gl_implementation_mac.cc",
-    "gl_implementation_win.cc",
     "gl_osmesa_api_implementation.cc",
     "gl_osmesa_api_implementation.h",
     "gl_share_group.cc",
     "gl_share_group.h",
     "gl_state_restorer.cc",
     "gl_state_restorer.h",
+    "gl_stub_api.cc",
+    "gl_stub_api.h",
+    "gl_stub_api_base.h",
+    "gl_stub_autogen_gl.cc",
+    "gl_stub_autogen_gl.h",
     "gl_surface.cc",
     "gl_surface.h",
-    "gl_surface_android.cc",
-    "gl_surface_mac.cc",
     "gl_surface_osmesa.cc",
     "gl_surface_osmesa.h",
     "gl_surface_overlay.cc",
     "gl_surface_overlay.h",
     "gl_surface_stub.cc",
     "gl_surface_stub.h",
-    "gl_surface_win.cc",
     "gl_switches.cc",
     "gl_switches.h",
     "gl_version_info.cc",
@@ -115,10 +135,7 @@ component("gl") {
   configs += [ "//build/config:precompiled_headers" ]
   defines = [ "GL_IMPLEMENTATION" ]
 
-  include_dirs = [
-    "//third_party/switfshader/include",
-    "//third_party/mesa/src/include",
-  ]
+  include_dirs = [ "//third_party/mesa/src/include" ]
 
   all_dependent_configs = [ ":gl_config" ]
 
@@ -126,7 +143,6 @@ component("gl") {
 
   deps = [
     "//base/third_party/dynamic_annotations",
-    "//skia",
   ]
   public_deps = [
     "//base",
@@ -136,14 +152,18 @@ component("gl") {
     "//ui/gfx/geometry",
   ]
 
-  if (is_win || is_android || is_linux) {
+  if (use_egl) {
     sources += [
+      "angle_platform_impl.cc",
+      "angle_platform_impl.h",
       "egl_util.cc",
       "egl_util.h",
       "gl_bindings_autogen_egl.cc",
       "gl_bindings_autogen_egl.h",
       "gl_context_egl.cc",
       "gl_context_egl.h",
+      "gl_egl_api_implementation.cc",
+      "gl_egl_api_implementation.h",
       "gl_fence_egl.cc",
       "gl_fence_egl.h",
       "gl_image_egl.cc",
@@ -158,29 +178,37 @@ component("gl") {
       "gl_implementation_osmesa.h",
     ]
   }
-  if (is_linux) {
-    deps += [ "//third_party/libevent" ]
-  }
-  if (!is_android) {  # TODO(GYP) Enable on Android when osmesa links.
-    deps += [ "//third_party/mesa:osmesa" ]
-  }
   if (use_x11) {
+    sources += [
+      "gl_surface_egl_x11.cc",
+      "gl_surface_egl_x11.h",
+      "gl_surface_glx_x11.cc",
+      "gl_surface_glx_x11.h",
+      "gl_surface_osmesa_x11.cc",
+      "gl_surface_osmesa_x11.h",
+    ]
+
+    deps += [ "//ui/base/x" ]
+
+    data_deps = [
+      "//third_party/angle:libEGL",
+      "//third_party/angle:libGLESv2",
+    ]
+  }
+  if (use_glx) {
     sources += [
       "gl_bindings_autogen_glx.cc",
       "gl_bindings_autogen_glx.h",
       "gl_context_glx.cc",
       "gl_context_glx.h",
-      "gl_context_x11.cc",
-      "gl_egl_api_implementation.cc",
-      "gl_egl_api_implementation.h",
       "gl_glx_api_implementation.cc",
       "gl_glx_api_implementation.h",
       "gl_image_glx.cc",
       "gl_image_glx.h",
-      "gl_implementation_x11.cc",
       "gl_surface_glx.cc",
       "gl_surface_glx.h",
-      "gl_surface_x11.cc",
+      "gl_visual_picker_glx.cc",
+      "gl_visual_picker_glx.h",
     ]
 
     configs += [
@@ -193,18 +221,18 @@ component("gl") {
   }
   if (is_win) {
     sources += [
-      "angle_platform_impl.cc",
-      "angle_platform_impl.h",
       "gl_bindings_autogen_wgl.cc",
       "gl_bindings_autogen_wgl.h",
       "gl_context_wgl.cc",
       "gl_context_wgl.h",
-      "gl_egl_api_implementation.cc",
-      "gl_egl_api_implementation.h",
+      "gl_surface_osmesa_win.cc",
+      "gl_surface_osmesa_win.h",
       "gl_surface_wgl.cc",
       "gl_surface_wgl.h",
       "gl_wgl_api_implementation.cc",
       "gl_wgl_api_implementation.h",
+      "vsync_provider_win.cc",
+      "vsync_provider_win.h",
     ]
 
     libs = [ "dwmapi.lib" ]
@@ -226,9 +254,12 @@ component("gl") {
       "gl_image_io_surface.mm",
       "scoped_cgl.cc",
       "scoped_cgl.h",
+      "yuv_to_rgb_converter.cc",
+      "yuv_to_rgb_converter.h",
     ]
 
     libs = [
+      "CoreFoundation.framework",
       "IOSurface.framework",
       "OpenGL.framework",
       "Quartz.framework",
@@ -236,8 +267,6 @@ component("gl") {
   }
   if (is_android) {
     sources += [
-      "gl_egl_api_implementation.cc",
-      "gl_egl_api_implementation.h",
       "gl_image_surface_texture.cc",
       "gl_image_surface_texture.h",
     ]
@@ -249,29 +278,11 @@ component("gl") {
 
     libs = [ "android" ]
 
-    deps += [
-      ":gl_jni_headers",
-      "//ui/android:ui_java",
-    ]
-  }
-  if (use_ozone) {
-    sources += [
-      "gl_context_ozone.cc",
-      "gl_egl_api_implementation.cc",
-      "gl_egl_api_implementation.h",
-      "gl_image_ozone_native_pixmap.cc",
-      "gl_image_ozone_native_pixmap.h",
-      "gl_implementation_ozone.cc",
-      "gl_surface_ozone.cc",
-    ]
-    deps += [
-      "//ui/ozone",
-      "//ui/ozone:ozone_base",
-    ]
+    deps += [ ":gl_jni_headers" ]
   }
 }
 
-source_set("gl_unittest_utils") {
+static_library("gl_unittest_utils") {
   testonly = true
   sources = [
     "gl_bindings_autogen_mock.cc",
@@ -288,10 +299,11 @@ source_set("gl_unittest_utils") {
   deps = [
     ":gl",
     "//testing/gmock",
+    "//testing/gtest",
   ]
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "test/gl_image_test_support.cc",
@@ -305,27 +317,42 @@ source_set("test_support") {
 
   configs += [ "//third_party/khronos:khronos_headers" ]
 
-  deps = [
+  public_deps = [
     ":gl",
+    "//ui/gl/init",
+  ]
+  deps = [
     "//testing/gtest",
   ]
 
   if (use_x11) {
     configs += [ "//build/config/linux:x11" ]
-    deps += [
-      "//ui/gfx/x",
-      "//ui/platform_window/x11",
-    ]
+    deps += [ "//ui/platform_window/x11" ]
+  }
+
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
   }
 }
 
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("gl_unittests_run") {
+source_set("run_all_unittests") {
   testonly = true
-  deps = [
-    ":gl_unittests",
+
+  sources = [
+    "test/run_all_unittests.cc",
   ]
+
+  deps = [
+    "//base",
+  ]
+
+  public_deps = [
+    "//base/test:test_support",
+  ]
+
+  if (use_ozone) {
+    deps += [ "//ui/ozone" ]
+  }
 }
 
 test("gl_unittests") {
@@ -333,27 +360,28 @@ test("gl_unittests") {
     "gl_api_unittest.cc",
     "gl_image_ref_counted_memory_unittest.cc",
     "gl_image_shared_memory_unittest.cc",
+    "gl_version_info_unittest.cc",
     "gpu_timing_unittest.cc",
-    "test/run_all_unittests.cc",
   ]
 
-  if (is_win || is_android || is_linux) {
+  if (use_egl) {
     sources += [
       "egl_api_unittest.cc",
       "test/egl_initialization_displays_unittest.cc",
     ]
   }
 
-  if (use_x11) {
+  if (use_glx) {
     sources += [ "glx_api_unittest.cc" ]
-  }
-
-  if (use_ozone) {
-    sources += [ "gl_image_ozone_native_pixmap_unittest.cc" ]
   }
 
   if (is_mac) {
     sources += [ "gl_image_io_surface_unittest.cc" ]
+    libs = [ "IOSurface.framework" ]
+  }
+
+  if (is_win) {
+    sources += [ "wgl_api_unittest.cc" ]
   }
 
   include_dirs = [ "//third_party/khronos" ]
@@ -361,21 +389,38 @@ test("gl_unittests") {
   deps = [
     ":gl",
     ":gl_unittest_utils",
+    ":run_all_unittests",
     ":test_support",
     "//base",
-    "//base/test:test_support",
     "//testing/gmock",
     "//testing/gtest",
     "//ui/gfx",
     "//ui/gfx/geometry",
+    "//ui/gl/init",
   ]
 
   data_deps = [
     "//third_party/mesa:osmesa",
   ]
+}
 
-  if (use_ozone) {
-    deps += [ "//ui/ozone" ]
+# Non-Ozone trybots end up trying to build this when building "all" and failing
+# when X11 isn't there.
+if (ozone_platform_x11) {
+  group("gl_unittests_ozonex") {
+    testonly = true
+    data_deps = [
+      ":gl_unittests",
+    ]
+  }
+
+  # TODO(GYP_GONE): Delete this after we've converted everything to GN.
+  # The _run targets exist only for compatibility w/ GYP.
+  group("gl_unittests_ozonex_run") {
+    testonly = true
+    deps = [
+      ":gl_unittests_ozonex",
+    ]
   }
 }
 

@@ -4,6 +4,8 @@
 
 #include "components/data_reduction_proxy/core/browser/data_reduction_proxy_configurator.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -29,8 +31,18 @@ DataReductionProxyConfigurator::~DataReductionProxyConfigurator() {
 
 void DataReductionProxyConfigurator::Enable(
     bool secure_transport_restricted,
-    const std::vector<net::ProxyServer>& proxies_for_http,
-    const std::vector<net::ProxyServer>& proxies_for_https) {
+    const std::vector<net::ProxyServer>& proxies_for_http) {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  net::ProxyConfig config =
+      CreateProxyConfig(secure_transport_restricted, proxies_for_http);
+  data_reduction_proxy_event_creator_->AddProxyEnabledEvent(
+      net_log_, secure_transport_restricted, proxies_for_http);
+  config_ = config;
+}
+
+net::ProxyConfig DataReductionProxyConfigurator::CreateProxyConfig(
+    bool secure_transport_restricted,
+    const std::vector<net::ProxyServer>& proxies_for_http) const {
   DCHECK(thread_checker_.CalledOnValidThread());
   net::ProxyConfig config;
   config.proxy_rules().type =
@@ -49,29 +61,13 @@ void DataReductionProxyConfigurator::Enable(
         net::ProxyServer::Direct());
   }
 
-  for (const auto& https_proxy : proxies_for_https) {
-    if (!secure_transport_restricted ||
-        (https_proxy.scheme() != net::ProxyServer::SCHEME_HTTPS &&
-         https_proxy.scheme() != net::ProxyServer::SCHEME_QUIC)) {
-      config.proxy_rules().proxies_for_https.AddProxyServer(https_proxy);
-    }
-  }
-
-  if (!config.proxy_rules().proxies_for_https.IsEmpty()) {
-    config.proxy_rules().proxies_for_https.AddProxyServer(
-        net::ProxyServer::Direct());
-  }
-
   config.proxy_rules().bypass_rules.ParseFromString(
       base::JoinString(bypass_rules_, ", "));
   // The ID is set to a bogus value. It cannot be left uninitialized, else the
   // config will return invalid.
   net::ProxyConfig::ID unused_id = 1;
   config.set_id(unused_id);
-  data_reduction_proxy_event_creator_->AddProxyEnabledEvent(
-      net_log_, secure_transport_restricted, proxies_for_http,
-      proxies_for_https);
-  config_ = config;
+  return config;
 }
 
 void DataReductionProxyConfigurator::Disable() {
@@ -85,22 +81,6 @@ void DataReductionProxyConfigurator::AddHostPatternToBypass(
     const std::string& pattern) {
   DCHECK(thread_checker_.CalledOnValidThread());
   bypass_rules_.push_back(pattern);
-}
-
-void DataReductionProxyConfigurator::AddURLPatternToBypass(
-    const std::string& pattern) {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  size_t pos = pattern.find('/');
-  if (pattern.find('/', pos + 1) == pos + 1)
-    pos = pattern.find('/', pos + 2);
-
-  std::string host_pattern;
-  if (pos != std::string::npos)
-    host_pattern = pattern.substr(0, pos);
-  else
-    host_pattern = pattern;
-
-  AddHostPatternToBypass(host_pattern);
 }
 
 const net::ProxyConfig& DataReductionProxyConfigurator::GetProxyConfig() const {

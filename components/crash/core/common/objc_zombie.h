@@ -5,7 +5,10 @@
 #ifndef COMPONENTS_CRASH_CORE_COMMON_OBJC_ZOMBIE_H_
 #define COMPONENTS_CRASH_CORE_COMMON_OBJC_ZOMBIE_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include "build/build_config.h"
+#include "components/crash/core/common/crash_export.h"
 
 // You should think twice every single time you use anything from this
 // namespace.
@@ -24,10 +27,10 @@ namespace ObjcEvilDoers {
 // |zombieCount| controls how many zombies to store before freeing the
 // oldest.  Set to 0 to free objects immediately after making them
 // zombies.
-bool ZombieEnable(bool zombieAllObjects, size_t zombieCount);
+bool CRASH_EXPORT ZombieEnable(bool zombieAllObjects, size_t zombieCount);
 
 // Disable zombies.
-void ZombieDisable();
+void CRASH_EXPORT ZombieDisable();
 
 }  // namespace ObjcEvilDoers
 

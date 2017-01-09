@@ -5,16 +5,18 @@
 #include "components/metrics/serialization/serialization_utils.h"
 
 #include <errno.h>
+#include <stdint.h>
 #include <sys/file.h>
 
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
@@ -87,10 +89,10 @@ bool ReadMessage(int fd, std::string* message) {
 
 }  // namespace
 
-scoped_ptr<MetricSample> SerializationUtils::ParseSample(
+std::unique_ptr<MetricSample> SerializationUtils::ParseSample(
     const std::string& sample) {
   if (sample.empty())
-    return scoped_ptr<MetricSample>();
+    return std::unique_ptr<MetricSample>();
 
   std::vector<std::string> parts = base::SplitString(
       sample, std::string(1, '\0'),
@@ -100,7 +102,7 @@ scoped_ptr<MetricSample> SerializationUtils::ParseSample(
   if (parts.size() != 3) {
     DLOG(ERROR) << "splitting message on \\0 produced " << parts.size()
                 << " parts (expected 3)";
-    return scoped_ptr<MetricSample>();
+    return std::unique_ptr<MetricSample>();
   }
   const std::string& name = parts[0];
   const std::string& value = parts[1];
@@ -118,7 +120,7 @@ scoped_ptr<MetricSample> SerializationUtils::ParseSample(
   } else {
     DLOG(ERROR) << "invalid event type: " << name << ", value: " << value;
   }
-  return scoped_ptr<MetricSample>();
+  return std::unique_ptr<MetricSample>();
 }
 
 void SerializationUtils::ReadAndTruncateMetricsFromFile(
@@ -158,9 +160,9 @@ void SerializationUtils::ReadAndTruncateMetricsFromFile(
     if (!ReadMessage(fd.get(), &message))
       break;
 
-    scoped_ptr<MetricSample> sample = ParseSample(message);
+    std::unique_ptr<MetricSample> sample = ParseSample(message);
     if (sample)
-      metrics->push_back(sample.Pass());
+      metrics->push_back(std::move(sample));
   }
 
   result = ftruncate(fd.get(), 0);
@@ -182,7 +184,7 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
                                       READ_WRITE_ALL_FILE_FLAGS));
 
   if (file_descriptor.get() < 0) {
-    DPLOG(ERROR) << "error openning the file: " << filename;
+    DPLOG(ERROR) << "error opening the file: " << filename;
     return false;
   }
 
@@ -196,7 +198,7 @@ bool SerializationUtils::WriteMetricToFile(const MetricSample& sample,
   }
 
   std::string msg = sample.ToString();
-  int32 size = msg.length() + sizeof(int32);
+  int32_t size = msg.length() + sizeof(int32_t);
   if (size > kMessageMaxLength) {
     DPLOG(ERROR) << "cannot write message: too long: " << filename;
     return false;

@@ -5,13 +5,13 @@
 #ifndef UI_VIEWS_COREWM_TOOLTIP_AURA_H_
 #define UI_VIEWS_COREWM_TOOLTIP_AURA_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "ui/gfx/screen_type_delegate.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/views/corewm/tooltip.h"
 #include "ui/views/widget/widget_observer.h"
 
 namespace gfx {
-class FontList;
 class Size;
 }  // namespace gfx
 
@@ -39,8 +39,7 @@ class VIEWS_EXPORT TooltipAura : public Tooltip, public WidgetObserver {
   void DestroyWidget();
 
   // Tooltip:
-  int GetMaxWidth(const gfx::Point& location,
-                  aura::Window* context) const override;
+  int GetMaxWidth(const gfx::Point& location) const override;
   void SetText(aura::Window* window,
                const base::string16& tooltip_text,
                const gfx::Point& location) override;
@@ -52,7 +51,7 @@ class VIEWS_EXPORT TooltipAura : public Tooltip, public WidgetObserver {
   void OnWidgetDestroying(Widget* widget) override;
 
   // The view showing the tooltip.
-  scoped_ptr<TooltipView> tooltip_view_;
+  std::unique_ptr<TooltipView> tooltip_view_;
 
   // The widget containing the tooltip. May be NULL.
   Widget* widget_;

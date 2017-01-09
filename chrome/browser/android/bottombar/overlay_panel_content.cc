@@ -8,13 +8,14 @@
 
 #include "base/android/jni_string.h"
 #include "base/callback.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/android/tab_android.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
-#include "chrome/browser/ui/android/window_android_helper.h"
+#include "chrome/browser/ui/android/view_android_helper.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/navigation_interception/intercept_navigation_delegate.h"
 #include "components/variations/variations_associated_data.h"
@@ -24,6 +25,7 @@
 #include "jni/OverlayPanelContent_jni.h"
 #include "net/url_request/url_fetcher_impl.h"
 
+using base::android::JavaParamRef;
 using content::ContentViewCore;
 
 namespace {
@@ -44,8 +46,7 @@ OverlayPanelContent::OverlayPanelContent(JNIEnv* env, jobject obj) {
 
 OverlayPanelContent::~OverlayPanelContent() {
   JNIEnv* env = base::android::AttachCurrentThread();
-  Java_OverlayPanelContent_clearNativePanelContentPtr(
-      env, java_manager_.obj());
+  Java_OverlayPanelContent_clearNativePanelContentPtr(env, java_manager_);
 }
 
 void OverlayPanelContent::Destroy(JNIEnv* env,
@@ -86,29 +87,30 @@ void OverlayPanelContent::RemoveLastHistoryEntry(
 void OverlayPanelContent::SetWebContents(
     JNIEnv* env,
     const JavaParamRef<jobject>& obj,
-    const JavaParamRef<jobject>& jcontent_view_core,
+    const JavaParamRef<jobject>& jweb_contents,
     const JavaParamRef<jobject>& jweb_contents_delegate) {
-  content::ContentViewCore* content_view_core =
-      content::ContentViewCore::GetNativeContentViewCore(env,
-                                                         jcontent_view_core);
-  DCHECK(content_view_core);
-  DCHECK(content_view_core->GetWebContents());
+  content::WebContents* web_contents =
+      content::WebContents::FromJavaWebContents(jweb_contents);
+
+  DCHECK(web_contents);
 
   // NOTE(pedrosimonetti): Takes ownership of the WebContents associated
   // with the ContentViewCore. This is to make sure that the WebContens
   // and the Compositor are in the same process.
   // TODO(pedrosimonetti): Confirm with dtrainor@ if the comment above
   // is accurate.
-  web_contents_.reset(content_view_core->GetWebContents());
+  web_contents_.reset(web_contents);
+
+  web_contents_->SetIsOverlayContent(true);
   // TODO(pedrosimonetti): confirm if we need this after promoting it
   // to a real tab.
   TabAndroid::AttachTabHelpers(web_contents_.get());
-  WindowAndroidHelper::FromWebContents(web_contents_.get())
-      ->SetWindowAndroid(content_view_core->GetWindowAndroid());
   web_contents_delegate_.reset(
       new web_contents_delegate_android::WebContentsDelegateAndroid(
           env, jweb_contents_delegate));
   web_contents_->SetDelegate(web_contents_delegate_.get());
+  ViewAndroidHelper::FromWebContents(web_contents_.get())
+      ->SetViewAndroid(web_contents_->GetNativeView());
 }
 
 void OverlayPanelContent::DestroyWebContents(
@@ -130,8 +132,8 @@ void OverlayPanelContent::SetInterceptNavigationDelegate(
   DCHECK(web_contents);
   navigation_interception::InterceptNavigationDelegate::Associate(
       web_contents,
-      make_scoped_ptr(new navigation_interception::InterceptNavigationDelegate(
-          env, delegate)));
+      base::MakeUnique<navigation_interception::InterceptNavigationDelegate>(
+          env, delegate));
 }
 
 bool RegisterOverlayPanelContent(JNIEnv* env) {

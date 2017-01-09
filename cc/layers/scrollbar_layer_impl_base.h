@@ -5,6 +5,7 @@
 #ifndef CC_LAYERS_SCROLLBAR_LAYER_IMPL_BASE_H_
 #define CC_LAYERS_SCROLLBAR_LAYER_IMPL_BASE_H_
 
+#include "base/macros.h"
 #include "cc/base/cc_export.h"
 #include "cc/input/scrollbar.h"
 #include "cc/layers/layer.h"
@@ -43,7 +44,6 @@ class CC_EXPORT ScrollbarLayerImplBase : public LayerImpl {
   bool CanScrollOrientation() const;
 
   void PushPropertiesTo(LayerImpl* layer) override;
-  void DidBecomeActive() override;
   ScrollbarLayerImplBase* ToScrollbarLayer() override;
 
   // Thumb quad rect in layer space.

@@ -9,8 +9,10 @@
 
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/macros.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 
 namespace base {
 namespace win {
@@ -45,30 +47,34 @@ namespace win {
 // If the object is already signaled before being watched, OnObjectSignaled is
 // still called after (but not necessarily immediately after) watch is started.
 //
-class BASE_EXPORT ObjectWatcher : public MessageLoop::DestructionObserver {
+// NOTE: Except for the constructor, all public methods of this class must be
+// called on the same thread. A ThreadTaskRunnerHandle must be set on that
+// thread.
+class BASE_EXPORT ObjectWatcher {
  public:
   class BASE_EXPORT Delegate {
    public:
     virtual ~Delegate() {}
-    // Called from the MessageLoop when a signaled object is detected.  To
-    // continue watching the object, StartWatching must be called again.
+    // Called from the thread that started the watch when a signaled object is
+    // detected. To continue watching the object, StartWatching must be called
+    // again.
     virtual void OnObjectSignaled(HANDLE object) = 0;
   };
 
   ObjectWatcher();
-  ~ObjectWatcher() override;
+  ~ObjectWatcher();
 
   // When the object is signaled, the given delegate is notified on the thread
   // where StartWatchingOnce is called. The ObjectWatcher is not responsible for
   // deleting the delegate.
-  // Returns true if the watch was started.  Otherwise, false is returned.
+  // Returns whether watching was successfully initiated.
   bool StartWatchingOnce(HANDLE object, Delegate* delegate);
 
   // Notifies the delegate, on the thread where this method is called, each time
   // the object is set. By definition, the handle must be an auto-reset object.
   // The caller must ensure that it (or any Windows system code) doesn't reset
   // the event or else the delegate won't be called.
-  // Returns true if the watch was started.  Otherwise, false is returned.
+  // Returns whether watching was successfully initiated.
   bool StartWatchingMultipleTimes(HANDLE object, Delegate* delegate);
 
   // Stops watching.  Does nothing if the watch has already completed.  If the
@@ -94,15 +100,23 @@ class BASE_EXPORT ObjectWatcher : public MessageLoop::DestructionObserver {
 
   void Signal(Delegate* delegate);
 
-  // MessageLoop::DestructionObserver implementation:
-  void WillDestroyCurrentMessageLoop() override;
+  void Reset();
 
-  // Internal state.
+  // A callback pre-bound to Signal() that is posted to the caller's task runner
+  // when the wait completes.
   Closure callback_;
-  HANDLE object_;             // The object being watched
-  HANDLE wait_object_;        // Returned by RegisterWaitForSingleObject
-  MessageLoop* origin_loop_;  // Used to get back to the origin thread
-  bool run_once_;
+
+  // The object being watched.
+  HANDLE object_ = nullptr;
+
+  // The wait handle returned by RegisterWaitForSingleObject.
+  HANDLE wait_object_ = nullptr;
+
+  // The task runner of the thread on which the watch was started.
+  scoped_refptr<SingleThreadTaskRunner> task_runner_;
+
+  bool run_once_ = true;
+
   WeakPtrFactory<ObjectWatcher> weak_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ObjectWatcher);

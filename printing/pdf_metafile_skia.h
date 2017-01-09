@@ -5,9 +5,11 @@
 #ifndef PRINTING_PDF_METAFILE_SKIA_H_
 #define PRINTING_PDF_METAFILE_SKIA_H_
 
-#include "base/basictypes.h"
-#include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "build/build_config.h"
 #include "printing/metafile.h"
 #include "skia/ext/platform_canvas.h"
@@ -16,27 +18,29 @@
 #include <windows.h>
 #endif
 
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-namespace base {
-struct FileDescriptor;
-}
-#endif
+class SkCanvas;
 
 namespace printing {
+
+enum SkiaDocumentType {
+  PDF_SKIA_DOCUMENT_TYPE,
+  // MSKP is an experimental, fragile, and diagnostic-only document type.
+  MSKP_SKIA_DOCUMENT_TYPE,
+};
 
 struct PdfMetafileSkiaData;
 
 // This class uses Skia graphics library to generate a PDF document.
 class PRINTING_EXPORT PdfMetafileSkia : public Metafile {
  public:
-  PdfMetafileSkia();
+  explicit PdfMetafileSkia(SkiaDocumentType type);
   ~PdfMetafileSkia() override;
 
   // Metafile methods.
   bool Init() override;
-  bool InitFromData(const void* src_buffer, uint32_t src_buffer_size) override;
+  bool InitFromData(const void* src_buffer, size_t src_buffer_size) override;
 
-  bool StartPage(const gfx::Size& page_size,
+  void StartPage(const gfx::Size& page_size,
                  const gfx::Rect& content_area,
                  const float& scale_factor) override;
   bool FinishPage() override;
@@ -48,41 +52,37 @@ class PRINTING_EXPORT PdfMetafileSkia : public Metafile {
   gfx::Rect GetPageBounds(unsigned int page_number) const override;
   unsigned int GetPageCount() const override;
 
-  gfx::NativeDrawingContext context() const override;
+  skia::NativeDrawingContext context() const override;
 
 #if defined(OS_WIN)
-  bool Playback(gfx::NativeDrawingContext hdc,
+  bool Playback(skia::NativeDrawingContext hdc,
                 const RECT* rect) const override;
-  bool SafePlayback(gfx::NativeDrawingContext hdc) const override;
+  bool SafePlayback(skia::NativeDrawingContext hdc) const override;
 #elif defined(OS_MACOSX)
   bool RenderPage(unsigned int page_number,
-                  gfx::NativeDrawingContext context,
+                  skia::NativeDrawingContext context,
                   const CGRect rect,
                   const MacRenderPageParams& params) const override;
 #endif
 
   bool SaveTo(base::File* file) const override;
 
-#if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-  // TODO(vitalybuka): replace with SaveTo().
-  bool SaveToFD(const base::FileDescriptor& fd) const;
-#endif  // if defined(OS_CHROMEOS) || defined(OS_ANDROID)
-
   // Return a new metafile containing just the current page in draft mode.
-  scoped_ptr<PdfMetafileSkia> GetMetafileForCurrentPage();
+  std::unique_ptr<PdfMetafileSkia> GetMetafileForCurrentPage(
+      SkiaDocumentType type);
 
   // This method calls StartPage and then returns an appropriate
   // PlatformCanvas implementation bound to the context created by
-  // StartPage or NULL on error.  The skia::PlatformCanvas pointer that
+  // StartPage or NULL on error.  The SkCanvas pointer that
   // is returned is owned by this PdfMetafileSkia object and does not
   // need to be ref()ed or unref()ed.  The canvas will remain valid
   // until FinishPage() or FinishDocument() is called.
-  skia::PlatformCanvas* GetVectorCanvasForNewPage(const gfx::Size& page_size,
-                                                  const gfx::Rect& content_area,
-                                                  const float& scale_factor);
+  SkCanvas* GetVectorCanvasForNewPage(const gfx::Size& page_size,
+                                      const gfx::Rect& content_area,
+                                      const float& scale_factor);
 
  private:
-  scoped_ptr<PdfMetafileSkiaData> data_;
+  std::unique_ptr<PdfMetafileSkiaData> data_;
 
   DISALLOW_COPY_AND_ASSIGN(PdfMetafileSkia);
 };

@@ -18,6 +18,8 @@ public class FakeMostVisitedSites extends MostVisitedSites {
 
     private final String[] mMostVisitedTitles;
     private final String[] mMostVisitedUrls;
+    private final String[] mMostVisitedWhitelistIconPaths;
+    private final int[] mMostVisitedSources;
 
     private final List<String> mBlacklistedUrls = new ArrayList<String>();
 
@@ -26,11 +28,14 @@ public class FakeMostVisitedSites extends MostVisitedSites {
      * @param mostVisitedTitles The titles of the fixed list of most visited sites.
      * @param mostVisitedUrls The URLs of the fixed list of most visited sites.
      */
-    public FakeMostVisitedSites(Profile p, String[] mostVisitedTitles, String[] mostVisitedUrls) {
+    public FakeMostVisitedSites(Profile p, String[] mostVisitedTitles, String[] mostVisitedUrls,
+            String[] mostVisitedWhitelistIconPaths, int[] mostVisitedSources) {
         super(p);
         assert mostVisitedTitles.length == mostVisitedUrls.length;
         mMostVisitedTitles = mostVisitedTitles.clone();
         mMostVisitedUrls = mostVisitedUrls.clone();
+        mMostVisitedWhitelistIconPaths = mostVisitedWhitelistIconPaths.clone();
+        mMostVisitedSources = mostVisitedSources.clone();
     }
 
     @Override
@@ -39,24 +44,20 @@ public class FakeMostVisitedSites extends MostVisitedSites {
             @Override
             public void run() {
                 observer.onMostVisitedURLsAvailable(mMostVisitedTitles.clone(),
-                        mMostVisitedUrls.clone());
+                        mMostVisitedUrls.clone(), mMostVisitedWhitelistIconPaths.clone(),
+                        mMostVisitedSources.clone());
             }
         });
     }
 
     @Override
-    public void getURLThumbnail(String url, final ThumbnailCallback callback) {
-        ThreadUtils.postOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                callback.onMostVisitedURLsThumbnailAvailable(null, true);
-            }
-        });
-    }
-
-    @Override
-    public void blacklistUrl(String url) {
+    public void addBlacklistedUrl(String url) {
         mBlacklistedUrls.add(url);
+    }
+
+    @Override
+    public void removeBlacklistedUrl(String url) {
+        mBlacklistedUrls.remove(url);
     }
 
     /**
@@ -67,12 +68,12 @@ public class FakeMostVisitedSites extends MostVisitedSites {
     }
 
     @Override
-    public void recordTileTypeMetrics(int[] tileTypes) {
+    public void recordPageImpression(int[] sources, int[] tileTypes, String[] tileUrls) {
         // Metrics are stubbed out.
     }
 
     @Override
-    public void recordOpenedMostVisitedItem(int index, int tileType) {
+    public void recordOpenedMostVisitedItem(int index, int tileType, int source) {
         //  Metrics are stubbed out.
     }
 }

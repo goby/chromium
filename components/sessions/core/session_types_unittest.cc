@@ -7,13 +7,12 @@
 #include <cstddef>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "components/sessions/core/serialized_navigation_entry_test_helper.h"
-#include "sync/protocol/session_specifics.pb.h"
-#include "sync/util/time.h"
+#include "components/sync/base/time.h"
+#include "components/sync/protocol/session_specifics.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/page_transition_types.h"
 #include "url/gurl.h"
@@ -67,8 +66,8 @@ TEST(SessionTab, FromSyncData) {
     EXPECT_EQ(i, tab.navigations[i].index());
     EXPECT_EQ(GURL("referrer"), tab.navigations[i].referrer_url());
     EXPECT_EQ(base::ASCIIToUTF16("title"),tab.navigations[i].title());
-    EXPECT_EQ(ui::PAGE_TRANSITION_TYPED,
-              tab.navigations[i].transition_type());
+    EXPECT_TRUE(ui::PageTransitionTypeIncludingQualifiersIs(
+        tab.navigations[i].transition_type(), ui::PAGE_TRANSITION_TYPED));
     EXPECT_EQ(GURL("http://foo/" + base::IntToString(i)),
               tab.navigations[i].virtual_url());
   }

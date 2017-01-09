@@ -28,34 +28,34 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "platform/plugins/PluginListBuilder.h"
 
 #include "public/platform/WebString.h"
 
 namespace blink {
 
-void PluginListBuilder::addPlugin(const WebString& name, const WebString& description, const WebString& fileName)
-{
-    PluginInfo info;
-    info.name = name;
-    info.desc = description;
-    info.file = fileName;
-    m_results->append(info);
+void PluginListBuilder::addPlugin(const WebString& name,
+                                  const WebString& description,
+                                  const WebString& fileName) {
+  PluginInfo info;
+  info.name = name;
+  info.desc = description;
+  info.file = fileName;
+  m_results->append(info);
 }
 
-void PluginListBuilder::addMediaTypeToLastPlugin(const WebString& name, const WebString& description)
-{
-    MimeClassInfo info;
-    info.type = name;
-    info.desc = description;
-    m_results->last().mimes.append(info);
+void PluginListBuilder::addMediaTypeToLastPlugin(const WebString& name,
+                                                 const WebString& description) {
+  MimeClassInfo info;
+  info.type = name;
+  info.desc = description;
+  m_results->back().mimes.append(info);
 }
 
-void PluginListBuilder::addFileExtensionToLastMediaType(const WebString& extension)
-{
-    MimeClassInfo& info = m_results->last().mimes.last();
-    info.extensions.append(extension);
+void PluginListBuilder::addFileExtensionToLastMediaType(
+    const WebString& extension) {
+  MimeClassInfo& info = m_results->back().mimes.back();
+  info.extensions.append(extension);
 }
 
-} // namespace blink
+}  // namespace blink

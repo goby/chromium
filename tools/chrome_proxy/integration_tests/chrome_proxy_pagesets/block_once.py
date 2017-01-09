@@ -2,6 +2,7 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+from common.chrome_proxy_shared_page_state import ChromeProxySharedPageState
 from telemetry.page import page as page_module
 from telemetry import story
 
@@ -9,7 +10,8 @@ from telemetry import story
 class BlockOncePage(page_module.Page):
 
   def __init__(self, url, page_set):
-    super(BlockOncePage, self).__init__(url=url, page_set=page_set)
+    super(BlockOncePage, self).__init__(url=url,page_set=page_set,
+        shared_page_state_class=ChromeProxySharedPageState)
 
   def RunNavigateSteps(self, action_runner):
     super(BlockOncePage, self).RunNavigateSteps(action_runner)
@@ -17,10 +19,14 @@ class BlockOncePage(page_module.Page):
     # Ensure that a subsequent request uses the data reduction proxy.
     action_runner.ExecuteJavaScript('''
       (function() {
+        window.post_request_completed = false;
         var request = new XMLHttpRequest();
         request.open("POST",
-            "http://chromeproxy-test.appspot.com/default?respBody=T0s=&respStatus=200&flywheelAction=block-once");
+            "http://chromeproxy-test.appspot.com/default?" +
+            "respBody=T0s=&respHeader=eyJBY2Nlc3MtQ29udHJvbC1BbGxvdy1Pcml" +
+            "naW4iOlsiKiJdfQ==&respStatus=200&flywheelAction=block-once");
         request.onload = function() {
+          window.post_request_completed = true;
           var viaProxyRequest = new XMLHttpRequest();
           viaProxyRequest.open("GET",
               "http://check.googlezip.net/image.png");
@@ -29,7 +35,8 @@ class BlockOncePage(page_module.Page):
         request.send();
       })();
     ''')
-    action_runner.Wait(1)
+    action_runner.WaitForJavaScriptCondition(
+        "window.post_request_completed == true", 30)
 
 class BlockOnceStorySet(story.StorySet):
 

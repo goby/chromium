@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "dbus/bus.h"
 #include "dbus/message.h"
 #include "dbus/object_path.h"
@@ -35,7 +36,7 @@ class EndToEndSyncTest : public testing::Test {
     client_bus_options.connection_type = Bus::PRIVATE;
     client_bus_ = new Bus(client_bus_options);
     object_proxy_ = client_bus_->GetObjectProxy(
-        "org.chromium.TestService",
+        test_service_->service_name(),
         ObjectPath("/org/chromium/TestObject"));
     ASSERT_FALSE(client_bus_->HasDBusThread());
   }
@@ -47,7 +48,7 @@ class EndToEndSyncTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<TestService> test_service_;
+  std::unique_ptr<TestService> test_service_;
   scoped_refptr<Bus> client_bus_;
   ObjectProxy* object_proxy_;
 };
@@ -62,7 +63,7 @@ TEST_F(EndToEndSyncTest, Echo) {
 
   // Call the method.
   const int timeout_ms = ObjectProxy::TIMEOUT_USE_DEFAULT;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   ASSERT_TRUE(response.get());
 
@@ -83,7 +84,7 @@ TEST_F(EndToEndSyncTest, Timeout) {
 
   // Call the method with timeout of 0ms.
   const int timeout_ms = 0;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   // Should fail because of timeout.
   ASSERT_FALSE(response.get());
@@ -93,7 +94,7 @@ TEST_F(EndToEndSyncTest, NonexistentMethod) {
   MethodCall method_call("org.chromium.TestInterface", "Nonexistent");
 
   const int timeout_ms = ObjectProxy::TIMEOUT_USE_DEFAULT;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   ASSERT_FALSE(response.get());
 }
@@ -102,7 +103,7 @@ TEST_F(EndToEndSyncTest, BrokenMethod) {
   MethodCall method_call("org.chromium.TestInterface", "BrokenMethod");
 
   const int timeout_ms = ObjectProxy::TIMEOUT_USE_DEFAULT;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   ASSERT_FALSE(response.get());
 }
@@ -112,13 +113,13 @@ TEST_F(EndToEndSyncTest, InvalidObjectPath) {
   const ObjectPath invalid_object_path("/org/chromium/TestObject/");
 
   // Replace object proxy with new one.
-  object_proxy_ = client_bus_->GetObjectProxy("org.chromium.TestService",
+  object_proxy_ = client_bus_->GetObjectProxy(test_service_->service_name(),
                                               invalid_object_path);
 
   MethodCall method_call("org.chromium.TestInterface", "Echo");
 
   const int timeout_ms = ObjectProxy::TIMEOUT_USE_DEFAULT;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   ASSERT_FALSE(response.get());
 }
@@ -134,7 +135,7 @@ TEST_F(EndToEndSyncTest, InvalidServiceName) {
   MethodCall method_call("org.chromium.TestInterface", "Echo");
 
   const int timeout_ms = ObjectProxy::TIMEOUT_USE_DEFAULT;
-  scoped_ptr<Response> response(
+  std::unique_ptr<Response> response(
       object_proxy_->CallMethodAndBlock(&method_call, timeout_ms));
   ASSERT_FALSE(response.get());
 }

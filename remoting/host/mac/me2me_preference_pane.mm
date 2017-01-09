@@ -10,21 +10,25 @@
 #include <launch.h>
 #import <PreferencePanes/PreferencePanes.h>
 #import <SecurityInterface/SFAuthorizationView.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include <fstream>
+#include <memory>
 
+#include "base/mac/authorization_util.h"
+#include "base/mac/launchd.h"
+#include "base/mac/mac_logging.h"
 #include "base/mac/scoped_launch_data.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/posix/eintr_wrapper.h"
-#include "remoting/host/constants_mac.h"
 #include "remoting/host/host_config.h"
+#include "remoting/host/mac/constants_mac.h"
 #import "remoting/host/mac/me2me_preference_pane_confirm_pin.h"
 #import "remoting/host/mac/me2me_preference_pane_disable.h"
+#include "remoting/host/pin_hash.h"
 #include "third_party/jsoncpp/source/include/json/reader.h"
 #include "third_party/jsoncpp/source/include/json/writer.h"
-#include "third_party/modp_b64/modp_b64.h"
 
 namespace {
 
@@ -45,185 +49,7 @@ bool IsConfigValid(const remoting::JsonHostConfig* config) {
           config->GetString(remoting::kXmppLoginConfigPath, &value));
 }
 
-bool IsPinValid(const std::string& pin, const std::string& host_id,
-                const std::string& host_secret_hash) {
-  // TODO(lambroslambrou): Once the "base" target supports building for 64-bit
-  // on Mac OS X, remove this code and replace it with |VerifyHostPinHash()|
-  // from host/pin_hash.h.
-  size_t separator = host_secret_hash.find(':');
-  if (separator == std::string::npos)
-    return false;
-
-  std::string method = host_secret_hash.substr(0, separator);
-  if (method != "hmac") {
-    NSLog(@"Authentication method '%s' not supported", method.c_str());
-    return false;
-  }
-
-  std::string hash_base64 = host_secret_hash.substr(separator + 1);
-
-  // Convert |hash_base64| to |hash|, based on code from base/base64.cc.
-  int hash_base64_size = static_cast<int>(hash_base64.size());
-  std::string hash;
-  hash.resize(modp_b64_decode_len(hash_base64_size));
-
-  // modp_b64_decode_len() returns at least 1, so hash[0] is safe here.
-  int hash_size = modp_b64_decode(&(hash[0]), hash_base64.data(),
-                                  hash_base64_size);
-  if (hash_size < 0) {
-    NSLog(@"Failed to parse host_secret_hash");
-    return false;
-  }
-  hash.resize(hash_size);
-
-  std::string computed_hash;
-  computed_hash.resize(CC_SHA256_DIGEST_LENGTH);
-
-  CCHmac(kCCHmacAlgSHA256,
-         host_id.data(), host_id.size(),
-         pin.data(), pin.size(),
-         &(computed_hash[0]));
-
-  // Normally, a constant-time comparison function would be used, but it is
-  // unnecessary here as the "secret" is already readable by the user
-  // supplying input to this routine.
-  return computed_hash == hash;
-}
-
 }  // namespace
-
-// These methods are copied from base/mac, but with the logging changed to use
-// NSLog().
-//
-// TODO(lambroslambrou): Once the "base" target supports building for 64-bit
-// on Mac OS X, remove these implementations and use the ones in base/mac.
-namespace base {
-namespace mac {
-
-// MessageForJob sends a single message to launchd with a simple dictionary
-// mapping |operation| to |job_label|, and returns the result of calling
-// launch_msg to send that message. On failure, returns nullptr. The caller
-// assumes ownership of the returned launch_data_t object.
-launch_data_t MessageForJob(const std::string& job_label,
-                            const char* operation) {
-  // launch_data_alloc returns something that needs to be freed.
-  ScopedLaunchData message(launch_data_alloc(LAUNCH_DATA_DICTIONARY));
-  if (!message) {
-    NSLog(@"launch_data_alloc");
-    return nullptr;
-  }
-
-  // launch_data_new_string returns something that needs to be freed, but
-  // the dictionary will assume ownership when launch_data_dict_insert is
-  // called, so put it in a scoper and .release() it when given to the
-  // dictionary.
-  ScopedLaunchData job_label_launchd(launch_data_new_string(job_label.c_str()));
-  if (!job_label_launchd) {
-    NSLog(@"launch_data_new_string");
-    return nullptr;
-  }
-
-  if (!launch_data_dict_insert(message,
-                               job_label_launchd.release(),
-                               operation)) {
-    return nullptr;
-  }
-
-  return launch_msg(message);
-}
-
-pid_t PIDForJob(const std::string& job_label) {
-  ScopedLaunchData response(MessageForJob(job_label, LAUNCH_KEY_GETJOB));
-  if (!response) {
-    return -1;
-  }
-
-  launch_data_type_t response_type = launch_data_get_type(response);
-  if (response_type != LAUNCH_DATA_DICTIONARY) {
-    if (response_type == LAUNCH_DATA_ERRNO) {
-      NSLog(@"PIDForJob: error %d", launch_data_get_errno(response));
-    } else {
-      NSLog(@"PIDForJob: expected dictionary, got %d", response_type);
-    }
-    return -1;
-  }
-
-  launch_data_t pid_data = launch_data_dict_lookup(response,
-                                                   LAUNCH_JOBKEY_PID);
-  if (!pid_data)
-    return 0;
-
-  if (launch_data_get_type(pid_data) != LAUNCH_DATA_INTEGER) {
-    NSLog(@"PIDForJob: expected integer");
-    return -1;
-  }
-
-  return launch_data_get_integer(pid_data);
-}
-
-OSStatus ExecuteWithPrivilegesAndGetPID(AuthorizationRef authorization,
-                                        const char* tool_path,
-                                        AuthorizationFlags options,
-                                        const char** arguments,
-                                        FILE** pipe,
-                                        pid_t* pid) {
-  // pipe may be nullptr, but this function needs one.  In that case, use a
-  // local pipe.
-  FILE* local_pipe;
-  FILE** pipe_pointer;
-  if (pipe) {
-    pipe_pointer = pipe;
-  } else {
-    pipe_pointer = &local_pipe;
-  }
-
-  // AuthorizationExecuteWithPrivileges wants |char* const*| for |arguments|,
-  // but it doesn't actually modify the arguments, and that type is kind of
-  // silly and callers probably aren't dealing with that.  Put the cast here
-  // to make things a little easier on callers.
-  OSStatus status = AuthorizationExecuteWithPrivileges(authorization,
-                                                       tool_path,
-                                                       options,
-                                                       (char* const*)arguments,
-                                                       pipe_pointer);
-  if (status != errAuthorizationSuccess) {
-    return status;
-  }
-
-  long line_pid = -1;
-  size_t line_length = 0;
-  char* line_c = fgetln(*pipe_pointer, &line_length);
-  if (line_c) {
-    if (line_length > 0 && line_c[line_length - 1] == '\n') {
-      // line_c + line_length is the start of the next line if there is one.
-      // Back up one character.
-      --line_length;
-    }
-    std::string line(line_c, line_length);
-
-    // The version in base/mac used base::StringToInt() here.
-    line_pid = strtol(line.c_str(), nullptr, 10);
-    if (line_pid == 0) {
-      NSLog(@"ExecuteWithPrivilegesAndGetPid: funny line: %s", line.c_str());
-      line_pid = -1;
-    }
-  } else {
-    NSLog(@"ExecuteWithPrivilegesAndGetPid: no line");
-  }
-
-  if (!pipe) {
-    fclose(*pipe_pointer);
-  }
-
-  if (pid) {
-    *pid = line_pid;
-  }
-
-  return status;
-}
-
-}  // namespace mac
-}  // namespace base
 
 namespace remoting {
 
@@ -327,7 +153,7 @@ std::string JsonHostConfig::GetSerializedData() const {
     return;
   }
 
-  // Ensure the authorization token is up-to-date before using it.
+  // Ensure the authorization token is up to date before using it.
   [self updateAuthorizationStatus];
   [self updateUI];
 
@@ -340,7 +166,7 @@ std::string JsonHostConfig::GetSerializedData() const {
     [self showError];
     return;
   }
-  if (!IsPinValid(pin_utf8, host_id, host_secret_hash)) {
+  if (!remoting::VerifyHostPinHash(host_secret_hash, host_id, pin_utf8)) {
     [self showIncorrectPinMessage];
     return;
   }
@@ -350,7 +176,7 @@ std::string JsonHostConfig::GetSerializedData() const {
 }
 
 - (void)onDisable:(id)sender {
-  // Ensure the authorization token is up-to-date before using it.
+  // Ensure the authorization token is up to date before using it.
   [self updateAuthorizationStatus];
   [self updateUI];
   if (!is_pane_unlocked_)
@@ -419,7 +245,7 @@ std::string JsonHostConfig::GetSerializedData() const {
   if (access(file.c_str(), F_OK) != 0)
     return;
 
-  scoped_ptr<remoting::JsonHostConfig> new_config_(
+  std::unique_ptr<remoting::JsonHostConfig> new_config_(
       new remoting::JsonHostConfig(file));
   if (!new_config_->Read()) {
     // Report the error, because the file exists but couldn't be read.  The
@@ -565,7 +391,8 @@ std::string JsonHostConfig::GetSerializedData() const {
       &pid);
   if (status != errAuthorizationSuccess) {
     NSLog(@"AuthorizationExecuteWithPrivileges: %s (%d)",
-          GetMacOSStatusErrorString(status), static_cast<int>(status));
+          logging::DescriptionFromOSStatus(status).c_str(),
+          static_cast<int>(status));
     return NO;
   }
   if (pid == -1) {
@@ -627,7 +454,7 @@ std::string JsonHostConfig::GetSerializedData() const {
 - (BOOL)sendJobControlMessage:(const char*)launch_key {
   base::mac::ScopedLaunchData response(
       base::mac::MessageForJob(remoting::kServiceName, launch_key));
-  if (!response) {
+  if (!response.is_valid()) {
     NSLog(@"Failed to send message to launchd");
     [self showError];
     return NO;

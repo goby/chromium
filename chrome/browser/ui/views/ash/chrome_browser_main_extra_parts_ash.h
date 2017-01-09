@@ -5,9 +5,20 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_ASH_CHROME_BROWSER_MAIN_EXTRA_PARTS_ASH_H_
 #define CHROME_BROWSER_UI_VIEWS_ASH_CHROME_BROWSER_MAIN_EXTRA_PARTS_ASH_H_
 
-#include "base/basictypes.h"
-#include "base/compiler_specific.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "chrome/browser/chrome_browser_main_extra_parts.h"
+
+class CastConfigClientMediaRouter;
+class ChromeLauncherControllerMus;
+class ChromeNewWindowClient;
+class ImmersiveContextMus;
+class ImmersiveHandlerFactoryMus;
+class SessionControllerClient;
+class SystemTrayClient;
+class VolumeController;
+class VpnListForwarder;
 
 class ChromeBrowserMainExtraPartsAsh : public ChromeBrowserMainExtraParts {
  public:
@@ -20,6 +31,16 @@ class ChromeBrowserMainExtraPartsAsh : public ChromeBrowserMainExtraParts {
   void PostMainMessageLoopRun() override;
 
  private:
+  std::unique_ptr<ChromeLauncherControllerMus> chrome_launcher_controller_mus_;
+  std::unique_ptr<CastConfigClientMediaRouter> cast_config_client_media_router_;
+  std::unique_ptr<ImmersiveHandlerFactoryMus> immersive_handler_factory_;
+  std::unique_ptr<ImmersiveContextMus> immersive_context_;
+  std::unique_ptr<SessionControllerClient> session_controller_client_;
+  std::unique_ptr<SystemTrayClient> system_tray_client_;
+  std::unique_ptr<ChromeNewWindowClient> new_window_client_;
+  std::unique_ptr<VolumeController> volume_controller_;
+  std::unique_ptr<VpnListForwarder> vpn_list_forwarder_;
+
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainExtraPartsAsh);
 };
 

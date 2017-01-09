@@ -4,14 +4,15 @@
 
 #include "ash/wm/maximize_mode/scoped_disable_internal_mouse_and_keyboard_x11.h"
 
-#include <set>
 #include <X11/extensions/XInput2.h>
 #include <X11/Xlib.h>
 
+#include <memory>
+#include <set>
+#include <utility>
+
 #include "ash/display/window_tree_host_manager.h"
-#include "ash/screen_util.h"
 #include "ash/shell.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_util.h"
 #include "ui/aura/client/cursor_client.h"
 #include "ui/aura/client/screen_position_client.h"
@@ -20,7 +21,6 @@
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/devices/input_device.h"
-#include "ui/events/devices/keyboard_device.h"
 #include "ui/events/devices/x11/device_data_manager_x11.h"
 #include "ui/events/devices/x11/device_list_cache_x11.h"
 #include "ui/events/event.h"
@@ -48,8 +48,9 @@ gfx::Point GetMouseLocationInScreen() {
 }
 
 void SetMouseLocationInScreen(const gfx::Point& screen_location) {
-  gfx::Display display = ash::ScreenUtil::FindDisplayContainingPoint(
-      screen_location);
+  const display::Display& display =
+      Shell::GetInstance()->display_manager()->FindDisplayContainingPoint(
+          screen_location);
   if (!display.is_valid())
     return;
   aura::Window* root_window = Shell::GetInstance()
@@ -60,7 +61,7 @@ void SetMouseLocationInScreen(const gfx::Point& screen_location) {
       aura::client::GetScreenPositionClient(root_window);
   if (client)
     client->ConvertPointFromScreen(root_window, &host_location);
-  root_window->GetHost()->MoveCursorTo(host_location);
+  root_window->GetHost()->MoveCursorToLocationInDIP(host_location);
 }
 
 }  // namespace
@@ -71,7 +72,6 @@ ScopedDisableInternalMouseAndKeyboardX11::
       keyboard_device_id_(kDeviceIdNone),
       core_keyboard_device_id_(kDeviceIdNone),
       last_mouse_location_(GetMouseLocationInScreen()) {
-
   ui::DeviceDataManagerX11* device_data_manager =
       ui::DeviceDataManagerX11::GetInstance();
   if (device_data_manager->IsXInput2Available()) {
@@ -96,8 +96,8 @@ ScopedDisableInternalMouseAndKeyboardX11::
       }
     }
 
-    for (const ui::KeyboardDevice& device :
-         device_data_manager->keyboard_devices()) {
+    for (const ui::InputDevice& device :
+         device_data_manager->GetKeyboardDevices()) {
       if (device.type == ui::InputDeviceType::INPUT_DEVICE_INTERNAL) {
         keyboard_device_id_ = device.id;
         device_data_manager->DisableDevice(keyboard_device_id_);
@@ -107,12 +107,12 @@ ScopedDisableInternalMouseAndKeyboardX11::
   }
   // Allow the accessible keys present on the side of some devices to continue
   // working.
-  scoped_ptr<std::set<ui::KeyboardCode> > excepted_keys(
+  std::unique_ptr<std::set<ui::KeyboardCode>> excepted_keys(
       new std::set<ui::KeyboardCode>);
   excepted_keys->insert(ui::VKEY_VOLUME_DOWN);
   excepted_keys->insert(ui::VKEY_VOLUME_UP);
   excepted_keys->insert(ui::VKEY_POWER);
-  device_data_manager->SetDisabledKeyboardAllowedKeys(excepted_keys.Pass());
+  device_data_manager->SetDisabledKeyboardAllowedKeys(std::move(excepted_keys));
   ui::PlatformEventSource::GetInstance()->AddPlatformEventObserver(this);
 }
 
@@ -130,27 +130,25 @@ ScopedDisableInternalMouseAndKeyboardX11::
   if (core_keyboard_device_id_ != kDeviceIdNone)
     device_data_manager->EnableDevice(core_keyboard_device_id_);
   device_data_manager->SetDisabledKeyboardAllowedKeys(
-      scoped_ptr<std::set<ui::KeyboardCode> >());
+      std::unique_ptr<std::set<ui::KeyboardCode>>());
   ui::PlatformEventSource::GetInstance()->RemovePlatformEventObserver(this);
 }
 
 void ScopedDisableInternalMouseAndKeyboardX11::WillProcessEvent(
-    const ui::PlatformEvent& event) {
-}
+    const ui::PlatformEvent& event) {}
 
 void ScopedDisableInternalMouseAndKeyboardX11::DidProcessEvent(
     const ui::PlatformEvent& event) {
   if (event->type != GenericEvent)
     return;
-  XIDeviceEvent* xievent =
-      static_cast<XIDeviceEvent*>(event->xcookie.data);
+  XIDeviceEvent* xievent = static_cast<XIDeviceEvent*>(event->xcookie.data);
   ui::DeviceDataManagerX11* device_data_manager =
       static_cast<ui::DeviceDataManagerX11*>(
           ui::DeviceDataManager::GetInstance());
   if (xievent->evtype != XI_Motion ||
-      device_data_manager->IsFlingEvent(event) ||
-      device_data_manager->IsScrollEvent(event) ||
-      device_data_manager->IsCMTMetricsEvent(event)) {
+      device_data_manager->IsFlingEvent(*event) ||
+      device_data_manager->IsScrollEvent(*event) ||
+      device_data_manager->IsCMTMetricsEvent(*event)) {
     return;
   }
   if (xievent->sourceid == touchpad_device_id_) {

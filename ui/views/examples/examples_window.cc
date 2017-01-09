@@ -6,9 +6,12 @@
 
 #include <algorithm>
 #include <string>
+#include <utility>
 
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/utf_string_conversions.h"
+#include "ui/base/l10n/l10n_util.h"
 #include "ui/base/models/combobox_model.h"
 #include "ui/base/ui_base_paths.h"
 #include "ui/views/background.h"
@@ -16,9 +19,9 @@
 #include "ui/views/controls/label.h"
 #include "ui/views/examples/bubble_example.h"
 #include "ui/views/examples/button_example.h"
+#include "ui/views/examples/button_sticker_sheet.h"
 #include "ui/views/examples/checkbox_example.h"
 #include "ui/views/examples/combobox_example.h"
-#include "ui/views/examples/double_split_view_example.h"
 #include "ui/views/examples/label_example.h"
 #include "ui/views/examples/link_example.h"
 #include "ui/views/examples/menu_example.h"
@@ -27,13 +30,13 @@
 #include "ui/views/examples/progress_bar_example.h"
 #include "ui/views/examples/radio_button_example.h"
 #include "ui/views/examples/scroll_view_example.h"
-#include "ui/views/examples/single_split_view_example.h"
 #include "ui/views/examples/slider_example.h"
 #include "ui/views/examples/tabbed_pane_example.h"
 #include "ui/views/examples/table_example.h"
 #include "ui/views/examples/text_example.h"
 #include "ui/views/examples/textfield_example.h"
 #include "ui/views/examples/throbber_example.h"
+#include "ui/views/examples/toggle_button_example.h"
 #include "ui/views/examples/tree_view_example.h"
 #include "ui/views/examples/vector_example.h"
 #include "ui/views/examples/widget_example.h"
@@ -45,7 +48,7 @@
 namespace views {
 namespace examples {
 
-typedef scoped_ptr<ScopedVector<ExampleBase> > ScopedExamples;
+typedef std::unique_ptr<ScopedVector<ExampleBase>> ScopedExamples;
 
 namespace {
 
@@ -54,9 +57,9 @@ ScopedExamples CreateExamples() {
   ScopedExamples examples(new ScopedVector<ExampleBase>);
   examples->push_back(new BubbleExample);
   examples->push_back(new ButtonExample);
+  examples->push_back(new ButtonStickerSheet);
   examples->push_back(new CheckboxExample);
   examples->push_back(new ComboboxExample);
-  examples->push_back(new DoubleSplitViewExample);
   examples->push_back(new LabelExample);
   examples->push_back(new LinkExample);
   examples->push_back(new MenuExample);
@@ -65,17 +68,17 @@ ScopedExamples CreateExamples() {
   examples->push_back(new ProgressBarExample);
   examples->push_back(new RadioButtonExample);
   examples->push_back(new ScrollViewExample);
-  examples->push_back(new SingleSplitViewExample);
   examples->push_back(new SliderExample);
   examples->push_back(new TabbedPaneExample);
   examples->push_back(new TableExample);
   examples->push_back(new TextExample);
   examples->push_back(new TextfieldExample);
+  examples->push_back(new ToggleButtonExample);
   examples->push_back(new ThrobberExample);
   examples->push_back(new TreeViewExample);
   examples->push_back(new VectorExample);
   examples->push_back(new WidgetExample);
-  return examples.Pass();
+  return examples;
 }
 
 struct ExampleTitleCompare {
@@ -91,7 +94,7 @@ ScopedExamples GetExamplesToShow(ScopedExamples extra) {
     extra->weak_clear();
   }
   std::sort(examples->begin(), examples->end(), ExampleTitleCompare());
-  return examples.Pass();
+  return examples;
 }
 
 }  // namespace
@@ -132,7 +135,7 @@ class ExamplesWindowContents : public WidgetDelegateView,
         operation_(operation) {
     instance_ = this;
     combobox_->set_listener(this);
-    combobox_model_.SetExamples(examples.Pass());
+    combobox_model_.SetExamples(std::move(examples));
     combobox_->ModelChanged();
 
     set_background(Background::CreateStandardPanelBackground());
@@ -180,11 +183,10 @@ class ExamplesWindowContents : public WidgetDelegateView,
   base::string16 GetWindowTitle() const override {
     return base::ASCIIToUTF16("Views Examples");
   }
-  View* GetContentsView() override { return this; }
   void WindowClosing() override {
     instance_ = NULL;
     if (operation_ == QUIT_ON_CLOSE)
-      base::MessageLoopForUI::current()->QuitWhenIdle();
+      base::MessageLoop::current()->QuitWhenIdle();
   }
   gfx::Size GetPreferredSize() const override { return gfx::Size(800, 300); }
 
@@ -219,10 +221,11 @@ void ShowExamplesWindow(Operation operation,
   if (ExamplesWindowContents::instance()) {
     ExamplesWindowContents::instance()->GetWidget()->Activate();
   } else {
-    ScopedExamples examples(GetExamplesToShow(extra_examples.Pass()));
+    ScopedExamples examples(GetExamplesToShow(std::move(extra_examples)));
     Widget* widget = new Widget;
     Widget::InitParams params;
-    params.delegate = new ExamplesWindowContents(operation, examples.Pass());
+    params.delegate =
+        new ExamplesWindowContents(operation, std::move(examples));
     params.context = window_context;
     widget->Init(params);
     widget->Show();

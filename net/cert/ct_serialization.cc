@@ -6,7 +6,15 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+#include <limits>
+
 #include "base/logging.h"
+#include "base/numerics/safe_math.h"
+#include "crypto/sha2.h"
+#include "net/cert/merkle_tree_leaf.h"
+#include "net/cert/signed_certificate_timestamp.h"
+#include "net/cert/signed_tree_head.h"
 
 namespace net {
 
@@ -15,28 +23,34 @@ namespace ct {
 namespace {
 
 // Note: length is always specified in bytes.
-// Signed Certificate Timestamp (SCT) Version length
+// CT protocol version length
 const size_t kVersionLength = 1;
 
-// Members of a V1 SCT
-const size_t kLogIdLength = 32;
+// Common V1 struct members
 const size_t kTimestampLength = 8;
+const size_t kLogEntryTypeLength = 2;
+const size_t kAsn1CertificateLengthBytes = 3;
+const size_t kTbsCertificateLengthBytes = 3;
 const size_t kExtensionsLengthBytes = 2;
+
+// Members of a V1 SCT
+const size_t kLogIdLength = crypto::kSHA256Length;
 const size_t kHashAlgorithmLength = 1;
 const size_t kSigAlgorithmLength = 1;
 const size_t kSignatureLengthBytes = 2;
 
 // Members of the digitally-signed struct of a V1 SCT
 const size_t kSignatureTypeLength = 1;
-const size_t kLogEntryTypeLength = 2;
-const size_t kAsn1CertificateLengthBytes = 3;
-const size_t kTbsCertificateLengthBytes = 3;
 
 const size_t kSCTListLengthBytes = 2;
 const size_t kSerializedSCTLengthBytes = 2;
 
 // Members of digitally-signed struct of a STH
 const size_t kTreeSizeLength = 8;
+
+// Members of a V1 MerkleTreeLeaf
+const size_t kMerkleLeafTypeLength = 1;
+const size_t kIssuerKeyHashLength = crypto::kSHA256Length;
 
 enum SignatureType {
   SIGNATURE_TYPE_CERTIFICATE_TIMESTAMP = 0,
@@ -52,11 +66,15 @@ template <typename T>
 bool ReadUint(size_t length, base::StringPiece* in, T* out) {
   if (in->size() < length)
     return false;
+  DCHECK_NE(length, 0u);
   DCHECK_LE(length, sizeof(T));
 
-  T result = 0;
-  for (size_t i = 0; i < length; ++i) {
-    result = (result << 8) | static_cast<unsigned char>((*in)[i]);
+  T result = static_cast<uint8_t>((*in)[0]);
+  // This loop only executes if sizeof(T) > 1, because the first operation is
+  // to shift left by 1 byte, which is undefined behaviour if T is a 1 byte
+  // integer.
+  for (size_t i = 1; i < length; ++i) {
+    result = (result << 8) | static_cast<uint8_t>((*in)[i]);
   }
   in->remove_prefix(length);
   *out = result;
@@ -64,14 +82,18 @@ bool ReadUint(size_t length, base::StringPiece* in, T* out) {
 }
 
 // Reads a TLS-encoded field length from |in|.
-// The bytes read from |in| are discarded (i.e. |in|'s prefix removed)
-// |prefix_length| indicates the bytes needed to represent the length (e.g. 3)
+// The bytes read from |in| are discarded (i.e. |in|'s prefix removed).
+// |prefix_length| indicates the bytes needed to represent the length (e.g. 3).
+// Max |prefix_length| is 8.
 // success, returns true and stores the result in |*out|.
 bool ReadLength(size_t prefix_length, base::StringPiece* in, size_t* out) {
-  size_t length;
+  uint64_t length = 0;
   if (!ReadUint(prefix_length, in, &length))
     return false;
-  *out = length;
+  base::CheckedNumeric<size_t> checked_length = length;
+  if (!checked_length.IsValid())
+    return false;
+  *out = checked_length.ValueOrDie();
   return true;
 }
 
@@ -94,7 +116,7 @@ bool ReadFixedBytes(size_t length,
 bool ReadVariableBytes(size_t prefix_length,
                        base::StringPiece* in,
                        base::StringPiece* out) {
-  size_t length;
+  size_t length = 0;
   if (!ReadLength(prefix_length, in, &length))
     return false;
   return ReadFixedBytes(length, in, out);
@@ -174,15 +196,15 @@ bool ConvertSignatureAlgorithm(
 }
 
 // Writes a TLS-encoded variable length unsigned integer to |output|.
-// |length| indicates the size (in bytes) of the integer.
+// |length| indicates the size (in bytes) of the integer. This must be able to
+// accomodate |value|.
 // |value| the value itself to be written.
-template <typename T>
-void WriteUint(size_t length, T value, std::string* output) {
-  DCHECK_LE(length, sizeof(T));
-  DCHECK(length == sizeof(T) || value >> (length * 8) == 0);
+void WriteUint(size_t length, uint64_t value, std::string* output) {
+  // Check that |value| fits into |length| bytes.
+  DCHECK(length >= sizeof(value) || value >> (length * 8) == 0);
 
   for (; length > 0; --length) {
-    output->push_back((value >> ((length - 1)* 8)) & 0xFF);
+    output->push_back((value >> ((length - 1) * 8)) & 0xFF);
   }
 }
 
@@ -193,25 +215,33 @@ void WriteUint(size_t length, T value, std::string* output) {
 // length when reading.
 // If the length of |input| is dynamic and data is expected to follow it,
 // WriteVariableBytes must be used.
-void WriteEncodedBytes(const base::StringPiece& input, std::string* output) {
+// Returns the number of bytes written (the length of |input|).
+size_t WriteEncodedBytes(const base::StringPiece& input, std::string* output) {
   input.AppendToString(output);
+  return input.size();
 }
 
 // Writes a variable-length array to |output|.
-// |prefix_length| indicates the number of bytes needed to represnt the length.
+// |prefix_length| indicates the number of bytes needed to represent the length.
 // |input| is the array itself.
-// If the size of |input| is less than 2^|prefix_length| - 1, encode the
-// length and data and return true. Otherwise, return false.
+// If 1 <= |prefix_length| <= 8 and the size of |input| is less than
+// 2^|prefix_length| - 1, encode the length and data and return true.
+// Otherwise, return false.
 bool WriteVariableBytes(size_t prefix_length,
                         const base::StringPiece& input,
                         std::string* output) {
-  size_t input_size = input.size();
-  size_t max_allowed_input_size =
-      static_cast<size_t>(((1 << (prefix_length * 8)) - 1));
-  if (input_size > max_allowed_input_size)
+  DCHECK_GE(prefix_length, 1u);
+  DCHECK_LE(prefix_length, 8u);
+
+  uint64_t input_size = input.size();
+  uint64_t max_input_size = (prefix_length == 8)
+                                ? UINT64_MAX
+                                : ((UINT64_C(1) << (prefix_length * 8)) - 1);
+
+  if (input_size > max_input_size)
     return false;
 
-  WriteUint(prefix_length, input.size(), output);
+  WriteUint(prefix_length, input_size, output);
   WriteEncodedBytes(input, output);
 
   return true;
@@ -234,7 +264,7 @@ bool EncodePrecertLogEntry(const LogEntry& input, std::string* output) {
   WriteEncodedBytes(
       base::StringPiece(
           reinterpret_cast<const char*>(input.issuer_key_hash.data),
-          kLogIdLength),
+          kIssuerKeyHashLength),
       output);
   return WriteVariableBytes(kTbsCertificateLengthBytes,
                             input.tbs_certificate, output);
@@ -289,17 +319,49 @@ bool EncodeLogEntry(const LogEntry& input, std::string* output) {
   return false;
 }
 
+static bool ReadTimeSinceEpoch(base::StringPiece* input, base::Time* output) {
+  uint64_t time_since_epoch = 0;
+  if (!ReadUint(kTimestampLength, input, &time_since_epoch))
+    return false;
+
+  base::CheckedNumeric<int64_t> time_since_epoch_signed = time_since_epoch;
+
+  if (!time_since_epoch_signed.IsValid()) {
+    DVLOG(1) << "Timestamp value too big to cast to int64_t: "
+             << time_since_epoch;
+    return false;
+  }
+
+  *output =
+      base::Time::UnixEpoch() +
+      base::TimeDelta::FromMilliseconds(time_since_epoch_signed.ValueOrDie());
+
+  return true;
+}
+
 static void WriteTimeSinceEpoch(const base::Time& timestamp,
                                 std::string* output) {
   base::TimeDelta time_since_epoch = timestamp - base::Time::UnixEpoch();
   WriteUint(kTimestampLength, time_since_epoch.InMilliseconds(), output);
 }
 
+bool EncodeTreeLeaf(const MerkleTreeLeaf& leaf, std::string* output) {
+  WriteUint(kVersionLength, 0, output);         // version: 1
+  WriteUint(kMerkleLeafTypeLength, 0, output);  // type: timestamped entry
+  WriteTimeSinceEpoch(leaf.timestamp, output);
+  if (!EncodeLogEntry(leaf.log_entry, output))
+    return false;
+  if (!WriteVariableBytes(kExtensionsLengthBytes, leaf.extensions, output))
+    return false;
+
+  return true;
+}
+
 bool EncodeV1SCTSignedData(const base::Time& timestamp,
                            const std::string& serialized_log_entry,
                            const std::string& extensions,
                            std::string* output) {
-  WriteUint(kVersionLength, SignedCertificateTimestamp::SCT_VERSION_1,
+  WriteUint(kVersionLength, SignedCertificateTimestamp::V1,
             output);
   WriteUint(kSignatureTypeLength, SIGNATURE_TYPE_CERTIFICATE_TIMESTAMP,
             output);
@@ -343,34 +405,23 @@ bool DecodeSignedCertificateTimestamp(
   unsigned version;
   if (!ReadUint(kVersionLength, input, &version))
     return false;
-  if (version != SignedCertificateTimestamp::SCT_VERSION_1) {
+  if (version != SignedCertificateTimestamp::V1) {
     DVLOG(1) << "Unsupported/invalid version " << version;
     return false;
   }
 
-  result->version = SignedCertificateTimestamp::SCT_VERSION_1;
-  uint64_t timestamp;
+  result->version = SignedCertificateTimestamp::V1;
   base::StringPiece log_id;
   base::StringPiece extensions;
   if (!ReadFixedBytes(kLogIdLength, input, &log_id) ||
-      !ReadUint(kTimestampLength, input, &timestamp) ||
-      !ReadVariableBytes(kExtensionsLengthBytes, input,
-                         &extensions) ||
+      !ReadTimeSinceEpoch(input, &result->timestamp) ||
+      !ReadVariableBytes(kExtensionsLengthBytes, input, &extensions) ||
       !DecodeDigitallySigned(input, &result->signature)) {
-    return false;
-  }
-
-  if (timestamp > static_cast<uint64_t>(kint64max)) {
-    DVLOG(1) << "Timestamp value too big to cast to int64_t: " << timestamp;
     return false;
   }
 
   log_id.CopyToString(&result->log_id);
   extensions.CopyToString(&result->extensions);
-  result->timestamp =
-      base::Time::UnixEpoch() +
-      base::TimeDelta::FromMilliseconds(static_cast<int64_t>(timestamp));
-
   output->swap(result);
   return true;
 }
@@ -379,7 +430,7 @@ bool EncodeSCTListForTesting(const base::StringPiece& sct,
                              std::string* output) {
   std::string encoded_sct;
   return WriteVariableBytes(kSerializedSCTLengthBytes, sct, &encoded_sct) &&
-      WriteVariableBytes(kSCTListLengthBytes, encoded_sct, output);
+         WriteVariableBytes(kSCTListLengthBytes, encoded_sct, output);
 }
 
 }  // namespace ct

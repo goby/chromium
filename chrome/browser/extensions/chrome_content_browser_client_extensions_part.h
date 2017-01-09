@@ -8,14 +8,15 @@
 #include "base/compiler_specific.h"
 #include "base/macros.h"
 #include "chrome/browser/chrome_content_browser_client_parts.h"
+#include "ui/base/page_transition_types.h"
 
 namespace content {
+struct Referrer;
 class ResourceContext;
+class VpnServiceProxy;
 }
 
 namespace extensions {
-
-class BrowserPermissionsPolicyDelegate;
 
 // Implements the extensions portion of ChromeContentBrowserClient.
 class ChromeContentBrowserClientExtensionsPart
@@ -35,9 +36,6 @@ class ChromeContentBrowserClientExtensionsPart
                                  const GURL& effective_site_url);
   static bool CanCommitURL(content::RenderProcessHost* process_host,
                            const GURL& url);
-  static bool IsIllegalOrigin(content::ResourceContext* resource_context,
-                              int child_process_id,
-                              const GURL& origin);
   static bool IsSuitableHost(Profile* profile,
                              content::RenderProcessHost* process_host,
                              const GURL& site_url);
@@ -48,7 +46,7 @@ class ChromeContentBrowserClientExtensionsPart
       const GURL& current_url,
       const GURL& new_url);
   static bool ShouldSwapProcessesForRedirect(
-      content::ResourceContext* resource_context,
+      content::BrowserContext* browser_context,
       const GURL& current_url,
       const GURL& new_url);
   static bool AllowServiceWorker(const GURL& scope,
@@ -56,16 +54,24 @@ class ChromeContentBrowserClientExtensionsPart
                                  content::ResourceContext* context,
                                  int render_process_id,
                                  int render_frame_id);
+  static void OverrideNavigationParams(content::SiteInstance* site_instance,
+                                       ui::PageTransition* transition,
+                                       bool* is_renderer_initiated,
+                                       content::Referrer* referrer);
 
   // Similiar to ChromeContentBrowserClient::ShouldAllowOpenURL(), but the
   // return value indicates whether to use |result| or not.
   static bool ShouldAllowOpenURL(content::SiteInstance* site_instance,
-                                 const GURL& from_url,
                                  const GURL& to_url,
                                  bool* result);
 
   // Helper function to call InfoMap::SetSigninProcess().
   static void SetSigninProcess(content::SiteInstance* site_instance);
+
+  // Creates a new VpnServiceProxy. The caller owns the returned value. It's
+  // valid to return nullptr.
+  static std::unique_ptr<content::VpnServiceProxy> GetVpnServiceProxy(
+      content::BrowserContext* browser_context);
 
  private:
   // ChromeContentBrowserClientParts:
@@ -87,8 +93,7 @@ class ChromeContentBrowserClientExtensionsPart
       base::CommandLine* command_line,
       content::RenderProcessHost* process,
       Profile* profile) override;
-
-  scoped_ptr<BrowserPermissionsPolicyDelegate> permissions_policy_delegate_;
+  void ResourceDispatcherHostCreated() override;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeContentBrowserClientExtensionsPart);
 };

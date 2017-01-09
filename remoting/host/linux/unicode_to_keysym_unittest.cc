@@ -4,6 +4,9 @@
 
 #include "remoting/host/linux/unicode_to_keysym.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 
 #include "base/macros.h"
@@ -34,8 +37,7 @@ TEST(GetKeySymsForUnicode, Map) {
   };
 
   for (size_t i = 0; i < arraysize(kTests); ++i) {
-    std::vector<uint32_t> keysyms;
-    GetKeySymsForUnicode(kTests[i].code_point, &keysyms);
+    std::vector<uint32_t> keysyms = GetKeySymsForUnicode(kTests[i].code_point);
 
     std::vector<uint32_t> expected(
         kTests[i].expected_keysyms,

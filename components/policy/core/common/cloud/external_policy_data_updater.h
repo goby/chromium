@@ -5,14 +5,17 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_EXTERNAL_POLICY_DATA_UPDATER_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_EXTERNAL_POLICY_DATA_UPDATER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "components/policy/policy_export.h"
 
@@ -37,13 +40,13 @@ class POLICY_EXPORT ExternalPolicyDataUpdater {
   struct POLICY_EXPORT Request {
    public:
     Request();
-    Request(const std::string& url, const std::string& hash, int64 max_size);
+    Request(const std::string& url, const std::string& hash, int64_t max_size);
 
     bool operator==(const Request& other) const;
 
     std::string url;
     std::string hash;
-    int64 max_size;
+    int64_t max_size;
   };
 
   // This callback is invoked when a fetch has successfully retrieved |data|
@@ -64,7 +67,7 @@ class POLICY_EXPORT ExternalPolicyDataUpdater {
   // thread by the |external_policy_data_fetcher|.
   ExternalPolicyDataUpdater(
       scoped_refptr<base::SequencedTaskRunner> task_runner,
-      scoped_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher,
+      std::unique_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher,
       size_t max_parallel_fetches);
   ~ExternalPolicyDataUpdater();
 
@@ -99,7 +102,7 @@ class POLICY_EXPORT ExternalPolicyDataUpdater {
   void OnJobFailed(FetchJob* job);
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
-  scoped_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher_;
+  std::unique_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher_;
 
   // The maximum number of jobs to run in parallel.
   size_t max_parallel_jobs_;
@@ -109,11 +112,11 @@ class POLICY_EXPORT ExternalPolicyDataUpdater {
 
   // Queue of jobs waiting to be run. Jobs are taken off the queue and started
   // by StartNextJobs().
-  std::queue<base::WeakPtr<FetchJob> > job_queue_;
+  std::queue<base::WeakPtr<FetchJob>> job_queue_;
 
   // Map that owns all existing jobs, regardless of whether they are currently
   // queued, running or waiting for a retry.
-  std::map<std::string, FetchJob*> job_map_;
+  std::map<std::string, std::unique_ptr<FetchJob>> job_map_;
 
   // |True| once the destructor starts. Prevents jobs from being started during
   // shutdown.

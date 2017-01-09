@@ -4,6 +4,9 @@
 
 #include "content/renderer/skia_benchmarking_extension.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -22,6 +25,7 @@
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorPriv.h"
 #include "third_party/skia/include/core/SkGraphics.h"
+#include "third_party/skia/include/core/SkImageDeserializer.h"
 #include "third_party/skia/include/core/SkPicture.h"
 #include "third_party/skia/include/core/SkStream.h"
 #include "ui/gfx/codec/jpeg_codec.h"
@@ -37,49 +41,66 @@ namespace {
 class Picture {
  public:
   gfx::Rect layer_rect;
-  skia::RefPtr<SkPicture> picture;
+  sk_sp<SkPicture> picture;
 };
 
-bool DecodeBitmap(const void* buffer, size_t size, SkBitmap* bm) {
-  const unsigned char* data = static_cast<const unsigned char*>(buffer);
-  // Try PNG first.
-  if (gfx::PNGCodec::Decode(data, size, bm))
-    return true;
-  // Try JPEG.
-  scoped_ptr<SkBitmap> decoded_jpeg(gfx::JPEGCodec::Decode(data, size));
-  if (decoded_jpeg) {
-    *bm = *decoded_jpeg;
-    return true;
+class GfxImageDeserializer final : public SkImageDeserializer {
+ public:
+  sk_sp<SkImage> makeFromData(SkData* data, const SkIRect* subset) override {
+    return makeFromMemory(data->data(), data->size(), subset);
   }
-  return false;
-}
+  sk_sp<SkImage> makeFromMemory(const void* data,
+                                size_t size,
+                                const SkIRect* subset) override {
+    sk_sp<SkImage> img;
+    // Try PNG first.
+    SkBitmap bitmap;
+    if (gfx::PNGCodec::Decode((const uint8_t*)data, size, &bitmap)) {
+      bitmap.setImmutable();
+      img = SkImage::MakeFromBitmap(bitmap);
+    } else {
+      // Try JPEG.
+      std::unique_ptr<SkBitmap> decoded_jpeg(
+          gfx::JPEGCodec::Decode((const uint8_t*)data, size));
+      if (decoded_jpeg) {
+        decoded_jpeg->setImmutable();
+        img = SkImage::MakeFromBitmap(*decoded_jpeg);
+      }
+    }
+    if (img && subset)
+      img = img->makeSubset(*subset);
+    return img;
+  }
+};
 
-scoped_ptr<base::Value> ParsePictureArg(v8::Isolate* isolate,
-                                        v8::Local<v8::Value> arg) {
-  scoped_ptr<content::V8ValueConverter> converter(
+std::unique_ptr<base::Value> ParsePictureArg(v8::Isolate* isolate,
+                                             v8::Local<v8::Value> arg) {
+  std::unique_ptr<content::V8ValueConverter> converter(
       content::V8ValueConverter::create());
-  return scoped_ptr<base::Value>(
+  return std::unique_ptr<base::Value>(
       converter->FromV8Value(arg, isolate->GetCurrentContext()));
 }
 
-scoped_ptr<Picture> CreatePictureFromEncodedString(const std::string& encoded) {
+std::unique_ptr<Picture> CreatePictureFromEncodedString(
+    const std::string& encoded) {
   std::string decoded;
   base::Base64Decode(encoded, &decoded);
   SkMemoryStream stream(decoded.data(), decoded.size());
-
-  SkPicture* skpicture = SkPicture::CreateFromStream(&stream, &DecodeBitmap);
+  GfxImageDeserializer deserializer;
+  sk_sp<SkPicture> skpicture =
+      SkPicture::MakeFromStream(&stream, &deserializer);
   if (!skpicture)
     return nullptr;
 
-  scoped_ptr<Picture> picture(new Picture);
+  std::unique_ptr<Picture> picture(new Picture);
   picture->layer_rect = gfx::SkIRectToRect(skpicture->cullRect().roundOut());
-  picture->picture = skia::AdoptRef(skpicture);
+  picture->picture = std::move(skpicture);
   return picture;
 }
 
-scoped_ptr<Picture> ParsePictureStr(v8::Isolate* isolate,
-                                    v8::Local<v8::Value> arg) {
-  scoped_ptr<base::Value> picture_value = ParsePictureArg(isolate, arg);
+std::unique_ptr<Picture> ParsePictureStr(v8::Isolate* isolate,
+                                         v8::Local<v8::Value> arg) {
+  std::unique_ptr<base::Value> picture_value = ParsePictureArg(isolate, arg);
   if (!picture_value)
     return nullptr;
   // Decode the picture from base64.
@@ -89,9 +110,9 @@ scoped_ptr<Picture> ParsePictureStr(v8::Isolate* isolate,
   return CreatePictureFromEncodedString(encoded);
 }
 
-scoped_ptr<Picture> ParsePictureHash(v8::Isolate* isolate,
-                                     v8::Local<v8::Value> arg) {
-  scoped_ptr<base::Value> picture_value = ParsePictureArg(isolate, arg);
+std::unique_ptr<Picture> ParsePictureHash(v8::Isolate* isolate,
+                                          v8::Local<v8::Value> arg) {
+  std::unique_ptr<base::Value> picture_value = ParsePictureArg(isolate, arg);
   if (!picture_value)
     return nullptr;
   const base::DictionaryValue* value = nullptr;
@@ -175,29 +196,27 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
     return;
   v8::Local<v8::Value> picture_handle;
   args->GetNext(&picture_handle);
-  scoped_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
+  std::unique_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
   if (!picture.get())
     return;
 
   double scale = 1.0;
   gfx::Rect clip_rect(picture->layer_rect);
   int stop_index = -1;
-  bool overdraw = false;
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
   if (!args->PeekNext().IsEmpty()) {
     v8::Local<v8::Value> params;
     args->GetNext(&params);
-    scoped_ptr<content::V8ValueConverter> converter(
+    std::unique_ptr<content::V8ValueConverter> converter(
         content::V8ValueConverter::create());
-    scoped_ptr<base::Value> params_value(
+    std::unique_ptr<base::Value> params_value(
         converter->FromV8Value(params, context));
 
     const base::DictionaryValue* params_dict = NULL;
     if (params_value.get() && params_value->GetAsDictionary(&params_dict)) {
       params_dict->GetDouble("scale", &scale);
       params_dict->GetInteger("stop", &stop_index);
-      params_dict->GetBoolean("overdraw", &overdraw);
 
       const base::Value* clip_value = NULL;
       if (params_dict->Get("clip", &clip_value))
@@ -220,9 +239,7 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
   canvas.scale(scale, scale);
   canvas.translate(picture->layer_rect.x(), picture->layer_rect.y());
 
-  skia::BenchmarkingCanvas benchmarking_canvas(
-      &canvas,
-      overdraw ? skia::BenchmarkingCanvas::kOverdrawVisualization_Flag : 0);
+  skia::BenchmarkingCanvas benchmarking_canvas(&canvas);
   size_t playback_count =
       (stop_index < 0) ? std::numeric_limits<size_t>::max() : stop_index;
   PicturePlaybackController controller(benchmarking_canvas, playback_count);
@@ -230,11 +247,11 @@ void SkiaBenchmarking::Rasterize(gin::Arguments* args) {
 
   blink::WebArrayBuffer buffer =
       blink::WebArrayBuffer::create(bitmap.getSize(), 1);
-  uint32* packed_pixels = reinterpret_cast<uint32*>(bitmap.getPixels());
-  uint8* buffer_pixels = reinterpret_cast<uint8*>(buffer.data());
+  uint32_t* packed_pixels = reinterpret_cast<uint32_t*>(bitmap.getPixels());
+  uint8_t* buffer_pixels = reinterpret_cast<uint8_t*>(buffer.data());
   // Swizzle from native Skia format to RGBA as we copy out.
   for (size_t i = 0; i < bitmap.getSize(); i += 4) {
-    uint32 c = packed_pixels[i >> 2];
+    uint32_t c = packed_pixels[i >> 2];
     buffer_pixels[i] = SkGetPackedR32(c);
     buffer_pixels[i + 1] = SkGetPackedG32(c);
     buffer_pixels[i + 2] = SkGetPackedB32(c);
@@ -259,7 +276,7 @@ void SkiaBenchmarking::GetOps(gin::Arguments* args) {
     return;
   v8::Local<v8::Value> picture_handle;
   args->GetNext(&picture_handle);
-  scoped_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
+  std::unique_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
   if (!picture.get())
     return;
 
@@ -268,7 +285,7 @@ void SkiaBenchmarking::GetOps(gin::Arguments* args) {
   picture->picture->playback(&benchmarking_canvas);
 
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  scoped_ptr<content::V8ValueConverter> converter(
+  std::unique_ptr<content::V8ValueConverter> converter(
       content::V8ValueConverter::create());
 
   args->Return(converter->ToV8Value(&benchmarking_canvas.Commands(), context));
@@ -280,7 +297,7 @@ void SkiaBenchmarking::GetOpTimings(gin::Arguments* args) {
     return;
   v8::Local<v8::Value> picture_handle;
   args->GetNext(&picture_handle);
-  scoped_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
+  std::unique_ptr<Picture> picture = ParsePictureHash(isolate, picture_handle);
   if (!picture.get())
     return;
 
@@ -321,7 +338,7 @@ void SkiaBenchmarking::GetInfo(gin::Arguments* args) {
     return;
   v8::Local<v8::Value> picture_handle;
   args->GetNext(&picture_handle);
-  scoped_ptr<Picture> picture = ParsePictureStr(isolate, picture_handle);
+  std::unique_ptr<Picture> picture = ParsePictureStr(isolate, picture_handle);
   if (!picture.get())
     return;
 

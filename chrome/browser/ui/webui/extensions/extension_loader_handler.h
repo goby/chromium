@@ -5,18 +5,20 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_LOADER_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_EXTENSIONS_EXTENSION_LOADER_HANDLER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/scoped_observer.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_error_reporter.h"
-#include "content/public/browser/navigation_controller.h"
+#include "content/public/browser/reload_type.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_ui_message_handler.h"
 
@@ -65,7 +67,7 @@ class ExtensionLoaderHandler : public content::WebUIMessageHandler,
   // content::WebContentsObserver:
   void DidStartNavigationToPendingEntry(
       const GURL& url,
-      content::NavigationController::ReloadType reload_type) override;
+      content::ReloadType reload_type) override;
 
   // Add a failure to |failures_|. If it was a manifest error, |manifest| will
   // hold the manifest contents, and |line_number| will point to the line at

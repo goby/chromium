@@ -8,12 +8,16 @@
 #include <pk11pub.h>
 #include <secmod.h>
 
+#include <algorithm>
+#include <utility>
+
 #include "crypto/nss_util_internal.h"
 #include "crypto/scoped_nss_types.h"
 #include "crypto/scoped_test_nss_chromeos_user.h"
 #include "crypto/scoped_test_nss_db.h"
-#include "net/base/test_data_directory.h"
+#include "net/base/hash_value.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -48,7 +52,14 @@ CertificateList ListCertsInSlot(PK11SlotInfo* slot) {
   CERT_DestroyCertList(cert_list);
 
   // Sort the result so that test comparisons can be deterministic.
-  std::sort(result.begin(), result.end(), X509Certificate::LessThan());
+  std::sort(
+      result.begin(), result.end(),
+      [](const scoped_refptr<X509Certificate>& lhs,
+         const scoped_refptr<X509Certificate>& rhs) {
+        return SHA256HashValueLessThan()(
+            X509Certificate::CalculateFingerprint256(lhs->os_cert_handle()),
+            X509Certificate::CalculateFingerprint256(rhs->os_cert_handle()));
+      });
   return result;
 }
 
@@ -75,8 +86,7 @@ class NSSProfileFilterChromeOSTest : public testing::Test {
     ASSERT_TRUE(private_slot_1.get());
     profile_filter_1_.Init(
         crypto::GetPublicSlotForChromeOSUser(user_1_.username_hash()),
-        private_slot_1.Pass(),
-        get_system_slot());
+        std::move(private_slot_1), get_system_slot());
 
     profile_filter_1_copy_ = profile_filter_1_;
 
@@ -86,7 +96,7 @@ class NSSProfileFilterChromeOSTest : public testing::Test {
     ASSERT_TRUE(private_slot_2.get());
     profile_filter_2_.Init(
         crypto::GetPublicSlotForChromeOSUser(user_2_.username_hash()),
-        private_slot_2.Pass(),
+        std::move(private_slot_2),
         crypto::ScopedPK11Slot() /* no system slot */);
 
     certs_ = CreateCertificateListFromFile(GetTestCertsDirectory(),

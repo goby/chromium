@@ -5,6 +5,7 @@
 #ifndef UI_APP_LIST_TEST_TEST_SEARCH_RESULT_H_
 #define UI_APP_LIST_TEST_TEST_SEARCH_RESULT_H_
 
+#include "base/macros.h"
 #include "ui/app_list/search_result.h"
 
 namespace app_list {
@@ -16,7 +17,7 @@ class TestSearchResult : public SearchResult {
   ~TestSearchResult() override;
 
   // SearchResult:
-  scoped_ptr<SearchResult> Duplicate() const override;
+  std::unique_ptr<SearchResult> Duplicate() const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestSearchResult);

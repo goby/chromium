@@ -4,40 +4,28 @@
 
 #include "components/policy/core/browser/configuration_policy_handler.h"
 
+#include <stddef.h>
+
 #include <algorithm>
+#include <utility>
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/prefs/pref_value_map.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/policy_map.h"
+#include "components/prefs/pref_value_map.h"
 #include "grit/components_strings.h"
 #include "url/gurl.h"
 
 namespace policy {
 
 // ConfigurationPolicyHandler implementation -----------------------------------
-
-// static
-std::string ConfigurationPolicyHandler::ValueTypeToString(
-    base::Value::Type type) {
-  static const char* strings[] = {
-    "null",
-    "boolean",
-    "integer",
-    "double",
-    "string",
-    "binary",
-    "dictionary",
-    "list"
-  };
-  CHECK(static_cast<size_t>(type) < arraysize(strings));
-  return std::string(strings[type]);
-}
 
 ConfigurationPolicyHandler::ConfigurationPolicyHandler() {
 }
@@ -82,9 +70,8 @@ bool TypeCheckingPolicyHandler::CheckAndGetValue(const PolicyMap& policies,
                                                  const base::Value** value) {
   *value = policies.GetValue(policy_name_);
   if (*value && !(*value)->IsType(value_type_)) {
-    errors->AddError(policy_name_,
-                     IDS_POLICY_TYPE_ERROR,
-                     ValueTypeToString(value_type_));
+    errors->AddError(policy_name_, IDS_POLICY_TYPE_ERROR,
+                     base::Value::GetTypeName(value_type_));
     return false;
   }
   return true;
@@ -98,7 +85,7 @@ IntRangePolicyHandlerBase::IntRangePolicyHandlerBase(
     int min,
     int max,
     bool clamp)
-    : TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_INTEGER),
+    : TypeCheckingPolicyHandler(policy_name, base::Value::Type::INTEGER),
       min_(min),
       max_(max),
       clamp_(clamp) {
@@ -148,8 +135,9 @@ bool IntRangePolicyHandlerBase::EnsureInRange(const base::Value* input,
 // StringMappingListPolicyHandler implementation -----------------------------
 
 StringMappingListPolicyHandler::MappingEntry::MappingEntry(
-    const char* policy_value, scoped_ptr<base::Value> map)
-    : enum_value(policy_value), mapped_value(map.Pass()) {}
+    const char* policy_value,
+    std::unique_ptr<base::Value> map)
+    : enum_value(policy_value), mapped_value(std::move(map)) {}
 
 StringMappingListPolicyHandler::MappingEntry::~MappingEntry() {}
 
@@ -157,7 +145,7 @@ StringMappingListPolicyHandler::StringMappingListPolicyHandler(
     const char* policy_name,
     const char* pref_path,
     const GenerateMapCallback& callback)
-    : TypeCheckingPolicyHandler(policy_name, base::Value::TYPE_LIST),
+    : TypeCheckingPolicyHandler(policy_name, base::Value::Type::LIST),
       pref_path_(pref_path),
       map_getter_(callback) {}
 
@@ -177,9 +165,9 @@ void StringMappingListPolicyHandler::ApplyPolicySettings(
   if (!pref_path_)
     return;
   const base::Value* value = policies.GetValue(policy_name());
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   if (value && Convert(value, list.get(), NULL))
-    prefs->SetValue(pref_path_, list.Pass());
+    prefs->SetValue(pref_path_, std::move(list));
 }
 
 bool StringMappingListPolicyHandler::Convert(const base::Value* input,
@@ -194,23 +182,21 @@ bool StringMappingListPolicyHandler::Convert(const base::Value* input,
     return false;
   }
 
-  for (base::ListValue::const_iterator entry(list_value->begin());
-       entry != list_value->end(); ++entry) {
+  for (auto entry = list_value->begin(); entry != list_value->end(); ++entry) {
     std::string entry_value;
     if (!(*entry)->GetAsString(&entry_value)) {
       if (errors) {
-        errors->AddError(policy_name(),
-                         entry - list_value->begin(),
+        errors->AddError(policy_name(), entry - list_value->begin(),
                          IDS_POLICY_TYPE_ERROR,
-                         ValueTypeToString(base::Value::TYPE_STRING));
+                         base::Value::GetTypeName(base::Value::Type::STRING));
       }
       continue;
     }
 
-    scoped_ptr<base::Value> mapped_value = Map(entry_value);
+    std::unique_ptr<base::Value> mapped_value = Map(entry_value);
     if (mapped_value) {
       if (output)
-        output->Append(mapped_value.release());
+        output->Append(std::move(mapped_value));
     } else {
       if (errors) {
         errors->AddError(policy_name(),
@@ -223,22 +209,18 @@ bool StringMappingListPolicyHandler::Convert(const base::Value* input,
   return true;
 }
 
-scoped_ptr<base::Value> StringMappingListPolicyHandler::Map(
+std::unique_ptr<base::Value> StringMappingListPolicyHandler::Map(
     const std::string& entry_value) {
   // Lazily generate the map of policy strings to mapped values.
   if (map_.empty())
     map_getter_.Run(&map_);
 
-  scoped_ptr<base::Value> return_value;
-  for (ScopedVector<MappingEntry>::const_iterator it = map_.begin();
-       it != map_.end(); ++it) {
-    const MappingEntry* mapping_entry = *it;
+  for (const auto& mapping_entry : map_) {
     if (mapping_entry->enum_value == entry_value) {
-      return_value = make_scoped_ptr(mapping_entry->mapped_value->DeepCopy());
-      break;
+      return mapping_entry->mapped_value->CreateDeepCopy();
     }
   }
-  return return_value.Pass();
+  return nullptr;
 }
 
 // IntRangePolicyHandler implementation ----------------------------------------
@@ -356,7 +338,7 @@ bool SchemaValidatingPolicyHandler::CheckPolicySettings(
 bool SchemaValidatingPolicyHandler::CheckAndGetValue(
     const PolicyMap& policies,
     PolicyErrorMap* errors,
-    scoped_ptr<base::Value>* output) {
+    std::unique_ptr<base::Value>* output) {
   const base::Value* value = policies.GetValue(policy_name());
   if (!value)
     return true;
@@ -426,16 +408,12 @@ void SimpleSchemaValidatingPolicyHandler::ApplyPolicySettings(
 
 // LegacyPoliciesDeprecatingPolicyHandler implementation -----------------------
 
-// TODO(binjin): Add a new common base class for SchemaValidatingPolicyHandler
-// and TypeCheckingPolicyHandler representing policy handlers for a single
-// policy, and use it as the type of |new_policy_handler|.
-// http://crbug.com/345299
 LegacyPoliciesDeprecatingPolicyHandler::LegacyPoliciesDeprecatingPolicyHandler(
-    ScopedVector<ConfigurationPolicyHandler> legacy_policy_handlers,
-    scoped_ptr<SchemaValidatingPolicyHandler> new_policy_handler)
-    : legacy_policy_handlers_(legacy_policy_handlers.Pass()),
-      new_policy_handler_(new_policy_handler.Pass()) {
-}
+    std::vector<std::unique_ptr<ConfigurationPolicyHandler>>
+        legacy_policy_handlers,
+    std::unique_ptr<SchemaValidatingPolicyHandler> new_policy_handler)
+    : legacy_policy_handlers_(std::move(legacy_policy_handlers)),
+      new_policy_handler_(std::move(new_policy_handler)) {}
 
 LegacyPoliciesDeprecatingPolicyHandler::
     ~LegacyPoliciesDeprecatingPolicyHandler() {
@@ -444,20 +422,16 @@ LegacyPoliciesDeprecatingPolicyHandler::
 bool LegacyPoliciesDeprecatingPolicyHandler::CheckPolicySettings(
     const PolicyMap& policies,
     PolicyErrorMap* errors) {
-  if (policies.Get(new_policy_handler_->policy_name())) {
+  if (policies.Get(new_policy_handler_->policy_name()))
     return new_policy_handler_->CheckPolicySettings(policies, errors);
-  } else {
-    // The new policy is not set, fall back to legacy ones.
-    ScopedVector<ConfigurationPolicyHandler>::iterator handler;
-    bool valid_policy_found = false;
-    for (handler = legacy_policy_handlers_.begin();
-         handler != legacy_policy_handlers_.end();
-         ++handler) {
-      if ((*handler)->CheckPolicySettings(policies, errors))
-        valid_policy_found = true;
-    }
-    return valid_policy_found;
+
+  // The new policy is not set, fall back to legacy ones.
+  bool valid_policy_found = false;
+  for (const auto& handler : legacy_policy_handlers_) {
+    if (handler->CheckPolicySettings(policies, errors))
+      valid_policy_found = true;
   }
+  return valid_policy_found;
 }
 
 void LegacyPoliciesDeprecatingPolicyHandler::ApplyPolicySettingsWithParameters(
@@ -467,20 +441,17 @@ void LegacyPoliciesDeprecatingPolicyHandler::ApplyPolicySettingsWithParameters(
   if (policies.Get(new_policy_handler_->policy_name())) {
     new_policy_handler_->ApplyPolicySettingsWithParameters(policies, parameters,
                                                            prefs);
-  } else {
-    // The new policy is not set, fall back to legacy ones.
-    PolicyErrorMap scoped_errors;
-    ScopedVector<ConfigurationPolicyHandler>::iterator handler;
-    for (handler = legacy_policy_handlers_.begin();
-         handler != legacy_policy_handlers_.end();
-         ++handler) {
-      if ((*handler)->CheckPolicySettings(policies, &scoped_errors)) {
-        (*handler)
-            ->ApplyPolicySettingsWithParameters(policies, parameters, prefs);
-      }
-    }
+    return;
+  }
+
+  // The new policy is not set, fall back to legacy ones.
+  PolicyErrorMap scoped_errors;
+  for (const auto& handler : legacy_policy_handlers_) {
+    if (handler->CheckPolicySettings(policies, &scoped_errors))
+      handler->ApplyPolicySettingsWithParameters(policies, parameters, prefs);
   }
 }
+
 void LegacyPoliciesDeprecatingPolicyHandler::ApplyPolicySettings(
     const policy::PolicyMap& /* policies */,
     PrefValueMap* /* prefs */) {

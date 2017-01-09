@@ -4,6 +4,7 @@
 
 #include "extensions/browser/app_window/app_window_contents.h"
 
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -27,12 +28,15 @@ AppWindowContentsImpl::AppWindowContentsImpl(AppWindow* host)
 AppWindowContentsImpl::~AppWindowContentsImpl() {}
 
 void AppWindowContentsImpl::Initialize(content::BrowserContext* context,
+                                       content::RenderFrameHost* creator_frame,
                                        const GURL& url) {
   url_ = url;
 
-  web_contents_.reset(
-      content::WebContents::Create(content::WebContents::CreateParams(
-          context, content::SiteInstance::CreateForURL(context, url_))));
+  content::WebContents::CreateParams create_params(
+      context, creator_frame->GetSiteInstance());
+  create_params.opener_render_process_id = creator_frame->GetProcess()->GetID();
+  create_params.opener_render_frame_id = creator_frame->GetRoutingID();
+  web_contents_.reset(content::WebContents::Create(create_params));
 
   Observe(web_contents_.get());
   web_contents_->GetMutableRendererPrefs()->
@@ -40,7 +44,7 @@ void AppWindowContentsImpl::Initialize(content::BrowserContext* context,
   web_contents_->GetRenderViewHost()->SyncRendererPrefs();
 }
 
-void AppWindowContentsImpl::LoadContents(int32 creator_process_id) {
+void AppWindowContentsImpl::LoadContents(int32_t creator_process_id) {
   // If the new view is in the same process as the creator, block the created
   // RVH from loading anything until the background page has had a chance to
   // do any initialization it wants. If it's a different process, the new RVH
@@ -62,14 +66,15 @@ void AppWindowContentsImpl::LoadContents(int32 creator_process_id) {
 void AppWindowContentsImpl::NativeWindowChanged(
     NativeAppWindow* native_app_window) {
   base::ListValue args;
-  base::DictionaryValue* dictionary = new base::DictionaryValue();
-  args.Append(dictionary);
-  host_->GetSerializedState(dictionary);
+  std::unique_ptr<base::DictionaryValue> dictionary(
+      new base::DictionaryValue());
+  host_->GetSerializedState(dictionary.get());
+  args.Append(std::move(dictionary));
 
   content::RenderFrameHost* rfh = web_contents_->GetMainFrame();
-  rfh->Send(new ExtensionMsg_MessageInvoke(
-      rfh->GetRoutingID(), host_->extension_id(), "app.window",
-      "updateAppWindowProperties", args, false));
+  rfh->Send(new ExtensionMsg_MessageInvoke(rfh->GetRoutingID(),
+                                           host_->extension_id(), "app.window",
+                                           "updateAppWindowProperties", args));
 }
 
 void AppWindowContentsImpl::NativeWindowClosed() {
@@ -77,26 +82,12 @@ void AppWindowContentsImpl::NativeWindowClosed() {
   rvh->Send(new ExtensionMsg_AppWindowClosed(rvh->GetRoutingID()));
 }
 
-void AppWindowContentsImpl::DispatchWindowShownForTests() const {
-  base::ListValue args;
-  content::RenderFrameHost* rfh = web_contents_->GetMainFrame();
-  rfh->Send(new ExtensionMsg_MessageInvoke(
-      rfh->GetRoutingID(), host_->extension_id(), "app.window",
-      "appWindowShownForTests", args, false));
-}
-
 void AppWindowContentsImpl::OnWindowReady() {
   is_window_ready_ = true;
   if (is_blocking_requests_) {
     is_blocking_requests_ = false;
-    content::RenderFrameHost* frame = web_contents_->GetMainFrame();
-    content::BrowserThread::PostTask(
-        content::BrowserThread::IO, FROM_HERE,
-        base::Bind(
-            &content::ResourceDispatcherHost::ResumeBlockedRequestsForRoute,
-            base::Unretained(content::ResourceDispatcherHost::Get()),
-            frame->GetProcess()->GetID(),
-            frame->GetRenderViewHost()->GetRoutingID()));
+    content::ResourceDispatcherHost::ResumeBlockedRequestsForFrameFromUI(
+        web_contents_->GetMainFrame());
   }
 }
 
@@ -136,14 +127,7 @@ void AppWindowContentsImpl::SuspendRenderFrameHost(
   if (is_window_ready_)
     return;
   is_blocking_requests_ = true;
-  // The ResourceDispatcherHost only accepts RenderViewHost child ids.
-  // TODO(devlin): This will need to change for site isolation.
-  content::BrowserThread::PostTask(
-      content::BrowserThread::IO, FROM_HERE,
-      base::Bind(&content::ResourceDispatcherHost::BlockRequestsForRoute,
-                 base::Unretained(content::ResourceDispatcherHost::Get()),
-                 rfh->GetProcess()->GetID(),
-                 rfh->GetRenderViewHost()->GetRoutingID()));
+  content::ResourceDispatcherHost::BlockRequestsForFrameFromUI(rfh);
 }
 
 }  // namespace extensions

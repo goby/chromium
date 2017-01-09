@@ -5,7 +5,10 @@
 #ifndef CC_PLAYBACK_DISPLAY_ITEM_H_
 #define CC_PLAYBACK_DISPLAY_ITEM_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "cc/base/cc_export.h"
 #include "cc/debug/traced_value.h"
 #include "third_party/skia/include/core/SkPicture.h"
@@ -17,43 +20,41 @@ namespace cc {
 
 namespace proto {
 class DisplayItem;
-}
+}  // namespace proto
 
 class CC_EXPORT DisplayItem {
  public:
+  enum Type {
+    CLIP,
+    END_CLIP,
+    CLIP_PATH,
+    END_CLIP_PATH,
+    COMPOSITING,
+    END_COMPOSITING,
+    DRAWING,
+    FILTER,
+    END_FILTER,
+    FLOAT_CLIP,
+    END_FLOAT_CLIP,
+    TRANSFORM,
+    END_TRANSFORM,
+  };
+
   virtual ~DisplayItem() {}
 
-  void SetNew(bool is_suitable_for_gpu_rasterization,
-              int approximate_op_count,
-              size_t external_memory_usage) {
-    is_suitable_for_gpu_rasterization_ = is_suitable_for_gpu_rasterization;
-    approximate_op_count_ = approximate_op_count;
-    external_memory_usage_ = external_memory_usage;
-  }
-
   virtual void ToProtobuf(proto::DisplayItem* proto) const = 0;
-  virtual void FromProtobuf(const proto::DisplayItem& proto) = 0;
+  virtual sk_sp<const SkPicture> GetPicture() const;
   virtual void Raster(SkCanvas* canvas,
-                      const gfx::Rect& canvas_target_playback_rect,
                       SkPicture::AbortCallback* callback) const = 0;
   virtual void AsValueInto(const gfx::Rect& visual_rect,
                            base::trace_event::TracedValue* array) const = 0;
 
-  bool is_suitable_for_gpu_rasterization() const {
-    return is_suitable_for_gpu_rasterization_;
-  }
-  int approximate_op_count() const { return approximate_op_count_; }
-  size_t external_memory_usage() const { return external_memory_usage_; }
+  Type type() const { return type_; }
 
  protected:
-  DisplayItem();
+  explicit DisplayItem(Type type) : type_(type) {}
 
-  bool is_suitable_for_gpu_rasterization_;
-  int approximate_op_count_;
-
-  // The size, in bytes, of the memory owned by this display item but not
-  // allocated within it (e.g. held through scoped_ptr or vector).
-  size_t external_memory_usage_;
+  const Type type_;
 };
 
 }  // namespace cc

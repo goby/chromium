@@ -5,7 +5,11 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -55,7 +59,7 @@ class TestWebDialogView : public views::WebDialogView {
       // Schedule message loop quit because we could be called while
       // the bounds change call is on the stack and not in the nested message
       // loop.
-      base::MessageLoop::current()->task_runner()->PostTask(
+      base::ThreadTaskRunnerHandle::Get()->PostTask(
           FROM_HERE,
           base::Bind(&base::MessageLoop::QuitWhenIdle,
                      base::Unretained(base::MessageLoop::current())));
@@ -218,7 +222,7 @@ IN_PROC_BROWSER_TEST_F(WebDialogBrowserTest, MAYBE_SizeWindow) {
 IN_PROC_BROWSER_TEST_F(WebDialogBrowserTest, CloseParentWindow) {
   // Open a second browser window so we don't trigger shutdown.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), GURL(url::kAboutBlankURL), NEW_WINDOW,
+      browser(), GURL(url::kAboutBlankURL), WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_NONE);
 
   // TestWebDialogDelegate defaults to window-modal, so closing the browser

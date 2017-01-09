@@ -19,13 +19,13 @@ namespace gfx {
 
 class GFX_EXPORT Vector2dF {
  public:
-  Vector2dF() : x_(0), y_(0) {}
-  Vector2dF(float x, float y) : x_(x), y_(y) {}
+  constexpr Vector2dF() : x_(0), y_(0) {}
+  constexpr Vector2dF(float x, float y) : x_(x), y_(y) {}
 
-  float x() const { return x_; }
+  constexpr float x() const { return x_; }
   void set_x(float x) { x_ = x; }
 
-  float y() const { return y_; }
+  constexpr float y() const { return y_; }
   void set_y(float y) { y_ = y; }
 
   // True if both components of the vector are 0.
@@ -109,8 +109,8 @@ inline Vector2dF ScaleVector2d(const Vector2dF& v, float scale) {
 }
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const Vector2dF& vector, ::std::ostream* os);
 
 }  // namespace gfx

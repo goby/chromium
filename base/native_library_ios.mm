@@ -6,6 +6,8 @@
 
 #include "base/logging.h"
 
+#include "base/strings/string_util.h"
+
 namespace base {
 
 std::string NativeLibraryLoadError::ToString() const {
@@ -13,8 +15,9 @@ std::string NativeLibraryLoadError::ToString() const {
 }
 
 // static
-NativeLibrary LoadNativeLibrary(const base::FilePath& library_path,
-                                NativeLibraryLoadError* error) {
+NativeLibrary LoadNativeLibraryWithOptions(const base::FilePath& library_path,
+                                           const NativeLibraryOptions& options,
+                                           NativeLibraryLoadError* error) {
   NOTIMPLEMENTED();
   if (error)
     error->message = "Not implemented.";
@@ -29,14 +32,15 @@ void UnloadNativeLibrary(NativeLibrary library) {
 
 // static
 void* GetFunctionPointerFromNativeLibrary(NativeLibrary library,
-                                          const char* name) {
+                                          StringPiece name) {
   NOTIMPLEMENTED();
   return nullptr;
 }
 
 // static
-string16 GetNativeLibraryName(const string16& name) {
-  return name;
+std::string GetNativeLibraryName(StringPiece name) {
+  DCHECK(IsStringASCII(name));
+  return name.as_string();
 }
 
 }  // namespace base

@@ -5,27 +5,37 @@
 #include "cc/test/fake_painted_scrollbar_layer.h"
 
 #include "base/auto_reset.h"
+#include "base/memory/ptr_util.h"
 #include "cc/test/fake_scrollbar.h"
 
 namespace cc {
 
 scoped_refptr<FakePaintedScrollbarLayer> FakePaintedScrollbarLayer::Create(
-    const LayerSettings& settings,
     bool paint_during_update,
     bool has_thumb,
     int scrolling_layer_id) {
-  FakeScrollbar* fake_scrollbar = new FakeScrollbar(
-      paint_during_update, has_thumb, false);
-  return make_scoped_refptr(new FakePaintedScrollbarLayer(
-      settings, fake_scrollbar, scrolling_layer_id));
+  return Create(paint_during_update, has_thumb, HORIZONTAL, false, false,
+                scrolling_layer_id);
+}
+
+scoped_refptr<FakePaintedScrollbarLayer> FakePaintedScrollbarLayer::Create(
+    bool paint_during_update,
+    bool has_thumb,
+    ScrollbarOrientation orientation,
+    bool is_left_side_vertical_scrollbar,
+    bool is_overlay,
+    int scrolling_layer_id) {
+  FakeScrollbar* fake_scrollbar =
+      new FakeScrollbar(paint_during_update, has_thumb, orientation,
+                        is_left_side_vertical_scrollbar, is_overlay);
+  return make_scoped_refptr(
+      new FakePaintedScrollbarLayer(fake_scrollbar, scrolling_layer_id));
 }
 
 FakePaintedScrollbarLayer::FakePaintedScrollbarLayer(
-    const LayerSettings& settings,
     FakeScrollbar* fake_scrollbar,
     int scrolling_layer_id)
-    : PaintedScrollbarLayer(settings,
-                            scoped_ptr<Scrollbar>(fake_scrollbar),
+    : PaintedScrollbarLayer(std::unique_ptr<Scrollbar>(fake_scrollbar),
                             scrolling_layer_id),
       update_count_(0),
       push_properties_count_(0),
@@ -47,10 +57,10 @@ void FakePaintedScrollbarLayer::PushPropertiesTo(LayerImpl* layer) {
   ++push_properties_count_;
 }
 
-scoped_ptr<base::AutoReset<bool>>
+std::unique_ptr<base::AutoReset<bool>>
 FakePaintedScrollbarLayer::IgnoreSetNeedsCommit() {
-  return make_scoped_ptr(
-      new base::AutoReset<bool>(&ignore_set_needs_commit_, true));
+  return base::MakeUnique<base::AutoReset<bool>>(&ignore_set_needs_commit_,
+                                                 true);
 }
 
 }  // namespace cc

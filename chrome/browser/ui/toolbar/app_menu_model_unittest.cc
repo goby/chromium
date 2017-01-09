@@ -4,6 +4,7 @@
 
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 
+#include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/defaults.h"
 #include "chrome/browser/prefs/browser_prefs.h"
@@ -19,7 +20,7 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_io_thread_state.h"
 #include "chrome/test/base/testing_profile.h"
-#include "components/syncable_prefs/testing_pref_service_syncable.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -58,7 +59,7 @@ class AppMenuModelTest : public BrowserWithTestWindowTest,
  public:
   // Don't handle accelerators.
   bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override {
+                                  ui::Accelerator* accelerator) const override {
     return false;
   }
 
@@ -80,8 +81,8 @@ class AppMenuModelTest : public BrowserWithTestWindowTest,
   }
 
  private:
-  scoped_ptr<TestingPrefServiceSimple> prefs_;
-  scoped_ptr<chrome::TestingIOThreadState> testing_io_thread_state_;
+  std::unique_ptr<TestingPrefServiceSimple> prefs_;
+  std::unique_ptr<chrome::TestingIOThreadState> testing_io_thread_state_;
 };
 
 // Copies parts of MenuModelTest::Delegate and combines them with the
@@ -201,14 +202,4 @@ TEST_F(AppMenuModelTest, GlobalError) {
   EXPECT_EQ(0, error2->execute_count());
   model.ActivatedAt(index2);
   EXPECT_EQ(1, error1->execute_count());
-}
-
-class EncodingMenuModelTest : public BrowserWithTestWindowTest,
-                              public MenuModelTest {
-};
-
-TEST_F(EncodingMenuModelTest, IsCommandIdCheckedWithNoTabs) {
-  EncodingMenuModel model(browser());
-  ASSERT_EQ(NULL, browser()->tab_strip_model()->GetActiveWebContents());
-  EXPECT_FALSE(model.IsCommandIdChecked(IDC_ENCODING_WINDOWS1252));
 }

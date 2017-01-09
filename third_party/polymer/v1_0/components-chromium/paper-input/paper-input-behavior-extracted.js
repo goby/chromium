@@ -1,4 +1,10 @@
-/**
+// Generate unique, monotonically increasing IDs for labels (needed by
+  // aria-labelledby) and add-ons.
+  Polymer.PaperInputHelper = {};
+  Polymer.PaperInputHelper.NextLabelID = 1;
+  Polymer.PaperInputHelper.NextAddonID = 1;
+
+  /**
    * Use `Polymer.PaperInputBehavior` to implement inputs with `<paper-input-container>`. This
    * behavior is implemented by `<paper-input>`. It exposes a number of properties from
    * `<paper-input-container>` and `<input is="iron-input">` and they should be bound in your
@@ -18,14 +24,19 @@
        */
 
       /**
-       * The label for this input. Bind this to `<paper-input-container>`'s `label` property.
+       * The label for this input. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * `<label>`'s content and `hidden` property, e.g.
+       * `<label hidden$="[[!label]]">[[label]]</label>` in your `template`
        */
       label: {
         type: String
       },
 
       /**
-       * The value for this input. Bind this to the `<input is="iron-input">`'s `bindValue`
+       * The value for this input. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<input is="iron-input">`'s `bindValue`
        * property, or the value property of your input that is `notify:true`.
        */
       value: {
@@ -34,8 +45,9 @@
       },
 
       /**
-       * Set to true to disable this input. Bind this to both the `<paper-input-container>`'s
-       * and the input's `disabled` property.
+       * Set to true to disable this input. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * both the `<paper-input-container>`'s and the input's `disabled` property.
        */
       disabled: {
         type: Boolean,
@@ -43,8 +55,12 @@
       },
 
       /**
-       * Returns true if the value is invalid. Bind this to both the `<paper-input-container>`'s
-       * and the input's `invalid` property.
+       * Returns true if the value is invalid. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to both the
+       * `<paper-input-container>`'s and the input's `invalid` property.
+       *
+       * If `autoValidate` is true, the `invalid` attribute is managed automatically,
+       * which can clobber attempts to manage it manually.
        */
       invalid: {
         type: Boolean,
@@ -53,48 +69,55 @@
       },
 
       /**
-       * Set to true to prevent the user from entering invalid input. Bind this to the
-       * `<input is="iron-input">`'s `preventInvalidInput` property.
+       * Set to true to prevent the user from entering invalid input. If you're
+       * using PaperInputBehavior to  implement your own paper-input-like element,
+       * bind this to `<input is="iron-input">`'s `preventInvalidInput` property.
        */
       preventInvalidInput: {
         type: Boolean
       },
 
       /**
-       * Set this to specify the pattern allowed by `preventInvalidInput`. Bind this to the
-       * `<input is="iron-input">`'s `allowedPattern` property.
+       * Set this to specify the pattern allowed by `preventInvalidInput`. If
+       * you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `allowedPattern`
+       * property.
        */
       allowedPattern: {
         type: String
       },
 
       /**
-       * The type of the input. The supported types are `text`, `number` and `password`. Bind this
-       * to the `<input is="iron-input">`'s `type` property.
+       * The type of the input. The supported types are `text`, `number` and `password`.
+       * If you're using PaperInputBehavior to implement your own paper-input-like element,
+       * bind this to the `<input is="iron-input">`'s `type` property.
        */
       type: {
         type: String
       },
 
       /**
-       * The datalist of the input (if any). This should match the id of an existing `<datalist>`. Bind this
-       * to the `<input is="iron-input">`'s `list` property.
+       * The datalist of the input (if any). This should match the id of an existing `<datalist>`.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `list` property.
        */
       list: {
         type: String
       },
 
       /**
-       * A pattern to validate the `input` with. Bind this to the `<input is="iron-input">`'s
-       * `pattern` property.
+       * A pattern to validate the `input` with. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<input is="iron-input">`'s `pattern` property.
        */
       pattern: {
         type: String
       },
 
       /**
-       * Set to true to mark the input as required. Bind this to the `<input is="iron-input">`'s
-       * `required` property.
+       * Set to true to mark the input as required. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<input is="iron-input">`'s `required` property.
        */
       required: {
         type: Boolean,
@@ -102,8 +125,9 @@
       },
 
       /**
-       * The error message to display when the input is invalid. Bind this to the
-       * `<paper-input-error>`'s content, if using.
+       * The error message to display when the input is invalid. If you're using
+       * PaperInputBehavior to implement your own paper-input-like element,
+       * bind this to the `<paper-input-error>`'s content, if using.
        */
       errorMessage: {
         type: String
@@ -118,8 +142,9 @@
       },
 
       /**
-       * Set to true to disable the floating label. Bind this to the `<paper-input-container>`'s
-       * `noLabelFloat` property.
+       * Set to true to disable the floating label. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<paper-input-container>`'s `noLabelFloat` property.
        */
       noLabelFloat: {
         type: Boolean,
@@ -127,8 +152,9 @@
       },
 
       /**
-       * Set to true to always float the label. Bind this to the `<paper-input-container>`'s
-       * `alwaysFloatLabel` property.
+       * Set to true to always float the label. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<paper-input-container>`'s `alwaysFloatLabel` property.
        */
       alwaysFloatLabel: {
         type: Boolean,
@@ -136,8 +162,9 @@
       },
 
       /**
-       * Set to true to auto-validate the input value. Bind this to the `<paper-input-container>`'s
-       * `autoValidate` property.
+       * Set to true to auto-validate the input value. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<paper-input-container>`'s `autoValidate` property.
        */
       autoValidate: {
         type: Boolean,
@@ -145,8 +172,9 @@
       },
 
       /**
-       * Name of the validator to use. Bind this to the `<input is="iron-input">`'s `validator`
-       * property.
+       * Name of the validator to use. If you're using PaperInputBehavior to
+       * implement your own paper-input-like element, bind this to
+       * the `<input is="iron-input">`'s `validator` property.
        */
       validator: {
         type: String
@@ -155,7 +183,8 @@
       // HTMLInputElement attributes for binding if needed
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `autocomplete` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `autocomplete` property.
        */
       autocomplete: {
         type: String,
@@ -163,29 +192,35 @@
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `autofocus` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `autofocus` property.
        */
       autofocus: {
-        type: Boolean
+        type: Boolean,
+        observer: '_autofocusChanged'
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `inputmode` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `inputmode` property.
        */
       inputmode: {
         type: String
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `minlength` property.
+       * The minimum length of the input value.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `minlength` property.
        */
       minlength: {
         type: Number
       },
 
       /**
-       * The maximum length of the input value. Bind this to the `<input is="iron-input">`'s
-       * `maxlength` property.
+       * The maximum length of the input value.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `maxlength` property.
        */
       maxlength: {
         type: Number
@@ -193,7 +228,8 @@
 
       /**
        * The minimum (numeric or date-time) input value.
-       * Bind this to the `<input is="iron-input">`'s `min` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `min` property.
        */
       min: {
         type: String
@@ -201,8 +237,9 @@
 
       /**
        * The maximum (numeric or date-time) input value.
-       * Can be a String (e.g. `"2000-1-1"`) or a Number (e.g. `2`).
-       * Bind this to the `<input is="iron-input">`'s `max` property.
+       * Can be a String (e.g. `"2000-01-01"`) or a Number (e.g. `2`).
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `max` property.
        */
       max: {
         type: String
@@ -210,14 +247,16 @@
 
       /**
        * Limits the numeric or date-time increments.
-       * Bind this to the `<input is="iron-input">`'s `step` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `step` property.
        */
       step: {
         type: String
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `name` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `name` property.
        */
       name: {
         type: String
@@ -233,7 +272,8 @@
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `readonly` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `readonly` property.
        */
       readonly: {
         type: Boolean,
@@ -241,7 +281,8 @@
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `size` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `size` property.
        */
       size: {
         type: Number
@@ -250,7 +291,8 @@
       // Nonstandard attributes for binding if needed
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `autocapitalize` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `autocapitalize` property.
        */
       autocapitalize: {
         type: String,
@@ -258,7 +300,8 @@
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `autocorrect` property.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `autocorrect` property.
        */
       autocorrect: {
         type: String,
@@ -266,28 +309,36 @@
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `autosave` property, used with type=search.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `autosave` property,
+       * used with type=search.
        */
       autosave: {
         type: String
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `results` property, , used with type=search.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `results` property,
+       * used with type=search.
        */
       results: {
         type: Number
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `accept` property, , used with type=file.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the `<input is="iron-input">`'s `accept` property,
+       * used with type=file.
        */
       accept: {
         type: String
       },
 
       /**
-       * Bind this to the `<input is="iron-input">`'s `multiple` property, , used with type=file.
+       * If you're using PaperInputBehavior to implement your own paper-input-like
+       * element, bind this to the`<input is="iron-input">`'s `multiple` property,
+       * used with type=file.
        */
       multiple: {
         type: Boolean
@@ -306,12 +357,16 @@
     },
 
     listeners: {
-      'addon-attached': '_onAddonAttached'
+      'addon-attached': '_onAddonAttached',
     },
 
-    observers: [
-      '_focusedControlStateChanged(focused)'
-    ],
+    keyBindings: {
+      'shift+tab:keydown': '_onShiftTabDown'
+    },
+
+    hostAttributes: {
+      tabindex: 0
+    },
 
     /**
      * Returns a reference to the input element.
@@ -320,8 +375,27 @@
       return this.$.input;
     },
 
+    /**
+     * Returns a reference to the focusable element.
+     */
+    get _focusableElement() {
+      return this.inputElement;
+    },
+
+    registered: function() {
+      // These types have some default placeholder text; overlapping
+      // the label on top of it looks terrible. Auto-float the label in this case.
+      this._typesThatHaveText = ["date", "datetime", "datetime-local", "month",
+          "time", "week", "file"];
+    },
+
     attached: function() {
       this._updateAriaLabelledBy();
+
+      if (this.inputElement &&
+          this._typesThatHaveText.indexOf(this.inputElement.type) !== -1) {
+        this.alwaysFloatLabel = true;
+      }
     },
 
     _appendStringWithSpace: function(str, more) {
@@ -338,7 +412,7 @@
       if (target.id) {
         this._ariaDescribedBy = this._appendStringWithSpace(this._ariaDescribedBy, target.id);
       } else {
-        var id = 'paper-input-add-on-' + Math.floor((Math.random() * 100000));
+        var id = 'paper-input-add-on-' + Polymer.PaperInputHelper.NextAddonID++;
         target.id = id;
         this._ariaDescribedBy = this._appendStringWithSpace(this._ariaDescribedBy, id);
       }
@@ -351,6 +425,32 @@
      */
     validate: function() {
       return this.inputElement.validate();
+    },
+
+    /**
+     * Forward focus to inputElement. Overriden from IronControlState.
+     */
+    _focusBlurHandler: function(event) {
+      Polymer.IronControlState._focusBlurHandler.call(this, event);
+
+      // Forward the focus to the nested input.
+      if (this.focused && !this._shiftTabPressed)
+        this._focusableElement.focus();
+    },
+
+    /**
+     * Handler that is called when a shift+tab keypress is detected by the menu.
+     *
+     * @param {CustomEvent} event A key combination event.
+     */
+    _onShiftTabDown: function(event) {
+      var oldTabIndex = this.getAttribute('tabindex');
+      this._shiftTabPressed = true;
+      this.setAttribute('tabindex', '-1');
+      this.async(function() {
+        this.setAttribute('tabindex', oldTabIndex);
+        this._shiftTabPressed = false;
+      }, 1);
     },
 
     /**
@@ -387,24 +487,6 @@
       return placeholder || alwaysFloatLabel;
     },
 
-    _focusedControlStateChanged: function(focused) {
-      // IronControlState stops the focus and blur events in order to redispatch them on the host
-      // element, but paper-input-container listens to those events. Since there are more
-      // pending work on focus/blur in IronControlState, I'm putting in this hack to get the
-      // input focus state working for now.
-      if (!this.$.container) {
-        this.$.container = Polymer.dom(this.root).querySelector('paper-input-container');
-        if (!this.$.container) {
-          return;
-        }
-      }
-      if (focused) {
-        this.$.container._onFocus();
-      } else {
-        this.$.container._onBlur();
-      }
-    },
-
     _updateAriaLabelledBy: function() {
       var label = Polymer.dom(this.root).querySelector('label');
       if (!label) {
@@ -415,7 +497,7 @@
       if (label.id) {
         labelledBy = label.id;
       } else {
-        labelledBy = 'paper-input-label-' + new Date().getUTCMilliseconds();
+        labelledBy = 'paper-input-label-' + Polymer.PaperInputHelper.NextLabelID++;
         label.id = labelledBy;
       }
       this._ariaLabelledBy = labelledBy;
@@ -432,9 +514,39 @@
           cancelable: event.cancelable
         });
       }
-    }
+    },
 
-  };
+    _autofocusChanged: function() {
+      // Firefox doesn't respect the autofocus attribute if it's applied after
+      // the page is loaded (Chrome/WebKit do respect it), preventing an
+      // autofocus attribute specified in markup from taking effect when the
+      // element is upgraded. As a workaround, if the autofocus property is set,
+      // and the focus hasn't already been moved elsewhere, we take focus.
+      if (this.autofocus && this._focusableElement) {
+
+        // In IE 11, the default document.activeElement can be the page's
+        // outermost html element, but there are also cases (under the
+        // polyfill?) in which the activeElement is not a real HTMLElement, but
+        // just a plain object. We identify the latter case as having no valid
+        // activeElement.
+        var activeElement = document.activeElement;
+        var isActiveElementValid = activeElement instanceof HTMLElement;
+
+        // Has some other element has already taken the focus?
+        var isSomeElementActive = isActiveElementValid &&
+            activeElement !== document.body &&
+            activeElement !== document.documentElement; /* IE 11 */
+        if (!isSomeElementActive) {
+          // No specific element has taken the focus yet, so we can take it.
+          this._focusableElement.focus();
+        }
+      }
+    }
+  }
 
   /** @polymerBehavior */
-  Polymer.PaperInputBehavior = [Polymer.IronControlState, Polymer.PaperInputBehaviorImpl];
+  Polymer.PaperInputBehavior = [
+    Polymer.IronControlState,
+    Polymer.IronA11yKeysBehavior,
+    Polymer.PaperInputBehaviorImpl
+  ];

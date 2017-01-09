@@ -6,6 +6,8 @@
 #define NET_WEBSOCKETS_WEBSOCKET_CHANNEL_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <string>
 #include <vector>
@@ -15,8 +17,6 @@
 #include "base/i18n/streaming_utf8_validator.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/net_export.h"
@@ -31,11 +31,13 @@ class Origin;
 
 namespace net {
 
-class BoundNetLog;
+class NetLogWithSource;
 class IOBuffer;
+class URLRequest;
 class URLRequestContext;
 struct WebSocketHandshakeRequestInfo;
 struct WebSocketHandshakeResponseInfo;
+class WebSocketHandshakeStreamCreateHelper;
 
 // Transport-independent implementation of WebSockets. Implements protocol
 // semantics that do not depend on the underlying transport. Provides the
@@ -46,18 +48,26 @@ class NET_EXPORT WebSocketChannel {
  public:
   // The type of a WebSocketStream creator callback. Must match the signature of
   // WebSocketStream::CreateAndConnectStream().
-  typedef base::Callback<scoped_ptr<WebSocketStreamRequest>(
+  typedef base::Callback<std::unique_ptr<WebSocketStreamRequest>(
       const GURL&,
-      const std::vector<std::string>&,
+      std::unique_ptr<WebSocketHandshakeStreamCreateHelper>,
       const url::Origin&,
+      const GURL&,
+      const std::string&,
       URLRequestContext*,
-      const BoundNetLog&,
-      scoped_ptr<WebSocketStream::ConnectDelegate>)> WebSocketStreamCreator;
+      const NetLogWithSource&,
+      std::unique_ptr<WebSocketStream::ConnectDelegate>)>
+      WebSocketStreamRequestCreationCallback;
+
+  // Methods which return a value of type ChannelState may delete |this|. If the
+  // return value is CHANNEL_DELETED, then the caller must return without making
+  // any further access to member variables or methods.
+  using ChannelState = WebSocketEventInterface::ChannelState;
 
   // Creates a new WebSocketChannel in an idle state.
   // SendAddChannelRequest() must be called immediately afterwards to start the
   // connection process.
-  WebSocketChannel(scoped_ptr<WebSocketEventInterface> event_interface,
+  WebSocketChannel(std::unique_ptr<WebSocketEventInterface> event_interface,
                    URLRequestContext* url_request_context);
   virtual ~WebSocketChannel();
 
@@ -65,27 +75,34 @@ class NET_EXPORT WebSocketChannel {
   void SendAddChannelRequest(
       const GURL& socket_url,
       const std::vector<std::string>& requested_protocols,
-      const url::Origin& origin);
+      const url::Origin& origin,
+      const GURL& first_party_for_cookies,
+      const std::string& additional_headers);
 
-  // Sends a data frame to the remote side. The frame should usually be no
-  // larger than 32KB to prevent the time required to copy the buffers from from
-  // unduly delaying other tasks that need to run on the IO thread. This method
-  // has a hard limit of 2GB. It is the responsibility of the caller to ensure
-  // that they have sufficient send quota to send this data, otherwise the
-  // connection will be closed without sending. |fin| indicates the last frame
-  // in a message, equivalent to "FIN" as specified in section 5.2 of
-  // RFC6455. |data| is the "Payload Data". If |op_code| is kOpCodeText, or it
-  // is kOpCodeContinuation and the type the message is Text, then |data| must
-  // be a chunk of a valid UTF-8 message, however there is no requirement for
-  // |data| to be split on character boundaries.
-  void SendFrame(bool fin,
-                 WebSocketFrameHeader::OpCode op_code,
-                 const std::vector<char>& data);
+  // Sends a data frame to the remote side. It is the responsibility of the
+  // caller to ensure that they have sufficient send quota to send this data,
+  // otherwise the connection will be closed without sending. |fin| indicates
+  // the last frame in a message, equivalent to "FIN" as specified in section
+  // 5.2 of RFC6455. |buffer->data()| is the "Payload Data". If |op_code| is
+  // kOpCodeText, or it is kOpCodeContinuation and the type the message is
+  // Text, then |buffer->data()| must be a chunk of a valid UTF-8 message,
+  // however there is no requirement for |buffer->data()| to be split on
+  // character boundaries. Calling SendFrame may result in synchronous calls to
+  // |event_interface_| which may result in this object being deleted. In that
+  // case, the return value will be CHANNEL_DELETED.
+  ChannelState SendFrame(bool fin,
+                         WebSocketFrameHeader::OpCode op_code,
+                         scoped_refptr<IOBuffer> buffer,
+                         size_t buffer_size);
 
   // Sends |quota| units of flow control to the remote side. If the underlying
   // transport has a concept of |quota|, then it permits the remote server to
   // send up to |quota| units of data.
-  void SendFlowControl(int64_t quota);
+  //
+  // Calling this function may result in synchronous calls to |event_interface_|
+  // which may result in this object being deleted. In that case, the return
+  // value will be CHANNEL_DELETED.
+  ChannelState SendFlowControl(int64_t quota) WARN_UNUSED_RESULT;
 
   // Starts the closing handshake for a client-initiated shutdown of the
   // connection. There is no API to close the connection without a closing
@@ -93,10 +110,17 @@ class NET_EXPORT WebSocketChannel {
   // effectively do that. |code| must be in the range 1000-4999. |reason| should
   // be a valid UTF-8 string or empty.
   //
-  // This does *not* trigger the event OnClosingHandshake(). The caller should
-  // assume that the closing handshake has started and perform the equivalent
-  // processing to OnClosingHandshake() if necessary.
-  void StartClosingHandshake(uint16_t code, const std::string& reason);
+  // Calling this function may result in synchronous calls to |event_interface_|
+  // which may result in this object being deleted. In that case, the return
+  // value will be CHANNEL_DELETED.
+  ChannelState StartClosingHandshake(uint16_t code, const std::string& reason)
+      WARN_UNUSED_RESULT;
+
+  // Returns the current send quota. This value is unsafe to use outside of the
+  // browser IO thread because it changes asynchronously.  The value is only
+  // valid for the execution of the current Task or until SendFrame() is called,
+  // whichever happens sooner.
+  int current_send_quota() const { return current_send_quota_; }
 
   // Starts the connection process, using a specified creator callback rather
   // than the default. This is exposed for testing.
@@ -104,7 +128,9 @@ class NET_EXPORT WebSocketChannel {
       const GURL& socket_url,
       const std::vector<std::string>& requested_protocols,
       const url::Origin& origin,
-      const WebSocketStreamCreator& creator);
+      const GURL& first_party_for_cookies,
+      const std::string& additional_headers,
+      const WebSocketStreamRequestCreationCallback& callback);
 
   // The default timout for the closing handshake is a sensible value (see
   // kClosingHandshakeTimeoutSeconds in websocket_channel.cc). However, we can
@@ -119,12 +145,12 @@ class NET_EXPORT WebSocketChannel {
   // Called when the stream starts the WebSocket Opening Handshake.
   // This method is public for testing.
   void OnStartOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeRequestInfo> request);
+      std::unique_ptr<WebSocketHandshakeRequestInfo> request);
 
   // Called when the stream ends the WebSocket Opening Handshake.
   // This method is public for testing.
   void OnFinishOpeningHandshake(
-      scoped_ptr<WebSocketHandshakeResponseInfo> response);
+      std::unique_ptr<WebSocketHandshakeResponseInfo> response);
 
  private:
   class HandshakeNotificationSender;
@@ -135,9 +161,10 @@ class NET_EXPORT WebSocketChannel {
    public:
     PendingReceivedFrame(bool final,
                          WebSocketFrameHeader::OpCode opcode,
-                         const scoped_refptr<IOBuffer>& data,
+                         scoped_refptr<IOBuffer> data,
                          uint64_t offset,
                          uint64_t size);
+    PendingReceivedFrame(const PendingReceivedFrame& other);
     ~PendingReceivedFrame();
 
     bool final() const { return final_; }
@@ -165,11 +192,6 @@ class NET_EXPORT WebSocketChannel {
     uint64_t size_;
   };
 
-  // Methods which return a value of type ChannelState may delete |this|. If the
-  // return value is CHANNEL_DELETED, then the caller must return without making
-  // any further access to member variables or methods.
-  typedef WebSocketEventInterface::ChannelState ChannelState;
-
   // The object passes through a linear progression of states from
   // FRESHLY_CONSTRUCTED to CLOSED, except that the SEND_CLOSED and RECV_CLOSED
   // states may be skipped in case of error.
@@ -195,16 +217,22 @@ class NET_EXPORT WebSocketChannel {
   // connection process.
   class ConnectDelegate;
 
-  // Starts the connection process, using the supplied creator callback.
-  void SendAddChannelRequestWithSuppliedCreator(
+  // Starts the connection process, using the supplied stream request creation
+  // callback.
+  void SendAddChannelRequestWithSuppliedCallback(
       const GURL& socket_url,
       const std::vector<std::string>& requested_protocols,
       const url::Origin& origin,
-      const WebSocketStreamCreator& creator);
+      const GURL& first_party_for_cookies,
+      const std::string& additional_headers,
+      const WebSocketStreamRequestCreationCallback& callback);
+
+  // Called when a URLRequest is created for handshaking.
+  void OnCreateURLRequest(URLRequest* request);
 
   // Success callback from WebSocketStream::CreateAndConnectStream(). Reports
   // success to the event interface. May delete |this|.
-  void OnConnectSuccess(scoped_ptr<WebSocketStream> stream);
+  void OnConnectSuccess(std::unique_ptr<WebSocketStream> stream);
 
   // Failure callback from WebSocketStream::CreateAndConnectStream(). Reports
   // failure to the event interface. May delete |this|.
@@ -214,7 +242,7 @@ class NET_EXPORT WebSocketChannel {
   // WebSocketStream::CreateAndConnectStream(). Forwards the request to the
   // event interface.
   void OnSSLCertificateError(
-      scoped_ptr<WebSocketEventInterface::SSLErrorCallbacks>
+      std::unique_ptr<WebSocketEventInterface::SSLErrorCallbacks>
           ssl_error_callbacks,
       const SSLInfo& ssl_info,
       bool fatal);
@@ -256,33 +284,40 @@ class NET_EXPORT WebSocketChannel {
   // This method performs sanity checks on the frame that are needed regardless
   // of the current state. Then, calls the HandleFrameByState() method below
   // which performs the appropriate action(s) depending on the current state.
-  ChannelState HandleFrame(
-      scoped_ptr<WebSocketFrame> frame) WARN_UNUSED_RESULT;
+  ChannelState HandleFrame(std::unique_ptr<WebSocketFrame> frame)
+      WARN_UNUSED_RESULT;
 
   // Handles a single frame depending on the current state. It's used by the
   // HandleFrame() method.
   ChannelState HandleFrameByState(const WebSocketFrameHeader::OpCode opcode,
                                   bool final,
-                                  const scoped_refptr<IOBuffer>& data_buffer,
+                                  scoped_refptr<IOBuffer> data_buffer,
                                   uint64_t size) WARN_UNUSED_RESULT;
 
-  // Forward a received data frame to the renderer, if connected. If
+  // Forwards a received data frame to the renderer, if connected. If
   // |expecting_continuation| is not equal to |expecting_to_read_continuation_|,
   // will fail the channel. Also checks the UTF-8 validity of text frames.
   ChannelState HandleDataFrame(WebSocketFrameHeader::OpCode opcode,
                                bool final,
-                               const scoped_refptr<IOBuffer>& data_buffer,
+                               scoped_refptr<IOBuffer> data_buffer,
                                uint64_t size) WARN_UNUSED_RESULT;
+
+  // Handles an incoming close frame with |code| and |reason|.
+  ChannelState HandleCloseFrame(uint16_t code,
+                                const std::string& reason) WARN_UNUSED_RESULT;
+
+  // Responds to a closing handshake initiated by the server.
+  ChannelState RespondToClosingHandshake() WARN_UNUSED_RESULT;
 
   // Low-level method to send a single frame. Used for both data and control
   // frames. Either sends the frame immediately or buffers it to be scheduled
   // when the current write finishes. |fin| and |op_code| are defined as for
   // SendFrame() above, except that |op_code| may also be a control frame
   // opcode.
-  ChannelState SendFrameFromIOBuffer(bool fin,
-                                     WebSocketFrameHeader::OpCode op_code,
-                                     const scoped_refptr<IOBuffer>& buffer,
-                                     uint64_t size) WARN_UNUSED_RESULT;
+  ChannelState SendFrameInternal(bool fin,
+                                 WebSocketFrameHeader::OpCode op_code,
+                                 scoped_refptr<IOBuffer> buffer,
+                                 uint64_t buffer_size) WARN_UNUSED_RESULT;
 
   // Performs the "Fail the WebSocket Connection" operation as defined in
   // RFC6455. A NotifyFailure message is sent to the renderer with |message|.
@@ -310,7 +345,7 @@ class NET_EXPORT WebSocketChannel {
   // is 1, or the supplied code is not permitted to be sent over the network,
   // then false is returned and |message| is set to an appropriate console
   // message.
-  bool ParseClose(const scoped_refptr<IOBuffer>& buffer,
+  bool ParseClose(scoped_refptr<IOBuffer> buffer,
                   uint64_t size,
                   uint16_t* code,
                   std::string* reason,
@@ -333,25 +368,25 @@ class NET_EXPORT WebSocketChannel {
   GURL socket_url_;
 
   // The object receiving events.
-  const scoped_ptr<WebSocketEventInterface> event_interface_;
+  const std::unique_ptr<WebSocketEventInterface> event_interface_;
 
   // The URLRequestContext to pass to the WebSocketStream creator.
   URLRequestContext* const url_request_context_;
 
   // The WebSocketStream on which to send and receive data.
-  scoped_ptr<WebSocketStream> stream_;
+  std::unique_ptr<WebSocketStream> stream_;
 
   // A data structure containing a vector of frames to be sent and the total
   // number of bytes contained in the vector.
   class SendBuffer;
   // Data that is currently pending write, or NULL if no write is pending.
-  scoped_ptr<SendBuffer> data_being_sent_;
+  std::unique_ptr<SendBuffer> data_being_sent_;
   // Data that is queued up to write after the current write completes.
   // Only non-NULL when such data actually exists.
-  scoped_ptr<SendBuffer> data_to_send_next_;
+  std::unique_ptr<SendBuffer> data_to_send_next_;
 
   // Destination for the current call to WebSocketStream::ReadFrames
-  ScopedVector<WebSocketFrame> read_frames_;
+  std::vector<std::unique_ptr<WebSocketFrame>> read_frames_;
 
   // Frames that have been read but not yet forwarded to the renderer due to
   // lack of quota.
@@ -359,7 +394,7 @@ class NET_EXPORT WebSocketChannel {
 
   // Handle to an in-progress WebSocketStream creation request. Only non-NULL
   // during the connection process.
-  scoped_ptr<WebSocketStreamRequest> stream_request_;
+  std::unique_ptr<WebSocketStreamRequest> stream_request_;
 
   // If the renderer's send quota reaches this level, it is sent a quota
   // refresh. "quota units" are currently bytes. TODO(ricea): Update the
@@ -397,7 +432,7 @@ class NET_EXPORT WebSocketChannel {
   State state_;
 
   // |notification_sender_| is owned by this object.
-  scoped_ptr<HandshakeNotificationSender> notification_sender_;
+  std::unique_ptr<HandshakeNotificationSender> notification_sender_;
 
   // UTF-8 validator for outgoing Text messages.
   base::StreamingUtf8Validator outgoing_utf8_validator_;

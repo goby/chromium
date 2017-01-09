@@ -8,7 +8,7 @@
 #ifndef CHROME_INSTALLER_UTIL_UTIL_CONSTANTS_H_
 #define CHROME_INSTALLER_UTIL_UTIL_CONSTANTS_H_
 
-#include "base/basictypes.h"
+#include <stddef.h>
 
 namespace installer {
 
@@ -88,6 +88,29 @@ enum InstallStatus {
   REENABLE_UPDATES_FAILED = 56,  // Autoupdates could not be enabled.
   UNPACKING_FAILED     = 57,  // Unpacking the (possibly patched) uncompressed
                               // archive failed.
+  IN_USE_DOWNGRADE     = 58,  // Successfully downgrade chrome but current
+                              // version is still running.
+  OLD_VERSION_DOWNGRADE = 59,  // Successfully downgrade chrome to an older
+                               // version.
+  SETUP_SINGLETON_ACQUISITION_FAILED = 60,  // The setup process could not
+                                            // acquire the exclusive right to
+                                            // modify the Chrome installation.
+  SETUP_SINGLETON_RELEASED           = 61,  // The task did not complete because
+                                            // another process asked this
+                                            // process to release the exclusive
+                                            // right to modify the Chrome
+                                            // installation.
+  DELETE_OLD_VERSIONS_SUCCESS        = 62,  // All files that belong to old
+                                            // versions of Chrome were
+                                            // successfully deleted.
+  DELETE_OLD_VERSIONS_TOO_MANY_ATTEMPTS = 63,  // A --delete-old-versions
+                                               // process exited after trying to
+                                               // delete all files that belong
+                                               // to old versions of Chrome too
+                                               // many times without success.
+
+  MAX_INSTALL_STATUS   = 64,  // When adding a new result, bump this and update
+                              // the InstallStatus enum in histograms.xml.
 };
 
 // The type of an update archive.
@@ -97,39 +120,32 @@ enum ArchiveType {
   INCREMENTAL_ARCHIVE_TYPE  // Incremental or differential archive.
 };
 
-// Stages of an installation reported through Google Update on failure.
-// The order and value of existing enums must not change. Please add new
-// values to the end (before NUM_STAGES) and update the compile assert below
-// to assert on the last value added.
+// Stages of an installation from which a progress indication is derived.
+// Generally listed in the order in which they are reached. The exceptions to
+// this are the fork-and-join for diff vs. full installers (where there are
+// additional (costly) stages for the former) and rollback in case of error.
 enum InstallerStage {
-  NO_STAGE = 0,                    // No stage to report.
-  PRECONDITIONS = 1,               // Evaluating pre-install conditions.
-  UNCOMPRESSING = 2,               // Uncompressing chrome.packed.7z.
-  ENSEMBLE_PATCHING = 3,           // Patching chrome.7z using courgette.
-  BINARY_PATCHING = 4,             // Patching chrome.7z using bspatch.
-  UNPACKING = 5,                   // Unpacking chrome.7z.
-  BUILDING = 6,                    // Building the install work item list.
-  EXECUTING = 7,                   // Executing the install work item list.
-  ROLLINGBACK = 8,                 // Rolling-back the install work item list.
-  REFRESHING_POLICY = 9,           // Refreshing the elevation policy.
-  UPDATING_CHANNELS = 10,          // Updating channel information.
-  COPYING_PREFERENCES_FILE = 11,   // Copying preferences file.
-  CREATING_SHORTCUTS = 12,         // Creating shortcuts.
-  REGISTERING_CHROME = 13,         // Performing Chrome registration.
-  REMOVING_OLD_VERSIONS = 14,      // Deleting old version directories.
-  FINISHING = 15,                  // Finishing the install.
-  // CONFIGURE_AUTO_LAUNCH = 16,
-  CREATING_VISUAL_MANIFEST = 17,   // Creating VisualElementsManifest.xml
-  // DEFERRING_TO_HIGHER_VERSION = 18,
-  UNINSTALLING_BINARIES = 19,      // Uninstalling unused binaries.
-  UNINSTALLING_CHROME_FRAME = 20,  // Uninstalling multi-install Chrome Frame.
-  NUM_STAGES                       // The number of stages.
+  NO_STAGE,                   // No stage to report.
+  UPDATING_SETUP,             // Courgette patching setup.exe (diff).
+  UNINSTALLING_CHROME_FRAME,  // Uninstalling multi-install Chrome Frame.
+  PRECONDITIONS,              // Evaluating pre-install conditions.
+  UNCOMPRESSING,              // Uncompressing chrome.packed.7z.
+  PATCHING,                   // Patching chrome.7z using Courgette (diff).
+  UNPACKING,                  // Unpacking chrome.7z.
+  CREATING_VISUAL_MANIFEST,   // Creating VisualElementsManifest.xml.
+  BUILDING,                   // Building the install work item list.
+  EXECUTING,                  // Executing the install work item list.
+  REFRESHING_POLICY,          // Refreshing the elevation policy.
+  UPDATING_CHANNELS,          // Updating channel information.
+  COPYING_PREFERENCES_FILE,   // Copying preferences file.
+  CREATING_SHORTCUTS,         // Creating shortcuts.
+  REGISTERING_CHROME,         // Performing Chrome registration.
+  REMOVING_OLD_VERSIONS,      // Deleting old version directories.
+  ROLLINGBACK,                // Rolling-back the install work item list.
+  FINISHING,                  // Finishing the install.
+  UNINSTALLING_BINARIES,      // Uninstalling unused binaries.
+  NUM_STAGES                  // The number of stages.
 };
-
-// When we start reporting the numerical values from the enum, the order
-// above MUST be preserved.
-static_assert(UNINSTALLING_CHROME_FRAME == 20,
-              "Never ever ever change InstallerStage values!");
 
 namespace switches {
 
@@ -138,6 +154,7 @@ extern const char kChromeFrame[];
 extern const char kChromeSxS[];
 extern const char kConfigureUserSettings[];
 extern const char kCriticalUpdateVersion[];
+extern const char kDeleteOldVersions[];
 extern const char kDeleteProfile[];
 extern const char kDisableLogging[];
 extern const char kDoNotLaunchChrome[];
@@ -171,7 +188,6 @@ extern const char kUpdateSetupExe[];
 extern const char kUncompressedArchive[];
 extern const char kVerboseLogging[];
 extern const char kShowEula[];
-extern const char kShowEulaForMetro[];
 extern const char kInactiveUserToast[];
 extern const char kSystemLevelToast[];
 extern const char kExperimentGroup[];
@@ -199,12 +215,10 @@ extern const wchar_t kChromeFrameHelperDll[];
 extern const wchar_t kChromeFrameHelperExe[];
 extern const wchar_t kChromeFrameHelperWndClass[];
 extern const wchar_t kChromeLauncherExe[];
-extern const wchar_t kChromeMetroDll[];
 extern const wchar_t kChromeNewExe[];
 extern const wchar_t kChromeOldExe[];
 extern const wchar_t kCmdOnOsUpgrade[];
 extern const wchar_t kCmdQuickEnableCf[];
-extern const wchar_t kDelegateExecuteExe[];
 extern const wchar_t kEULASentinelFile[];
 extern const wchar_t kGoogleChromeInstallSubDir1[];
 extern const wchar_t kGoogleChromeInstallSubDir2[];
@@ -253,6 +267,10 @@ const int kBsdiffErrorOffset = 600;
 // Arguments to --patch switch
 extern const char kCourgette[];
 extern const char kBsdiff[];
+
+// Name of the allocator (and associated file) for storing histograms to be
+// reported by Chrome during its next upload.
+extern const char kSetupHistogramAllocatorName[];
 
 }  // namespace installer
 

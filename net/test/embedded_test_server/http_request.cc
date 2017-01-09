@@ -5,11 +5,12 @@
 #include "net/test/embedded_test_server/http_request.h"
 
 #include <algorithm>
+#include <utility>
 
 #include "base/logging.h"
-#include "base/strings/string_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "net/http/http_chunked_decoder.h"
 #include "url/gurl.h"
 
@@ -33,11 +34,14 @@ HttpRequest::HttpRequest() : method(METHOD_UNKNOWN),
                              has_content(false) {
 }
 
+HttpRequest::HttpRequest(const HttpRequest& other) = default;
+
 HttpRequest::~HttpRequest() {
 }
 
 GURL HttpRequest::GetURL() const {
-  // TODO(svaldez): Use real URL from the EmbeddedTestServer.
+  if (base_url.is_valid())
+    return base_url.Resolve(relative_url);
   return GURL("http://localhost" + relative_url);
 }
 
@@ -214,9 +218,9 @@ HttpRequestParser::ParseResult HttpRequestParser::ParseContent() {
   return WAITING;
 }
 
-scoped_ptr<HttpRequest> HttpRequestParser::GetRequest() {
+std::unique_ptr<HttpRequest> HttpRequestParser::GetRequest() {
   DCHECK_EQ(STATE_ACCEPTED, state_);
-  scoped_ptr<HttpRequest> result = http_request_.Pass();
+  std::unique_ptr<HttpRequest> result = std::move(http_request_);
 
   // Prepare for parsing a new request.
   state_ = STATE_HEADERS;
@@ -225,7 +229,7 @@ scoped_ptr<HttpRequest> HttpRequestParser::GetRequest() {
   buffer_position_ = 0;
   declared_content_length_ = 0;
 
-  return result.Pass();
+  return result;
 }
 
 HttpMethod HttpRequestParser::GetMethodType(const std::string& token) const {
@@ -243,6 +247,8 @@ HttpMethod HttpRequestParser::GetMethodType(const std::string& token) const {
     return METHOD_PATCH;
   } else if (token == "connect") {
     return METHOD_CONNECT;
+  } else if (token == "options") {
+    return METHOD_OPTIONS;
   }
   LOG(WARNING) << "Method not implemented: " << token;
   return METHOD_GET;

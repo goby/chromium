@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef NET_ANDROID_LEGACY_OPENSSL_H
-#define NET_ANDROID_LEGACY_OPENSSL_H
+#ifndef NET_ANDROID_LEGACY_OPENSSL_H_
+#define NET_ANDROID_LEGACY_OPENSSL_H_
 
 // This file contains a replica of the Android system OpenSSL ABI shipped in
 // Android 4.1.x (API level 16). The ABI may not necessarily be compatible with
@@ -78,9 +78,8 @@ struct AndroidRSA_METHOD {
 struct AndroidEVP_PKEY {
   int type;
   int save_type;
-  // Note: this value must NOT be modified using Chromium's CRYPTO_add
-  // function. That may not necessarily use the same locking implementation as
-  // system OpenSSL.
+  // Note: this value is protected by threading functions in the Android system
+  // OpenSSL. It should not be accessed or modified directly.
   int references;
   const AndroidEVP_PKEY_ASN1_METHOD* ameth;
   AndroidENGINE* engine;
@@ -95,4 +94,4 @@ struct AndroidEVP_PKEY {
 }  // namespace android
 }  // namespace net
 
-#endif  // NET_ANDROID_LEGACY_OPENSSL_H
+#endif  // NET_ANDROID_LEGACY_OPENSSL_H_

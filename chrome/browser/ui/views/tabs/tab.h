@@ -6,15 +6,17 @@
 #define CHROME_BROWSER_UI_VIEWS_TABS_TAB_H_
 
 #include <list>
+#include <memory>
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/views/tabs/tab_renderer_data.h"
 #include "ui/base/layout.h"
 #include "ui/gfx/animation/animation_delegate.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/paint_throbber.h"
 #include "ui/views/context_menu_controller.h"
 #include "ui/views/controls/button/button.h"
@@ -22,14 +24,13 @@
 #include "ui/views/masked_targeter_delegate.h"
 #include "ui/views/view.h"
 
-class MediaIndicatorButton;
+class AlertIndicatorButton;
 class TabController;
 
 namespace gfx {
 class Animation;
 class AnimationContainer;
 class LinearAnimation;
-class MultiAnimation;
 class ThrobAnimation;
 }
 namespace views {
@@ -51,7 +52,7 @@ class Tab : public gfx::AnimationDelegate,
   // The Tab's class name.
   static const char kViewClassName[];
 
-  explicit Tab(TabController* controller);
+  Tab(TabController* controller, gfx::AnimationContainer* container);
   ~Tab() override;
 
   TabController* controller() const { return controller_; }
@@ -71,15 +72,15 @@ class Tab : public gfx::AnimationDelegate,
 
   SkColor button_color() const { return button_color_; }
 
-  // Sets the container all animations run from.
-  void SetAnimationContainer(gfx::AnimationContainer* container);
-
   // Returns true if this tab is the active tab.
   bool IsActive() const;
 
-  // Notifies the MediaIndicatorButton that the active state of this tab has
+  // Notifies the AlertIndicatorButton that the active state of this tab has
   // changed.
   void ActiveStateChanged();
+
+  // Called when the alert indicator has changed states.
+  void AlertStateChanged();
 
   // Returns true if the tab is selected.
   bool IsSelected() const;
@@ -96,9 +97,9 @@ class Tab : public gfx::AnimationDelegate,
   void StartPulse();
   void StopPulse();
 
-  // Start/stop the pinned tab title animation.
-  void StartPinnedTabTitleAnimation();
-  void StopPinnedTabTitleAnimation();
+  // Sets the visibility of the indicator shown when the tab title changes of
+  // an inactive pinned tab.
+  void SetPinnedTabTitleChangedIndicatorVisible(bool value);
 
   // Set the background offset used to match the image in the inactive tab
   // to the frame image.
@@ -121,6 +122,10 @@ class Tab : public gfx::AnimationDelegate,
   // Returns the width of the largest part of the tab that is available for the
   // user to click to select/activate the tab.
   int GetWidthOfLargestSelectableRegion() const;
+
+  // Called when stacked layout changes and the close button may need to
+  // be updated.
+  void HideCloseButtonForInactiveTabsChanged() { Layout(); }
 
   // Returns the inset within the first dragged tab to use when calculating the
   // "drag insertion point".  If we simply used the x-coordinate of the tab,
@@ -153,12 +158,17 @@ class Tab : public gfx::AnimationDelegate,
   // Returns the height for immersive mode tabs.
   static int GetImmersiveHeight();
 
-  // Returns the Y inset within the tab bounds for drawing the background image.
-  // This is necessary for correct vertical alignment of the frame, tab, and
-  // toolbar images with custom themes.
-  static int GetYInsetForActiveTabBackground();
+  // Returns the inverse of the slope of the diagonal portion of the tab outer
+  // border.  (This is a positive value, so it's specifically for the slope of
+  // the leading edge.)
+  //
+  // This returns the inverse (dx/dy instead of dy/dx) because we use exact
+  // values for the vertical distances between points and then compute the
+  // horizontal deltas from those.
+  static float GetInverseDiagonalSlope();
 
  private:
+  friend class AlertIndicatorButtonTest;
   friend class TabTest;
   friend class TabStripTest;
   FRIEND_TEST_ALL_PREFIXES(TabStripTest, TabHitTestMaskWhenStacked);
@@ -169,23 +179,6 @@ class Tab : public gfx::AnimationDelegate,
 
   class TabCloseButton;
   class ThrobberView;
-
-  // Contains a cached image and the values used to generate it.
-  struct ImageCacheEntry {
-    ImageCacheEntry();
-    ~ImageCacheEntry();
-
-    // ID of the resource used.
-    int resource_id;
-
-    // Scale factor we're drawing it.
-    ui::ScaleFactor scale_factor;
-
-    // The image.
-    gfx::ImageSkia image;
-  };
-
-  typedef std::list<ImageCacheEntry> ImageCache;
 
   // gfx::AnimationDelegate:
   void AnimationProgressed(const gfx::Animation* animation) override;
@@ -221,38 +214,43 @@ class Tab : public gfx::AnimationDelegate,
   void OnMouseEntered(const ui::MouseEvent& event) override;
   void OnMouseMoved(const ui::MouseEvent& event) override;
   void OnMouseExited(const ui::MouseEvent& event) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // ui::EventHandler:
   void OnGestureEvent(ui::GestureEvent* event) override;
 
-  // Invoked from Layout to adjust the position of the favicon or media
+  // Invoked from Layout to adjust the position of the favicon or alert
   // indicator for pinned tabs.
   void MaybeAdjustLeftForPinnedTab(gfx::Rect* bounds) const;
 
   // Invoked from SetData after |data_| has been updated to the new data.
   void DataChanged(const TabRendererData& old);
 
-  // Paint with the normal tab style.
-  void PaintTab(gfx::Canvas* canvas);
+  // Paints with the normal tab style.  If |clip| is non-empty, the tab border
+  // should be clipped against it.
+  void PaintTab(gfx::Canvas* canvas, const gfx::Path& clip);
 
-  // Paint with the "immersive mode" light-bar style.
+  // Paints with the "immersive mode" light-bar style.
   void PaintImmersiveTab(gfx::Canvas* canvas);
 
-  // Paint various portions of the Tab
-  void PaintTabBackground(gfx::Canvas* canvas);
-  void PaintInactiveTabBackgroundWithTitleChange(gfx::Canvas* canvas);
-  void PaintInactiveTabBackground(gfx::Canvas* canvas);
-  void PaintTabBackgroundUsingFillId(gfx::Canvas* canvas,
+  // Paints the background of an inactive tab.
+  void PaintInactiveTabBackground(gfx::Canvas* canvas, const gfx::Path& clip);
+
+  // Paints a tab background using the image defined by |fill_id| at the
+  // provided offset. If |fill_id| is 0, it will fall back to using the solid
+  // color defined by the theme provider and ignore the offset.
+  void PaintTabBackgroundUsingFillId(gfx::Canvas* fill_canvas,
+                                     gfx::Canvas* stroke_canvas,
                                      bool is_active,
                                      int fill_id,
-                                     bool has_custom_image,
                                      int y_offset);
-  void PaintTabFill(gfx::Canvas* canvas,
-                    gfx::ImageSkia* fill_image,
-                    int x_offset,
-                    int y_offset,
-                    bool is_active);
+
+  // Paints the pinned tab title changed indicator and |favicon_|. |favicon_|
+  // may be null. |favicon_draw_bounds| is |favicon_bounds_| adjusted for rtl
+  // and clipped to the bounds of the tab.
+  void PaintPinnedTabTitleChangedIndicatorAndIcon(
+      gfx::Canvas* canvas,
+      const gfx::Rect& favicon_draw_bounds);
 
   // Paints the favicon, mirrored for RTL if needed.
   void PaintIcon(gfx::Canvas* canvas);
@@ -267,8 +265,8 @@ class Tab : public gfx::AnimationDelegate,
   // Returns whether the Tab should display a favicon.
   bool ShouldShowIcon() const;
 
-  // Returns whether the Tab should display the media indicator.
-  bool ShouldShowMediaIndicator() const;
+  // Returns whether the Tab should display the alert indicator.
+  bool ShouldShowAlertIndicator() const;
 
   // Returns whether the Tab should display a close button.
   bool ShouldShowCloseBox() const;
@@ -286,11 +284,9 @@ class Tab : public gfx::AnimationDelegate,
   // animation.
   void SetFaviconHidingOffset(int offset);
 
-  void set_should_display_crashed_favicon() {
-    should_display_crashed_favicon_ = true;
-  }
+  void SetShouldDisplayCrashedFavicon(bool value);
 
-  // Recalculates the correct |button_color_| and resets the title, media
+  // Recalculates the correct |button_color_| and resets the title, alert
   // indicator, and close button colors if necessary.  This should be called any
   // time the theme or active state may have changed.
   void OnButtonColorMaybeChanged();
@@ -300,23 +296,6 @@ class Tab : public gfx::AnimationDelegate,
 
   // Returns the rectangle for the light bar in immersive mode.
   gfx::Rect GetImmersiveBarRect() const;
-
-  // Performs a one-time initialization of static resources such as tab images.
-  static void InitTabResources();
-
-  // Loads the images to be used for the tab background.
-  static void LoadTabImages();
-
-  // Returns the cached image for the specified arguments, or an empty image if
-  // there isn't one cached.
-  static gfx::ImageSkia GetCachedImage(int resource_id,
-                                       const gfx::Size& size,
-                                       ui::ScaleFactor scale_factor);
-
-  // Caches the specified image.
-  static void SetCachedImage(int resource_id,
-                             ui::ScaleFactor scale_factor,
-                             const gfx::ImageSkia& image);
 
   // The controller, never NULL.
   TabController* const controller_;
@@ -341,18 +320,18 @@ class Tab : public gfx::AnimationDelegate,
 
   bool should_display_crashed_favicon_;
 
-  // Whole-tab throbbing "pulse" animation.
-  scoped_ptr<gfx::ThrobAnimation> pulse_animation_;
+  bool showing_pinned_tab_title_changed_indicator_ = false;
 
-  scoped_ptr<gfx::MultiAnimation> pinned_title_change_animation_;
+  // Whole-tab throbbing "pulse" animation.
+  std::unique_ptr<gfx::ThrobAnimation> pulse_animation_;
 
   // Crash icon animation (in place of favicon).
-  scoped_ptr<gfx::LinearAnimation> crash_icon_animation_;
+  std::unique_ptr<gfx::LinearAnimation> crash_icon_animation_;
 
   scoped_refptr<gfx::AnimationContainer> animation_container_;
 
   ThrobberView* throbber_;
-  MediaIndicatorButton* media_indicator_button_;
+  AlertIndicatorButton* alert_indicator_button_;
   views::ImageButton* close_button_;
   views::Label* title_;
 
@@ -366,35 +345,25 @@ class Tab : public gfx::AnimationDelegate,
   // The offset used to paint the inactive background image.
   gfx::Point background_offset_;
 
-  struct TabImages {
-    gfx::ImageSkia* image_l;
-    gfx::ImageSkia* image_c;
-    gfx::ImageSkia* image_r;
-    int l_width;
-    int r_width;
-  };
-  static TabImages active_images_;
-  static TabImages inactive_images_;
-  static TabImages mask_images_;
-
   // Whether we're showing the icon. It is cached so that we can detect when it
   // changes and layout appropriately.
   bool showing_icon_;
 
-  // Whether we're showing the media indicator. It is cached so that we can
+  // Whether we're showing the alert indicator. It is cached so that we can
   // detect when it changes and layout appropriately.
-  bool showing_media_indicator_;
+  bool showing_alert_indicator_;
 
   // Whether we are showing the close button. It is cached so that we can
   // detect when it changes and layout appropriately.
   bool showing_close_button_;
 
-  // The current color of the media indicator and close button icons.
+  // The current color of the alert indicator and close button icons.
   SkColor button_color_;
 
-  // As the majority of the tabs are inactive, and painting tabs is slowish,
-  // we cache a handful of the inactive tab backgrounds here.
-  static ImageCache* image_cache_;
+  // The favicon for the tab. This might be the sad tab icon or a copy of
+  // data().favicon and may be modified for theming. It is created on demand
+  // and thus may be null.
+  gfx::ImageSkia favicon_;
 
   DISALLOW_COPY_AND_ASSIGN(Tab);
 };

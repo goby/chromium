@@ -5,32 +5,32 @@
 #include "components/crash/content/app/breakpad_win.h"
 
 #include <windows.h>
+#include <intrin.h>
 #include <shellapi.h>
+#include <stddef.h>
 #include <tchar.h>
 #include <userenv.h>
 #include <winnt.h>
 
 #include <algorithm>
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "base/base_switches.h"
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/debug/crash_logging.h"
 #include "base/debug/dump_without_crashing.h"
 #include "base/environment.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/synchronization/lock.h"
-#include "base/win/metro.h"
 #include "base/win/pe_image.h"
-#include "base/win/registry.h"
 #include "base/win/win_util.h"
 #include "breakpad/src/client/windows/common/ipc_protocol.h"
 #include "breakpad/src/client/windows/handler/exception_handler.h"
@@ -41,9 +41,6 @@
 #include "content/public/common/result_codes.h"
 #include "sandbox/win/src/nt_internals.h"
 #include "sandbox/win/src/sidestep/preamble_patcher.h"
-
-// userenv.dll is required for GetProfileType().
-#pragma comment(lib, "userenv.lib")
 
 #pragma intrinsic(_AddressOfReturnAddress)
 #pragma intrinsic(_ReturnAddress)
@@ -91,7 +88,7 @@ const wchar_t kGoogleUpdatePipeName[] = L"\\\\.\\pipe\\GoogleCrashServices\\";
 const wchar_t kChromePipeName[] = L"\\\\.\\pipe\\ChromeCrashServices";
 
 // This is the well known SID for the system principal.
-const wchar_t kSystemPrincipalSid[] =L"S-1-5-18";
+const wchar_t kSystemPrincipalSid[] = L"S-1-5-18";
 
 google_breakpad::ExceptionHandler* g_breakpad = NULL;
 google_breakpad::ExceptionHandler* g_dumphandler_no_crash = NULL;
@@ -153,10 +150,28 @@ MSVC_ENABLE_OPTIMIZE()
 }  // namespace
 
 // Injects a thread into a remote process to dump state when there is no crash.
-extern "C" HANDLE __declspec(dllexport) __cdecl
-InjectDumpProcessWithoutCrash(HANDLE process) {
+extern "C" HANDLE __declspec(dllexport) __cdecl InjectDumpProcessWithoutCrash(
+    HANDLE process) {
+  return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread, 0,
+                            0, NULL);
+}
+
+extern "C" HANDLE __declspec(dllexport) __cdecl InjectDumpForHungInput(
+    HANDLE process,
+    void* serialized_crash_keys) {
+  // |serialized_crash_keys| is not propagated in breakpad but is in crashpad
+  // since breakpad is deprecated.
   return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread,
                             0, 0, NULL);
+}
+
+extern "C" HANDLE __declspec(
+    dllexport) __cdecl InjectDumpForHungInputNoCrashKeys(HANDLE process,
+                                                         int reason) {
+  // |reason| is not propagated in breakpad but is in crashpad since breakpad
+  // is deprecated.
+  return CreateRemoteThread(process, NULL, 0, DumpProcessWithoutCrashThread, 0,
+                            0, NULL);
 }
 
 extern "C" HANDLE __declspec(dllexport) __cdecl
@@ -201,8 +216,6 @@ namespace {
 bool DumpDoneCallbackWhenNoCrash(const wchar_t*, const wchar_t*, void*,
                                  EXCEPTION_POINTERS* ex_info,
                                  MDRawAssertionInfo*, bool succeeded) {
-  GetCrashReporterClient()->RecordCrashDumpAttemptResult(
-      false /* is_real_crash */, succeeded);
   return true;
 }
 
@@ -215,8 +228,6 @@ bool DumpDoneCallbackWhenNoCrash(const wchar_t*, const wchar_t*, void*,
 bool DumpDoneCallback(const wchar_t*, const wchar_t*, void*,
                       EXCEPTION_POINTERS* ex_info,
                       MDRawAssertionInfo*, bool succeeded) {
-  GetCrashReporterClient()->RecordCrashDumpAttemptResult(
-      true /* is_real_crash */, succeeded);
   // Check if the exception is one of the kind which would not be solved
   // by simply restarting chrome. In this case we show a message box with
   // and exit silently. Remember that chrome is in a crashed state so we
@@ -248,7 +259,6 @@ volatile LONG handling_exception = 0;
 // to implement it.
 bool FilterCallbackWhenNoCrash(
     void*, EXCEPTION_POINTERS*, MDRawAssertionInfo*) {
-  GetCrashReporterClient()->RecordCrashDumpAttempt(false);
   return true;
 }
 
@@ -262,7 +272,6 @@ bool FilterCallback(void*, EXCEPTION_POINTERS*, MDRawAssertionInfo*) {
   if (::InterlockedCompareExchange(&handling_exception, 1, 0) == 1) {
     ::Sleep(INFINITE);
   }
-  GetCrashReporterClient()->RecordCrashDumpAttempt(true);
   return true;
 }
 
@@ -353,10 +362,6 @@ static bool WrapMessageBoxWithSEH(const wchar_t* text, const wchar_t* caption,
 // spawned and basically just shows the 'chrome has crashed' dialog if
 // the CHROME_CRASHED environment variable is present.
 bool ShowRestartDialogIfCrashed(bool* exit_now) {
-  // If we are being launched in metro mode don't try to show the dialog.
-  if (base::win::IsMetroProcess())
-    return false;
-
   base::string16 message;
   base::string16 title;
   bool is_rtl_locale;
@@ -472,7 +477,7 @@ static void InitTerminateProcessHooks() {
 #endif
 
 static void InitPipeNameEnvVar(bool is_per_user_install) {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   if (env->HasVar(kPipeNameVar)) {
     // The Breakpad pipe name is already configured: nothing to do.
     return;
@@ -551,7 +556,7 @@ void InitCrashReporter(const std::string& process_type_switch) {
   GetModuleFileNameW(NULL, exe_path, MAX_PATH);
 
   bool is_per_user_install =
-      GetCrashReporterClient()->GetIsPerUserInstall(base::FilePath(exe_path));
+      GetCrashReporterClient()->GetIsPerUserInstall(exe_path);
 
   // This is intentionally leaked.
   CrashKeysWin* keeper = new CrashKeysWin();
@@ -587,10 +592,7 @@ void InitCrashReporter(const std::string& process_type_switch) {
   if (GetCrashReporterClient()->ShouldCreatePipeName(process_type))
     InitPipeNameEnvVar(is_per_user_install);
 
-  if (process_type == L"browser")
-    GetCrashReporterClient()->InitBrowserCrashDumpsRegKey();
-
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   std::string pipe_name_ascii;
   if (!env->GetVar(kPipeNameVar, &pipe_name_ascii)) {
     // Breakpad is not enabled.  Configuration is managed or the user
@@ -677,8 +679,8 @@ void ConsumeInvalidHandleExceptions() {
 // clears the environment variable, so that the restarted Chrome, which inherits
 // its environment from the current Chrome, will no longer contain the variable.
 extern "C" void __declspec(dllexport) __cdecl
-      ClearBreakpadPipeEnvironmentVariable() {
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+ClearBreakpadPipeEnvironmentVariable() {
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   env->UnSetVar(kPipeNameVar);
 }
 

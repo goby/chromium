@@ -4,12 +4,14 @@
 
 #include "components/proximity_auth/ble/bluetooth_low_energy_connection.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_characteristics_finder.h"
 #include "components/proximity_auth/ble/fake_wire_message.h"
@@ -19,16 +21,16 @@
 #include "components/proximity_auth/wire_message.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
-#include "device/bluetooth/bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_gatt_connection.h"
 #include "device/bluetooth/bluetooth_gatt_notify_session.h"
+#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
 using device::BluetoothAdapter;
 using device::BluetoothDevice;
 using device::BluetoothGattConnection;
-using device::BluetoothGattService;
-using device::BluetoothGattCharacteristic;
+using device::BluetoothRemoteGattService;
+using device::BluetoothRemoteGattCharacteristic;
 using device::BluetoothGattNotifySession;
 using device::BluetoothUUID;
 
@@ -51,7 +53,7 @@ const int kMaxChunkSize = 500;
 }  // namespace
 
 BluetoothLowEnergyConnection::BluetoothLowEnergyConnection(
-    const RemoteDevice& device,
+    const cryptauth::RemoteDevice& device,
     scoped_refptr<device::BluetoothAdapter> adapter,
     const BluetoothUUID remote_service_uuid,
     BluetoothThrottler* bluetooth_throttler,
@@ -163,22 +165,22 @@ void BluetoothLowEnergyConnection::SetTaskRunnerForTesting(
 }
 
 void BluetoothLowEnergyConnection::SendMessageImpl(
-    scoped_ptr<WireMessage> message) {
+    std::unique_ptr<WireMessage> message) {
   PA_LOG(INFO) << "Sending message " << message->Serialize();
   std::string serialized_msg = message->Serialize();
 
   // [First write]: Build a header with the [send signal] + [size of the
   // message].
   WriteRequest write_request = BuildWriteRequest(
-      ToByteVector(static_cast<uint32>(ControlSignal::kSendSignal)),
-      ToByteVector(static_cast<uint32>(serialized_msg.size())), false);
+      ToByteVector(static_cast<uint32_t>(ControlSignal::kSendSignal)),
+      ToByteVector(static_cast<uint32_t>(serialized_msg.size())), false);
 
   // [First write]: Fill the it with a prefix of |serialized_msg| up to
   // |max_chunk_size_|.
   size_t first_chunk_size = std::min(
       max_chunk_size_ - write_request.value.size(), serialized_msg.size());
-  std::vector<uint8> bytes(serialized_msg.begin(),
-                           serialized_msg.begin() + first_chunk_size);
+  std::vector<uint8_t> bytes(serialized_msg.begin(),
+                             serialized_msg.begin() + first_chunk_size);
   write_request.value.insert(write_request.value.end(), bytes.begin(),
                              bytes.end());
 
@@ -191,8 +193,8 @@ void BluetoothLowEnergyConnection::SendMessageImpl(
   // [Other write requests]: Each chunk has to include a deprecated signal:
   // |kFirstByteZero| as the first byte.
   int chunk_size = max_chunk_size_ - 1;
-  std::vector<uint8> kFirstByteZeroVector;
-  kFirstByteZeroVector.push_back(static_cast<uint8>(kFirstByteZero));
+  std::vector<uint8_t> kFirstByteZeroVector;
+  kFirstByteZeroVector.push_back(static_cast<uint8_t>(kFirstByteZero));
 
   int message_size = static_cast<int>(serialized_msg.size());
   int start_index = first_chunk_size;
@@ -203,8 +205,8 @@ void BluetoothLowEnergyConnection::SendMessageImpl(
     bool is_last_write_request = (end_index == message_size);
     write_request = BuildWriteRequest(
         kFirstByteZeroVector,
-        std::vector<uint8>(serialized_msg.begin() + start_index,
-                           serialized_msg.begin() + end_index),
+        std::vector<uint8_t>(serialized_msg.begin() + start_index,
+                             serialized_msg.begin() + end_index),
         is_last_write_request);
     WriteRemoteCharacteristic(write_request);
     start_index = end_index;
@@ -245,8 +247,8 @@ void BluetoothLowEnergyConnection::DeviceRemoved(BluetoothAdapter* adapter,
 
 void BluetoothLowEnergyConnection::GattCharacteristicValueChanged(
     BluetoothAdapter* adapter,
-    BluetoothGattCharacteristic* characteristic,
-    const std::vector<uint8>& value) {
+    BluetoothRemoteGattCharacteristic* characteristic,
+    const std::vector<uint8_t>& value) {
   DCHECK_EQ(adapter, adapter_.get());
   if (sub_status() != SubStatus::WAITING_RESPONSE_SIGNAL &&
       sub_status() != SubStatus::CONNECTED)
@@ -286,7 +288,7 @@ void BluetoothLowEnergyConnection::GattCharacteristicValueChanged(
               << "Incoming data corrupted, expected message size not found.";
           return;
         }
-        std::vector<uint8> size(value.begin() + 4, value.begin() + 8);
+        std::vector<uint8_t> size(value.begin() + 4, value.begin() + 8);
         expected_number_of_incoming_bytes_ =
             static_cast<size_t>(ToUint32(size));
         receiving_bytes_ = true;
@@ -310,12 +312,14 @@ void BluetoothLowEnergyConnection::GattCharacteristicValueChanged(
 }
 
 BluetoothLowEnergyConnection::WriteRequest::WriteRequest(
-    const std::vector<uint8>& val,
+    const std::vector<uint8_t>& val,
     bool flag)
     : value(val),
       is_last_write_for_wire_message(flag),
-      number_of_failed_attempts(0) {
-}
+      number_of_failed_attempts(0) {}
+
+BluetoothLowEnergyConnection::WriteRequest::WriteRequest(
+    const WriteRequest& other) = default;
 
 BluetoothLowEnergyConnection::WriteRequest::~WriteRequest() {}
 
@@ -335,7 +339,7 @@ void BluetoothLowEnergyConnection::OnCreateGattConnectionError(
 }
 
 void BluetoothLowEnergyConnection::OnGattConnectionCreated(
-    scoped_ptr<device::BluetoothGattConnection> gatt_connection) {
+    std::unique_ptr<device::BluetoothGattConnection> gatt_connection) {
   DCHECK(sub_status() == SubStatus::WAITING_GATT_CONNECTION);
   PA_LOG(INFO) << "GATT connection with " << gatt_connection->GetDeviceAddress()
                << " created.";
@@ -344,7 +348,7 @@ void BluetoothLowEnergyConnection::OnGattConnectionCreated(
   // Informing |bluetooth_trottler_| a new connection was established.
   bluetooth_throttler_->OnConnection(this);
 
-  gatt_connection_ = gatt_connection.Pass();
+  gatt_connection_ = std::move(gatt_connection);
   SetSubStatus(SubStatus::WAITING_CHARACTERISTICS);
   characteristic_finder_.reset(CreateCharacteristicsFinder(
       base::Bind(&BluetoothLowEnergyConnection::OnCharacteristicsFound,
@@ -398,7 +402,7 @@ void BluetoothLowEnergyConnection::OnCharacteristicsFinderError(
 
 void BluetoothLowEnergyConnection::StartNotifySession() {
   if (sub_status() == SubStatus::CHARACTERISTICS_FOUND) {
-    BluetoothGattCharacteristic* characteristic =
+    BluetoothRemoteGattCharacteristic* characteristic =
         GetGattCharacteristic(from_peripheral_char_.id);
     DCHECK(characteristic);
 
@@ -423,21 +427,21 @@ void BluetoothLowEnergyConnection::StartNotifySession() {
 }
 
 void BluetoothLowEnergyConnection::OnNotifySessionError(
-    BluetoothGattService::GattErrorCode error) {
+    BluetoothRemoteGattService::GattErrorCode error) {
   DCHECK(sub_status() == SubStatus::WAITING_NOTIFY_SESSION);
   PA_LOG(WARNING) << "Error starting notification session: " << error;
   Disconnect();
 }
 
 void BluetoothLowEnergyConnection::OnNotifySessionStarted(
-    scoped_ptr<BluetoothGattNotifySession> notify_session) {
+    std::unique_ptr<BluetoothGattNotifySession> notify_session) {
   DCHECK(sub_status() == SubStatus::WAITING_NOTIFY_SESSION);
   PA_LOG(INFO) << "Notification session started "
                << notify_session->GetCharacteristicIdentifier();
   PrintTimeElapsed();
 
   SetSubStatus(SubStatus::NOTIFY_SESSION_READY);
-  notify_session_ = notify_session.Pass();
+  notify_session_ = std::move(notify_session);
 
   SendInviteToConnectSignal();
 }
@@ -456,8 +460,8 @@ void BluetoothLowEnergyConnection::SendInviteToConnectSignal() {
 
     WriteRequest write_request = BuildWriteRequest(
         ToByteVector(
-            static_cast<uint32>(ControlSignal::kInviteToConnectSignal)),
-        std::vector<uint8>(), false);
+            static_cast<uint32_t>(ControlSignal::kInviteToConnectSignal)),
+        std::vector<uint8_t>(), false);
 
     WriteRemoteCharacteristic(write_request);
   }
@@ -470,7 +474,7 @@ void BluetoothLowEnergyConnection::WriteRemoteCharacteristic(
 }
 
 void BluetoothLowEnergyConnection::ProcessNextWriteRequest() {
-  BluetoothGattCharacteristic* characteristic =
+  BluetoothRemoteGattCharacteristic* characteristic =
       GetGattCharacteristic(to_peripheral_char_.id);
   if (!write_requests_queue_.empty() && !write_remote_characteristic_pending_ &&
       characteristic) {
@@ -505,7 +509,7 @@ void BluetoothLowEnergyConnection::OnRemoteCharacteristicWritten(
 
 void BluetoothLowEnergyConnection::OnWriteRemoteCharacteristicError(
     bool run_did_send_message_callback,
-    BluetoothGattService::GattErrorCode error) {
+    BluetoothRemoteGattService::GattErrorCode error) {
   PA_LOG(WARNING) << "Error " << error << " writing characteristic: "
                   << to_peripheral_char_.uuid.canonical_value();
   write_remote_characteristic_pending_ = false;
@@ -525,10 +529,10 @@ void BluetoothLowEnergyConnection::OnWriteRemoteCharacteristicError(
 
 BluetoothLowEnergyConnection::WriteRequest
 BluetoothLowEnergyConnection::BuildWriteRequest(
-    const std::vector<uint8>& signal,
-    const std::vector<uint8>& bytes,
+    const std::vector<uint8_t>& signal,
+    const std::vector<uint8_t>& bytes,
     bool is_last_write_for_wire_message) {
-  std::vector<uint8> value(signal.begin(), signal.end());
+  std::vector<uint8_t> value(signal.begin(), signal.end());
   value.insert(value.end(), bytes.begin(), bytes.end());
   return WriteRequest(value, is_last_write_for_wire_message);
 }
@@ -555,7 +559,7 @@ BluetoothDevice* BluetoothLowEnergyConnection::GetRemoteDevice() {
   // bug in the way device::BluetoothAdapter is storing the devices (see
   // crbug.com/497841).
   std::vector<BluetoothDevice*> devices = adapter_->GetDevices();
-  for (const auto& device : devices) {
+  for (auto* device : devices) {
     if (device->GetAddress() == GetDeviceAddress())
       return device;
   }
@@ -563,16 +567,16 @@ BluetoothDevice* BluetoothLowEnergyConnection::GetRemoteDevice() {
   return nullptr;
 }
 
-BluetoothGattService* BluetoothLowEnergyConnection::GetRemoteService() {
+BluetoothRemoteGattService* BluetoothLowEnergyConnection::GetRemoteService() {
   BluetoothDevice* remote_device = GetRemoteDevice();
   if (!remote_device) {
     PA_LOG(WARNING) << "Remote device not found.";
     return NULL;
   }
   if (remote_service_.id.empty()) {
-    std::vector<BluetoothGattService*> services =
+    std::vector<BluetoothRemoteGattService*> services =
         remote_device->GetGattServices();
-    for (const auto& service : services)
+    for (const auto* service : services)
       if (service->GetUUID() == remote_service_.uuid) {
         remote_service_.id = service->GetIdentifier();
         break;
@@ -581,10 +585,10 @@ BluetoothGattService* BluetoothLowEnergyConnection::GetRemoteService() {
   return remote_device->GetGattService(remote_service_.id);
 }
 
-BluetoothGattCharacteristic*
+BluetoothRemoteGattCharacteristic*
 BluetoothLowEnergyConnection::GetGattCharacteristic(
     const std::string& gatt_characteristic) {
-  BluetoothGattService* remote_service = GetRemoteService();
+  BluetoothRemoteGattService* remote_service = GetRemoteService();
   if (!remote_service) {
     PA_LOG(WARNING) << "Remote service not found.";
     return NULL;
@@ -594,19 +598,20 @@ BluetoothLowEnergyConnection::GetGattCharacteristic(
 
 // TODO(sacomoto): make this robust to byte ordering in both sides of the
 // SmartLock BLE socket.
-uint32 BluetoothLowEnergyConnection::ToUint32(const std::vector<uint8>& bytes) {
+uint32_t BluetoothLowEnergyConnection::ToUint32(
+    const std::vector<uint8_t>& bytes) {
   return bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24);
 }
 
 // TODO(sacomoto): make this robust to byte ordering in both sides of the
 // SmartLock BLE socket.
-const std::vector<uint8> BluetoothLowEnergyConnection::ToByteVector(
-    const uint32 value) {
-  std::vector<uint8> bytes(4, 0);
-  bytes[0] = static_cast<uint8>(value);
-  bytes[1] = static_cast<uint8>(value >> 8);
-  bytes[2] = static_cast<uint8>(value >> 16);
-  bytes[3] = static_cast<uint8>(value >> 24);
+const std::vector<uint8_t> BluetoothLowEnergyConnection::ToByteVector(
+    const uint32_t value) {
+  std::vector<uint8_t> bytes(4, 0);
+  bytes[0] = static_cast<uint8_t>(value);
+  bytes[1] = static_cast<uint8_t>(value >> 8);
+  bytes[2] = static_cast<uint8_t>(value >> 16);
+  bytes[3] = static_cast<uint8_t>(value >> 24);
   return bytes;
 }
 

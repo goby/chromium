@@ -12,37 +12,43 @@ namespace blink {
 // Never supports pairwise conversion while always supporting single conversion.
 // A catch all default for SVGValues.
 class SVGValueInterpolationType : public SVGInterpolationType {
-public:
-    SVGValueInterpolationType(const QualifiedName& attribute)
-        : SVGInterpolationType(attribute)
-    { }
+ public:
+  SVGValueInterpolationType(const QualifiedName& attribute)
+      : SVGInterpolationType(attribute) {}
 
-private:
-    PassOwnPtr<PairwisePrimitiveInterpolation> maybeConvertPairwise(const PropertySpecificKeyframe& startKeyframe, const PropertySpecificKeyframe& endKeyframe, const InterpolationEnvironment&, const UnderlyingValue&, ConversionCheckers&) const final
-    {
-        return nullptr;
-    }
+ private:
+  PairwiseInterpolationValue maybeConvertPairwise(
+      const PropertySpecificKeyframe& startKeyframe,
+      const PropertySpecificKeyframe& endKeyframe,
+      const InterpolationEnvironment&,
+      const InterpolationValue& underlying,
+      ConversionCheckers&) const final {
+    return nullptr;
+  }
 
-    PassOwnPtr<InterpolationValue> maybeConvertNeutral(const UnderlyingValue&, ConversionCheckers&) const final
-    {
-        return nullptr;
-    }
+  InterpolationValue maybeConvertNeutral(const InterpolationValue& underlying,
+                                         ConversionCheckers&) const final {
+    return nullptr;
+  }
 
-    PassOwnPtr<InterpolationValue> maybeConvertSVGValue(const SVGPropertyBase&) const final;
+  InterpolationValue maybeConvertSVGValue(const SVGPropertyBase&) const final;
 
-    PassOwnPtr<InterpolationValue> maybeConvertUnderlyingValue(const InterpolationEnvironment&) const final
-    {
-        return nullptr;
-    }
+  InterpolationValue maybeConvertUnderlyingValue(
+      const InterpolationEnvironment&) const final {
+    return nullptr;
+  }
 
-    void composite(UnderlyingValue& underlyingValue, double underlyingFraction, const InterpolationValue& value) const final
-    {
-        underlyingValue.set(&value);
-    }
+  void composite(UnderlyingValueOwner& underlyingValueOwner,
+                 double underlyingFraction,
+                 const InterpolationValue& value,
+                 double interpolationFraction) const final {
+    underlyingValueOwner.set(*this, value);
+  }
 
-    PassRefPtrWillBeRawPtr<SVGPropertyBase> appliedSVGValue(const InterpolableValue&, const NonInterpolableValue*) const final;
+  SVGPropertyBase* appliedSVGValue(const InterpolableValue&,
+                                   const NonInterpolableValue*) const final;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGValueInterpolationType_h
+#endif  // SVGValueInterpolationType_h

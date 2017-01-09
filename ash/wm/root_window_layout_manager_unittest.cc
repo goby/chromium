@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ash/public/cpp/shell_window_ids.h"
 #include "ash/shell.h"
-#include "ash/shell_window_ids.h"
 #include "ash/test/ash_test_base.h"
 #include "ui/aura/test/test_windows.h"
 #include "ui/aura/window_observer.h"
@@ -34,7 +34,7 @@ using RootWindowLayoutManagerTest = test::AshTestBase;
 
 TEST_F(RootWindowLayoutManagerTest, DeleteChildDuringResize) {
   aura::Window* parent = Shell::GetPrimaryRootWindow()->GetChildById(
-      kShellWindowId_DesktopBackgroundContainer);
+      kShellWindowId_WallpaperContainer);
   aura::Window* w1 = aura::test::CreateTestWindowWithId(1, parent);
   aura::Window* w2 = aura::test::CreateTestWindowWithId(2, parent);
   WindowDeleter deleter(w1);

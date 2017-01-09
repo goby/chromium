@@ -4,9 +4,10 @@
 
 #include "remoting/host/setup/service_client.h"
 
+#include <memory>
+
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/url_fetcher.h"
@@ -61,7 +62,7 @@ class ServiceClient::Core
 
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
   ServiceClient::Delegate* delegate_;
-  scoped_ptr<net::URLFetcher> request_;
+  std::unique_ptr<net::URLFetcher> request_;
   PendingRequestType pending_request_type_;
   std::string chromoting_hosts_url_;
 };
@@ -145,11 +146,12 @@ void ServiceClient::Core::HandleResponse(const net::URLFetcher* source) {
         {
           std::string data;
           source->GetResponseAsString(&data);
-          scoped_ptr<base::Value> message_value = base::JSONReader::Read(data);
+          std::unique_ptr<base::Value> message_value =
+              base::JSONReader::Read(data);
           base::DictionaryValue *dict;
           std::string code;
           if (message_value.get() &&
-              message_value->IsType(base::Value::TYPE_DICTIONARY) &&
+              message_value->IsType(base::Value::Type::DICTIONARY) &&
               message_value->GetAsDictionary(&dict) &&
               dict->GetString("data.authorizationCode", &code)) {
             delegate_->OnHostRegistered(code);

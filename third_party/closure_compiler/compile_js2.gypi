@@ -6,7 +6,8 @@
 
   'variables': {
     'CLOSURE_DIR': '<(DEPTH)/third_party/closure_compiler',
-    'EXTERNS_GYP': '<(CLOSURE_DIR)/externs/compiled_resources.gyp',
+    'EXTERNS_GYP': '<(CLOSURE_DIR)/externs/compiled_resources2.gyp',
+    'INTERFACES_GYP': '<(CLOSURE_DIR)/interfaces/compiled_resources2.gyp',
 
     'default_source_file': '<(_target_name).js',
     'source_files%': ['<(default_source_file)'],
@@ -38,15 +39,17 @@
       'variables': {
         'target_path': '<!(python <(CLOSURE_DIR)/build/outputs.py <(default_source_file))',
         'out_file%': '<(SHARED_INTERMEDIATE_DIR)/closure/<(target_path)',
-        # TODO(dbeam): add --custom_sources when 'source_files' is set?
+        'runner_args%': ['enable-chrome-pass'],
+        # TODO(dbeam): remove when no longer used from remoting/.
         'script_args%': [],
+        'closure_args%': '<(default_closure_args)',
         'disabled_closure_args%': '<(default_disabled_closure_args)',
       },
 
       'inputs': [
         '<(CLOSURE_DIR)/compile_js2.gypi',
         '<(CLOSURE_DIR)/compile2.py',
-        '<(CLOSURE_DIR)/externs_js.gypi',
+        '<(CLOSURE_DIR)/include_js.gypi',
         '<(CLOSURE_DIR)/processor.py',
         '<(CLOSURE_DIR)/build/outputs.py',
         '<(CLOSURE_DIR)/compiler/compiler.jar',
@@ -62,6 +65,7 @@
         '<@(script_args)',
         '>@(_sources)',
         '--out_file', '<(out_file)',
+        '--runner_args', '<@(runner_args)',
         '--closure_args', '<@(closure_args)', '<@(disabled_closure_args)',
         # '--verbose' # for make glorious log spam of Closure compiler.
       ],

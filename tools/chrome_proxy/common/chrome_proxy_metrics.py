@@ -6,7 +6,7 @@ import logging
 import time
 
 from common import network_metrics
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import scalar
 
 
@@ -98,10 +98,21 @@ class ChromeProxyResponse(network_metrics.HTTPResponse):
     return self.GetChromeProxyRequestHeaderValue('c')
 
   def HasChromeProxyLoFiRequest(self):
-    return self.HasRequestHeader('Chrome-Proxy', "q=low")
+    return self.HasRequestHeader('Chrome-Proxy-Accept-Transform', "empty-image")
 
   def HasChromeProxyLoFiResponse(self):
-    return self.HasResponseHeader('Chrome-Proxy', "q=low")
+    return self.HasResponseHeader('Chrome-Proxy-Content-Transform',
+                                  "empty-image")
+
+  def HasChromeProxyLitePageRequest(self):
+    return self.HasRequestHeader('Chrome-Proxy-Accept-Transform', "lite-page")
+
+  def HasChromeProxyLitePageExpRequest(self):
+    return self.HasRequestHeader('Chrome-Proxy', "exp=ignore_preview_blacklist")
+
+  def HasChromeProxyLitePageResponse(self):
+    return self.HasResponseHeader('Chrome-Proxy-Content-Transform', "lite-page")
 
   def HasChromeProxyPassThroughRequest(self):
-    return self.HasRequestHeader('Chrome-Proxy', "pass-through")
+    return self.HasRequestHeader('Chrome-Proxy-Accept-Transform', "identity")
+

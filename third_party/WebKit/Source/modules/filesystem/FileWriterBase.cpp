@@ -28,43 +28,36 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/filesystem/FileWriterBase.h"
 
 #include "core/events/ProgressEvent.h"
 #include "core/fileapi/Blob.h"
 #include "core/fileapi/FileError.h"
 #include "public/platform/WebFileWriter.h"
+#include <memory>
 
 namespace blink {
 
-FileWriterBase::~FileWriterBase()
-{
+FileWriterBase::~FileWriterBase() {}
+
+void FileWriterBase::initialize(std::unique_ptr<WebFileWriter> writer,
+                                long long length) {
+  ASSERT(!m_writer);
+  ASSERT(length >= 0);
+  m_writer = std::move(writer);
+  m_length = length;
 }
 
-void FileWriterBase::initialize(PassOwnPtr<WebFileWriter> writer, long long length)
-{
-    ASSERT(!m_writer);
-    ASSERT(length >= 0);
-    m_writer = writer;
-    m_length = length;
+FileWriterBase::FileWriterBase() : m_position(0) {}
+
+void FileWriterBase::seekInternal(long long position) {
+  if (position > m_length)
+    position = m_length;
+  else if (position < 0)
+    position = m_length + position;
+  if (position < 0)
+    position = 0;
+  m_position = position;
 }
 
-FileWriterBase::FileWriterBase()
-    : m_position(0)
-{
-}
-
-void FileWriterBase::seekInternal(long long position)
-{
-    if (position > m_length)
-        position = m_length;
-    else if (position < 0)
-        position = m_length + position;
-    if (position < 0)
-        position = 0;
-    m_position = position;
-}
-
-} // namespace blink
+}  // namespace blink

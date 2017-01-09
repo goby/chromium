@@ -19,12 +19,8 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "core/svg/SVGRect.h"
 
-#include "bindings/core/v8/ExceptionState.h"
-#include "core/dom/ExceptionCode.h"
 #include "core/svg/SVGAnimationElement.h"
 #include "core/svg/SVGParserUtilities.h"
 #include "wtf/text/StringBuilder.h"
@@ -32,123 +28,115 @@
 
 namespace blink {
 
-SVGRect::SVGRect()
-    : m_isValid(true)
-{
+SVGRect::SVGRect() : m_isValid(true) {}
+
+SVGRect::SVGRect(const FloatRect& rect) : m_isValid(true), m_value(rect) {}
+
+SVGRect* SVGRect::clone() const {
+  return SVGRect::create(m_value);
 }
 
-SVGRect::SVGRect(const FloatRect& rect)
-    : m_isValid(true)
-    , m_value(rect)
-{
+template <typename CharType>
+SVGParsingError SVGRect::parse(const CharType*& ptr, const CharType* end) {
+  const CharType* start = ptr;
+  float x = 0;
+  float y = 0;
+  float width = 0;
+  float height = 0;
+  if (!parseNumber(ptr, end, x) || !parseNumber(ptr, end, y) ||
+      !parseNumber(ptr, end, width) ||
+      !parseNumber(ptr, end, height, DisallowWhitespace))
+    return SVGParsingError(SVGParseStatus::ExpectedNumber, ptr - start);
+
+  if (skipOptionalSVGSpaces(ptr, end)) {
+    // Nothing should come after the last, fourth number.
+    return SVGParsingError(SVGParseStatus::TrailingGarbage, ptr - start);
+  }
+
+  m_value = FloatRect(x, y, width, height);
+  m_isValid = true;
+  return SVGParseStatus::NoError;
 }
 
-PassRefPtrWillBeRawPtr<SVGRect> SVGRect::clone() const
-{
-    return SVGRect::create(m_value);
+SVGParsingError SVGRect::setValueAsString(const String& string) {
+  setInvalid();
+
+  if (string.isNull())
+    return SVGParseStatus::NoError;
+
+  if (string.isEmpty())
+    return SVGParsingError(SVGParseStatus::ExpectedNumber, 0);
+
+  if (string.is8Bit()) {
+    const LChar* ptr = string.characters8();
+    const LChar* end = ptr + string.length();
+    return parse(ptr, end);
+  }
+  const UChar* ptr = string.characters16();
+  const UChar* end = ptr + string.length();
+  return parse(ptr, end);
 }
 
-template<typename CharType>
-void SVGRect::parse(const CharType*& ptr, const CharType* end, ExceptionState& exceptionState)
-{
-    const CharType* start = ptr;
-
-    skipOptionalSVGSpaces(ptr, end);
-
-    float x = 0.0f;
-    float y = 0.0f;
-    float width = 0.0f;
-    float height = 0.0f;
-    bool valid = parseNumber(ptr, end, x) && parseNumber(ptr, end, y) && parseNumber(ptr, end, width) && parseNumber(ptr, end, height, DisallowWhitespace);
-
-    if (!valid) {
-        exceptionState.throwDOMException(SyntaxError, "Problem parsing rect \"" + String(start, end - start) + "\"");
-        setInvalid();
-        return;
-    }
-
-    skipOptionalSVGSpaces(ptr, end);
-    if (ptr < end) { // nothing should come after the last, fourth number
-        exceptionState.throwDOMException(SyntaxError, "Problem parsing rect \"" + String(start, end - start) + "\"");
-        setInvalid();
-        return;
-    }
-
-    m_value = FloatRect(x, y, width, height);
-    m_isValid = true;
+String SVGRect::valueAsString() const {
+  StringBuilder builder;
+  builder.appendNumber(x());
+  builder.append(' ');
+  builder.appendNumber(y());
+  builder.append(' ');
+  builder.appendNumber(width());
+  builder.append(' ');
+  builder.appendNumber(height());
+  return builder.toString();
 }
 
-void SVGRect::setValueAsString(const String& string, ExceptionState& exceptionState)
-{
-    if (string.isNull()) {
-        setInvalid();
-        return;
-    }
-    if (string.isEmpty()) {
-        m_value = FloatRect(0.0f, 0.0f, 0.0f, 0.0f);
-        m_isValid = true;
-        return;
-    }
-
-    if (string.is8Bit()) {
-        const LChar* ptr = string.characters8();
-        const LChar* end = ptr + string.length();
-        parse(ptr, end, exceptionState);
-        return;
-    }
-
-    const UChar* ptr = string.characters16();
-    const UChar* end = ptr + string.length();
-    parse(ptr, end, exceptionState);
+void SVGRect::add(SVGPropertyBase* other, SVGElement*) {
+  m_value += toSVGRect(other)->value();
 }
 
-String SVGRect::valueAsString() const
-{
-    StringBuilder builder;
-    builder.appendNumber(x());
-    builder.append(' ');
-    builder.appendNumber(y());
-    builder.append(' ');
-    builder.appendNumber(width());
-    builder.append(' ');
-    builder.appendNumber(height());
-    return builder.toString();
+void SVGRect::calculateAnimatedValue(SVGAnimationElement* animationElement,
+                                     float percentage,
+                                     unsigned repeatCount,
+                                     SVGPropertyBase* fromValue,
+                                     SVGPropertyBase* toValue,
+                                     SVGPropertyBase* toAtEndOfDurationValue,
+                                     SVGElement*) {
+  ASSERT(animationElement);
+  SVGRect* fromRect = animationElement->getAnimationMode() == ToAnimation
+                          ? this
+                          : toSVGRect(fromValue);
+  SVGRect* toRect = toSVGRect(toValue);
+  SVGRect* toAtEndOfDurationRect = toSVGRect(toAtEndOfDurationValue);
+
+  float animatedX = x();
+  float animatedY = y();
+  float animatedWidth = width();
+  float animatedHeight = height();
+  animationElement->animateAdditiveNumber(
+      percentage, repeatCount, fromRect->x(), toRect->x(),
+      toAtEndOfDurationRect->x(), animatedX);
+  animationElement->animateAdditiveNumber(
+      percentage, repeatCount, fromRect->y(), toRect->y(),
+      toAtEndOfDurationRect->y(), animatedY);
+  animationElement->animateAdditiveNumber(
+      percentage, repeatCount, fromRect->width(), toRect->width(),
+      toAtEndOfDurationRect->width(), animatedWidth);
+  animationElement->animateAdditiveNumber(
+      percentage, repeatCount, fromRect->height(), toRect->height(),
+      toAtEndOfDurationRect->height(), animatedHeight);
+
+  m_value = FloatRect(animatedX, animatedY, animatedWidth, animatedHeight);
 }
 
-void SVGRect::add(PassRefPtrWillBeRawPtr<SVGPropertyBase> other, SVGElement*)
-{
-    m_value += toSVGRect(other)->value();
+float SVGRect::calculateDistance(SVGPropertyBase* to,
+                                 SVGElement* contextElement) {
+  // FIXME: Distance calculation is not possible for SVGRect right now. We need
+  // the distance for every single value.
+  return -1;
 }
 
-void SVGRect::calculateAnimatedValue(SVGAnimationElement* animationElement, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> fromValue, PassRefPtrWillBeRawPtr<SVGPropertyBase> toValue, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDurationValue, SVGElement*)
-{
-    ASSERT(animationElement);
-    RefPtrWillBeRawPtr<SVGRect> fromRect = animationElement->animationMode() == ToAnimation ? PassRefPtrWillBeRawPtr<SVGRect>(this) : toSVGRect(fromValue);
-    RefPtrWillBeRawPtr<SVGRect> toRect = toSVGRect(toValue);
-    RefPtrWillBeRawPtr<SVGRect> toAtEndOfDurationRect = toSVGRect(toAtEndOfDurationValue);
-
-    float animatedX = x();
-    float animatedY = y();
-    float animatedWidth = width();
-    float animatedHeight = height();
-    animationElement->animateAdditiveNumber(percentage, repeatCount, fromRect->x(), toRect->x(), toAtEndOfDurationRect->x(), animatedX);
-    animationElement->animateAdditiveNumber(percentage, repeatCount, fromRect->y(), toRect->y(), toAtEndOfDurationRect->y(), animatedY);
-    animationElement->animateAdditiveNumber(percentage, repeatCount, fromRect->width(), toRect->width(), toAtEndOfDurationRect->width(), animatedWidth);
-    animationElement->animateAdditiveNumber(percentage, repeatCount, fromRect->height(), toRect->height(), toAtEndOfDurationRect->height(), animatedHeight);
-
-    m_value = FloatRect(animatedX, animatedY, animatedWidth, animatedHeight);
+void SVGRect::setInvalid() {
+  m_value = FloatRect(0.0f, 0.0f, 0.0f, 0.0f);
+  m_isValid = false;
 }
 
-float SVGRect::calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> to, SVGElement* contextElement)
-{
-    // FIXME: Distance calculation is not possible for SVGRect right now. We need the distance for every single value.
-    return -1;
-}
-
-void SVGRect::setInvalid()
-{
-    m_value = FloatRect(0.0f, 0.0f, 0.0f, 0.0f);
-    m_isValid = false;
-}
-
-}
+}  // namespace blink

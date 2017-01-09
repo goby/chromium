@@ -5,7 +5,7 @@
 from core import perf_benchmark
 
 from telemetry import benchmark
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import list_of_scalar_values
 from telemetry.value import scalar
 
@@ -13,11 +13,13 @@ from measurements import media
 import page_sets
 
 
-class _MSEMeasurement(page_test.PageTest):
+class _MSEMeasurement(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(_MSEMeasurement, self).__init__()
 
   def ValidateAndMeasurePage(self, page, tab, results):
+    del page  # unused
     media_metric = tab.EvaluateJavaScript('window.__testMetrics')
     trace = media_metric['id'] if 'id' in media_metric else None
     metrics = media_metric['metrics'] if 'metrics' in media_metric else []
@@ -25,21 +27,20 @@ class _MSEMeasurement(page_test.PageTest):
       trace_name = '%s.%s' % (m, trace)
       if isinstance(metrics[m], list):
         results.AddValue(list_of_scalar_values.ListOfScalarValues(
-                results.current_page, trace_name, units='ms',
-                values=[float(v) for v in metrics[m]],
-                important=True))
+            results.current_page, trace_name, units='ms',
+            values=[float(v) for v in metrics[m]],
+            important=True))
 
       else:
         results.AddValue(scalar.ScalarValue(
-                results.current_page, trace_name, units='ms',
-                value=float(metrics[m]), important=True))
+            results.current_page, trace_name, units='ms',
+            value=float(metrics[m]), important=True))
 
 
 # android: See media.android.tough_video_cases below
-# xp: crbug.com/475191
 # win8: crbug.com/531618
-# win7: crbug.com/555079
-@benchmark.Disabled('android', 'xp', 'win8', 'win7')
+# crbug.com/565180: Only include cases that report time_to_play
+@benchmark.Disabled('android', 'win8')
 class Media(perf_benchmark.PerfBenchmark):
   """Obtains media metrics for key user scenarios."""
   test = media.Media
@@ -50,7 +51,19 @@ class Media(perf_benchmark.PerfBenchmark):
     return 'media.tough_video_cases'
 
 
-@benchmark.Disabled('android', 'mac', 'xp')
+# crbug.com/565180: Only include cases that don't report time_to_play
+@benchmark.Disabled('android', 'win8')
+class MediaExtra(perf_benchmark.PerfBenchmark):
+  """Obtains extra media metrics for key user scenarios."""
+  test = media.Media
+  page_set = page_sets.ToughVideoCasesExtraPageSet
+
+  @classmethod
+  def Name(cls):
+    return 'media.tough_video_cases_extra'
+
+
+@benchmark.Disabled('android', 'mac')
 class MediaNetworkSimulation(perf_benchmark.PerfBenchmark):
   """Obtains media metrics under different network simulations."""
   test = media.Media
@@ -61,8 +74,7 @@ class MediaNetworkSimulation(perf_benchmark.PerfBenchmark):
     return 'media.media_cns_cases'
 
 
-@benchmark.Disabled('all') # crbug.com/448092
-@benchmark.Disabled('l', 'android-webview') # WebView: crbug.com/419689
+@benchmark.Disabled('android')  # crbug.com/671628, WebView: crbug.com/419689.
 class MediaAndroid(perf_benchmark.PerfBenchmark):
   """Obtains media metrics for key user scenarios on Android."""
   test = media.Media
@@ -70,6 +82,21 @@ class MediaAndroid(perf_benchmark.PerfBenchmark):
   page_set = page_sets.ToughVideoCasesPageSet
   # Exclude is_4k and 50 fps media files (garden* & crowd*).
   options = {'story_label_filter_exclude': 'is_4k,is_50fps'}
+
+  @classmethod
+  def ShouldDisable(cls, possible_browser):
+    # crbug.com/672059
+    if possible_browser.platform.GetOSName() != "android":
+      return True
+    # crbug.com/448092
+    if cls.IsSvelte(possible_browser):
+        return True
+
+    # crbug.com/647372
+    if possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X':
+      return True
+
+    return False
 
   @classmethod
   def Name(cls):
@@ -112,7 +139,7 @@ class MediaChromeOS(perf_benchmark.PerfBenchmark):
     return 'media.chromeOS.tough_video_cases'
 
 
-@benchmark.Disabled('android-webview') # crbug.com/419689
+@benchmark.Disabled('android-webview')  # crbug.com/419689
 class MediaSourceExtensions(perf_benchmark.PerfBenchmark):
   """Obtains media metrics for key media source extensions functions."""
   test = _MSEMeasurement

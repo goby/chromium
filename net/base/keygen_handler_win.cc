@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "base/base64.h"
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
@@ -20,9 +19,6 @@
 #include "crypto/capi_util.h"
 #include "crypto/scoped_capi_types.h"
 #include "crypto/wincrypt_shim.h"
-
-#pragma comment(lib, "crypt32.lib")
-#pragma comment(lib, "rpcrt4.lib")
 
 namespace net {
 
@@ -183,7 +179,7 @@ std::string KeygenHandler::GenKeyAndSignChallenge() {
             CRYPT_SILENT | CRYPT_NEWKEYSET))
       break;
 
-    if (GetLastError() != NTE_BAD_KEYSET) {
+    if (GetLastError() != static_cast<DWORD>(NTE_BAD_KEYSET)) {
       LOG(ERROR) << "Keygen failed: Couldn't acquire a CryptoAPI provider "
                     "context: " << GetLastError();
       return std::string();

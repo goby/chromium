@@ -4,12 +4,17 @@
 
 #include "ui/events/latency_info.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <string>
+#include <utility>
 
 #include "base/json/json_writer.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
+#include "base/trace_event/trace_event.h"
 
 namespace {
 
@@ -30,9 +35,11 @@ const char* GetComponentName(ui::LatencyComponentType type) {
     CASE_TYPE(INPUT_EVENT_LATENCY_ACK_RWH_COMPONENT);
     CASE_TYPE(WINDOW_SNAPSHOT_FRAME_NUMBER_COMPONENT);
     CASE_TYPE(TAB_SHOW_COMPONENT);
+    CASE_TYPE(INPUT_EVENT_LATENCY_RENDERER_MAIN_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_RENDERER_SWAP_COMPONENT);
     CASE_TYPE(INPUT_EVENT_BROWSER_RECEIVED_RENDERER_SWAP_COMPONENT);
     CASE_TYPE(INPUT_EVENT_GPU_SWAP_BUFFER_COMPONENT);
+    CASE_TYPE(INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL);
     CASE_TYPE(INPUT_EVENT_LATENCY_TERMINATED_MOUSE_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_TERMINATED_MOUSE_WHEEL_COMPONENT);
     CASE_TYPE(INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT);
@@ -80,8 +87,8 @@ bool IsInputLatencyBeginComponent(ui::LatencyComponentType type) {
 class LatencyInfoTracedValue
     : public base::trace_event::ConvertableToTraceFormat {
  public:
-  static scoped_refptr<ConvertableToTraceFormat> FromValue(
-      scoped_ptr<base::Value> value);
+  static std::unique_ptr<ConvertableToTraceFormat> FromValue(
+      std::unique_ptr<base::Value> value);
 
   void AppendAsTraceFormat(std::string* out) const override;
 
@@ -89,14 +96,14 @@ class LatencyInfoTracedValue
   explicit LatencyInfoTracedValue(base::Value* value);
   ~LatencyInfoTracedValue() override;
 
-  scoped_ptr<base::Value> value_;
+  std::unique_ptr<base::Value> value_;
 
   DISALLOW_COPY_AND_ASSIGN(LatencyInfoTracedValue);
 };
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
-LatencyInfoTracedValue::FromValue(scoped_ptr<base::Value> value) {
-  return scoped_refptr<base::trace_event::ConvertableToTraceFormat>(
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
+LatencyInfoTracedValue::FromValue(std::unique_ptr<base::Value> value) {
+  return std::unique_ptr<base::trace_event::ConvertableToTraceFormat>(
       new LatencyInfoTracedValue(value.release()));
 }
 
@@ -113,7 +120,7 @@ LatencyInfoTracedValue::LatencyInfoTracedValue(base::Value* value)
     : value_(value) {
 }
 
-const char kTraceCategoriesForAsyncEvents[] = "benchmark,latencyInfo";
+const char kTraceCategoriesForAsyncEvents[] = "benchmark,latencyInfo,rail";
 
 struct LatencyInfoEnabledInitializer {
   LatencyInfoEnabledInitializer() :
@@ -131,27 +138,24 @@ static base::LazyInstance<LatencyInfoEnabledInitializer>::Leaky
 
 namespace ui {
 
-LatencyInfo::InputCoordinate::InputCoordinate() : x(0), y(0) {
-}
+LatencyInfo::LatencyInfo() : LatencyInfo(SourceEventType::UNKNOWN) {}
 
-LatencyInfo::InputCoordinate::InputCoordinate(float x, float y) : x(x), y(y) {
-}
-
-LatencyInfo::LatencyInfo()
+LatencyInfo::LatencyInfo(SourceEventType type)
     : input_coordinates_size_(0),
-      coalesced_events_size_(0),
       trace_id_(-1),
-      terminated_(false) {
-}
+      coalesced_(false),
+      terminated_(false),
+      source_event_type_(type) {}
 
-LatencyInfo::~LatencyInfo() {
-}
+LatencyInfo::LatencyInfo(const LatencyInfo& other) = default;
 
-LatencyInfo::LatencyInfo(int64 trace_id, bool terminated)
+LatencyInfo::~LatencyInfo() {}
+
+LatencyInfo::LatencyInfo(int64_t trace_id, bool terminated)
     : input_coordinates_size_(0),
-      coalesced_events_size_(0),
       trace_id_(trace_id),
-      terminated_(terminated) {}
+      terminated_(terminated),
+      source_event_type_(SourceEventType::UNKNOWN) {}
 
 bool LatencyInfo::Verify(const std::vector<LatencyInfo>& latency_info,
                          const char* referring_msg) {
@@ -192,38 +196,38 @@ void LatencyInfo::AddNewLatencyFrom(const LatencyInfo& other) {
 }
 
 void LatencyInfo::AddLatencyNumber(LatencyComponentType component,
-                                   int64 id,
-                                   int64 component_sequence_number) {
+                                   int64_t id,
+                                   int64_t component_sequence_number) {
   AddLatencyNumberWithTimestampImpl(component, id, component_sequence_number,
                                     base::TimeTicks::Now(), 1, nullptr);
 }
 
 void LatencyInfo::AddLatencyNumberWithTraceName(
     LatencyComponentType component,
-    int64 id,
-    int64 component_sequence_number,
+    int64_t id,
+    int64_t component_sequence_number,
     const char* trace_name_str) {
   AddLatencyNumberWithTimestampImpl(component, id, component_sequence_number,
                                     base::TimeTicks::Now(), 1, trace_name_str);
 }
 
-void LatencyInfo::AddLatencyNumberWithTimestamp(LatencyComponentType component,
-                                                int64 id,
-                                                int64 component_sequence_number,
-                                                base::TimeTicks time,
-                                                uint32 event_count) {
+void LatencyInfo::AddLatencyNumberWithTimestamp(
+    LatencyComponentType component,
+    int64_t id,
+    int64_t component_sequence_number,
+    base::TimeTicks time,
+    uint32_t event_count) {
   AddLatencyNumberWithTimestampImpl(component, id, component_sequence_number,
                                     time, event_count, nullptr);
 }
 
 void LatencyInfo::AddLatencyNumberWithTimestampImpl(
     LatencyComponentType component,
-    int64 id,
-    int64 component_sequence_number,
+    int64_t id,
+    int64_t component_sequence_number,
     base::TimeTicks time,
-    uint32 event_count,
+    uint32_t event_count,
     const char* trace_name_str) {
-
   const unsigned char* latency_info_enabled =
       g_latency_info_enabled.Get().latency_info_enabled;
 
@@ -239,16 +243,16 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
       // originally created, e.g. the timestamp of its ORIGINAL/UI_COMPONENT,
       // not when we actually issue the ASYNC_BEGIN trace event.
       LatencyComponent begin_component;
-      int64 ts = 0;
+      base::TimeTicks ts;
       if (FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT,
                       0,
                       &begin_component) ||
           FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT,
                       0,
                       &begin_component)) {
-        ts = begin_component.event_time.ToInternalValue();
+        ts = begin_component.event_time;
       } else {
-        ts = base::TimeTicks::Now().ToInternalValue();
+        ts = base::TimeTicks::Now();
       }
 
       if (trace_name_str) {
@@ -275,12 +279,13 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
   LatencyMap::key_type key = std::make_pair(component, id);
   LatencyMap::iterator it = latency_components_.find(key);
   if (it == latency_components_.end()) {
-    LatencyComponent info = {component_sequence_number, time, event_count};
+    LatencyComponent info = {component_sequence_number, time, event_count, time,
+                             time};
     latency_components_[key] = info;
   } else {
     it->second.sequence_number = std::max(component_sequence_number,
                                           it->second.sequence_number);
-    uint32 new_count = event_count + it->second.event_count;
+    uint32_t new_count = event_count + it->second.event_count;
     if (event_count > 0 && new_count != 0) {
       // Do a weighted average, so that the new event_time is the average of
       // the times of events currently in this structure with the time passed
@@ -288,6 +293,7 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
       it->second.event_time += (time - it->second.event_time) * event_count /
           new_count;
       it->second.event_count = new_count;
+      it->second.last_event_time = std::max(it->second.last_event_time, time);
     }
   }
 
@@ -311,12 +317,13 @@ void LatencyInfo::AddLatencyNumberWithTimestampImpl(
   }
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 LatencyInfo::AsTraceableData() {
-  scoped_ptr<base::DictionaryValue> record_data(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> record_data(
+      new base::DictionaryValue());
   for (const auto& lc : latency_components_) {
-    scoped_ptr<base::DictionaryValue>
-        component_info(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> component_info(
+        new base::DictionaryValue());
     component_info->SetDouble("comp_id", static_cast<double>(lc.first.second));
     component_info->SetDouble(
         "time",
@@ -324,27 +331,28 @@ LatencyInfo::AsTraceableData() {
     component_info->SetDouble("count", lc.second.event_count);
     component_info->SetDouble("sequence_number",
                               lc.second.sequence_number);
-    record_data->Set(GetComponentName(lc.first.first), component_info.Pass());
+    record_data->Set(GetComponentName(lc.first.first),
+                     std::move(component_info));
   }
   record_data->SetDouble("trace_id", static_cast<double>(trace_id_));
-  return LatencyInfoTracedValue::FromValue(record_data.Pass());
+  return LatencyInfoTracedValue::FromValue(std::move(record_data));
 }
 
-scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
 LatencyInfo::CoordinatesAsTraceableData() {
-  scoped_ptr<base::ListValue> coordinates(new base::ListValue());
+  std::unique_ptr<base::ListValue> coordinates(new base::ListValue());
   for (size_t i = 0; i < input_coordinates_size_; i++) {
-    scoped_ptr<base::DictionaryValue> coordinate_pair(
+    std::unique_ptr<base::DictionaryValue> coordinate_pair(
         new base::DictionaryValue());
-    coordinate_pair->SetDouble("x", input_coordinates_[i].x);
-    coordinate_pair->SetDouble("y", input_coordinates_[i].y);
-    coordinates->Append(coordinate_pair.release());
+    coordinate_pair->SetDouble("x", input_coordinates_[i].x());
+    coordinate_pair->SetDouble("y", input_coordinates_[i].y());
+    coordinates->Append(std::move(coordinate_pair));
   }
-  return LatencyInfoTracedValue::FromValue(coordinates.Pass());
+  return LatencyInfoTracedValue::FromValue(std::move(coordinates));
 }
 
 bool LatencyInfo::FindLatency(LatencyComponentType type,
-                              int64 id,
+                              int64_t id,
                               LatencyComponent* output) const {
   LatencyMap::const_iterator it = latency_components_.find(
       std::make_pair(type, id));
@@ -358,27 +366,17 @@ bool LatencyInfo::FindLatency(LatencyComponentType type,
 void LatencyInfo::RemoveLatency(LatencyComponentType type) {
   LatencyMap::iterator it = latency_components_.begin();
   while (it != latency_components_.end()) {
-    if (it->first.first == type) {
-      LatencyMap::iterator tmp = it;
-      ++it;
-      latency_components_.erase(tmp);
-    } else {
+    if (it->first.first == type)
+      it = latency_components_.erase(it);
+    else
       it++;
-    }
   }
 }
 
-bool LatencyInfo::AddInputCoordinate(const InputCoordinate& input_coordinate) {
+bool LatencyInfo::AddInputCoordinate(const gfx::PointF& input_coordinate) {
   if (input_coordinates_size_ >= kMaxInputCoordinates)
     return false;
   input_coordinates_[input_coordinates_size_++] = input_coordinate;
-  return true;
-}
-
-bool LatencyInfo::AddCoalescedEventTimestamp(double timestamp) {
-  if (coalesced_events_size_ >= kMaxCoalescedEventTimestamps)
-    return false;
-  timestamps_of_coalesced_events_[coalesced_events_size_++] = timestamp;
   return true;
 }
 

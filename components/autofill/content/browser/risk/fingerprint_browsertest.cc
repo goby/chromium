@@ -6,18 +6,22 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "build/build_config.h"
 #include "components/autofill/content/browser/risk/proto/fingerprint.pb.h"
-#include "content/public/browser/geolocation_provider.h"
 #include "content/public/browser/gpu_data_manager.h"
-#include "content/public/common/geoposition.h"
+#include "content/public/common/screen_info.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/test_utils.h"
+#include "device/geolocation/geolocation_provider.h"
+#include "device/geolocation/geoposition.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/WebKit/public/platform/WebRect.h"
-#include "third_party/WebKit/public/platform/WebScreenInfo.h"
 #include "ui/gfx/geometry/rect.h"
 
 using testing::ElementsAre;
@@ -32,7 +36,7 @@ void GetFingerprintInternal(
     uint64_t obfuscated_gaia_id,
     const gfx::Rect& window_bounds,
     const gfx::Rect& content_bounds,
-    const blink::WebScreenInfo& screen_info,
+    const content::ScreenInfo& screen_info,
     const std::string& version,
     const std::string& charset,
     const std::string& accept_languages,
@@ -40,7 +44,7 @@ void GetFingerprintInternal(
     const std::string& app_locale,
     const std::string& user_agent,
     const base::TimeDelta& timeout,
-    const base::Callback<void(scoped_ptr<Fingerprint>)>& callback);
+    const base::Callback<void(std::unique_ptr<Fingerprint>)>& callback);
 
 }  // namespace internal
 
@@ -70,7 +74,7 @@ class AutofillRiskFingerprintTest : public content::ContentBrowserTest {
         available_screen_bounds_(0, 11, 101, 60),
         unavailable_screen_bounds_(0, 0, 101, 11) {}
 
-  void GetFingerprintTestCallback(scoped_ptr<Fingerprint> fingerprint) {
+  void GetFingerprintTestCallback(std::unique_ptr<Fingerprint> fingerprint) {
     // Verify that all fields Chrome can fill have been filled.
     ASSERT_TRUE(fingerprint->has_machine_characteristics());
     const Fingerprint::MachineCharacteristics& machine =
@@ -181,16 +185,9 @@ class AutofillRiskFingerprintTest : public content::ContentBrowserTest {
   base::MessageLoopForUI message_loop_;
 };
 
-#if defined(OS_WIN)
-// http://crbug.com/503821
-#define MAYBE_GetFingerprint DISABLED_GetFingerprint
-#else
-#define MAYBE_GetFingerprint GetFingerprint
-#endif
-
 // Test that getting a fingerprint works on some basic level.
-IN_PROC_BROWSER_TEST_F(AutofillRiskFingerprintTest, MAYBE_GetFingerprint) {
-  content::Geoposition position;
+IN_PROC_BROWSER_TEST_F(AutofillRiskFingerprintTest, GetFingerprint) {
+  device::Geoposition position;
   position.latitude = kLatitude;
   position.longitude = kLongitude;
   position.altitude = kAltitude;
@@ -198,13 +195,13 @@ IN_PROC_BROWSER_TEST_F(AutofillRiskFingerprintTest, MAYBE_GetFingerprint) {
   position.timestamp =
       base::Time::UnixEpoch() +
       base::TimeDelta::FromMilliseconds(kGeolocationTime);
-  content::GeolocationProvider::GetInstance()->OverrideLocationForTesting(
+  device::GeolocationProvider::GetInstance()->OverrideLocationForTesting(
       position);
 
-  blink::WebScreenInfo screen_info;
+  content::ScreenInfo screen_info;
   screen_info.depth = kScreenColorDepth;
-  screen_info.rect = blink::WebRect(screen_bounds_);
-  screen_info.availableRect = blink::WebRect(available_screen_bounds_);
+  screen_info.rect = screen_bounds_;
+  screen_info.available_rect = available_screen_bounds_;
 
   internal::GetFingerprintInternal(
       kObfuscatedGaiaId, window_bounds_, content_bounds_, screen_info,
@@ -215,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(AutofillRiskFingerprintTest, MAYBE_GetFingerprint) {
                  base::Unretained(this)));
 
   // Wait for the callback to be called.
-  message_loop_.Run();
+  base::RunLoop().Run();
 }
 
 }  // namespace risk

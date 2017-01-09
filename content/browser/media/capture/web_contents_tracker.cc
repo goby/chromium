@@ -4,7 +4,7 @@
 
 #include "content/browser/media/capture/web_contents_tracker.h"
 
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -24,10 +24,10 @@ WebContentsTracker::~WebContentsTracker() {
 
 void WebContentsTracker::Start(int render_process_id, int main_render_frame_id,
                                const ChangeCallback& callback) {
-  DCHECK(!task_runner_.get() || task_runner_->BelongsToCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->BelongsToCurrentThread());
 
   task_runner_ = base::ThreadTaskRunnerHandle::Get();
-  DCHECK(task_runner_.get());
+  DCHECK(task_runner_);
   callback_ = callback;
 
   if (BrowserThread::CurrentlyOn(BrowserThread::UI)) {
@@ -81,7 +81,7 @@ RenderWidgetHost* WebContentsTracker::GetTargetRenderWidgetHost() const {
 
 void WebContentsTracker::SetResizeChangeCallback(
     const base::Closure& callback) {
-  DCHECK(!task_runner_.get() || task_runner_->BelongsToCurrentThread());
+  DCHECK(!task_runner_ || task_runner_->BelongsToCurrentThread());
   resize_callback_ = callback;
 }
 
@@ -163,11 +163,11 @@ void WebContentsTracker::WebContentsDestroyed() {
   OnPossibleTargetChange(false);
 }
 
-void WebContentsTracker::DidShowFullscreenWidget(int routing_id) {
+void WebContentsTracker::DidShowFullscreenWidget() {
   OnPossibleTargetChange(false);
 }
 
-void WebContentsTracker::DidDestroyFullscreenWidget(int routing_id) {
+void WebContentsTracker::DidDestroyFullscreenWidget() {
   OnPossibleTargetChange(false);
 }
 

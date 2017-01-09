@@ -4,11 +4,11 @@
 
 #include "base/deferred_sequenced_task_runner.h"
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/threading/thread.h"
@@ -70,14 +70,14 @@ class DeferredSequencedTaskRunnerTest : public testing::Test,
 
 TEST_F(DeferredSequencedTaskRunnerTest, Stopped) {
   PostExecuteTask(1);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre());
 }
 
 TEST_F(DeferredSequencedTaskRunnerTest, Start) {
   StartRunner();
   PostExecuteTask(1);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre(1));
 }
 
@@ -86,34 +86,34 @@ TEST_F(DeferredSequencedTaskRunnerTest, StartWithMultipleElements) {
   for (int i = 1; i < 5; ++i)
     PostExecuteTask(i);
 
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre(1, 2, 3, 4));
 }
 
 TEST_F(DeferredSequencedTaskRunnerTest, DeferredStart) {
   PostExecuteTask(1);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre());
 
   StartRunner();
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre(1));
 
   PostExecuteTask(2);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre(1, 2));
 }
 
 TEST_F(DeferredSequencedTaskRunnerTest, DeferredStartWithMultipleElements) {
   for (int i = 1; i < 5; ++i)
     PostExecuteTask(i);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre());
 
   StartRunner();
   for (int i = 5; i < 9; ++i)
     PostExecuteTask(i);
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_, testing::ElementsAre(1, 2, 3, 4, 5, 6, 7, 8));
 }
 
@@ -140,7 +140,7 @@ TEST_F(DeferredSequencedTaskRunnerTest, DeferredStartWithMultipleThreads) {
     }
   }
 
-  loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_THAT(executed_task_ids_,
       testing::WhenSorted(testing::ElementsAre(0, 1, 2, 3, 4, 5, 6, 7, 8, 9)));
 }
@@ -157,10 +157,9 @@ TEST_F(DeferredSequencedTaskRunnerTest, ObjectDestructionOrder) {
         scoped_refptr<ExecuteTaskOnDestructor> short_lived_object =
             new ExecuteTaskOnDestructor(this, 2 * i);
         runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&DeferredSequencedTaskRunnerTest::DoNothing,
-                       base::Unretained(this),
-                       short_lived_object));
+            FROM_HERE, base::Bind(&DeferredSequencedTaskRunnerTest::DoNothing,
+                                  base::Unretained(this),
+                                  base::RetainedRef(short_lived_object)));
       }
       // |short_lived_object| with id |2 * i| should be destroyed before the
       // task |2 * i + 1| is executed.

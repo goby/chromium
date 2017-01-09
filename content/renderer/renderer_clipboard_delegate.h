@@ -6,6 +6,7 @@
 #define CONTENT_RENDERER_RENDERER_CLIPBOARD_DELEGATE_H_
 
 #include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
@@ -26,7 +27,7 @@ class RendererClipboardDelegate {
  public:
   RendererClipboardDelegate();
 
-  uint64 GetSequenceNumber(ui::ClipboardType type);
+  uint64_t GetSequenceNumber(ui::ClipboardType type);
   bool IsFormatAvailable(ClipboardFormat format, ui::ClipboardType type);
   void Clear(ui::ClipboardType type);
   void ReadAvailableTypes(ui::ClipboardType type,
@@ -36,10 +37,13 @@ class RendererClipboardDelegate {
   void ReadHTML(ui::ClipboardType type,
                 base::string16* markup,
                 GURL* url,
-                uint32* fragment_start,
-                uint32* fragment_end);
+                uint32_t* fragment_start,
+                uint32_t* fragment_end);
   void ReadRTF(ui::ClipboardType type, std::string* result);
-  void ReadImage(ui::ClipboardType type, std::string* data);
+  void ReadImage(ui::ClipboardType type,
+                 std::string* blob_uuid,
+                 std::string* mime_type,
+                 int64_t* size);
   void ReadCustomData(ui::ClipboardType clipboard_type,
                       const base::string16& type,
                       base::string16* data);

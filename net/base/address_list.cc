@@ -4,34 +4,38 @@
 
 #include "net/base/address_list.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/logging.h"
 #include "base/values.h"
-#include "net/base/net_util.h"
 #include "net/base/sys_addrinfo.h"
+#include "net/log/net_log_capture_mode.h"
 
 namespace net {
 
 namespace {
 
-scoped_ptr<base::Value> NetLogAddressListCallback(
+std::unique_ptr<base::Value> NetLogAddressListCallback(
     const AddressList* address_list,
     NetLogCaptureMode capture_mode) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
 
   for (AddressList::const_iterator it = address_list->begin();
        it != address_list->end(); ++it) {
-    list->Append(new base::StringValue(it->ToString()));
+    list->AppendString(it->ToString());
   }
 
-  dict->Set("address_list", list.Pass());
-  return dict.Pass();
+  dict->Set("address_list", std::move(list));
+  return std::move(dict);
 }
 
 }  // namespace
 
 AddressList::AddressList() {}
+
+AddressList::AddressList(const AddressList&) = default;
 
 AddressList::~AddressList() {}
 
@@ -40,7 +44,7 @@ AddressList::AddressList(const IPEndPoint& endpoint) {
 }
 
 // static
-AddressList AddressList::CreateFromIPAddress(const IPAddressNumber& address,
+AddressList AddressList::CreateFromIPAddress(const IPAddress& address,
                                              uint16_t port) {
   return AddressList(IPEndPoint(address, port));
 }
@@ -89,7 +93,7 @@ void AddressList::SetDefaultCanonicalName() {
   set_canonical_name(front().ToStringWithoutPort());
 }
 
-NetLog::ParametersCallback AddressList::CreateNetLogCallback() const {
+NetLogParametersCallback AddressList::CreateNetLogCallback() const {
   return base::Bind(&NetLogAddressListCallback, this);
 }
 

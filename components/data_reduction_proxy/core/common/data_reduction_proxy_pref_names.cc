@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
 
 namespace data_reduction_proxy {
@@ -76,7 +78,7 @@ const char kDailyContentLengthWithDataReductionProxyEnabledUnknown[] =
     "data_reduction.daily_received_length_with_data_reduction_proxy_enabled_"
     "unknown";
 
-// An int64 pref that contains an internal representation of midnight on the
+// An int64_t pref that contains an internal representation of midnight on the
 // date of the last update to |kDailyHttp{Original,Received}ContentLength|.
 const char kDailyHttpContentLengthLastUpdateDate[] =
     "data_reduction.last_update_date";
@@ -175,9 +177,6 @@ const char kDataReductionProxy[] = "auth.spdyproxy.origin";
 // String that specifies a persisted Data Reduction Proxy configuration.
 const char kDataReductionProxyConfig[] = "data_reduction.config";
 
-// A boolean specifying whether the data reduction proxy is enabled.
-const char kDataReductionProxyEnabled[] = "spdy_proxy.enabled";
-
 // A boolean specifying whether data usage should be collected for reporting.
 const char kDataUsageReportingEnabled[] = "data_usage_reporting.enabled";
 
@@ -186,11 +185,17 @@ const char kDataUsageReportingEnabled[] = "data_usage_reporting.enabled";
 const char kDataReductionProxyWasEnabledBefore[] =
     "spdy_proxy.was_enabled_before";
 
-// An int64 pref that contains the total size of all HTTP content received from
-// the network.
+// An integer pref that contains the time when the data reduction proxy was last
+// enabled. Recorded only if the data reduction proxy was last enabled since
+// this pref was added.
+const char kDataReductionProxyLastEnabledTime[] =
+    "data_reduction.last_enabled_time";
+
+// An int64_t pref that contains the total size of all HTTP content received
+// from the network.
 const char kHttpReceivedContentLength[] = "http_received_content_length";
 
-// An int64 pref that contains the total original size of all HTTP content
+// An int64_t pref that contains the total original size of all HTTP content
 // received over the network.
 const char kHttpOriginalContentLength[] = "http_original_content_length";
 
@@ -200,13 +205,15 @@ const char kHttpOriginalContentLength[] = "http_original_content_length";
 const char kLoFiImplicitOptOutEpoch[] =
     "data_reduction_lo_fi.implicit_opt_out_epoch";
 
-// An integer pref that contains the number of times that "Load images" Lo-Fi
-// snackbar has been shown for the current session.
-const char kLoFiSnackbarsShownPerSession[] =
+// An integer pref that contains the number of times that "Load original" Lo-Fi
+// UI has been shown for the current session. Note the naming of the pref is due
+// to the fact that this UI was originally a snackbar, and has since been
+// changed.
+const char kLoFiUIShownPerSession[] =
     "data_reduction_lo_fi.load_images_snackbars_shown_per_session";
 
-// An integer pref that contains the number of times that "Load images" has been
-// requested on the Lo-Fi snackbar for the current session.
+// An integer pref that contains the number of times that loading the images has
+// been requested from the Lo-Fi UI for the current session.
 const char kLoFiLoadImagesPerSession[] =
     "data_reduction_lo_fi.load_images_requests_per_session";
 
@@ -225,18 +232,6 @@ const char kLoFiWasUsedThisSession[] =
 // or not available.
 const char kSimulatedConfigRetrieveTime[] =
     "data_reduction.simulated_config_retrieve_time";
-
-// A boolean specifying whether the data reduction proxy statistics preferences
-// have migrated from local state to the profile.
-const char kStatisticsPrefsMigrated[] =
-    "data_reduction.statistics_prefs_migrated";
-
-// Pref to indicate that the kDailyHttpOriginalContentLength and
-// kDailyHttpReceivedContentLength prefs must be updated with their latest
-// value. These values are cached in memory on platforms other than Android and
-// iOS for performance reasons.
-const char kUpdateDailyReceivedContentLengths[] =
-    "data_reduction.update_daily_lengths";
 
 }  // namespace prefs
 }  // namespace data_reduction_proxy

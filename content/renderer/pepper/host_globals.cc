@@ -21,7 +21,6 @@
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/web/WebConsoleMessage.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
 #include "third_party/WebKit/public/web/WebPluginContainer.h"
 
@@ -149,10 +148,13 @@ void HostGlobals::LogWithSource(PP_Instance instance,
                                 const std::string& value) {
   PepperPluginInstanceImpl* instance_object =
       HostGlobals::Get()->GetInstance(instance);
-  if (instance_object) {
+  // It's possible to process this message in a nested message loop while
+  // detaching a Document…
+  // TODO(dcheng): Make it so this can't happen. https://crbug.com/561683
+  if (instance_object &&
+      instance_object->container()->document().frame()) {
     instance_object->container()
-        ->element()
-        .document()
+        ->document()
         .frame()
         ->addMessageToConsole(MakeLogMessage(level, source, value));
   } else {
@@ -183,14 +185,14 @@ void HostGlobals::BroadcastLogWithSource(PP_Module pp_module,
   WebConsoleMessage message = MakeLogMessage(level, source, value);
   for (ContainerSet::iterator i = containers.begin(); i != containers.end();
        ++i) {
-    WebLocalFrame* frame = (*i)->element().document().frame();
+    WebLocalFrame* frame = (*i)->document().frame();
     if (frame)
       frame->addMessageToConsole(message);
   }
 }
 
 base::TaskRunner* HostGlobals::GetFileTaskRunner() {
-  return RenderThreadImpl::current()->GetFileThreadMessageLoopProxy().get();
+  return RenderThreadImpl::current()->GetFileThreadTaskRunner().get();
 }
 
 ppapi::MessageLoopShared* HostGlobals::GetCurrentMessageLoop() { return NULL; }

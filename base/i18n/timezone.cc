@@ -4,10 +4,12 @@
 
 #include "base/i18n/timezone.h"
 
+#include <stddef.h>
 #include <string.h>
 
 #include <map>
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -605,7 +607,7 @@ class TimezoneMap {
 }  // namespace
 
 std::string CountryCodeForCurrentTimezone() {
-  scoped_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
+  std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
   icu::UnicodeString id;
   zone->getID(id);
   string16 olson_code(id.getBuffer(), id.length());

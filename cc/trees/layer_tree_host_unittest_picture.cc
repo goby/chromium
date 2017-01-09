@@ -17,14 +17,14 @@ namespace {
 class LayerTreeHostPictureTest : public LayerTreeTest {
  protected:
   void SetupTreeWithSinglePictureLayer(const gfx::Size& size) {
-    scoped_refptr<Layer> root = Layer::Create(layer_settings());
+    scoped_refptr<Layer> root = Layer::Create();
     root->SetBounds(size);
 
-    root_picture_layer_ = FakePictureLayer::Create(layer_settings(), &client_);
+    root_picture_layer_ = FakePictureLayer::Create(&client_);
     root_picture_layer_->SetBounds(size);
     root->AddChild(root_picture_layer_);
 
-    layer_tree_host()->SetRootLayer(root);
+    layer_tree()->SetRootLayer(root);
     client_.set_bounds(size);
   }
 
@@ -36,6 +36,8 @@ class LayerTreeHostPictureTestTwinLayer
     : public LayerTreeHostPictureTest {
   void SetupTree() override {
     SetupTreeWithSinglePictureLayer(gfx::Size(1, 1));
+    picture_id1_ = root_picture_layer_->id();
+    picture_id2_ = -1;
   }
 
   void BeginTest() override {
@@ -44,7 +46,7 @@ class LayerTreeHostPictureTestTwinLayer
   }
 
   void DidCommit() override {
-    switch (layer_tree_host()->source_frame_number()) {
+    switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
         // Activate while there are pending and active twins in place.
         layer_tree_host()->SetNeedsCommit();
@@ -52,14 +54,15 @@ class LayerTreeHostPictureTestTwinLayer
       case 2:
         // Drop the picture layer from the tree so the activate will have an
         // active layer without a pending twin.
-        layer_tree_host()->root_layer()->children()[0]->RemoveFromParent();
+        root_picture_layer_->RemoveFromParent();
         break;
       case 3: {
         // Add a new picture layer so the activate will have a pending layer
         // without an active twin.
         scoped_refptr<FakePictureLayer> picture =
-            FakePictureLayer::Create(layer_settings(), &client_);
-        layer_tree_host()->root_layer()->AddChild(picture);
+            FakePictureLayer::Create(&client_);
+        picture_id2_ = picture->id();
+        layer_tree()->root_layer()->AddChild(picture);
         break;
       }
       case 4:
@@ -73,17 +76,19 @@ class LayerTreeHostPictureTestTwinLayer
   }
 
   void WillActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* pending_root_impl = impl->pending_tree()->root_layer();
-    LayerImpl* active_root_impl = impl->active_tree()->root_layer();
+    LayerImpl* active_root_impl = impl->active_tree()->root_layer_for_testing();
+    int picture_id = impl->active_tree()->source_frame_number() < 2
+                         ? picture_id1_
+                         : picture_id2_;
 
-    if (pending_root_impl->children().empty()) {
+    if (!impl->pending_tree()->LayerById(picture_id)) {
       EXPECT_EQ(2, activates_);
       return;
     }
 
     FakePictureLayerImpl* pending_picture_impl =
         static_cast<FakePictureLayerImpl*>(
-            pending_root_impl->children()[0].get());
+            impl->pending_tree()->LayerById(picture_id));
 
     if (!active_root_impl) {
       EXPECT_EQ(0, activates_);
@@ -91,7 +96,7 @@ class LayerTreeHostPictureTestTwinLayer
       return;
     }
 
-    if (active_root_impl->children().empty()) {
+    if (!impl->active_tree()->LayerById(picture_id)) {
       EXPECT_EQ(3, activates_);
       EXPECT_EQ(nullptr, pending_picture_impl->GetPendingOrActiveTwinLayer());
       return;
@@ -99,7 +104,7 @@ class LayerTreeHostPictureTestTwinLayer
 
     FakePictureLayerImpl* active_picture_impl =
         static_cast<FakePictureLayerImpl*>(
-            active_root_impl->children()[0].get());
+            impl->active_tree()->LayerById(picture_id));
 
     // After the first activation, when we commit again, we'll have a pending
     // and active layer. Then we recreate a picture layer in the 4th activate
@@ -113,13 +118,15 @@ class LayerTreeHostPictureTestTwinLayer
   }
 
   void DidActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* active_root_impl = impl->active_tree()->root_layer();
-    if (active_root_impl->children().empty()) {
+    int picture_id = impl->active_tree()->source_frame_number() < 3
+                         ? picture_id1_
+                         : picture_id2_;
+    if (!impl->active_tree()->LayerById(picture_id)) {
       EXPECT_EQ(2, activates_);
     } else {
       FakePictureLayerImpl* active_picture_impl =
           static_cast<FakePictureLayerImpl*>(
-              active_root_impl->children()[0].get());
+              impl->active_tree()->LayerById(picture_id));
       EXPECT_EQ(nullptr, active_picture_impl->GetPendingOrActiveTwinLayer());
     }
 
@@ -129,6 +136,8 @@ class LayerTreeHostPictureTestTwinLayer
   void AfterTest() override { EXPECT_EQ(5, activates_); }
 
   int activates_;
+  int picture_id1_;
+  int picture_id2_;
 };
 
 // There is no pending layers in single thread mode.
@@ -141,22 +150,22 @@ class LayerTreeHostPictureTestResizeViewportWithGpuRaster
   }
 
   void SetupTree() override {
-    scoped_refptr<Layer> root = Layer::Create(layer_settings());
+    scoped_refptr<Layer> root = Layer::Create();
     root->SetBounds(gfx::Size(768, 960));
     client_.set_bounds(root->bounds());
     client_.set_fill_with_nonsolid_color(true);
-    picture_ = FakePictureLayer::Create(layer_settings(), &client_);
+    picture_ = FakePictureLayer::Create(&client_);
     picture_->SetBounds(gfx::Size(768, 960));
     root->AddChild(picture_);
 
-    layer_tree_host()->SetRootLayer(root);
+    layer_tree()->SetRootLayer(root);
     LayerTreeHostPictureTest::SetupTree();
   }
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void CommitCompleteOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* child = impl->sync_tree()->root_layer()->children()[0].get();
+    LayerImpl* child = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture_impl =
         static_cast<FakePictureLayerImpl*>(child);
     gfx::Size tile_size =
@@ -176,12 +185,12 @@ class LayerTreeHostPictureTestResizeViewportWithGpuRaster
   }
 
   void DidCommit() override {
-    switch (layer_tree_host()->source_frame_number()) {
+    switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
         // Change the picture layer's size along with the viewport, so it will
         // consider picking a new tile size.
         picture_->SetBounds(gfx::Size(768, 1056));
-        layer_tree_host()->SetViewportSize(gfx::Size(768, 1056));
+        layer_tree()->SetViewportSize(gfx::Size(768, 1056));
         break;
       case 2:
         EndTest();
@@ -204,12 +213,12 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
     frame_ = 0;
     did_post_commit_ = false;
 
-    scoped_refptr<Layer> root = Layer::Create(layer_settings());
+    scoped_refptr<Layer> root = Layer::Create();
     root->SetBounds(gfx::Size(100, 100));
     // The layer is big enough that the live tiles rect won't cover the full
     // layer.
     client_.set_fill_with_nonsolid_color(true);
-    picture_ = FakePictureLayer::Create(layer_settings(), &client_);
+    picture_ = FakePictureLayer::Create(&client_);
     picture_->SetBounds(gfx::Size(100, 100000));
     root->AddChild(picture_);
 
@@ -217,7 +226,7 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
     // force it to have a transform node by making it scrollable.
     picture_->SetScrollClipLayerId(root->id());
 
-    layer_tree_host()->SetRootLayer(root);
+    layer_tree()->SetRootLayer(root);
     LayerTreeHostPictureTest::SetupTree();
     client_.set_bounds(picture_->bounds());
   }
@@ -225,7 +234,7 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void DrawLayersOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* child = impl->active_tree()->root_layer()->children()[0].get();
+    LayerImpl* child = impl->active_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture_impl =
         static_cast<FakePictureLayerImpl*>(child);
     switch (++frame_) {
@@ -241,8 +250,11 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
         // Make the bottom of the layer visible.
         gfx::Transform transform;
         transform.Translate(0.f, -100000.f + 100.f);
-        picture_impl->SetTransform(transform);
-        picture_impl->UpdatePropertyTreeTransform();
+        impl->active_tree()
+            ->property_trees()
+            ->transform_tree.OnTransformAnimated(
+                transform, picture_impl->transform_tree_index(),
+                impl->active_tree());
         impl->SetNeedsRedraw();
         break;
       }
@@ -253,8 +265,11 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
         EXPECT_FALSE(tiling->TileAt(0, 0));
 
         // Make the top of the layer visible again.
-        picture_impl->SetTransform(gfx::Transform());
-        picture_impl->UpdatePropertyTreeTransform();
+        impl->active_tree()
+            ->property_trees()
+            ->transform_tree.OnTransformAnimated(
+                gfx::Transform(), picture_impl->transform_tree_index(),
+                impl->active_tree());
         impl->SetNeedsRedraw();
         break;
       }
@@ -276,13 +291,13 @@ class LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree
   }
 
   void WillActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* child = impl->sync_tree()->root_layer()->children()[0].get();
+    LayerImpl* child = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture_impl =
         static_cast<FakePictureLayerImpl*>(child);
     PictureLayerTiling* tiling = picture_impl->HighResTiling();
     int num_tiles_y = tiling->TilingDataForTesting().num_tiles_y();
 
-    if (!impl->active_tree()->root_layer()) {
+    if (!impl->active_tree()->root_layer_for_testing()) {
       // If active tree doesn't have the layer, then pending tree should have
       // all needed tiles.
       EXPECT_TRUE(tiling->TileAt(0, 0));
@@ -310,29 +325,27 @@ MULTI_THREAD_TEST_F(LayerTreeHostPictureTestChangeLiveTilesRectWithRecycleTree);
 
 class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
   void SetupTree() override {
-    scoped_refptr<Layer> root = Layer::Create(layer_settings());
+    scoped_refptr<Layer> root = Layer::Create();
     root->SetBounds(gfx::Size(100, 100));
     client_.set_bounds(root->bounds());
 
-    child_ = Layer::Create(layer_settings());
+    child_ = Layer::Create();
     root->AddChild(child_);
 
     // Don't be solid color so the layer has tilings/tiles.
     client_.set_fill_with_nonsolid_color(true);
-    picture_ = FakePictureLayer::Create(layer_settings(), &client_);
+    picture_ = FakePictureLayer::Create(&client_);
     picture_->SetBounds(gfx::Size(100, 100));
     child_->AddChild(picture_);
 
-    layer_tree_host()->SetRootLayer(root);
+    layer_tree()->SetRootLayer(root);
     LayerTreeHostPictureTest::SetupTree();
   }
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
   void CommitCompleteOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* root = impl->sync_tree()->root_layer();
-    LayerImpl* child = root->children()[0].get();
-    LayerImpl* gchild = child->children()[0].get();
+    LayerImpl* gchild = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
 
     switch (impl->sync_tree()->source_frame_number()) {
@@ -352,9 +365,7 @@ class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
   }
 
   void DidActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* root = impl->active_tree()->root_layer();
-    LayerImpl* child = root->children()[0].get();
-    LayerImpl* gchild = child->children()[0].get();
+    LayerImpl* gchild = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
 
     switch (impl->active_tree()->source_frame_number()) {
@@ -375,7 +386,7 @@ class LayerTreeHostPictureTestRSLLMembership : public LayerTreeHostPictureTest {
   }
 
   void DidCommit() override {
-    switch (layer_tree_host()->source_frame_number()) {
+    switch (layer_tree_host()->SourceFrameNumber()) {
       case 1:
         // For the 2nd commit, change opacity to 0 so that the layer will not be
         // part of the visible frame.
@@ -400,24 +411,28 @@ SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostPictureTestRSLLMembership);
 class LayerTreeHostPictureTestRSLLMembershipWithScale
     : public LayerTreeHostPictureTest {
   void SetupTree() override {
-    scoped_refptr<Layer> root = Layer::Create(layer_settings());
-    root->SetBounds(gfx::Size(100, 100));
+    scoped_refptr<Layer> root_clip = Layer::Create();
+    root_clip->SetBounds(gfx::Size(100, 100));
+    scoped_refptr<Layer> page_scale_layer = Layer::Create();
+    page_scale_layer->SetBounds(gfx::Size(100, 100));
 
-    pinch_ = Layer::Create(layer_settings());
+    pinch_ = Layer::Create();
     pinch_->SetBounds(gfx::Size(500, 500));
-    pinch_->SetScrollClipLayerId(root->id());
+    pinch_->SetScrollClipLayerId(root_clip->id());
     pinch_->SetIsContainerForFixedPositionLayers(true);
-    root->AddChild(pinch_);
+    page_scale_layer->AddChild(pinch_);
+    root_clip->AddChild(page_scale_layer);
 
     // Don't be solid color so the layer has tilings/tiles.
     client_.set_fill_with_nonsolid_color(true);
-    picture_ = FakePictureLayer::Create(layer_settings(), &client_);
+    picture_ = FakePictureLayer::Create(&client_);
     picture_->SetBounds(gfx::Size(100, 100));
     pinch_->AddChild(picture_);
 
-    layer_tree_host()->RegisterViewportLayers(NULL, root, pinch_, nullptr);
-    layer_tree_host()->SetPageScaleFactorAndLimits(1.f, 1.f, 4.f);
-    layer_tree_host()->SetRootLayer(root);
+    layer_tree()->RegisterViewportLayers(NULL, page_scale_layer, pinch_,
+                                         nullptr);
+    layer_tree()->SetPageScaleFactorAndLimits(1.f, 1.f, 4.f);
+    layer_tree()->SetRootLayer(root_clip);
     LayerTreeHostPictureTest::SetupTree();
     client_.set_bounds(picture_->bounds());
   }
@@ -435,9 +450,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
   }
 
   void WillActivateTreeOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* root = impl->sync_tree()->root_layer();
-    LayerImpl* pinch = root->children()[0].get();
-    LayerImpl* gchild = pinch->children()[0].get();
+    LayerImpl* gchild = impl->sync_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
     ready_to_draw_ = false;
 
@@ -445,26 +458,24 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
       case 0:
         // On 1st commit the pending layer has tilings.
         ASSERT_EQ(1u, picture->tilings()->num_tilings());
-        EXPECT_EQ(1.f, picture->tilings()->tiling_at(0)->contents_scale());
+        EXPECT_EQ(1.f, picture->tilings()->tiling_at(0)->contents_scale_key());
         break;
       case 1:
         // On 2nd commit, the pending layer is transparent, so has a stale
         // value.
         ASSERT_EQ(1u, picture->tilings()->num_tilings());
-        EXPECT_EQ(1.f, picture->tilings()->tiling_at(0)->contents_scale());
+        EXPECT_EQ(1.f, picture->tilings()->tiling_at(0)->contents_scale_key());
         break;
       case 2:
         // On 3rd commit, the pending layer is visible again, so has tilings and
         // is updated for the pinch.
         ASSERT_EQ(1u, picture->tilings()->num_tilings());
-        EXPECT_EQ(2.f, picture->tilings()->tiling_at(0)->contents_scale());
+        EXPECT_EQ(2.f, picture->tilings()->tiling_at(0)->contents_scale_key());
     }
   }
 
   void DrawLayersOnThread(LayerTreeHostImpl* impl) override {
-    LayerImpl* root = impl->active_tree()->root_layer();
-    LayerImpl* pinch = root->children()[0].get();
-    LayerImpl* gchild = pinch->children()[0].get();
+    LayerImpl* gchild = impl->active_tree()->LayerById(picture_->id());
     FakePictureLayerImpl* picture = static_cast<FakePictureLayerImpl*>(gchild);
 
     if (frame_ != last_frame_drawn_)
@@ -477,7 +488,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
         if (draws_in_frame_ == 1) {
           // On 1st commit the layer has tilings.
           EXPECT_GT(picture->tilings()->num_tilings(), 0u);
-          EXPECT_EQ(1.f, picture->HighResTiling()->contents_scale());
+          EXPECT_EQ(1.f, picture->HighResTiling()->contents_scale_key());
 
           // Pinch zoom in to change the scale on the active tree.
           impl->PinchGestureBegin();
@@ -487,7 +498,7 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
           // If the pinch gesture caused a commit we could get here with a
           // pending tree.
           EXPECT_FALSE(impl->pending_tree());
-          EXPECT_EQ(2.f, picture->HighResTiling()->contents_scale());
+          EXPECT_EQ(2.f, picture->HighResTiling()->contents_scale_key());
 
           // Need to wait for ready to draw here so that the pinch is
           // entirely complete, otherwise another draw might come in before
@@ -564,6 +575,112 @@ class LayerTreeHostPictureTestRSLLMembershipWithScale
 // Multi-thread only because in single thread you can't pinch zoom on the
 // compositor thread.
 MULTI_THREAD_TEST_F(LayerTreeHostPictureTestRSLLMembershipWithScale);
+
+class LayerTreeHostPictureTestForceRecalculateScales
+    : public LayerTreeHostPictureTest {
+  void SetupTree() override {
+    gfx::Size size(100, 100);
+    scoped_refptr<Layer> root = Layer::Create();
+    root->SetBounds(size);
+
+    will_change_layer_ = FakePictureLayer::Create(&client_);
+    will_change_layer_->SetHasWillChangeTransformHint(true);
+    will_change_layer_->SetBounds(size);
+    root->AddChild(will_change_layer_);
+
+    normal_layer_ = FakePictureLayer::Create(&client_);
+    normal_layer_->SetBounds(size);
+    root->AddChild(normal_layer_);
+
+    layer_tree()->SetRootLayer(root);
+    layer_tree()->SetViewportSize(size);
+
+    client_.set_fill_with_nonsolid_color(true);
+    client_.set_bounds(size);
+  }
+
+  void InitializeSettings(LayerTreeSettings* settings) override {
+    settings->layer_transforms_should_scale_layer_contents = true;
+  }
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void DrawLayersOnThread(LayerTreeHostImpl* impl) override {
+    FakePictureLayerImpl* will_change_layer =
+        static_cast<FakePictureLayerImpl*>(
+            impl->active_tree()->LayerById(will_change_layer_->id()));
+    FakePictureLayerImpl* normal_layer = static_cast<FakePictureLayerImpl*>(
+        impl->active_tree()->LayerById(normal_layer_->id()));
+
+    switch (impl->sync_tree()->source_frame_number()) {
+      case 0:
+        // On first commit, both layers are at the default scale.
+        ASSERT_EQ(1u, will_change_layer->tilings()->num_tilings());
+        EXPECT_EQ(
+            1.f,
+            will_change_layer->tilings()->tiling_at(0)->contents_scale_key());
+        ASSERT_EQ(1u, normal_layer->tilings()->num_tilings());
+        EXPECT_EQ(1.f,
+                  normal_layer->tilings()->tiling_at(0)->contents_scale_key());
+
+        MainThreadTaskRunner()->PostTask(
+            FROM_HERE,
+            base::Bind(
+                &LayerTreeHostPictureTestForceRecalculateScales::ScaleRootUp,
+                base::Unretained(this)));
+        break;
+      case 1:
+        // On 2nd commit after scaling up to 2, the normal layer will adjust its
+        // scale and the will change layer should not (as it is will change.
+        ASSERT_EQ(1u, will_change_layer->tilings()->num_tilings());
+        EXPECT_EQ(
+            1.f,
+            will_change_layer->tilings()->tiling_at(0)->contents_scale_key());
+        ASSERT_EQ(1u, normal_layer->tilings()->num_tilings());
+        EXPECT_EQ(2.f,
+                  normal_layer->tilings()->tiling_at(0)->contents_scale_key());
+
+        MainThreadTaskRunner()->PostTask(
+            FROM_HERE,
+            base::Bind(&LayerTreeHostPictureTestForceRecalculateScales::
+                           ScaleRootUpAndRecalculateScales,
+                       base::Unretained(this)));
+        break;
+      case 2:
+        // On 3rd commit, both layers should adjust scales due to forced
+        // recalculating.
+        ASSERT_EQ(1u, will_change_layer->tilings()->num_tilings());
+        EXPECT_EQ(
+            4.f,
+            will_change_layer->tilings()->tiling_at(0)->contents_scale_key());
+        ASSERT_EQ(1u, normal_layer->tilings()->num_tilings());
+        EXPECT_EQ(4.f,
+                  normal_layer->tilings()->tiling_at(0)->contents_scale_key());
+        EndTest();
+        break;
+    }
+  }
+
+  void ScaleRootUp() {
+    gfx::Transform transform;
+    transform.Scale(2, 2);
+    layer_tree_host()->GetLayerTree()->root_layer()->SetTransform(transform);
+  }
+
+  void ScaleRootUpAndRecalculateScales() {
+    gfx::Transform transform;
+    transform.Scale(4, 4);
+    layer_tree_host()->GetLayerTree()->root_layer()->SetTransform(transform);
+    layer_tree_host()->SetNeedsRecalculateRasterScales();
+  }
+
+  void AfterTest() override {}
+
+  scoped_refptr<FakePictureLayer> will_change_layer_;
+  scoped_refptr<FakePictureLayer> normal_layer_;
+};
+
+SINGLE_AND_MULTI_THREAD_TEST_F(LayerTreeHostPictureTestForceRecalculateScales);
 
 }  // namespace
 }  // namespace cc

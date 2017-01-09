@@ -1,4 +1,3 @@
-
 // Copyright 2014 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
@@ -7,10 +6,13 @@
 #define UI_EVENTS_ANDROID_MOTION_EVENT_ANDROID_H_
 
 #include <jni.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 
 #include "base/android/scoped_java_ref.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "ui/events/events_export.h"
 #include "ui/events/gesture_detection/motion_event.h"
@@ -56,12 +58,12 @@ class EVENTS_EXPORT MotionEventAndroid : public MotionEvent {
                      jint meta_state,
                      jfloat raw_offset_x_pixels,
                      jfloat raw_offset_y_pixels,
-                     const Pointer& pointer0,
-                     const Pointer& pointer1);
+                     const Pointer* const pointer0,
+                     const Pointer* const pointer1);
   ~MotionEventAndroid() override;
 
   // ui::MotionEvent methods.
-  uint32 GetUniqueEventId() const override;
+  uint32_t GetUniqueEventId() const override;
   Action GetAction() const override;
   int GetActionIndex() const override;
   size_t GetPointerCount() const override;
@@ -88,8 +90,6 @@ class EVENTS_EXPORT MotionEventAndroid : public MotionEvent {
   ToolType GetToolType(size_t pointer_index) const override;
   int GetButtonState() const override;
   int GetFlags() const override;
-
-  static bool RegisterMotionEventAndroid(JNIEnv* env);
 
  private:
   struct CachedPointer;
@@ -129,7 +129,7 @@ class EVENTS_EXPORT MotionEventAndroid : public MotionEvent {
   } cached_pointers_[MAX_POINTERS_TO_CACHE];
 
   // A unique identifier for the Android motion event.
-  const uint32 unique_event_id_;
+  const uint32_t unique_event_id_;
 
   DISALLOW_COPY_AND_ASSIGN(MotionEventAndroid);
 };

@@ -8,6 +8,7 @@
 #include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/shell/browser/shell_browser_context.h"
 
 namespace content {
@@ -22,7 +23,7 @@ ShellAccessTokenStore::~ShellAccessTokenStore() {
 }
 
 void ShellAccessTokenStore::LoadAccessTokens(
-    const LoadAccessTokensCallbackType& callback) {
+    const LoadAccessTokensCallback& callback) {
   BrowserThread::PostTaskAndReply(
       BrowserThread::UI,
       FROM_HERE,
@@ -36,16 +37,18 @@ void ShellAccessTokenStore::LoadAccessTokens(
 
 void ShellAccessTokenStore::GetRequestContextOnUIThread(
     content::ShellBrowserContext* shell_browser_context) {
-  system_request_context_ = shell_browser_context->GetRequestContext();
+  system_request_context_ =
+      BrowserContext::GetDefaultStoragePartition(shell_browser_context)->
+          GetURLRequestContext();
 }
 
 void ShellAccessTokenStore::RespondOnOriginatingThread(
-    const LoadAccessTokensCallbackType& callback) {
+    const LoadAccessTokensCallback& callback) {
   // Since content_shell is a test executable, rather than an end user program,
   // we provide a dummy access_token set to avoid hitting the server.
-  AccessTokenSet access_token_set;
-  access_token_set[GURL()] = base::ASCIIToUTF16("chromium_content_shell");
-  callback.Run(access_token_set, system_request_context_.get());
+  AccessTokenMap access_token_map;
+  access_token_map[GURL()] = base::ASCIIToUTF16("chromium_content_shell");
+  callback.Run(access_token_map, system_request_context_.get());
   system_request_context_ = NULL;
 }
 

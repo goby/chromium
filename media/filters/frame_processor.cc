@@ -4,9 +4,12 @@
 
 #include "media/filters/frame_processor.h"
 
+#include <stdint.h>
+
 #include <cstdlib>
 
-#include "base/stl_util.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "media/base/stream_parser_buffer.h"
 #include "media/base/timestamp_constants.h"
 
@@ -80,15 +83,15 @@ class MseTrackBuffer {
 
  private:
   // The decode timestamp of the last coded frame appended in the current coded
-  // frame group. Initially kNoTimestamp(), meaning "unset".
+  // frame group. Initially kNoTimestamp, meaning "unset".
   DecodeTimestamp last_decode_timestamp_;
 
   // The coded frame duration of the last coded frame appended in the current
-  // coded frame group. Initially kNoTimestamp(), meaning "unset".
+  // coded frame group. Initially kNoTimestamp, meaning "unset".
   base::TimeDelta last_frame_duration_;
 
   // The highest presentation timestamp encountered in a coded frame appended
-  // in the current coded frame group. Initially kNoTimestamp(), meaning
+  // in the current coded frame group. Initially kNoTimestamp, meaning
   // "unset".
   base::TimeDelta highest_presentation_timestamp_;
 
@@ -112,29 +115,29 @@ class MseTrackBuffer {
 
 MseTrackBuffer::MseTrackBuffer(ChunkDemuxerStream* stream)
     : last_decode_timestamp_(kNoDecodeTimestamp()),
-      last_frame_duration_(kNoTimestamp()),
-      highest_presentation_timestamp_(kNoTimestamp()),
+      last_frame_duration_(kNoTimestamp),
+      highest_presentation_timestamp_(kNoTimestamp),
       needs_random_access_point_(true),
       stream_(stream) {
   DCHECK(stream_);
 }
 
 MseTrackBuffer::~MseTrackBuffer() {
-  DVLOG(2) << __FUNCTION__ << "()";
+  DVLOG(2) << __func__ << "()";
 }
 
 void MseTrackBuffer::Reset() {
-  DVLOG(2) << __FUNCTION__ << "()";
+  DVLOG(2) << __func__ << "()";
 
   last_decode_timestamp_ = kNoDecodeTimestamp();
-  last_frame_duration_ = kNoTimestamp();
-  highest_presentation_timestamp_ = kNoTimestamp();
+  last_frame_duration_ = kNoTimestamp;
+  highest_presentation_timestamp_ = kNoTimestamp;
   needs_random_access_point_ = true;
 }
 
 void MseTrackBuffer::SetHighestPresentationTimestampIfIncreased(
     base::TimeDelta timestamp) {
-  if (highest_presentation_timestamp_ == kNoTimestamp() ||
+  if (highest_presentation_timestamp_ == kNoTimestamp ||
       timestamp > highest_presentation_timestamp_) {
     highest_presentation_timestamp_ = timestamp;
   }
@@ -152,7 +155,7 @@ bool MseTrackBuffer::FlushProcessedFrames() {
   bool result = stream_->Append(processed_frames_);
   processed_frames_.clear();
 
-  DVLOG_IF(3, !result) << __FUNCTION__
+  DVLOG_IF(3, !result) << __func__
                        << "(): Failure appending processed frames to stream";
 
   return result;
@@ -160,28 +163,31 @@ bool MseTrackBuffer::FlushProcessedFrames() {
 
 FrameProcessor::FrameProcessor(const UpdateDurationCB& update_duration_cb,
                                const scoped_refptr<MediaLog>& media_log)
-    : group_start_timestamp_(kNoTimestamp()),
+    : group_start_timestamp_(kNoTimestamp),
       update_duration_cb_(update_duration_cb),
       media_log_(media_log) {
-  DVLOG(2) << __FUNCTION__ << "()";
+  DVLOG(2) << __func__ << "()";
   DCHECK(!update_duration_cb.is_null());
 }
 
 FrameProcessor::~FrameProcessor() {
-  DVLOG(2) << __FUNCTION__ << "()";
-  STLDeleteValues(&track_buffers_);
+  DVLOG(2) << __func__ << "()";
 }
 
 void FrameProcessor::SetSequenceMode(bool sequence_mode) {
-  DVLOG(2) << __FUNCTION__ << "(" << sequence_mode << ")";
-
-  // Per April 1, 2014 MSE spec editor's draft:
-  // https://dvcs.w3.org/hg/html-media/raw-file/d471a4412040/media-source/media-source.html#widl-SourceBuffer-mode
+  DVLOG(2) << __func__ << "(" << sequence_mode << ")";
+  // Per June 9, 2016 MSE spec editor's draft:
+  // https://rawgit.com/w3c/media-source/d8f901f22/
+  //     index.html#widl-SourceBuffer-mode
   // Step 7: If the new mode equals "sequence", then set the group start
   // timestamp to the group end timestamp.
   if (sequence_mode) {
-    DCHECK(kNoTimestamp() != group_end_timestamp_);
+    DCHECK(kNoTimestamp != group_end_timestamp_);
     group_start_timestamp_ = group_end_timestamp_;
+  } else if (sequence_mode_) {
+    // We're switching from 'sequence' to 'segments' mode. Be safe and signal a
+    // new coded frame group on the next frame emitted.
+    coded_frame_group_last_dts_ = kNoDecodeTimestamp();
   }
 
   // Step 8: Update the attribute to new mode.
@@ -189,15 +195,12 @@ void FrameProcessor::SetSequenceMode(bool sequence_mode) {
 }
 
 bool FrameProcessor::ProcessFrames(
-    const StreamParser::BufferQueue& audio_buffers,
-    const StreamParser::BufferQueue& video_buffers,
-    const StreamParser::TextBufferQueueMap& text_map,
+    const StreamParser::BufferQueueMap& buffer_queue_map,
     base::TimeDelta append_window_start,
     base::TimeDelta append_window_end,
-    bool* new_media_segment,
     base::TimeDelta* timestamp_offset) {
   StreamParser::BufferQueue frames;
-  if (!MergeBufferQueues(audio_buffers, video_buffers, text_map, &frames)) {
+  if (!MergeBufferQueues(buffer_queue_map, &frames)) {
     MEDIA_LOG(ERROR, media_log_) << "Parsed buffers not in DTS sequence";
     return false;
   }
@@ -207,14 +210,14 @@ bool FrameProcessor::ProcessFrames(
   // Implements the coded frame processing algorithm's outer loop for step 1.
   // Note that ProcessFrame() implements an inner loop for a single frame that
   // handles "jump to the Loop Top step to restart processing of the current
-  // coded frame" per April 1, 2014 MSE spec editor's draft:
-  // https://dvcs.w3.org/hg/html-media/raw-file/d471a4412040/media-source/
-  //     media-source.html#sourcebuffer-coded-frame-processing
+  // coded frame" per June 9, 2016 MSE spec editor's draft:
+  // https://rawgit.com/w3c/media-source/d8f901f22/
+  //     index.html#sourcebuffer-coded-frame-processing
   // 1. For each coded frame in the media segment run the following steps:
   for (StreamParser::BufferQueue::const_iterator frames_itr = frames.begin();
        frames_itr != frames.end(); ++frames_itr) {
     if (!ProcessFrame(*frames_itr, append_window_start, append_window_end,
-                      timestamp_offset, new_media_segment)) {
+                      timestamp_offset)) {
       FlushProcessedFrames();
       return false;
     }
@@ -225,7 +228,9 @@ bool FrameProcessor::ProcessFrames(
 
   // 2. - 4. Are handled by the WebMediaPlayer / Pipeline / Media Element.
 
-  // Step 5:
+  // 5. If the media segment contains data beyond the current duration, then run
+  //    the duration change algorithm with new duration set to the maximum of
+  //    the current duration and the group end timestamp.
   update_duration_cb_.Run(group_end_timestamp_);
 
   return true;
@@ -233,8 +238,8 @@ bool FrameProcessor::ProcessFrames(
 
 void FrameProcessor::SetGroupStartTimestampIfInSequenceMode(
     base::TimeDelta timestamp_offset) {
-  DVLOG(2) << __FUNCTION__ << "(" << timestamp_offset.InSecondsF() << ")";
-  DCHECK(kNoTimestamp() != timestamp_offset);
+  DVLOG(2) << __func__ << "(" << timestamp_offset.InSecondsF() << ")";
+  DCHECK(kNoTimestamp != timestamp_offset);
   if (sequence_mode_)
     group_start_timestamp_ = timestamp_offset;
 
@@ -244,7 +249,7 @@ void FrameProcessor::SetGroupStartTimestampIfInSequenceMode(
 
 bool FrameProcessor::AddTrack(StreamParser::TrackId id,
                               ChunkDemuxerStream* stream) {
-  DVLOG(2) << __FUNCTION__ << "(): id=" << id;
+  DVLOG(2) << __func__ << "(): id=" << id;
 
   MseTrackBuffer* existing_track = FindTrack(id);
   DCHECK(!existing_track);
@@ -254,44 +259,63 @@ bool FrameProcessor::AddTrack(StreamParser::TrackId id,
     return false;
   }
 
-  track_buffers_[id] = new MseTrackBuffer(stream);
+  track_buffers_[id] = base::MakeUnique<MseTrackBuffer>(stream);
   return true;
 }
 
-bool FrameProcessor::UpdateTrack(StreamParser::TrackId old_id,
-                                 StreamParser::TrackId new_id) {
-  DVLOG(2) << __FUNCTION__ << "() : old_id=" << old_id << ", new_id=" << new_id;
+bool FrameProcessor::UpdateTrackIds(const TrackIdChanges& track_id_changes) {
+  TrackBuffersMap& old_track_buffers = track_buffers_;
+  TrackBuffersMap new_track_buffers;
 
-  if (old_id == new_id || !FindTrack(old_id) || FindTrack(new_id)) {
-    MEDIA_LOG(ERROR, media_log_) << "Failure updating track id from " << old_id
-                                 << " to " << new_id;
-    return false;
+  for (const auto& ids : track_id_changes) {
+    if (old_track_buffers.find(ids.first) == old_track_buffers.end() ||
+        new_track_buffers.find(ids.second) != new_track_buffers.end()) {
+      MEDIA_LOG(ERROR, media_log_) << "Failure updating track id from "
+                                   << ids.first << " to " << ids.second;
+      return false;
+    }
+    new_track_buffers[ids.second] = std::move(old_track_buffers[ids.first]);
+    CHECK_EQ(1u, old_track_buffers.erase(ids.first));
   }
 
-  track_buffers_[new_id] = track_buffers_[old_id];
-  CHECK_EQ(1u, track_buffers_.erase(old_id));
+  // Process remaining track buffers with unchanged ids.
+  for (const auto& t : old_track_buffers) {
+    if (new_track_buffers.find(t.first) != new_track_buffers.end()) {
+      MEDIA_LOG(ERROR, media_log_) << "Track id " << t.first << " conflict";
+      return false;
+    }
+    new_track_buffers[t.first] = std::move(old_track_buffers[t.first]);
+  }
+
+  std::swap(track_buffers_, new_track_buffers);
   return true;
 }
 
 void FrameProcessor::SetAllTrackBuffersNeedRandomAccessPoint() {
-  for (TrackBufferMap::iterator itr = track_buffers_.begin();
-       itr != track_buffers_.end();
-       ++itr) {
+  for (auto itr = track_buffers_.begin(); itr != track_buffers_.end(); ++itr) {
     itr->second->set_needs_random_access_point(true);
   }
 }
 
 void FrameProcessor::Reset() {
-  DVLOG(2) << __FUNCTION__ << "()";
-  for (TrackBufferMap::iterator itr = track_buffers_.begin();
-       itr != track_buffers_.end(); ++itr) {
+  DVLOG(2) << __func__ << "()";
+  for (auto itr = track_buffers_.begin(); itr != track_buffers_.end(); ++itr) {
     itr->second->Reset();
   }
 
-  if (sequence_mode_) {
-    DCHECK(kNoTimestamp() != group_end_timestamp_);
-    group_start_timestamp_ = group_end_timestamp_;
+  // Maintain current |coded_frame_group_last_dts_| state for Reset() during
+  // sequence mode. Reset it here only if in segments mode. In sequence mode,
+  // the current coded frame group may be continued across Reset() operations to
+  // allow the stream to coalesce what might otherwise be gaps in the buffered
+  // ranges. See also the declaration for |coded_frame_group_last_dts_|.
+  if (!sequence_mode_) {
+    coded_frame_group_last_dts_ = kNoDecodeTimestamp();
+    return;
   }
+
+  // Sequence mode
+  DCHECK(kNoTimestamp != group_end_timestamp_);
+  group_start_timestamp_ = group_end_timestamp_;
 }
 
 void FrameProcessor::OnPossibleAudioConfigUpdate(
@@ -310,31 +334,27 @@ void FrameProcessor::OnPossibleAudioConfigUpdate(
 }
 
 MseTrackBuffer* FrameProcessor::FindTrack(StreamParser::TrackId id) {
-  TrackBufferMap::iterator itr = track_buffers_.find(id);
+  auto itr = track_buffers_.find(id);
   if (itr == track_buffers_.end())
     return NULL;
 
-  return itr->second;
+  return itr->second.get();
 }
 
-void FrameProcessor::NotifyNewMediaSegmentStarting(
-    DecodeTimestamp segment_timestamp) {
-  DVLOG(2) << __FUNCTION__ << "(" << segment_timestamp.InSecondsF() << ")";
+void FrameProcessor::NotifyStartOfCodedFrameGroup(
+    DecodeTimestamp start_timestamp) {
+  DVLOG(2) << __func__ << "(" << start_timestamp.InSecondsF() << ")";
 
-  for (TrackBufferMap::iterator itr = track_buffers_.begin();
-       itr != track_buffers_.end();
-       ++itr) {
-    itr->second->stream()->OnNewMediaSegment(segment_timestamp);
+  for (auto itr = track_buffers_.begin(); itr != track_buffers_.end(); ++itr) {
+    itr->second->stream()->OnStartOfCodedFrameGroup(start_timestamp);
   }
 }
 
 bool FrameProcessor::FlushProcessedFrames() {
-  DVLOG(2) << __FUNCTION__ << "()";
+  DVLOG(2) << __func__ << "()";
 
   bool result = true;
-  for (TrackBufferMap::iterator itr = track_buffers_.begin();
-       itr != track_buffers_.end();
-       ++itr) {
+  for (auto itr = track_buffers_.begin(); itr != track_buffers_.end(); ++itr) {
     if (!itr->second->FlushProcessedFrames())
       result = false;
   }
@@ -346,7 +366,7 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
     base::TimeDelta append_window_start,
     base::TimeDelta append_window_end,
     const scoped_refptr<StreamParserBuffer>& buffer) {
-  DCHECK(buffer->duration() > base::TimeDelta());
+  DCHECK(buffer->duration() >= base::TimeDelta());
   DCHECK_EQ(DemuxerStream::AUDIO, buffer->type());
   DCHECK(buffer->is_key_frame());
 
@@ -375,7 +395,7 @@ bool FrameProcessor::HandlePartialAppendWindowTrimming(
   if (audio_preroll_buffer_.get()) {
     // We only want to use the preroll buffer if it directly precedes (less
     // than one sample apart) the current buffer.
-    const int64 delta =
+    const int64_t delta =
         (audio_preroll_buffer_->timestamp() +
          audio_preroll_buffer_->duration() - buffer->timestamp())
             .InMicroseconds();
@@ -445,28 +465,28 @@ bool FrameProcessor::ProcessFrame(
     const scoped_refptr<StreamParserBuffer>& frame,
     base::TimeDelta append_window_start,
     base::TimeDelta append_window_end,
-    base::TimeDelta* timestamp_offset,
-    bool* new_media_segment) {
+    base::TimeDelta* timestamp_offset) {
   // Implements the loop within step 1 of the coded frame processing algorithm
-  // for a single input frame per April 1, 2014 MSE spec editor's draft:
-  // https://dvcs.w3.org/hg/html-media/raw-file/d471a4412040/media-source/
-  //     media-source.html#sourcebuffer-coded-frame-processing
-
+  // for a single input frame per June 9, 2016 MSE spec editor's draft:
+  // https://rawgit.com/w3c/media-source/d8f901f22/
+  //     index.html#sourcebuffer-coded-frame-processing
   while (true) {
-    // 1. Loop Top: Let presentation timestamp be a double precision floating
-    //    point representation of the coded frame's presentation timestamp in
-    //    seconds.
-    // 2. Let decode timestamp be a double precision floating point
-    //    representation of the coded frame's decode timestamp in seconds.
-    // 3. Let frame duration be a double precision floating point representation
+    // 1. Loop Top:
+    // Otherwise case: (See SourceBufferState's |auto_update_timestamp_offset_|,
+    // too).
+    // 1.1. Let presentation timestamp be a double precision floating point
+    //      representation of the coded frame's presentation timestamp in
+    //      seconds.
+    // 1.2. Let decode timestamp be a double precision floating point
+    //      representation of the coded frame's decode timestamp in seconds.
+    // 2. Let frame duration be a double precision floating point representation
     //    of the coded frame's duration in seconds.
     // We use base::TimeDelta and DecodeTimestamp instead of double.
     base::TimeDelta presentation_timestamp = frame->timestamp();
     DecodeTimestamp decode_timestamp = frame->GetDecodeTimestamp();
     base::TimeDelta frame_duration = frame->duration();
 
-    DVLOG(3) << __FUNCTION__ << ": Processing frame "
-             << "Type=" << frame->type()
+    DVLOG(3) << __func__ << ": Processing frame Type=" << frame->type()
              << ", TrackID=" << frame->track_id()
              << ", PTS=" << presentation_timestamp.InSecondsF()
              << ", DTS=" << decode_timestamp.InSecondsF()
@@ -474,7 +494,7 @@ bool FrameProcessor::ProcessFrame(
              << ", RAP=" << frame->is_key_frame();
 
     // Sanity check the timestamps.
-    if (presentation_timestamp == kNoTimestamp()) {
+    if (presentation_timestamp == kNoTimestamp) {
       MEDIA_LOG(ERROR, media_log_) << "Unknown PTS for " << frame->GetTypeName()
                                    << " frame";
       return false;
@@ -493,16 +513,15 @@ bool FrameProcessor::ProcessFrame(
           << decode_timestamp.InMicroseconds()
           << "us, which is after the frame's PTS "
           << presentation_timestamp.InMicroseconds() << "us";
-      DVLOG(2) << __FUNCTION__ << ": WARNING: Frame DTS("
+      DVLOG(2) << __func__ << ": WARNING: Frame DTS("
                << decode_timestamp.InSecondsF() << ") > PTS("
                << presentation_timestamp.InSecondsF()
                << "), frame type=" << frame->GetTypeName();
     }
 
-    // TODO(acolwell/wolenetz): All stream parsers must emit valid (positive)
-    // frame durations. For now, we allow non-negative frame duration.
-    // See http://crbug.com/351166.
-    if (frame_duration == kNoTimestamp()) {
+    // All stream parsers must emit valid (non-negative) frame durations.
+    // Note that duration of 0 can occur for at least WebM alt-ref frames.
+    if (frame_duration == kNoTimestamp) {
       MEDIA_LOG(ERROR, media_log_)
           << "Unknown duration for " << frame->GetTypeName() << " frame at PTS "
           << presentation_timestamp.InMicroseconds() << "us";
@@ -516,59 +535,42 @@ bool FrameProcessor::ProcessFrame(
       return false;
     }
 
-    // 4. If mode equals "sequence" and group start timestamp is set, then run
+    // 3. If mode equals "sequence" and group start timestamp is set, then run
     //    the following steps:
-    if (sequence_mode_ && group_start_timestamp_ != kNoTimestamp()) {
-      // 4.1. Set timestampOffset equal to group start timestamp -
+    if (sequence_mode_ && group_start_timestamp_ != kNoTimestamp) {
+      // 3.1. Set timestampOffset equal to group start timestamp -
       //      presentation timestamp.
       *timestamp_offset = group_start_timestamp_ - presentation_timestamp;
 
-      DVLOG(3) << __FUNCTION__ << ": updated timestampOffset is now "
+      DVLOG(3) << __func__ << ": updated timestampOffset is now "
                << timestamp_offset->InSecondsF();
 
-      // 4.2. Set group end timestamp equal to group start timestamp.
+      // 3.2. Set group end timestamp equal to group start timestamp.
       group_end_timestamp_ = group_start_timestamp_;
 
-      // 4.3. Set the need random access point flag on all track buffers to
+      // 3.3. Set the need random access point flag on all track buffers to
       //      true.
       SetAllTrackBuffersNeedRandomAccessPoint();
 
-      // 4.4. Unset group start timestamp.
-      group_start_timestamp_ = kNoTimestamp();
+      // 3.4. Unset group start timestamp.
+      group_start_timestamp_ = kNoTimestamp;
     }
 
-    // 5. If timestampOffset is not 0, then run the following steps:
-    if (*timestamp_offset != base::TimeDelta()) {
-      // 5.1. Add timestampOffset to the presentation timestamp.
+    // 4. If timestampOffset is not 0, then run the following steps:
+    if (!timestamp_offset->is_zero()) {
+      // 4.1. Add timestampOffset to the presentation timestamp.
       // Note: |frame| PTS is only updated if it survives discontinuity
       // processing.
       presentation_timestamp += *timestamp_offset;
 
-      // 5.2. Add timestampOffset to the decode timestamp.
+      // 4.2. Add timestampOffset to the decode timestamp.
       // Frame DTS is only updated if it survives discontinuity processing.
       decode_timestamp += *timestamp_offset;
     }
 
-    // 6. Let track buffer equal the track buffer that the coded frame will be
+    // 5. Let track buffer equal the track buffer that the coded frame will be
     //    added to.
-
-    // Remap audio and video track types to their special singleton identifiers.
-    StreamParser::TrackId track_id = kAudioTrackId;
-    switch (frame->type()) {
-      case DemuxerStream::AUDIO:
-        break;
-      case DemuxerStream::VIDEO:
-        track_id = kVideoTrackId;
-        break;
-      case DemuxerStream::TEXT:
-        track_id = frame->track_id();
-        break;
-      case DemuxerStream::UNKNOWN:
-      case DemuxerStream::NUM_TYPES:
-        DCHECK(false) << ": Invalid frame type " << frame->type();
-        return false;
-    }
-
+    StreamParser::TrackId track_id = frame->track_id();
     MseTrackBuffer* track_buffer = FindTrack(track_id);
     if (!track_buffer) {
       MEDIA_LOG(ERROR, media_log_)
@@ -577,20 +579,28 @@ bool FrameProcessor::ProcessFrame(
           << ", and parser track id " << frame->track_id();
       return false;
     }
+    if (frame->type() != track_buffer->stream()->type()) {
+      MEDIA_LOG(ERROR, media_log_) << "Frame type " << frame->GetTypeName()
+                                   << " doesn't match track buffer type "
+                                   << track_buffer->stream()->type();
+      return false;
+    }
 
-    // 7. If last decode timestamp for track buffer is set and decode timestamp
+    // 6. If last decode timestamp for track buffer is set and decode timestamp
     //    is less than last decode timestamp
     //    OR
     //    If last decode timestamp for track buffer is set and the difference
     //    between decode timestamp and last decode timestamp is greater than 2
     //    times last frame duration:
-    DecodeTimestamp last_decode_timestamp =
+    DecodeTimestamp track_last_decode_timestamp =
         track_buffer->last_decode_timestamp();
-    if (last_decode_timestamp != kNoDecodeTimestamp()) {
-      base::TimeDelta dts_delta = decode_timestamp - last_decode_timestamp;
-      if (dts_delta < base::TimeDelta() ||
-          dts_delta > 2 * track_buffer->last_frame_duration()) {
-        // 7.1. If mode equals "segments": Set group end timestamp to
+    if (track_last_decode_timestamp != kNoDecodeTimestamp()) {
+      base::TimeDelta track_dts_delta =
+          decode_timestamp - track_last_decode_timestamp;
+      if (track_dts_delta < base::TimeDelta() ||
+          track_dts_delta > 2 * track_buffer->last_frame_duration()) {
+        DCHECK(coded_frame_group_last_dts_ != kNoDecodeTimestamp());
+        // 6.1. If mode equals "segments": Set group end timestamp to
         //      presentation timestamp.
         //      If mode equals "sequence": Set group start timestamp equal to
         //      the group end timestamp.
@@ -598,39 +608,42 @@ bool FrameProcessor::ProcessFrame(
           group_end_timestamp_ = presentation_timestamp;
           // This triggers a discontinuity so we need to treat the next frames
           // appended within the append window as if they were the beginning of
-          // a new segment.
-          *new_media_segment = true;
+          // a new coded frame group. |coded_frame_group_last_dts_| is reset in
+          // Reset(), below, for "segments" mode.
         } else {
-          DVLOG(3) << __FUNCTION__ << " : Sequence mode discontinuity, GETS: "
+          DVLOG(3) << __func__ << " : Sequence mode discontinuity, GETS: "
                    << group_end_timestamp_.InSecondsF();
-          DCHECK(kNoTimestamp() != group_end_timestamp_);
-          group_start_timestamp_ = group_end_timestamp_;
+          // Reset(), below, performs the "Set group start timestamp equal to
+          // the group end timestamp" operation for "sequence" mode.
         }
 
-        // 7.2. - 7.5.:
+        // 6.2. - 6.5.:
         Reset();
 
-        // 7.6. Jump to the Loop Top step above to restart processing of the
+        // 6.6. Jump to the Loop Top step above to restart processing of the
         //      current coded frame.
-        DVLOG(3) << __FUNCTION__ << ": Discontinuity: reprocessing frame";
+        DVLOG(3) << __func__ << ": Discontinuity: reprocessing frame";
         continue;
       }
     }
 
-    // 9. Let frame end timestamp equal the sum of presentation timestamp and
+    // 7. Let frame end timestamp equal the sum of presentation timestamp and
     //    frame duration.
     base::TimeDelta frame_end_timestamp =
         presentation_timestamp + frame_duration;
 
-    // 10.  If presentation timestamp is less than appendWindowStart, then set
-    //      the need random access point flag to true, drop the coded frame, and
-    //      jump to the top of the loop to start processing the next coded
-    //      frame.
+    // 8.  If presentation timestamp is less than appendWindowStart, then set
+    //     the need random access point flag to true, drop the coded frame, and
+    //     jump to the top of the loop to start processing the next coded
+    //     frame.
     // Note: We keep the result of partial discard of a buffer that overlaps
-    //      |append_window_start| and does not end after |append_window_end|.
-    // 11. If frame end timestamp is greater than appendWindowEnd, then set the
-    //     need random access point flag to true, drop the coded frame, and jump
-    //     to the top of the loop to start processing the next coded frame.
+    //       |append_window_start| and does not end after |append_window_end|,
+    //       for streams which support partial trimming.
+    // 9. If frame end timestamp is greater than appendWindowEnd, then set the
+    //    need random access point flag to true, drop the coded frame, and jump
+    //    to the top of the loop to start processing the next coded frame.
+    // Note: We keep the result of partial discard of a buffer that overlaps
+    //       |append_window_end|, for streams which support partial trimming.
     frame->set_timestamp(presentation_timestamp);
     frame->SetDecodeTimestamp(decode_timestamp);
     if (track_buffer->stream()->supports_partial_append_window_trimming() &&
@@ -653,16 +666,13 @@ bool FrameProcessor::ProcessFrame(
       return true;
     }
 
-    // Note: This step is relocated, versus April 1 spec, to allow append window
-    // processing to first filter coded frames shifted by |timestamp_offset_| in
-    // such a way that their PTS is negative.
-    // 8. If the presentation timestamp or decode timestamp is less than the
-    // presentation start time, then run the end of stream algorithm with the
-    // error parameter set to "decode", and abort these steps.
     DCHECK(presentation_timestamp >= base::TimeDelta());
     if (decode_timestamp < DecodeTimestamp()) {
       // B-frames may still result in negative DTS here after being shifted by
       // |timestamp_offset_|.
+      // TODO(wolenetz): This is no longer a step in the CFP, since negative DTS
+      // are allowed. Remove this parse failure and error log as part of fixing
+      // PTS/DTS conflation in SourceBufferStream. See https://crbug.com/398141
       MEDIA_LOG(ERROR, media_log_)
           << frame->GetTypeName() << " frame with PTS "
           << presentation_timestamp.InMicroseconds() << "us has negative DTS "
@@ -672,68 +682,74 @@ bool FrameProcessor::ProcessFrame(
       return false;
     }
 
-    // 12. If the need random access point flag on track buffer equals true,
+    // 10. If the need random access point flag on track buffer equals true,
     //     then run the following steps:
     if (track_buffer->needs_random_access_point()) {
-      // 12.1. If the coded frame is not a random access point, then drop the
+      // 10.1. If the coded frame is not a random access point, then drop the
       //       coded frame and jump to the top of the loop to start processing
       //       the next coded frame.
       if (!frame->is_key_frame()) {
-        DVLOG(3) << __FUNCTION__
+        DVLOG(3) << __func__
                  << ": Dropping frame that is not a random access point";
         return true;
       }
 
-      // 12.2. Set the need random access point flag on track buffer to false.
+      // 10.2. Set the need random access point flag on track buffer to false.
       track_buffer->set_needs_random_access_point(false);
     }
 
     // We now have a processed buffer to append to the track buffer's stream.
-    // If it is the first in a new media segment or following a discontinuity,
-    // notify all the track buffers' streams that a new segment is beginning.
-    if (*new_media_segment) {
-      // First, complete the append to track buffer streams of previous media
-      // segment's frames, if any.
+    // If it is the first in a new coded frame group (such as following a
+    // discontinuity), notify all the track buffers' streams that a coded frame
+    // group is starting.
+    // If in 'sequence' appendMode, also check to make sure we don't need to
+    // signal the start of a new coded frame group in the case where
+    // timestampOffset adjustments by the app may cause this coded frame to be
+    // in the timeline prior to the last frame processed.
+    if (coded_frame_group_last_dts_ == kNoDecodeTimestamp() ||
+        (sequence_mode_ && coded_frame_group_last_dts_ > decode_timestamp)) {
+      // First, complete the append to track buffer streams of the previous
+      // coded frame group's frames, if any.
       if (!FlushProcessedFrames())
         return false;
 
-      *new_media_segment = false;
-
-      // TODO(acolwell/wolenetz): This should be changed to a presentation
-      // timestamp. See http://crbug.com/402502
-      NotifyNewMediaSegmentStarting(decode_timestamp);
+      // TODO(wolenetz): This should be changed to a presentation timestamp. See
+      // http://crbug.com/402502
+      NotifyStartOfCodedFrameGroup(decode_timestamp);
     }
 
-    DVLOG(3) << __FUNCTION__ << ": Sending processed frame to stream, "
+    coded_frame_group_last_dts_ = decode_timestamp;
+
+    DVLOG(3) << __func__ << ": Sending processed frame to stream, "
              << "PTS=" << presentation_timestamp.InSecondsF()
              << ", DTS=" << decode_timestamp.InSecondsF();
 
-    // Steps 13-18: Note, we optimize by appending groups of contiguous
+    // Steps 11-16: Note, we optimize by appending groups of contiguous
     // processed frames for each track buffer at end of ProcessFrames() or prior
-    // to NotifyNewMediaSegmentStarting().
-    // TODO(wolenetz): Refactor SourceBufferStream to conform to spec GC timing.
-    // See http://crbug.com/371197.
+    // to NotifyStartOfCodedFrameGroup().
     track_buffer->EnqueueProcessedFrame(frame);
 
-    // 19. Set last decode timestamp for track buffer to decode timestamp.
+    // 17. Set last decode timestamp for track buffer to decode timestamp.
     track_buffer->set_last_decode_timestamp(decode_timestamp);
 
-    // 20. Set last frame duration for track buffer to frame duration.
+    // 18. Set last frame duration for track buffer to frame duration.
     track_buffer->set_last_frame_duration(frame_duration);
 
-    // 21. If highest presentation timestamp for track buffer is unset or frame
+    // 19. If highest presentation timestamp for track buffer is unset or frame
     //     end timestamp is greater than highest presentation timestamp, then
     //     set highest presentation timestamp for track buffer to frame end
     //     timestamp.
     track_buffer->SetHighestPresentationTimestampIfIncreased(
         frame_end_timestamp);
 
-    // 22. If frame end timestamp is greater than group end timestamp, then set
+    // 20. If frame end timestamp is greater than group end timestamp, then set
     //     group end timestamp equal to frame end timestamp.
     if (frame_end_timestamp > group_end_timestamp_)
       group_end_timestamp_ = frame_end_timestamp;
     DCHECK(group_end_timestamp_ >= base::TimeDelta());
 
+    // Step 21 is currently handled differently. See SourceBufferState's
+    // |auto_update_timestamp_offset_|.
     return true;
   }
 

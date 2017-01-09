@@ -9,6 +9,17 @@
 var VolumeManagerCommon = {};
 
 /**
+ * Paths that can be handled by the dialog opener in native code.
+ * @enum {string}
+ * @const
+ */
+var AllowedPaths = {
+  NATIVE_PATH: 'nativePath',
+  NATIVE_OR_DRIVE_PATH: 'nativeOrDrivePath',
+  ANY_PATH: 'anyPath'
+};
+
+/**
  * Type of a root directory.
  * @enum {string}
  * @const
@@ -203,7 +214,7 @@ VolumeManagerCommon.VolumeInfoProvider.prototype.getVolumeInfo;
 /**
  * Fake entries for Google Drive's virtual folders.
  * (OFFLINE, RECENT, and SHARED_WITH_ME)
- * @typedef {?{
+ * @typedef {{
  *   isDirectory: boolean,
  *   rootType: VolumeManagerCommon.RootType,
  *   toURL: function(): string

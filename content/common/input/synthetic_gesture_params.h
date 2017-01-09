@@ -5,7 +5,8 @@
 #ifndef CONTENT_COMMON_INPUT_SYNTHETIC_GESTURE_PARAMS_H_
 #define CONTENT_COMMON_INPUT_SYNTHETIC_GESTURE_PARAMS_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "content/common/content_export.h"
 
 namespace content {
@@ -48,8 +49,10 @@ struct CONTENT_EXPORT SyntheticGestureParams {
     SMOOTH_DRAG_GESTURE,
     PINCH_GESTURE,
     TAP_GESTURE,
-    SYNTHETIC_GESTURE_TYPE_MAX = TAP_GESTURE
+    POINTER_ACTION,
+    SYNTHETIC_GESTURE_TYPE_MAX = POINTER_ACTION
   };
+
   virtual GestureType GetGestureType() const = 0;
 
   // Returns true if the specific gesture source type is supported on this

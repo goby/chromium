@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_VIEWS_EXTENSIONS_EXTENSION_DIALOG_H_
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -73,7 +74,7 @@ class ExtensionDialog : public views::DialogDelegate,
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
   views::View* GetContentsView() override;
-  bool UseNewStyleForThisDialog() const override;
+  bool ShouldUseCustomFrame() const override;
 
   // content::NotificationObserver overrides.
   void Observe(int type,
@@ -96,7 +97,7 @@ class ExtensionDialog : public views::DialogDelegate,
   base::string16 window_title_;
 
   // The contained host for the view.
-  scoped_ptr<extensions::ExtensionViewHost> host_;
+  std::unique_ptr<extensions::ExtensionViewHost> host_;
 
   content::NotificationRegistrar registrar_;
 

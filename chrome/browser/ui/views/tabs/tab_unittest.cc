@@ -4,12 +4,15 @@
 
 #include "chrome/browser/ui/views/tabs/tab.h"
 
-#include "base/i18n/rtl.h"
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/tabs/tab_utils.h"
-#include "chrome/browser/ui/views/tabs/media_indicator_button.h"
+#include "chrome/browser/ui/views/tabs/alert_indicator_button.h"
 #include "chrome/browser/ui/views/tabs/tab_controller.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/models/list_selection_model.h"
 #include "ui/views/controls/button/image_button.h"
@@ -36,6 +39,7 @@ class FakeTabController : public TabController {
   bool ShouldHideCloseButtonForInactiveTabs() override {
     return false;
   }
+  bool MaySetClip() override { return false; }
   void SelectTab(Tab* tab) override {}
   void ExtendSelectionTo(Tab* tab) override {}
   void ToggleSelected(Tab* tab) override {}
@@ -60,17 +64,23 @@ class FakeTabController : public TabController {
   }
   void OnMouseEventInTab(views::View* source,
                          const ui::MouseEvent& event) override {}
-  bool ShouldPaintTab(const Tab* tab, gfx::Rect* clip) override { return true; }
+  bool ShouldPaintTab(
+      const Tab* tab,
+      const base::Callback<gfx::Path(const gfx::Size&)>& border_callback,
+      gfx::Path* clip) override {
+    return true;
+  }
   bool CanPaintThrobberToLayer() const override {
     return paint_throbber_to_layer_;
   }
   bool IsImmersiveStyle() const override { return immersive_style_; }
+  SkColor GetToolbarTopSeparatorColor() const override { return SK_ColorBLACK; }
   int GetBackgroundResourceId(bool* custom_image) const override {
     *custom_image = false;
     return IDR_THEME_TAB_BACKGROUND;
   }
   void UpdateTabAccessibilityState(const Tab* tab,
-                                   ui::AXViewState* state) override{};
+                                   ui::AXNodeData* node_data) override{};
 
  private:
   ui::ListSelectionModel selection_model_;
@@ -81,27 +91,10 @@ class FakeTabController : public TabController {
   DISALLOW_COPY_AND_ASSIGN(FakeTabController);
 };
 
-class TabTest : public views::ViewsTestBase,
-                public ::testing::WithParamInterface<bool> {
+class TabTest : public views::ViewsTestBase {
  public:
   TabTest() {}
-  virtual ~TabTest() {}
-
-  bool testing_for_rtl_locale() const { return GetParam(); }
-
-  void SetUp() override {
-    if (testing_for_rtl_locale()) {
-      original_locale_ = base::i18n::GetConfiguredLocale();
-      base::i18n::SetICUDefaultLocale("he");
-    }
-    views::ViewsTestBase::SetUp();
-  }
-
-  void TearDown() override {
-    views::ViewsTestBase::TearDown();
-    if (testing_for_rtl_locale())
-      base::i18n::SetICUDefaultLocale(original_locale_);
-  }
+  ~TabTest() override {}
 
   static views::ImageButton* GetCloseButton(const Tab& tab) {
     return tab.close_button_;
@@ -117,6 +110,10 @@ class TabTest : public views::ViewsTestBase,
     return tab.favicon_bounds_;
   }
 
+  static int GetTitleWidth(const Tab& tab) {
+    return tab.title_->bounds().width();
+  }
+
   static void LayoutTab(Tab* tab) { tab->Layout(); }
 
   static void CheckForExpectedLayoutAndVisibilityOfElements(const Tab& tab) {
@@ -124,12 +121,12 @@ class TabTest : public views::ViewsTestBase,
     // Tab size and TabRendererData state.
     if (tab.data_.pinned) {
       EXPECT_EQ(1, tab.IconCapacity());
-      if (tab.data_.media_state != TAB_MEDIA_STATE_NONE) {
+      if (tab.data_.alert_state != TabAlertState::NONE) {
         EXPECT_FALSE(tab.ShouldShowIcon());
-        EXPECT_TRUE(tab.ShouldShowMediaIndicator());
+        EXPECT_TRUE(tab.ShouldShowAlertIndicator());
       } else {
         EXPECT_TRUE(tab.ShouldShowIcon());
-        EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+        EXPECT_FALSE(tab.ShouldShowAlertIndicator());
       }
       EXPECT_FALSE(tab.ShouldShowCloseBox());
     } else if (tab.IsActive()) {
@@ -138,24 +135,24 @@ class TabTest : public views::ViewsTestBase,
         case 0:
         case 1:
           EXPECT_FALSE(tab.ShouldShowIcon());
-          EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+          EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           break;
         case 2:
-          if (tab.data_.media_state != TAB_MEDIA_STATE_NONE) {
+          if (tab.data_.alert_state != TabAlertState::NONE) {
             EXPECT_FALSE(tab.ShouldShowIcon());
-            EXPECT_TRUE(tab.ShouldShowMediaIndicator());
+            EXPECT_TRUE(tab.ShouldShowAlertIndicator());
           } else {
             EXPECT_TRUE(tab.ShouldShowIcon());
-            EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+            EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           }
           break;
         default:
           EXPECT_LE(3, tab.IconCapacity());
           EXPECT_TRUE(tab.ShouldShowIcon());
-          if (tab.data_.media_state != TAB_MEDIA_STATE_NONE)
-            EXPECT_TRUE(tab.ShouldShowMediaIndicator());
+          if (tab.data_.alert_state != TabAlertState::NONE)
+            EXPECT_TRUE(tab.ShouldShowAlertIndicator());
           else
-            EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+            EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           break;
       }
     } else {  // Tab not active and not pinned tab.
@@ -163,25 +160,25 @@ class TabTest : public views::ViewsTestBase,
         case 0:
           EXPECT_FALSE(tab.ShouldShowCloseBox());
           EXPECT_FALSE(tab.ShouldShowIcon());
-          EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+          EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           break;
         case 1:
           EXPECT_FALSE(tab.ShouldShowCloseBox());
-          if (tab.data_.media_state != TAB_MEDIA_STATE_NONE) {
+          if (tab.data_.alert_state != TabAlertState::NONE) {
             EXPECT_FALSE(tab.ShouldShowIcon());
-            EXPECT_TRUE(tab.ShouldShowMediaIndicator());
+            EXPECT_TRUE(tab.ShouldShowAlertIndicator());
           } else {
             EXPECT_TRUE(tab.ShouldShowIcon());
-            EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+            EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           }
           break;
         default:
           EXPECT_LE(2, tab.IconCapacity());
           EXPECT_TRUE(tab.ShouldShowIcon());
-          if (tab.data_.media_state != TAB_MEDIA_STATE_NONE)
-            EXPECT_TRUE(tab.ShouldShowMediaIndicator());
+          if (tab.data_.alert_state != TabAlertState::NONE)
+            EXPECT_TRUE(tab.ShouldShowAlertIndicator());
           else
-            EXPECT_FALSE(tab.ShouldShowMediaIndicator());
+            EXPECT_FALSE(tab.ShouldShowAlertIndicator());
           break;
       }
     }
@@ -196,22 +193,22 @@ class TabTest : public views::ViewsTestBase,
       EXPECT_LE(contents_bounds.y(), tab.favicon_bounds_.y());
       EXPECT_LE(tab.favicon_bounds_.bottom(), contents_bounds.bottom());
     }
-    if (tab.ShouldShowIcon() && tab.ShouldShowMediaIndicator())
-      EXPECT_LE(tab.favicon_bounds_.right(), GetMediaIndicatorBounds(tab).x());
-    if (tab.ShouldShowMediaIndicator()) {
+    if (tab.ShouldShowIcon() && tab.ShouldShowAlertIndicator())
+      EXPECT_LE(tab.favicon_bounds_.right(), GetAlertIndicatorBounds(tab).x());
+    if (tab.ShouldShowAlertIndicator()) {
       if (tab.title_->width() > 0) {
         EXPECT_LE(tab.title_->bounds().right(),
-                  GetMediaIndicatorBounds(tab).x());
+                  GetAlertIndicatorBounds(tab).x());
       }
-      EXPECT_LE(GetMediaIndicatorBounds(tab).right(), contents_bounds.right());
-      EXPECT_LE(contents_bounds.y(), GetMediaIndicatorBounds(tab).y());
-      EXPECT_LE(GetMediaIndicatorBounds(tab).bottom(),
+      EXPECT_LE(GetAlertIndicatorBounds(tab).right(), contents_bounds.right());
+      EXPECT_LE(contents_bounds.y(), GetAlertIndicatorBounds(tab).y());
+      EXPECT_LE(GetAlertIndicatorBounds(tab).bottom(),
                 contents_bounds.bottom());
     }
-    if (tab.ShouldShowMediaIndicator() && tab.ShouldShowCloseBox()) {
-      // Note: The media indicator can overlap the left-insets of the close box,
+    if (tab.ShouldShowAlertIndicator() && tab.ShouldShowCloseBox()) {
+      // Note: The alert indicator can overlap the left-insets of the close box,
       // but should otherwise be to the left of the close button.
-      EXPECT_LE(GetMediaIndicatorBounds(tab).right(),
+      EXPECT_LE(GetAlertIndicatorBounds(tab).right(),
                 tab.close_button_->bounds().x() +
                     tab.close_button_->GetInsets().left());
     }
@@ -244,41 +241,37 @@ class TabTest : public views::ViewsTestBase,
   }
 
  private:
-  static gfx::Rect GetMediaIndicatorBounds(const Tab& tab) {
-    if (!tab.media_indicator_button_) {
+  static gfx::Rect GetAlertIndicatorBounds(const Tab& tab) {
+    if (!tab.alert_indicator_button_) {
       ADD_FAILURE();
       return gfx::Rect();
     }
-    return tab.media_indicator_button_->bounds();
+    return tab.alert_indicator_button_->bounds();
   }
 
   std::string original_locale_;
 };
 
-TEST_P(TabTest, HitTestTopPixel) {
-  if (testing_for_rtl_locale() && !base::i18n::IsRTL()) {
-    LOG(WARNING) << "Testing of RTL locale not supported on current platform.";
-    return;
-  }
-
+TEST_F(TabTest, HitTestTopPixel) {
   Widget widget;
   InitWidget(&widget);
 
   FakeTabController tab_controller;
-  Tab tab(&tab_controller);
+  Tab tab(&tab_controller, nullptr);
   widget.GetContentsView()->AddChildView(&tab);
   tab.SetBoundsRect(gfx::Rect(gfx::Point(0, 0), Tab::GetStandardSize()));
-
-  // Tabs have some shadow in the top, so by default we don't hit the tab there.
-  int middle_x = tab.width() / 2;
-  EXPECT_FALSE(tab.HitTestPoint(gfx::Point(middle_x, 0)));
 
   // Tabs are slanted, so a click halfway down the left edge won't hit it.
   int middle_y = tab.height() / 2;
   EXPECT_FALSE(tab.HitTestPoint(gfx::Point(0, middle_y)));
 
-  // If the window is maximized, however, we want clicks in the top edge to
-  // select the tab.
+  // Tabs should not be hit if we click above them.
+  int middle_x = tab.width() / 2;
+  EXPECT_FALSE(tab.HitTestPoint(gfx::Point(middle_x, -1)));
+  EXPECT_TRUE(tab.HitTestPoint(gfx::Point(middle_x, 0)));
+
+  // Make sure top edge clicks still select the tab when the window is
+  // maximized.
   widget.Maximize();
   EXPECT_TRUE(tab.HitTestPoint(gfx::Point(middle_x, 0)));
 
@@ -287,22 +280,16 @@ TEST_P(TabTest, HitTestTopPixel) {
   EXPECT_FALSE(tab.HitTestPoint(gfx::Point(tab.width() - 1, 0)));
 }
 
-TEST_P(TabTest, LayoutAndVisibilityOfElements) {
-  if (testing_for_rtl_locale() && !base::i18n::IsRTL()) {
-    LOG(WARNING) << "Testing of RTL locale not supported on current platform.";
-    return;
-  }
-
-  static const TabMediaState kMediaStatesToTest[] = {
-    TAB_MEDIA_STATE_NONE, TAB_MEDIA_STATE_CAPTURING,
-    TAB_MEDIA_STATE_AUDIO_PLAYING, TAB_MEDIA_STATE_AUDIO_MUTING
-  };
+TEST_F(TabTest, LayoutAndVisibilityOfElements) {
+  static const TabAlertState kAlertStatesToTest[] = {
+      TabAlertState::NONE, TabAlertState::TAB_CAPTURING,
+      TabAlertState::AUDIO_PLAYING, TabAlertState::AUDIO_MUTING};
 
   Widget widget;
   InitWidget(&widget);
 
   FakeTabController controller;
-  Tab tab(&controller);
+  Tab tab(&controller, nullptr);
   widget.GetContentsView()->AddChildView(&tab);
 
   SkBitmap bitmap;
@@ -314,18 +301,19 @@ TEST_P(TabTest, LayoutAndVisibilityOfElements) {
   // results.
   for (int is_pinned_tab = 0; is_pinned_tab < 2; ++is_pinned_tab) {
     for (int is_active_tab = 0; is_active_tab < 2; ++is_active_tab) {
-      for (size_t media_state_index = 0;
-           media_state_index < arraysize(kMediaStatesToTest);
-           ++media_state_index) {
-        const TabMediaState media_state = kMediaStatesToTest[media_state_index];
+      for (size_t alert_state_index = 0;
+           alert_state_index < arraysize(kAlertStatesToTest);
+           ++alert_state_index) {
+        const TabAlertState alert_state = kAlertStatesToTest[alert_state_index];
         SCOPED_TRACE(::testing::Message()
                      << (is_active_tab ? "Active" : "Inactive") << ' '
                      << (is_pinned_tab ? "Pinned " : "")
-                     << "Tab with media indicator state " << media_state);
+                     << "Tab with alert indicator state "
+                     << static_cast<uint8_t>(alert_state));
 
         data.pinned = !!is_pinned_tab;
         controller.set_active_tab(!!is_active_tab);
-        data.media_state = media_state;
+        data.alert_state = alert_state;
         tab.SetData(data);
 
         // Test layout for every width from standard to minimum.
@@ -352,17 +340,12 @@ TEST_P(TabTest, LayoutAndVisibilityOfElements) {
 // Regression test for http://crbug.com/420313: Confirms that any child Views of
 // Tab do not attempt to provide their own tooltip behavior/text. It also tests
 // that Tab provides the expected tooltip text (according to tab_utils).
-TEST_P(TabTest, TooltipProvidedByTab) {
-  if (testing_for_rtl_locale() && !base::i18n::IsRTL()) {
-    LOG(WARNING) << "Testing of RTL locale not supported on current platform.";
-    return;
-  }
-
+TEST_F(TabTest, TooltipProvidedByTab) {
   Widget widget;
   InitWidget(&widget);
 
   FakeTabController controller;
-  Tab tab(&controller);
+  Tab tab(&controller, nullptr);
   widget.GetContentsView()->AddChildView(&tab);
   tab.SetBoundsRect(gfx::Rect(Tab::GetStandardSize()));
 
@@ -377,13 +360,14 @@ TEST_P(TabTest, TooltipProvidedByTab) {
       "the tooltip instead.");
 
   // Test both with and without an indicator showing since the tab tooltip text
-  // should include a description of the media state when the indicator is
+  // should include a description of the alert state when the indicator is
   // present.
   for (int i = 0; i < 2; ++i) {
-    data.media_state =
-        (i == 0 ? TAB_MEDIA_STATE_NONE : TAB_MEDIA_STATE_AUDIO_PLAYING);
+    data.alert_state =
+        (i == 0 ? TabAlertState::NONE : TabAlertState::AUDIO_PLAYING);
     SCOPED_TRACE(::testing::Message()
-                 << "Tab with media indicator state " << data.media_state);
+                 << "Tab with alert indicator state "
+                 << static_cast<uint8_t>(data.alert_state));
     tab.SetData(data);
 
     for (int j = 0; j < tab.child_count(); ++j) {
@@ -402,7 +386,7 @@ TEST_P(TabTest, TooltipProvidedByTab) {
       base::string16 tooltip;
       EXPECT_TRUE(static_cast<views::View&>(tab).GetTooltipText(
           mouse_hover_point, &tooltip));
-      EXPECT_EQ(chrome::AssembleTabTooltipText(data.title, data.media_state),
+      EXPECT_EQ(chrome::AssembleTabTooltipText(data.title, data.alert_state),
                 tooltip);
     }
   }
@@ -410,14 +394,9 @@ TEST_P(TabTest, TooltipProvidedByTab) {
 
 // Regression test for http://crbug.com/226253. Calling Layout() more than once
 // shouldn't change the insets of the close button.
-TEST_P(TabTest, CloseButtonLayout) {
-  if (testing_for_rtl_locale() && !base::i18n::IsRTL()) {
-    LOG(WARNING) << "Testing of RTL locale not supported on current platform.";
-    return;
-  }
-
+TEST_F(TabTest, CloseButtonLayout) {
   FakeTabController tab_controller;
-  Tab tab(&tab_controller);
+  Tab tab(&tab_controller, nullptr);
   tab.SetBounds(0, 0, 100, 50);
   LayoutTab(&tab);
   gfx::Insets close_button_insets = GetCloseButton(tab)->GetInsets();
@@ -432,19 +411,34 @@ TEST_P(TabTest, CloseButtonLayout) {
   EXPECT_EQ(50, GetCloseButton(tab)->bounds().height());
 }
 
+// Regression test for http://crbug.com/609701. Ensure TabCloseButton does not
+// get focus on right click.
+TEST_F(TabTest, CloseButtonFocus) {
+  Widget widget;
+  InitWidget(&widget);
+  FakeTabController tab_controller;
+  Tab tab(&tab_controller, nullptr);
+  widget.GetContentsView()->AddChildView(&tab);
+
+  views::ImageButton* tab_close_button = GetCloseButton(tab);
+
+  // Verify tab_close_button does not get focus on right click.
+  ui::MouseEvent right_click_event(ui::ET_KEY_PRESSED, gfx::Point(),
+                                   gfx::Point(), base::TimeTicks(),
+                                   ui::EF_RIGHT_MOUSE_BUTTON, 0);
+  tab_close_button->OnMousePressed(right_click_event);
+  EXPECT_NE(tab_close_button,
+            tab_close_button->GetFocusManager()->GetFocusedView());
+}
+
 // Tests expected changes to the ThrobberView state when the WebContents loading
 // state changes or the animation timer (usually in BrowserView) triggers.
-TEST_P(TabTest, LayeredThrobber) {
-  if (testing_for_rtl_locale() && !base::i18n::IsRTL()) {
-    LOG(WARNING) << "Testing of RTL locale not supported on current platform.";
-    return;
-  }
-
+TEST_F(TabTest, LayeredThrobber) {
   Widget widget;
   InitWidget(&widget);
 
   FakeTabController tab_controller;
-  Tab tab(&tab_controller);
+  Tab tab(&tab_controller, nullptr);
   widget.GetContentsView()->AddChildView(&tab);
   tab.SetBoundsRect(gfx::Rect(Tab::GetStandardSize()));
 
@@ -493,10 +487,11 @@ TEST_P(TabTest, LayeredThrobber) {
   EXPECT_FALSE(throbber->visible());
 }
 
-// Test in both a LTR and a RTL locale.  Note: The fact that the UI code is
-// configured for an RTL locale does *not* change how the coordinates are
-// examined in the tests above because views::View and friends are supposed to
-// auto-mirror the widgets when painting.  Thus, what we're testing here is that
-// there's no code in Tab that will erroneously subvert this automatic
-// coordinate translation.  http://crbug.com/384179
-INSTANTIATE_TEST_CASE_P(, TabTest, ::testing::Values(false, true));
+TEST_F(TabTest, TitleHiddenWhenSmall) {
+  FakeTabController tab_controller;
+  Tab tab(&tab_controller, nullptr);
+  tab.SetBounds(0, 0, 100, 50);
+  EXPECT_GT(GetTitleWidth(tab), 0);
+  tab.SetBounds(0, 0, 0, 50);
+  EXPECT_EQ(0, GetTitleWidth(tab));
+}

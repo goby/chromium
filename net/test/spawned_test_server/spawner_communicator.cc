@@ -5,12 +5,17 @@
 #include "net/test/spawned_test_server/spawner_communicator.h"
 
 #include <limits>
+#include <utility>
 
 #include "base/json/json_reader.h"
+#include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/supports_user_data.h"
 #include "base/test/test_timeouts.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -102,7 +107,8 @@ class SpawnerRequestData : public base::SupportsUserData::Data {
 
 SpawnerCommunicator::SpawnerCommunicator(uint16_t port)
     : io_thread_("spawner_communicator"),
-      event_(false, false),
+      event_(base::WaitableEvent::ResetPolicy::AUTOMATIC,
+             base::WaitableEvent::InitialState::NOT_SIGNALED),
       port_(port),
       next_id_(0),
       is_running_(false),
@@ -156,9 +162,11 @@ void SpawnerCommunicator::SendCommandAndWaitForResult(
   // Since the method will be blocked until SpawnerCommunicator gets result
   // from the spawner server or timed-out. It's safe to use base::Unretained
   // when using base::Bind.
-  io_thread_.message_loop()->PostTask(FROM_HERE, base::Bind(
-      &SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread,
-      base::Unretained(this), command, post_data, result_code, data_received));
+  io_thread_.task_runner()->PostTask(
+      FROM_HERE,
+      base::Bind(&SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread,
+                 base::Unretained(this), command, post_data, result_code,
+                 data_received));
   WaitForResponse();
 }
 
@@ -169,7 +177,7 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
     std::string* data_received) {
   base::MessageLoop* loop = io_thread_.message_loop();
   DCHECK(loop);
-  DCHECK_EQ(base::MessageLoop::current(), loop);
+  DCHECK(loop->task_runner()->BelongsToCurrentThread());
 
   // Prepare the URLRequest for sending the command.
   DCHECK(!cur_request_.get());
@@ -188,10 +196,10 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
     cur_request_->set_method("GET");
   } else {
     cur_request_->set_method("POST");
-    scoped_ptr<UploadElementReader> reader(
+    std::unique_ptr<UploadElementReader> reader(
         UploadOwnedBytesElementReader::CreateWithString(post_data));
     cur_request_->set_upload(
-        ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+        ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
     HttpRequestHeaders headers;
     headers.SetHeader(HttpRequestHeaders::kContentType,
                       "application/json");
@@ -199,11 +207,9 @@ void SpawnerCommunicator::SendCommandAndWaitForResultOnIOThread(
   }
 
   // Post a task to timeout this request if it takes too long.
-  base::MessageLoop::current()->PostDelayedTask(
-      FROM_HERE,
-      base::Bind(&SpawnerCommunicator::OnTimeout,
-                 weak_factory_.GetWeakPtr(),
-                 current_request_id),
+  base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
+      FROM_HERE, base::Bind(&SpawnerCommunicator::OnTimeout,
+                            weak_factory_.GetWeakPtr(), current_request_id),
       TestTimeouts::action_max_timeout());
 
   // Start the request.
@@ -222,12 +228,14 @@ void SpawnerCommunicator::OnTimeout(int id) {
   if (!data->DoesRequestIdMatch(id))
     return;
   // Set the result code and cancel the timed-out task.
-  data->SetResultCode(ERR_TIMED_OUT);
-  cur_request_->Cancel();
-  OnSpawnerCommandCompleted(cur_request_.get());
+  int result = cur_request_->CancelWithError(ERR_TIMED_OUT);
+  OnSpawnerCommandCompleted(cur_request_.get(), result);
 }
 
-void SpawnerCommunicator::OnSpawnerCommandCompleted(URLRequest* request) {
+void SpawnerCommunicator::OnSpawnerCommandCompleted(URLRequest* request,
+                                                    int net_error) {
+  DCHECK_NE(ERR_IO_PENDING, net_error);
+
   if (!cur_request_.get())
     return;
   DCHECK_EQ(request, cur_request_.get());
@@ -236,13 +244,11 @@ void SpawnerCommunicator::OnSpawnerCommandCompleted(URLRequest* request) {
   DCHECK(data);
 
   // If request is faild,return the error code.
-  if (!cur_request_->status().is_success())
-    data->SetResultCode(cur_request_->status().error());
+  if (net_error != OK)
+    data->SetResultCode(net_error);
 
   if (!data->IsResultOK()) {
-    LOG(ERROR) << "request failed, status: "
-               << static_cast<int>(request->status().status())
-               << ", error: " << request->status().error();
+    LOG(ERROR) << "request failed, error: " << net_error;
     // Clear the buffer of received data if any net error happened.
     data->ClearReceivedData();
   } else {
@@ -269,30 +275,35 @@ void SpawnerCommunicator::ReadResult(URLRequest* request) {
   IOBuffer* buf = data->buf();
   // Read as many bytes as are available synchronously.
   while (true) {
-    int num_bytes;
-    if (!request->Read(buf, kBufferSize, &num_bytes)) {
-      // Check whether the read failed synchronously.
-      if (!request->status().is_io_pending())
-        OnSpawnerCommandCompleted(request);
+    int rv = request->Read(buf, kBufferSize);
+    if (rv == ERR_IO_PENDING)
+      return;
+
+    if (rv < 0) {
+      OnSpawnerCommandCompleted(request, rv);
       return;
     }
-    if (!data->ConsumeBytesRead(num_bytes)) {
-      OnSpawnerCommandCompleted(request);
+
+    if (!data->ConsumeBytesRead(rv)) {
+      OnSpawnerCommandCompleted(request, rv);
       return;
     }
   }
 }
 
-void SpawnerCommunicator::OnResponseStarted(URLRequest* request) {
+void SpawnerCommunicator::OnResponseStarted(URLRequest* request,
+                                            int net_error) {
   DCHECK_EQ(request, cur_request_.get());
+  DCHECK_NE(ERR_IO_PENDING, net_error);
+
   SpawnerRequestData* data =
       static_cast<SpawnerRequestData*>(cur_request_->GetUserData(this));
   DCHECK(data);
 
   data->IncreaseResponseStartedCount();
 
-  if (!request->status().is_success()) {
-    OnSpawnerCommandCompleted(request);
+  if (net_error != OK) {
+    OnSpawnerCommandCompleted(request, net_error);
     return;
   }
 
@@ -302,7 +313,7 @@ void SpawnerCommunicator::OnResponseStarted(URLRequest* request) {
                << request->response_headers()->GetStatusLine();
     data->SetResultCode(ERR_FAILED);
     request->Cancel();
-    OnSpawnerCommandCompleted(request);
+    OnSpawnerCommandCompleted(request, ERR_ABORTED);
     return;
   }
 
@@ -310,6 +321,8 @@ void SpawnerCommunicator::OnResponseStarted(URLRequest* request) {
 }
 
 void SpawnerCommunicator::OnReadCompleted(URLRequest* request, int num_bytes) {
+  DCHECK_NE(ERR_IO_PENDING, num_bytes);
+
   if (!cur_request_.get())
     return;
   DCHECK_EQ(request, cur_request_.get());
@@ -321,7 +334,9 @@ void SpawnerCommunicator::OnReadCompleted(URLRequest* request, int num_bytes) {
     // Keep reading.
     ReadResult(request);
   } else {
-    OnSpawnerCommandCompleted(request);
+    // |bytes_read| < 0
+    int net_error = num_bytes;
+    OnSpawnerCommandCompleted(request, net_error);
   }
 }
 
@@ -338,8 +353,9 @@ bool SpawnerCommunicator::StartServer(const std::string& arguments,
     return false;
 
   // Check whether the data returned from spawner server is JSON-formatted.
-  scoped_ptr<base::Value> value = base::JSONReader::Read(server_return_data);
-  if (!value.get() || !value->IsType(base::Value::TYPE_DICTIONARY)) {
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::Read(server_return_data);
+  if (!value.get() || !value->IsType(base::Value::Type::DICTIONARY)) {
     LOG(ERROR) << "Invalid server data: " << server_return_data.c_str();
     return false;
   }

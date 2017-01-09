@@ -5,12 +5,17 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_ERROR_CONSOLE_ERROR_CONSOLE_H_
 #define CHROME_BROWSER_EXTENSIONS_ERROR_CONSOLE_ERROR_CONSOLE_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/observer_list.h"
-#include "base/prefs/pref_change_registrar.h"
 #include "base/scoped_observer.h"
 #include "base/threading/thread_checker.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/pref_change_registrar.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/error_map.h"
@@ -21,7 +26,6 @@ namespace content {
 class BrowserContext;
 class NotificationDetails;
 class NotificationSource;
-class RenderViewHost;
 }
 
 class Profile;
@@ -83,7 +87,7 @@ class ErrorConsole : public KeyedService,
   void UseDefaultReportingForExtension(const std::string& extension_id);
 
   // Report an extension error, and add it to the list.
-  void ReportError(scoped_ptr<ExtensionError> error);
+  void ReportError(std::unique_ptr<ExtensionError> error);
 
   // Removes errors from the map according to the given |filter|.
   void RemoveErrors(const ErrorMap::Filter& filter);
@@ -178,7 +182,7 @@ class ErrorConsole : public KeyedService,
   ErrorMap errors_;
 
   // The default mask to use if an Extension does not have specific settings.
-  int32 default_mask_;
+  int32_t default_mask_;
 
   // The profile with which the ErrorConsole is associated. Only collect errors
   // from extensions and RenderViews associated with this Profile (and it's

@@ -5,6 +5,7 @@
 #ifndef GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_CLEAR_FRAMEBUFFER_H_
 #define GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_CLEAR_FRAMEBUFFER_H_
 
+#include "base/macros.h"
 #include "gpu/command_buffer/service/gl_utils.h"
 #include "gpu/gpu_export.h"
 
@@ -15,7 +16,6 @@ class Size;
 namespace gpu {
 namespace gles2 {
 class GLES2Decoder;
-}
 
 class GPU_EXPORT ClearFramebufferResourceManager {
  public:
@@ -49,6 +49,7 @@ class GPU_EXPORT ClearFramebufferResourceManager {
   DISALLOW_COPY_AND_ASSIGN(ClearFramebufferResourceManager);
 };
 
-}  // namespace gpu.
+}  // namespace gles2
+}  // namespace gpu
 
 #endif  // GPU_COMMAND_BUFFER_SERVICE_GLES2_CMD_CLEAR_FRAMEBUFFER_H_

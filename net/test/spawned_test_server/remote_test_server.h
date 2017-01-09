@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "net/test/spawned_test_server/base_test_server.h"
 
 namespace net {
@@ -60,7 +61,7 @@ class RemoteTestServer : public BaseTestServer {
 
   // Helper to start and stop instances of the Python test server that runs on
   // the host machine.
-  scoped_ptr<SpawnerCommunicator> spawner_communicator_;
+  std::unique_ptr<SpawnerCommunicator> spawner_communicator_;
 
   DISALLOW_COPY_AND_ASSIGN(RemoteTestServer);
 };
@@ -68,4 +69,3 @@ class RemoteTestServer : public BaseTestServer {
 }  // namespace net
 
 #endif  // NET_TEST_SPAWNED_TEST_SERVER_REMOTE_TEST_SERVER_H_
-

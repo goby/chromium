@@ -9,66 +9,42 @@
 
 #include "base/macros.h"
 #include "content/public/renderer/render_frame_observer.h"
-#include "content/public/renderer/render_view_observer.h"
-#include "content/public/renderer/render_view_observer_tracker.h"
+#include "content/public/renderer/render_frame_observer_tracker.h"
 #include "mojo/public/cpp/system/core.h"
-
-namespace gin {
-class PerContextData;
-}
 
 namespace content {
 
 class MojoContextState;
 
+enum class MojoBindingsType { FOR_WEB_UI, FOR_LAYOUT_TESTS, FOR_HEADLESS };
+
 // MojoBindingsController is responsible for enabling the renderer side of mojo
 // bindings. It creates (and destroys) a MojoContextState at the appropriate
 // times and handles the necessary browser messages. MojoBindingsController
-// destroys itself when the RendererView it is created with is destroyed.
+// destroys itself when the RendererFrame it is created with is destroyed.
 class MojoBindingsController
-    : public RenderViewObserver,
-      public RenderViewObserverTracker<MojoBindingsController> {
+    : public RenderFrameObserver,
+      public RenderFrameObserverTracker<MojoBindingsController> {
  public:
-  explicit MojoBindingsController(RenderView* render_view);
+  MojoBindingsController(RenderFrame* render_frame,
+                         MojoBindingsType bindings_type);
+  void RunScriptsAtDocumentStart();
+  void RunScriptsAtDocumentReady();
 
  private:
-  class MainFrameObserver : public RenderFrameObserver {
-   public:
-    explicit MainFrameObserver(MojoBindingsController* web_ui_mojo);
-    ~MainFrameObserver() override;
-
-    // RenderFrameObserver overrides:
-    void WillReleaseScriptContext(v8::Local<v8::Context> context,
-                                  int world_id) override;
-    void DidFinishDocumentLoad() override;
-    // MainFrameObserver is inline owned by MojoBindingsController and should
-    // not be destroyed when the main RenderFrame is deleted. Overriding the
-    // OnDestruct method allows this object to remain alive and be cleaned
-    // up as part of MojoBindingsController deletion.
-    void OnDestruct() override;
-
-   private:
-    MojoBindingsController* mojo_bindings_controller_;
-
-    DISALLOW_COPY_AND_ASSIGN(MainFrameObserver);
-  };
-
   ~MojoBindingsController() override;
 
   void CreateContextState();
   void DestroyContextState(v8::Local<v8::Context> context);
-
-  // Invoked when the frame finishes loading. Invokes Run() on the
-  // MojoContextState.
-  void OnDidFinishDocumentLoad();
-
   MojoContextState* GetContextState();
 
-  // RenderViewObserver overrides:
-  void DidCreateDocumentElement(blink::WebLocalFrame* frame) override;
-  void DidClearWindowObject(blink::WebLocalFrame* frame) override;
+  // RenderFrameObserver overrides:
+  void WillReleaseScriptContext(v8::Local<v8::Context> context,
+                                int world_id) override;
+  void DidClearWindowObject() override;
+  void OnDestruct() override;
 
-  MainFrameObserver main_frame_observer_;
+  const MojoBindingsType bindings_type_;
 
   DISALLOW_COPY_AND_ASSIGN(MojoBindingsController);
 };

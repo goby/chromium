@@ -2,12 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_CAST_TEST_SKEWED_TASK_RUNNER_H_
-#define MEDIA_CAST_TEST_SKEWED_TASK_RUNNER_H_
+#ifndef MEDIA_CAST_TEST_SKEWED_SINGLE_THREAD_TASK_RUNNER_H_
+#define MEDIA_CAST_TEST_SKEWED_SINGLE_THREAD_TASK_RUNNER_H_
 
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/test/test_pending_task.h"
@@ -54,4 +54,4 @@ class SkewedSingleThreadTaskRunner : public base::SingleThreadTaskRunner {
 }  // namespace cast
 }  // namespace media
 
-#endif  // MEDIA_CAST_TEST_SKEWED_TASK_RUNNER_H_
+#endif  // MEDIA_CAST_TEST_SKEWED_SINGLE_THREAD_TASK_RUNNER_H_

@@ -4,14 +4,17 @@
 
 #include "components/sessions/core/serialized_navigation_entry.h"
 
+#include <stddef.h>
+
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/sessions/core/serialized_navigation_driver.h"
-#include "sync/protocol/session_specifics.pb.h"
-#include "sync/util/time.h"
+#include "components/sync/base/time.h"
+#include "components/sync/protocol/session_specifics.pb.h"
 
 namespace sessions {
 
+// TODO(treib): Remove, not needed anymore. crbug.com/627747
 const char kSearchTermsKey[] = "search_terms";
 
 SerializedNavigationEntry::SerializedNavigationEntry()
@@ -23,10 +26,14 @@ SerializedNavigationEntry::SerializedNavigationEntry()
       is_overriding_user_agent_(false),
       http_status_code_(0),
       is_restored_(false),
-      blocked_state_(STATE_INVALID) {
+      blocked_state_(STATE_INVALID),
+      password_state_(PASSWORD_STATE_UNKNOWN) {
   referrer_policy_ =
       SerializedNavigationDriver::Get()->GetDefaultReferrerPolicy();
 }
+
+SerializedNavigationEntry::SerializedNavigationEntry(
+    const SerializedNavigationEntry& other) = default;
 
 SerializedNavigationEntry::~SerializedNavigationEntry() {}
 
@@ -52,7 +59,7 @@ SerializedNavigationEntry SerializedNavigationEntry::FromSyncData(
   navigation.virtual_url_ = GURL(sync_data.virtual_url());
   navigation.title_ = base::UTF8ToUTF16(sync_data.title());
 
-  uint32 transition = 0;
+  uint32_t transition = 0;
   if (sync_data.has_page_transition()) {
     switch (sync_data.page_transition()) {
       case sync_pb::SyncEnums_PageTransition_LINK:
@@ -121,6 +128,12 @@ SerializedNavigationEntry SerializedNavigationEntry::FromSyncData(
   navigation.search_terms_ = base::UTF8ToUTF16(sync_data.search_terms());
   if (sync_data.has_favicon_url())
     navigation.favicon_url_ = GURL(sync_data.favicon_url());
+
+  if (sync_data.has_password_state()) {
+    navigation.password_state_ =
+        static_cast<SerializedNavigationEntry::PasswordState>(
+            sync_data.password_state());
+  }
 
   navigation.http_status_code_ = sync_data.http_status_code();
 
@@ -200,6 +213,7 @@ enum TypeMask {
 // search_terms_
 // http_status_code_
 // referrer_policy_
+// extended_info_map_
 
 void SerializedNavigationEntry::WriteToPickle(int max_size,
                                               base::Pickle* pickle) const {
@@ -244,6 +258,12 @@ void SerializedNavigationEntry::WriteToPickle(int max_size,
   pickle->WriteInt(http_status_code_);
 
   pickle->WriteInt(referrer_policy_);
+
+  pickle->WriteInt(extended_info_map_.size());
+  for (const auto entry : extended_info_map_) {
+    WriteStringToPickle(pickle, &bytes_written, max_size, entry.first);
+    WriteStringToPickle(pickle, &bytes_written, max_size, entry.second);
+  }
 }
 
 bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
@@ -293,7 +313,7 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
     if (!iterator->ReadBool(&is_overriding_user_agent_))
       is_overriding_user_agent_ = false;
 
-    int64 timestamp_internal_value = 0;
+    int64_t timestamp_internal_value = 0;
     if (iterator->ReadInt64(&timestamp_internal_value)) {
       timestamp_ = base::Time::FromInternalValue(timestamp_internal_value);
     } else {
@@ -322,6 +342,17 @@ bool SerializedNavigationEntry::ReadFromPickle(base::PickleIterator* iterator) {
           SerializedNavigationDriver::Get()->StripReferrerFromPageState(
               encoded_page_state_);
     }
+
+    int extended_info_map_size = 0;
+    if (iterator->ReadInt(&extended_info_map_size) &&
+        extended_info_map_size > 0) {
+      for (int i = 0; i < extended_info_map_size; ++i) {
+        std::string key;
+        std::string value;
+        if (iterator->ReadString(&key) && iterator->ReadString(&value))
+          extended_info_map_[key] = value;
+      }
+    }
   }
 
   SerializedNavigationDriver::Get()->Sanitize(this);
@@ -348,8 +379,8 @@ sync_pb::TabNavigation SerializedNavigationEntry::ToSyncData() const {
   sync_data.set_title(base::UTF16ToUTF8(title_));
 
   // Page transition core.
-  static_assert(ui::PAGE_TRANSITION_LAST_CORE ==
-                ui::PAGE_TRANSITION_KEYWORD_GENERATED,
+  static_assert(static_cast<int32_t>(ui::PAGE_TRANSITION_LAST_CORE) ==
+                static_cast<int32_t>(ui::PAGE_TRANSITION_KEYWORD_GENERATED),
                 "PAGE_TRANSITION_LAST_CORE must equal "
                 "PAGE_TRANSITION_KEYWORD_GENERATED");
   switch (ui::PageTransitionStripQualifier(transition_type_)) {
@@ -438,6 +469,9 @@ sync_pb::TabNavigation SerializedNavigationEntry::ToSyncData() const {
     sync_data.set_blocked_state(
         static_cast<sync_pb::TabNavigation_BlockedState>(blocked_state_));
   }
+
+  sync_data.set_password_state(
+      static_cast<sync_pb::TabNavigation_PasswordState>(password_state_));
 
   for (std::set<std::string>::const_iterator it =
            content_pack_categories_.begin();

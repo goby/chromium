@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/callback_forward.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/non_thread_safe.h"
 #include "components/invalidation/impl/p2p_invalidator.h"
@@ -31,7 +34,7 @@ class P2PInvalidationService : public base::NonThreadSafe,
                                public InvalidationService {
  public:
   P2PInvalidationService(
-      scoped_ptr<IdentityProvider> identity_provider,
+      std::unique_ptr<IdentityProvider> identity_provider,
       const scoped_refptr<net::URLRequestContextGetter>& request_context,
       syncer::P2PNotificationTarget notification_target);
   ~P2PInvalidationService() override;
@@ -57,8 +60,8 @@ class P2PInvalidationService : public base::NonThreadSafe,
   void SendInvalidation(const syncer::ObjectIdSet& ids);
 
  private:
-  scoped_ptr<IdentityProvider> identity_provider_;
-  scoped_ptr<syncer::P2PInvalidator> invalidator_;
+  std::unique_ptr<IdentityProvider> identity_provider_;
+  std::unique_ptr<syncer::P2PInvalidator> invalidator_;
   std::string invalidator_id_;
 
   DISALLOW_COPY_AND_ASSIGN(P2PInvalidationService);

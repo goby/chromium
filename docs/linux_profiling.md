@@ -1,6 +1,6 @@
 # Linux Profiling
 
-How to profile chromium on Linux.
+How to profile Chromium on Linux.
 
 See
 [Profiling Chromium and WebKit](https://sites.google.com/a/chromium.org/dev/developers/profiling-chromium-and-webkit)
@@ -164,7 +164,7 @@ http://google-perftools.googlecode.com/svn/trunk/doc/heapprofile.html.
 ### Massif
 
 [Massif](http://valgrind.org/docs/manual/mc-manual.html) is a
-[Valgrind](http://www.chromium.org/developers/how-tos/using-valgrind)-based heap
+[Valgrind](https://www.chromium.org/developers/how-tos/using-valgrind)-based heap
 profiler. It is much slower than the heap profiler from google-perftools, but it
 may have some advantages. (In particular, it handles the multi-process
 executables well).
@@ -172,8 +172,8 @@ executables well).
 First, you will need to build massif from valgrind-variant project yourself,
 it's [easy](http://code.google.com/p/valgrind-variant/wiki/HowTo).
 
-Then, make sure your chromium is built using the
-[valgrind instructions](http://www.chromium.org/developers/how-tos/using-valgrind).
+Then, make sure your Chromium is built using the
+[valgrind instructions](https://www.chromium.org/developers/how-tos/using-valgrind).
 Now, you can run massif like this:
 
 ```

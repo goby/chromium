@@ -1,10 +1,9 @@
 include_rules = [
   "+cc/switches.h", # For cc command line switches.
-  "+components/mus/public",
-  "+media/base",  # For media command line switches.
-  "+media/audio/audio_util.h",  # For audio hardware sample-rate.
+  "+components/display_compositor",
+  "+components/variations",
+  "+services/ui/public",
   "+third_party/zlib",
-  "+third_party/libyuv",
 
   # The renderer_host files should only call upwards in the layering via the
   # delegate interfaces.
@@ -21,14 +20,6 @@ specific_include_rules = {
     "+content/browser/web_contents",
     "+content/public/browser/web_contents.h",
     "+content/public/browser/web_contents_view.h",
-    "+media/renderers",
-  ],
-  "sandbox_ipc_linux\.cc": [
-    "+third_party/WebKit/public/platform/linux/WebFontInfo.h",
-    "+third_party/WebKit/public/web/WebKit.h",
-  ],
-  "sandbox_ipc_linux\.h": [
-    "+content/child/blink_platform_impl.h",
   ],
   "render_process_host_impl\.cc": [
     "+content/browser/frame_host/render_frame_message_filter.h",
@@ -48,5 +39,18 @@ specific_include_rules = {
   ],
   "render_widget_host_view_aura\.cc": [
     "+content/browser/frame_host",
+  ],
+  "render_widget_host_view_event_handler\.cc": [
+    "+content/browser/frame_host",
+  ],
+  # TODO(kenrb): RenderWidgetHostViewChildFrame should eventually be moved
+  # to content/renderer_host, at which time this can be removed.
+  # RenderWidgetHostViewGuest dependency is needed to allow for routing mouse
+  # events to the correct owner RenderWidgetHostViewBase. It should be removed
+  # when all inner WebContents are based on OOPIF structure (as opposed to
+  # BrowserPlugin).
+  "render_widget_host_input_event_router.cc": [
+    "+content/browser/frame_host/render_widget_host_view_child_frame.h",
+    "+content/browser/frame_host/render_widget_host_view_guest.h",
   ],
 }

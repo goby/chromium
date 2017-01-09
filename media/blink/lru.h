@@ -5,6 +5,8 @@
 #ifndef MEDIA_BLINK_LRU_H_
 #define MEDIA_BLINK_LRU_H_
 
+#include <stddef.h>
+
 #include <list>
 
 #include "base/containers/hash_tables.h"
@@ -90,4 +92,4 @@ class LRU {
 
 }  // namespace media
 
-#endif  // MEDIA_BLINK_LRU_H
+#endif  // MEDIA_BLINK_LRU_H_

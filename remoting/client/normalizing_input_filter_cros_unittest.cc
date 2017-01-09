@@ -4,6 +4,8 @@
 
 #include "remoting/client/normalizing_input_filter_cros.h"
 
+#include <stdint.h>
+
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/protocol_mock_objects.h"
 #include "remoting/protocol/test_event_matchers.h"
@@ -58,57 +60,57 @@ static MouseEvent MakeMouseButtonEvent(MouseEvent::MouseButton button,
 // Test OSKey press/release.
 TEST(NormalizingInputFilterCrosTest, PressReleaseOsKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, true)));
+        ui::DomCode::META_RIGHT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, false)));
+        ui::DomCode::META_RIGHT, false)));
   }
 
   // Inject press & release events for left & right OSKeys.
-  PressAndReleaseKey(processor.get(), ui::DomCode::OS_LEFT);
-  PressAndReleaseKey(processor.get(), ui::DomCode::OS_RIGHT);
+  PressAndReleaseKey(processor.get(), ui::DomCode::META_LEFT);
+  PressAndReleaseKey(processor.get(), ui::DomCode::META_RIGHT);
 }
 
 // Test OSKey key repeat switches it to "modifying" mode.
 TEST(NormalizingInputFilterCrosTest, OSKeyRepeats) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub,InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
   }
 
   // Inject a press and repeats for the left OSKey, but don't release it, and
   // verify that the repeats result in press events.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
 }
 
 // Test OSKey press followed by function key press and release results in
 // just the function key events.
 TEST(NormalizingInputFilterCrosTest, FunctionKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
@@ -121,16 +123,16 @@ TEST(NormalizingInputFilterCrosTest, FunctionKey) {
   }
 
   // Hold the left OSKey while pressing & releasing the function key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   PressAndReleaseKey(processor.get(), ui::DomCode::F1);
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test OSKey press followed by extended key press and release results in
 // just the function key events.
 TEST(NormalizingInputFilterCrosTest, ExtendedKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
@@ -143,9 +145,9 @@ TEST(NormalizingInputFilterCrosTest, ExtendedKey) {
   }
 
   // Hold the left OSKey while pressing & releasing the function key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   PressAndReleaseKey(processor.get(), ui::DomCode::INSERT);
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test OSKey press followed by non-function, non-extended key press and release
@@ -153,33 +155,33 @@ TEST(NormalizingInputFilterCrosTest, ExtendedKey) {
 // test.
 TEST(NormalizingInputFilterCrosTest, OtherKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub,InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub,InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::TAB, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::TAB, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
   }
 
   // Hold the left OSKey while pressing & releasing the function key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   PressAndReleaseKey(processor.get(), ui::DomCode::TAB);
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test OSKey press followed by extended key press, then normal key press
 // results in OSKey switching to modifying mode for the normal key.
 TEST(NormalizingInputFilterCrosTest, ExtendedThenOtherKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
@@ -190,48 +192,48 @@ TEST(NormalizingInputFilterCrosTest, ExtendedThenOtherKey) {
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::INSERT, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::TAB, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::TAB, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
   }
 
   // Hold the left OSKey while pressing & releasing the function key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   PressAndReleaseKey(processor.get(), ui::DomCode::INSERT);
   PressAndReleaseKey(processor.get(), ui::DomCode::TAB);
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test OSKey press followed by mouse event puts the OSKey into modifying mode.
 TEST(NormalizingInputFilterCrosTest, MouseEvent) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub,InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectMouseEvent(EqualsMouseMoveEvent(0, 0)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
   }
 
   // Hold the left OSKey while pressing & releasing the function key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   processor->InjectMouseEvent(MakeMouseMoveEvent(0, 0));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test left alt + right click is remapped to left alt + left click.
 TEST(NormalizingInputFilterCrosTest, LeftAltClick) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
@@ -260,7 +262,7 @@ TEST(NormalizingInputFilterCrosTest, LeftAltClick) {
 // Test that right alt + right click is unchanged.
 TEST(NormalizingInputFilterCrosTest, RightAltClick) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {
@@ -289,7 +291,7 @@ TEST(NormalizingInputFilterCrosTest, RightAltClick) {
 // Test that the Alt-key remapping for Up and Down is not applied.
 TEST(NormalizingInputFilterCrosTest, UndoAltPlusArrowRemapping) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterCros(&stub));
 
   {

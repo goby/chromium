@@ -10,19 +10,17 @@ namespace media {
 namespace cast {
 
 FrameBuffer::FrameBuffer()
-    : frame_id_(0),
-      max_packet_id_(0),
+    : max_packet_id_(0),
       num_packets_received_(0),
       max_seen_packet_id_(0),
       new_playout_delay_ms_(0),
       is_key_frame_(false),
       total_data_size_(0),
-      last_referenced_frame_id_(0),
       packets_() {}
 
 FrameBuffer::~FrameBuffer() {}
 
-bool FrameBuffer::InsertPacket(const uint8* payload_data,
+bool FrameBuffer::InsertPacket(const uint8_t* payload_data,
                                size_t payload_size,
                                const RtpCastHeader& rtp_header) {
   // Is this the first packet in the frame?
@@ -45,7 +43,7 @@ bool FrameBuffer::InsertPacket(const uint8* payload_data,
     return false;
   }
 
-  std::vector<uint8> data;
+  std::vector<uint8_t> data;
   std::pair<PacketMap::iterator, bool> retval =
       packets_.insert(make_pair(rtp_header.packet_id, data));
 

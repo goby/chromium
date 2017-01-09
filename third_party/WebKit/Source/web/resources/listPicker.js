@@ -83,6 +83,13 @@ ListPicker.prototype._handleWindowMessage = function(event) {
         this._config.baseStyle = window.updateData.baseStyle;
         this._config.children = window.updateData.children;
         this._update();
+        if (this._config.anchorRectInScreen.x !== window.updateData.anchorRectInScreen.x ||
+            this._config.anchorRectInScreen.y !== window.updateData.anchorRectInScreen.y ||
+            this._config.anchorRectInScreen.width !== window.updateData.anchorRectInScreen.width ||
+            this._config.anchorRectInScreen.height !== window.updateData.anchorRectInScreen.height) {
+            this._config.anchorRectInScreen = window.updateData.anchorRectInScreen;
+            this._fixWindowSize();
+        }
     }
     delete window.updateData;
 };
@@ -162,7 +169,7 @@ ListPicker.prototype._handleWindowTouchEnd = function(event) {
     if (!touch)
         return;
     var target = document.elementFromPoint(touch.clientX, touch.clientY)
-    if (target.tagName === "OPTION")
+    if (target.tagName === "OPTION" && !target.disabled)
         window.pagePopupController.setValueAndClosePopup(0, this._selectElement.value);
     this._exitTouchSelectMode();
 };
@@ -176,7 +183,7 @@ ListPicker.prototype._getTouchForId = function (touchList, id) {
 };
 
 ListPicker.prototype._highlightOption = function(target) {
-    if (target.tagName !== "OPTION" || target.selected)
+    if (target.tagName !== "OPTION" || target.selected || target.disabled)
         return;
     var savedScrollTop = this._selectElement.scrollTop;
     // TODO(tkent): Updating HTMLOptionElement::selected is not efficient. We
@@ -191,14 +198,14 @@ ListPicker.prototype._handleChange = function(event) {
 };
 
 ListPicker.prototype._handleKeyDown = function(event) {
-    var key = event.keyIdentifier;
-    if (key === "U+001B") { // ESC
+    var key = event.key;
+    if (key === "Escape") {
         window.pagePopupController.closePopup();
         event.preventDefault();
-    } else if (key === "U+0009" /* TAB */ || key === "Enter") {
+    } else if (key === "Tab" || key === "Enter") {
         window.pagePopupController.setValueAndClosePopup(0, this._selectElement.value);
         event.preventDefault();
-    } else if (event.altKey && (key === "Down" || key === "Up")) {
+    } else if (event.altKey && (key === "ArrowDown" || key === "ArrowUp")) {
         // We need to add a delay here because, if we do it immediately the key
         // press event will be handled by HTMLSelectElement and this popup will
         // be reopened.
@@ -211,24 +218,29 @@ ListPicker.prototype._handleKeyDown = function(event) {
 
 ListPicker.prototype._fixWindowSize = function() {
     this._selectElement.style.height = "";
-    var maxHeight = this._selectElement.offsetHeight;
-    var noScrollHeight = this._calculateScrollHeight() + ListPicker.ListboxSelectBorder * 2;
+    var zoom = this._config.zoomFactor;
+    var maxHeight = this._selectElement.offsetHeight * zoom;
+    var noScrollHeight = (this._calculateScrollHeight() + ListPicker.ListboxSelectBorder * 2) * zoom;
+    var scrollbarWidth = getScrollbarWidth() * zoom;
+    var elementOffsetWidth = this._selectElement.offsetWidth * zoom;
     var desiredWindowHeight = noScrollHeight;
-    var desiredWindowWidth = this._selectElement.offsetWidth;
+    var desiredWindowWidth = elementOffsetWidth;
+    // If we already have a vertical scrollbar, subtract it out, it will get re-added below.
+    if (this._selectElement.scrollHeight > this._selectElement.clientHeight)
+      desiredWindowWidth -= scrollbarWidth;
     var expectingScrollbar = false;
     if (desiredWindowHeight > maxHeight) {
         desiredWindowHeight = maxHeight;
         // Setting overflow to auto does not increase width for the scrollbar
         // so we need to do it manually.
-        desiredWindowWidth += getScrollbarWidth();
+        desiredWindowWidth += scrollbarWidth;
         expectingScrollbar = true;
     }
-    var zoom = this._config.zoomFactor;
-    desiredWindowWidth = Math.max(this._config.anchorRectInScreen.width / zoom, desiredWindowWidth);
-    var windowRect = adjustWindowRect(desiredWindowWidth * zoom, desiredWindowHeight * zoom, this._selectElement.offsetWidth * zoom, 0);
+    desiredWindowWidth = Math.max(this._config.anchorRectInScreen.width, desiredWindowWidth);
+    var windowRect = adjustWindowRect(desiredWindowWidth, desiredWindowHeight, elementOffsetWidth, 0);
     // If the available screen space is smaller than maxHeight, we will get an unexpected scrollbar.
-    if (!expectingScrollbar && windowRect.height < noScrollHeight * zoom) {
-        desiredWindowWidth = windowRect.width + getScrollbarWidth() * zoom;
+    if (!expectingScrollbar && windowRect.height < noScrollHeight) {
+        desiredWindowWidth = windowRect.width + scrollbarWidth;
         windowRect = adjustWindowRect(desiredWindowWidth, windowRect.height, windowRect.width, windowRect.height);
     }
     this._selectElement.style.width = (windowRect.width / zoom) + "px";

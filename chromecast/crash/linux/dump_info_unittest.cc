@@ -12,50 +12,49 @@
 namespace chromecast {
 
 TEST(DumpInfoTest, EmptyStringIsNotValid) {
-  scoped_ptr<DumpInfo> dump_info(CreateDumpInfo(""));
+  std::unique_ptr<DumpInfo> dump_info(CreateDumpInfo(""));
   ASSERT_FALSE(dump_info->valid());
 }
 
 TEST(DumpInfoTest, TooFewFieldsIsNotValid) {
-  scoped_ptr<DumpInfo> dump_info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\""
-      "}"));
+  std::unique_ptr<DumpInfo> dump_info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\""
+                     "}"));
   ASSERT_FALSE(dump_info->valid());
 }
 
 TEST(DumpInfoTest, BadTimeStringIsNotValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"Mar 23 2014 01:23:45\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\""
-      "}"));
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"Mar 23 2014 01:23:45\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\""
+                     "}"));
   ASSERT_FALSE(info->valid());
 }
 
 TEST(DumpInfoTest, AllRequiredFieldsIsValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\""
-      "}"));
-  struct tm tm = {0};
-  tm.tm_isdst = 0;
-  tm.tm_sec = 1;
-  tm.tm_min = 31;
-  tm.tm_hour = 18;
-  tm.tm_mday = 12;
-  tm.tm_mon = 10;
-  tm.tm_year = 101;
-  time_t dump_time = mktime(&tm);
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\""
+                     "}"));
+  base::Time::Exploded ex = {0};
+  ex.second = 1;
+  ex.minute = 31;
+  ex.hour = 18;
+  ex.day_of_month = 12;
+  ex.month = 11;
+  ex.year = 2001;
+  base::Time dump_time = base::Time::FromLocalExploded(ex);
 
   ASSERT_TRUE(info->valid());
   ASSERT_EQ("name", info->params().process_name);
@@ -66,35 +65,34 @@ TEST(DumpInfoTest, AllRequiredFieldsIsValid) {
 }
 
 TEST(DumpInfoTest, EmptyProcessNameIsValid) {
-  scoped_ptr<DumpInfo> dump_info(CreateDumpInfo(
-      "{"
-      "\"name\": \"\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\""
-      "}"));
+  std::unique_ptr<DumpInfo> dump_info(
+      CreateDumpInfo("{"
+                     "\"name\": \"\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\""
+                     "}"));
   ASSERT_TRUE(dump_info->valid());
 }
 
 TEST(DumpInfoTest, SomeRequiredFieldsEmptyIsValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"\","
-      "\"uptime\": \"\","
-      "\"logfile\": \"\""
-      "}"));
-  struct tm tm = {0};
-  tm.tm_isdst = 0;
-  tm.tm_sec = 1;
-  tm.tm_min = 31;
-  tm.tm_hour = 18;
-  tm.tm_mday = 12;
-  tm.tm_mon = 10;
-  tm.tm_year = 101;
-  time_t dump_time = mktime(&tm);
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"\","
+                     "\"uptime\": \"\","
+                     "\"logfile\": \"\""
+                     "}"));
+  base::Time::Exploded ex = {0};
+  ex.second = 1;
+  ex.minute = 31;
+  ex.hour = 18;
+  ex.day_of_month = 12;
+  ex.month = 11;
+  ex.year = 2001;
+  base::Time dump_time = base::Time::FromLocalExploded(ex);
 
   ASSERT_TRUE(info->valid());
   ASSERT_EQ("name", info->params().process_name);
@@ -105,30 +103,29 @@ TEST(DumpInfoTest, SomeRequiredFieldsEmptyIsValid) {
 }
 
 TEST(DumpInfoTest, AllOptionalFieldsIsValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\","
-      "\"suffix\": \"suffix\","
-      "\"prev_app_name\": \"previous_app\","
-      "\"cur_app_name\": \"current_app\","
-      "\"last_app_name\": \"last_app\","
-      "\"release_version\": \"RELEASE\","
-      "\"build_number\": \"BUILD_NUMBER\","
-      "\"reason\": \"foo\""
-      "}"));
-  struct tm tm = {0};
-  tm.tm_isdst = 0;
-  tm.tm_sec = 1;
-  tm.tm_min = 31;
-  tm.tm_hour = 18;
-  tm.tm_mday = 12;
-  tm.tm_mon = 10;
-  tm.tm_year = 101;
-  time_t dump_time = mktime(&tm);
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\","
+                     "\"suffix\": \"suffix\","
+                     "\"prev_app_name\": \"previous_app\","
+                     "\"cur_app_name\": \"current_app\","
+                     "\"last_app_name\": \"last_app\","
+                     "\"release_version\": \"RELEASE\","
+                     "\"build_number\": \"BUILD_NUMBER\","
+                     "\"reason\": \"foo\""
+                     "}"));
+  base::Time::Exploded ex = {0};
+  ex.second = 1;
+  ex.minute = 31;
+  ex.hour = 18;
+  ex.day_of_month = 12;
+  ex.month = 11;
+  ex.year = 2001;
+  base::Time dump_time = base::Time::FromLocalExploded(ex);
 
   ASSERT_TRUE(info->valid());
   ASSERT_EQ("name", info->params().process_name);
@@ -145,25 +142,24 @@ TEST(DumpInfoTest, AllOptionalFieldsIsValid) {
 }
 
 TEST(DumpInfoTest, SomeOptionalFieldsIsValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\","
-      "\"suffix\": \"suffix\","
-      "\"prev_app_name\": \"previous_app\""
-      "}"));
-  struct tm tm = {0};
-  tm.tm_isdst = 0;
-  tm.tm_sec = 1;
-  tm.tm_min = 31;
-  tm.tm_hour = 18;
-  tm.tm_mday = 12;
-  tm.tm_mon = 10;
-  tm.tm_year = 101;
-  time_t dump_time = mktime(&tm);
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\","
+                     "\"suffix\": \"suffix\","
+                     "\"prev_app_name\": \"previous_app\""
+                     "}"));
+  base::Time::Exploded ex = {0};
+  ex.second = 1;
+  ex.minute = 31;
+  ex.hour = 18;
+  ex.day_of_month = 12;
+  ex.month = 11;
+  ex.year = 2001;
+  base::Time dump_time = base::Time::FromLocalExploded(ex);
 
   ASSERT_TRUE(info->valid());
   ASSERT_EQ("name", info->params().process_name);
@@ -177,21 +173,21 @@ TEST(DumpInfoTest, SomeOptionalFieldsIsValid) {
 }
 
 TEST(DumpInfoTest, ExtraFieldsIsNotValid) {
-  scoped_ptr<DumpInfo> info(CreateDumpInfo(
-      "{"
-      "\"name\": \"name\","
-      "\"dump_time\" : \"2001-11-12 18:31:01\","
-      "\"dump\": \"dump_string\","
-      "\"uptime\": \"123456789\","
-      "\"logfile\": \"logfile.log\","
-      "\"suffix\": \"suffix\","
-      "\"prev_app_name\": \"previous_app\","
-      "\"cur_app_name\": \"current_app\","
-      "\"last_app_name\": \"last_app\","
-      "\"release_version\": \"RELEASE\","
-      "\"build_number\": \"BUILD_NUMBER\","
-      "\"hello\": \"extra_field\""
-      "}"));
+  std::unique_ptr<DumpInfo> info(
+      CreateDumpInfo("{"
+                     "\"name\": \"name\","
+                     "\"dump_time\" : \"2001-11-12 18:31:01\","
+                     "\"dump\": \"dump_string\","
+                     "\"uptime\": \"123456789\","
+                     "\"logfile\": \"logfile.log\","
+                     "\"suffix\": \"suffix\","
+                     "\"prev_app_name\": \"previous_app\","
+                     "\"cur_app_name\": \"current_app\","
+                     "\"last_app_name\": \"last_app\","
+                     "\"release_version\": \"RELEASE\","
+                     "\"build_number\": \"BUILD_NUMBER\","
+                     "\"hello\": \"extra_field\""
+                     "}"));
   ASSERT_FALSE(info->valid());
 }
 

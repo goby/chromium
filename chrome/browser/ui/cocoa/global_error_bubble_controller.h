@@ -7,7 +7,8 @@
 
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/memory/weak_ptr.h"
 #import "chrome/browser/ui/cocoa/base_bubble_controller.h"
 
@@ -15,18 +16,17 @@ class Browser;
 class GlobalErrorWithStandardBubble;
 @class GTMUILocalizerAndLayoutTweaker;
 @class GTMWidthBasedTweaker;
-class Profile;
 
 namespace GlobalErrorBubbleControllerInternal {
 class Bridge;
 }
 
-// This is a bubble view shown from the wrench menu to display information
+// This is a bubble view shown from the app menu to display information
 // about a global error.
 @interface GlobalErrorBubbleController : BaseBubbleController {
  @private
   base::WeakPtr<GlobalErrorWithStandardBubble> error_;
-  scoped_ptr<GlobalErrorBubbleControllerInternal::Bridge> bridge_;
+  std::unique_ptr<GlobalErrorBubbleControllerInternal::Bridge> bridge_;
   Browser* browser_;
 
   IBOutlet NSImageView* iconView_;

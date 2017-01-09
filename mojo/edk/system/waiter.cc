@@ -4,6 +4,8 @@
 
 #include "mojo/edk/system/waiter.h"
 
+#include <stdint.h>
+
 #include <limits>
 
 #include "base/logging.h"
@@ -14,7 +16,7 @@ namespace edk {
 
 Waiter::Waiter()
     : cv_(&lock_),
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
       initialized_(false),
 #endif
       awoken_(false),
@@ -26,7 +28,7 @@ Waiter::~Waiter() {
 }
 
 void Waiter::Init() {
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   initialized_ = true;
 #endif
   awoken_ = false;
@@ -39,7 +41,7 @@ void Waiter::Init() {
 MojoResult Waiter::Wait(MojoDeadline deadline, uintptr_t* context) {
   base::AutoLock locker(lock_);
 
-#ifndef NDEBUG
+#if DCHECK_IS_ON()
   DCHECK(initialized_);
   // It'll need to be re-initialized after this.
   initialized_ = false;

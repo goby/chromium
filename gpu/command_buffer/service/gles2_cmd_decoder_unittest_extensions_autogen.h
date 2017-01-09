@@ -21,10 +21,8 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
       0,
   };
   cmd.Init(GL_PATH_PROJECTION_CHROMIUM, &temp[0]);
-  EXPECT_CALL(
-      *gl_,
-      MatrixLoadfEXT(GL_PATH_PROJECTION_CHROMIUM,
-                     reinterpret_cast<GLfloat*>(ImmediateDataAddress(&cmd))));
+  EXPECT_CALL(*gl_, MatrixLoadfEXT(GL_PATH_PROJECTION_CHROMIUM,
+                                   PointsToArray(temp, 16)));
   EXPECT_EQ(error::kNoError, ExecuteImmediateCmd(cmd, sizeof(temp)));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }
@@ -65,6 +63,16 @@ TEST_P(GLES2DecoderTestWithCHROMIUMPathRendering,
   SpecializedSetup<cmds::PathStencilFuncCHROMIUM, 0>(true);
   cmds::PathStencilFuncCHROMIUM cmd;
   cmd.Init(GL_NEVER, 2, 3);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderTestWithCHROMIUMFramebufferMixedSamples,
+       CoverageModulationCHROMIUMValidArgs) {
+  EXPECT_CALL(*gl_, CoverageModulationNV(GL_RGB));
+  SpecializedSetup<cmds::CoverageModulationCHROMIUM, 0>(true);
+  cmds::CoverageModulationCHROMIUM cmd;
+  cmd.Init(GL_RGB);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
 }

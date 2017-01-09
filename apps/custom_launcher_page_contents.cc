@@ -5,6 +5,7 @@
 #include "apps/custom_launcher_page_contents.h"
 
 #include <string>
+#include <utility>
 
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/chrome_extension_web_contents_observer.h"
@@ -20,10 +21,9 @@
 namespace apps {
 
 CustomLauncherPageContents::CustomLauncherPageContents(
-    scoped_ptr<extensions::AppDelegate> app_delegate,
+    std::unique_ptr<extensions::AppDelegate> app_delegate,
     const std::string& extension_id)
-    : app_delegate_(app_delegate.Pass()), extension_id_(extension_id) {
-}
+    : app_delegate_(std::move(app_delegate)), extension_id_(extension_id) {}
 
 CustomLauncherPageContents::~CustomLauncherPageContents() {
 }
@@ -102,9 +102,9 @@ content::ColorChooser* CustomLauncherPageContents::OpenColorChooser(
 }
 
 void CustomLauncherPageContents::RunFileChooser(
-    content::WebContents* tab,
+    content::RenderFrameHost* render_frame_host,
     const content::FileChooserParams& params) {
-  app_delegate_->RunFileChooser(tab, params);
+  app_delegate_->RunFileChooser(render_frame_host, params);
 }
 
 void CustomLauncherPageContents::RequestToLockMouse(

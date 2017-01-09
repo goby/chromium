@@ -5,16 +5,16 @@
 #ifndef CHROME_BROWSER_NET_CHROME_URL_REQUEST_CONTEXT_GETTER_H_
 #define CHROME_BROWSER_NET_CHROME_URL_REQUEST_CONTEXT_GETTER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/custom_handlers/protocol_handler_registry.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_job_factory.h"
 
 class ChromeURLRequestContextFactory;
-class IOThread;
 class Profile;
 class ProfileIOData;
 struct StoragePartitionDescriptor;
@@ -34,7 +34,7 @@ class ChromeURLRequestContextGetter : public net::URLRequestContextGetter {
 
   // Note that GetURLRequestContext() can only be called from the IO
   // thread (it will assert otherwise).
-  // GetIOMessageLoopProxy however can be called from any thread.
+  // GetIOTaskRunner however can be called from any thread.
   //
   // net::URLRequestContextGetter implementation.
   net::URLRequestContext* GetURLRequestContext() override;
@@ -66,7 +66,7 @@ class ChromeURLRequestContextGetter : public net::URLRequestContextGetter {
       Profile* profile,
       const ProfileIOData* profile_io_data,
       const StoragePartitionDescriptor& partition_descriptor,
-      scoped_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
+      std::unique_ptr<ProtocolHandlerRegistry::JobInterceptorFactory>
           protocol_handler_interceptor,
       content::ProtocolHandlerMap* protocol_handlers,
       content::URLRequestInterceptorScopedVector request_interceptors);
@@ -88,7 +88,7 @@ class ChromeURLRequestContextGetter : public net::URLRequestContextGetter {
 
   // Deferred logic for creating a URLRequestContext.
   // Access only from the IO thread.
-  scoped_ptr<ChromeURLRequestContextFactory> factory_;
+  std::unique_ptr<ChromeURLRequestContextFactory> factory_;
 
   // NULL before initialization and after invalidation.
   // Otherwise, it is the URLRequestContext instance that

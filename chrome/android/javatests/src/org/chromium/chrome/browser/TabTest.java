@@ -4,25 +4,27 @@
 
 package org.chromium.chrome.browser;
 
+import android.app.Activity;
 import android.test.suitebuilder.annotation.SmallTest;
 
 import org.chromium.base.ThreadUtils;
-import org.chromium.base.test.util.CommandLineFlags;
+import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.Feature;
-import org.chromium.chrome.browser.ssl.ConnectionSecurityLevel;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
 import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
 import org.chromium.chrome.test.ChromeActivityTestCaseBase;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
-import org.chromium.content.browser.test.util.CallbackHelper;
+import org.chromium.components.security_state.ConnectionSecurityLevel;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
 
 /**
  * Tests for Tab class.
  */
+@RetryOnFailure
 public class TabTest extends ChromeActivityTestCaseBase<ChromeActivity> {
     private Tab mTab;
     private CallbackHelper mOnTitleUpdatedHelper;
@@ -53,6 +55,16 @@ public class TabTest extends ChromeActivityTestCaseBase<ChromeActivity> {
 
     @SmallTest
     @Feature({"Tab"})
+    public void testTabContext() throws Throwable {
+        assertFalse("The tab context cannot be an activity",
+                mTab.getContentViewCore().getContext() instanceof Activity);
+        assertNotSame("The tab context's theme should have been updated",
+                mTab.getContentViewCore().getContext().getTheme(),
+                getActivity().getApplication().getTheme());
+    }
+
+    @SmallTest
+    @Feature({"Tab"})
     public void testTitleDelayUpdate() throws Throwable {
         final String oldTitle = "oldTitle";
         final String newTitle = "newTitle";
@@ -72,7 +84,6 @@ public class TabTest extends ChromeActivityTestCaseBase<ChromeActivity> {
      * Note that document mode is explicitly disabled, as the document activity
      * may be fully recreated if its contents is killed while in the background.
      */
-    @CommandLineFlags.Add(ChromeSwitches.DISABLE_DOCUMENT_MODE)
     @SmallTest
     @Feature({"Tab"})
     public void testTabRestoredIfKilledWhileActivityStopped() throws Exception {
@@ -97,7 +108,7 @@ public class TabTest extends ChromeActivityTestCaseBase<ChromeActivity> {
             }
         });
 
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return mTab.isHidden();
@@ -109,7 +120,7 @@ public class TabTest extends ChromeActivityTestCaseBase<ChromeActivity> {
         ApplicationTestUtils.launchChrome(getInstrumentation().getTargetContext());
 
         // The tab should be restored and visible.
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
                 return !mTab.isHidden();

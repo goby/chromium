@@ -4,19 +4,20 @@
 
 #include "chrome/browser/metrics/chrome_browser_main_extra_parts_metrics.h"
 
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/test/histogram_tester.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "ui/display/screen.h"
+#include "ui/display/test/test_screen.h"
 #include "ui/events/test/device_data_manager_test_api.h"
 #include "ui/gfx/geometry/size.h"
-#include "ui/gfx/screen.h"
-#include "ui/gfx/test/test_screen.h"
 
 namespace {
 
-const char kTouchEventsEnabledHistogramName[] =
+const char kTouchEventFeatureDetectionEnabledHistogramName[] =
     "Touchscreen.TouchEventsEnabled";
 
 }  // namespace
@@ -35,19 +36,19 @@ class ChromeBrowserMainExtraPartsMetricsTest : public testing::Test {
   base::MessageLoop message_loop_;
 
   // Dummy screen required by a ChromeBrowserMainExtraPartsMetrics test target.
-  gfx::test::TestScreen test_screen_;
+  display::test::TestScreen test_screen_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserMainExtraPartsMetricsTest);
 };
 
 ChromeBrowserMainExtraPartsMetricsTest::ChromeBrowserMainExtraPartsMetricsTest()
     : device_data_manager_test_api_() {
-  gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, &test_screen_);
+  display::Screen::SetScreenInstance(&test_screen_);
 }
 
 ChromeBrowserMainExtraPartsMetricsTest::
     ~ChromeBrowserMainExtraPartsMetricsTest() {
-  gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, nullptr);
+  display::Screen::SetScreenInstance(nullptr);
 }
 
 // Verify a TouchEventsEnabled value isn't recorded during construction.
@@ -55,7 +56,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
        VerifyTouchEventsEnabledIsNotRecordedAfterConstruction) {
   base::HistogramTester histogram_tester;
   ChromeBrowserMainExtraPartsMetrics test_target;
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 0);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 0);
 }
 
 #if defined(USE_OZONE) || defined(USE_X11)
@@ -69,7 +71,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
   ChromeBrowserMainExtraPartsMetrics test_target;
 
   test_target.PostBrowserStart();
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 0);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 0);
 }
 
 // Verify a TouchEventsEnabled value is recorded during PostBrowserStart if the
@@ -83,7 +86,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
   ChromeBrowserMainExtraPartsMetrics test_target;
 
   test_target.PostBrowserStart();
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 1);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 1);
 }
 
 // Verify a TouchEventsEnabled value is recorded when an asynchronous device
@@ -95,7 +99,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
 
   test_target.PostBrowserStart();
   device_data_manager_test_api_.NotifyObserversDeviceListsComplete();
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 1);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 1);
 }
 
 // Verify a TouchEventsEnabled value is only recorded once if multiple
@@ -108,7 +113,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
   test_target.PostBrowserStart();
   device_data_manager_test_api_.NotifyObserversDeviceListsComplete();
   device_data_manager_test_api_.NotifyObserversDeviceListsComplete();
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 1);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 1);
 }
 
 #else
@@ -120,7 +126,8 @@ TEST_F(ChromeBrowserMainExtraPartsMetricsTest,
   ChromeBrowserMainExtraPartsMetrics test_target;
 
   test_target.PostBrowserStart();
-  histogram_tester.ExpectTotalCount(kTouchEventsEnabledHistogramName, 1);
+  histogram_tester.ExpectTotalCount(
+      kTouchEventFeatureDetectionEnabledHistogramName, 1);
 }
 
 #endif  // defined(USE_OZONE) || defined(USE_X11)

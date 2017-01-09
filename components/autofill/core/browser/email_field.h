@@ -5,20 +5,20 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_EMAIL_FIELD_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_EMAIL_FIELD_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/autofill/core/browser/form_field.h"
 
 namespace autofill {
 
 class EmailField : public FormField {
  public:
-  static scoped_ptr<FormField> Parse(AutofillScanner* scanner);
+  static std::unique_ptr<FormField> Parse(AutofillScanner* scanner);
 
  protected:
-  // FormField:
-  bool ClassifyField(ServerFieldTypeMap* map) const override;
+  void AddClassifications(FieldCandidatesMap* field_candidates) const override;
 
  private:
   explicit EmailField(const AutofillField* field);

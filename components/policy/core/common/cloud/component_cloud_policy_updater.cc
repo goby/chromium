@@ -4,6 +4,11 @@
 
 #include "components/policy/core/common/cloud/component_cloud_policy_updater.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
@@ -11,8 +16,8 @@
 #include "base/strings/string_number_conversions.h"
 #include "components/policy/core/common/cloud/component_cloud_policy_store.h"
 #include "components/policy/core/common/cloud/external_policy_data_fetcher.h"
-#include "policy/proto/chrome_extension_policy.pb.h"
-#include "policy/proto/device_management_backend.pb.h"
+#include "components/policy/proto/chrome_extension_policy.pb.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 
 namespace em = enterprise_management;
 
@@ -24,28 +29,28 @@ namespace {
 const size_t kPolicyProtoMaxSize = 16 * 1024;
 
 // The maximum size of the downloaded policy data.
-const int64 kPolicyDataMaxSize = 5 * 1024 * 1024;
+const int64_t kPolicyDataMaxSize = 5 * 1024 * 1024;
 
 // Tha maximum number of policy data fetches to run in parallel.
-const int64 kMaxParallelPolicyDataFetches = 2;
+const int64_t kMaxParallelPolicyDataFetches = 2;
 
 }  // namespace
 
 ComponentCloudPolicyUpdater::ComponentCloudPolicyUpdater(
     scoped_refptr<base::SequencedTaskRunner> task_runner,
-    scoped_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher,
+    std::unique_ptr<ExternalPolicyDataFetcher> external_policy_data_fetcher,
     ComponentCloudPolicyStore* store)
     : store_(store),
       external_policy_data_updater_(task_runner,
-                                    external_policy_data_fetcher.Pass(),
-                                    kMaxParallelPolicyDataFetches) {
-}
+                                    std::move(external_policy_data_fetcher),
+                                    kMaxParallelPolicyDataFetches) {}
 
 ComponentCloudPolicyUpdater::~ComponentCloudPolicyUpdater() {
 }
 
 void ComponentCloudPolicyUpdater::UpdateExternalPolicy(
-    scoped_ptr<em::PolicyFetchResponse> response) {
+    const PolicyNamespace& ns,
+    std::unique_ptr<em::PolicyFetchResponse> response) {
   // Keep a serialized copy of |response|, to cache it later.
   // The policy is also rejected if it exceeds the maximum size.
   std::string serialized_response;
@@ -55,10 +60,10 @@ void ComponentCloudPolicyUpdater::UpdateExternalPolicy(
   }
 
   // Validate the policy before doing anything else.
-  PolicyNamespace ns;
+  std::unique_ptr<em::PolicyData> policy_data(new em::PolicyData);
   em::ExternalPolicyData data;
-  if (!store_->ValidatePolicy(response.Pass(), &ns, &data)) {
-    LOG(ERROR) << "Failed to validate component policy fetched from DMServer";
+  if (!store_->ValidatePolicy(ns, std::move(response), policy_data.get(),
+                              &data)) {
     return;
   }
 
@@ -84,13 +89,10 @@ void ComponentCloudPolicyUpdater::UpdateExternalPolicy(
     // Make a request to fetch policy for this component. If another fetch
     // request is already pending for the component, it will be canceled.
     external_policy_data_updater_.FetchExternalData(
-        key,
-        ExternalPolicyDataUpdater::Request(data.download_url(),
-                                           data.secure_hash(),
-                                           kPolicyDataMaxSize),
+        key, ExternalPolicyDataUpdater::Request(
+                 data.download_url(), data.secure_hash(), kPolicyDataMaxSize),
         base::Bind(&ComponentCloudPolicyStore::Store, base::Unretained(store_),
-                   ns,
-                   serialized_response,
+                   ns, serialized_response, base::Passed(&policy_data),
                    data.secure_hash()));
   }
 }

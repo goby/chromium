@@ -4,12 +4,15 @@
 
 #include "content/common/pepper_plugin_list.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/pepper_plugin_info.h"
@@ -30,7 +33,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
   // existence in subsequent calls if the flag is set.
   // NOTE: In theory we could have unlimited number of plugins registered in
   // command line. But in practice, 64 plugins should be more than enough.
-  static uint64 skip_file_check_flags = 0;
+  static uint64_t skip_file_check_flags = 0;
   static_assert(
       kMaxPluginsToRegisterFromCommandLine <= sizeof(skip_file_check_flags) * 8,
       "max plugins to register from command line exceeds limit");
@@ -51,7 +54,8 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
   // plugin-entry =
   //    <file-path> +
   //    ["#" + <name> + ["#" + <description> + ["#" + <version>]]] +
-  //    *1( LWS + ";" + LWS + <mime-type> )
+  //    *1( LWS + ";" + LWS + <mime-type-data> )
+  // mime-type-data = <mime-type> + [ LWS + "#" + LWS + <extension> ]
   std::vector<std::string> modules = base::SplitString(
       value, ",", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
 
@@ -85,7 +89,7 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
     plugin.path = base::FilePath(name_parts[0]);
 #endif
 
-    uint64 index_mask = 1ULL << i;
+    uint64_t index_mask = 1ULL << i;
     if (!(skip_file_check_flags & index_mask)) {
       if (base::PathExists(plugin.path)) {
         skip_file_check_flags |= index_mask;
@@ -102,8 +106,14 @@ void ComputePluginsFromCommandLine(std::vector<PepperPluginInfo>* plugins) {
     if (name_parts.size() > 3)
       plugin.version = name_parts[3];
     for (size_t j = 1; j < parts.size(); ++j) {
-      WebPluginMimeType mime_type(parts[j],
-                                  std::string(),
+      std::vector<std::string> mime_parts = base::SplitString(
+          parts[j], "#", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
+      DCHECK_GE(mime_parts.size(), 1u);
+      std::string mime_extension;
+      if (mime_parts.size() > 1)
+        mime_extension = mime_parts[1];
+      WebPluginMimeType mime_type(mime_parts[0],
+                                  mime_extension,
                                   plugin.description);
       plugin.mime_types.push_back(mime_type);
     }

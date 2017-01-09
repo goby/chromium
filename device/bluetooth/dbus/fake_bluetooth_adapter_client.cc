@@ -4,11 +4,18 @@
 
 #include "device/bluetooth/dbus/fake_bluetooth_adapter_client.h"
 
+#include <map>
+#include <utility>
+
+#include "base/bind_helpers.h"
+#include "base/callback_forward.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "dbus/bus.h"
+#include "device/bluetooth/bluez/bluetooth_service_record_bluez.h"
 #include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "device/bluetooth/dbus/fake_bluetooth_device_client.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -71,7 +78,8 @@ FakeBluetoothAdapterClient::FakeBluetoothAdapterClient()
       second_visible_(false),
       discovering_count_(0),
       set_discovery_filter_should_fail_(false),
-      simulation_interval_ms_(kSimulationIntervalMs) {
+      simulation_interval_ms_(kSimulationIntervalMs),
+      last_handle_(0) {
   properties_.reset(new Properties(base::Bind(
       &FakeBluetoothAdapterClient::OnPropertyChanged, base::Unretained(this))));
 
@@ -226,6 +234,32 @@ void FakeBluetoothAdapterClient::SetDiscoveryFilter(
   PostDelayedTask(callback);
 }
 
+void FakeBluetoothAdapterClient::CreateServiceRecord(
+    const dbus::ObjectPath& object_path,
+    const bluez::BluetoothServiceRecordBlueZ& record,
+    const ServiceRecordCallback& callback,
+    const ErrorCallback& error_callback) {
+  ++last_handle_;
+  records_.insert(
+      std::pair<uint32_t, BluetoothServiceRecordBlueZ>(last_handle_, record));
+  callback.Run(last_handle_);
+}
+
+void FakeBluetoothAdapterClient::RemoveServiceRecord(
+    const dbus::ObjectPath& object_path,
+    uint32_t handle,
+    const base::Closure& callback,
+    const ErrorCallback& error_callback) {
+  auto it = records_.find(handle);
+  if (it == records_.end()) {
+    error_callback.Run(bluetooth_adapter::kErrorDoesNotExist,
+                       "Service record does not exist.");
+    return;
+  }
+  records_.erase(it);
+  callback.Run();
+}
+
 void FakeBluetoothAdapterClient::SetSimulationIntervalMs(int interval_ms) {
   simulation_interval_ms_ = interval_ms;
 }
@@ -240,15 +274,15 @@ void FakeBluetoothAdapterClient::SetVisible(bool visible) {
     // Adapter becoming visible
     visible_ = visible;
 
-    FOR_EACH_OBSERVER(BluetoothAdapterClient::Observer, observers_,
-                      AdapterAdded(dbus::ObjectPath(kAdapterPath)));
+    for (auto& observer : observers_)
+      observer.AdapterAdded(dbus::ObjectPath(kAdapterPath));
 
   } else if (visible_ && !visible) {
     // Adapter becoming invisible
     visible_ = visible;
 
-    FOR_EACH_OBSERVER(BluetoothAdapterClient::Observer, observers_,
-                      AdapterRemoved(dbus::ObjectPath(kAdapterPath)));
+    for (auto& observer : observers_)
+      observer.AdapterRemoved(dbus::ObjectPath(kAdapterPath));
   }
 }
 
@@ -257,16 +291,30 @@ void FakeBluetoothAdapterClient::SetSecondVisible(bool visible) {
     // Second adapter becoming visible
     second_visible_ = visible;
 
-    FOR_EACH_OBSERVER(BluetoothAdapterClient::Observer, observers_,
-                      AdapterAdded(dbus::ObjectPath(kSecondAdapterPath)));
+    for (auto& observer : observers_)
+      observer.AdapterAdded(dbus::ObjectPath(kSecondAdapterPath));
 
   } else if (second_visible_ && !visible) {
     // Second adapter becoming invisible
     second_visible_ = visible;
 
-    FOR_EACH_OBSERVER(BluetoothAdapterClient::Observer, observers_,
-                      AdapterRemoved(dbus::ObjectPath(kSecondAdapterPath)));
+    for (auto& observer : observers_)
+      observer.AdapterRemoved(dbus::ObjectPath(kSecondAdapterPath));
   }
+}
+
+void FakeBluetoothAdapterClient::SetUUIDs(
+    const std::vector<std::string>& uuids) {
+  properties_->uuids.ReplaceValue(uuids);
+}
+
+void FakeBluetoothAdapterClient::SetSecondUUIDs(
+    const std::vector<std::string>& uuids) {
+  second_properties_->uuids.ReplaceValue(uuids);
+}
+
+void FakeBluetoothAdapterClient::SetDiscoverableTimeout(uint32_t timeout) {
+  properties_->discoverable_timeout.ReplaceValue(timeout);
 }
 
 void FakeBluetoothAdapterClient::OnPropertyChanged(
@@ -281,9 +329,10 @@ void FakeBluetoothAdapterClient::OnPropertyChanged(
     }
   }
 
-  FOR_EACH_OBSERVER(
-      BluetoothAdapterClient::Observer, observers_,
-      AdapterPropertyChanged(dbus::ObjectPath(kAdapterPath), property_name));
+  for (auto& observer : observers_) {
+    observer.AdapterPropertyChanged(dbus::ObjectPath(kAdapterPath),
+                                    property_name);
+  }
 }
 
 void FakeBluetoothAdapterClient::PostDelayedTask(

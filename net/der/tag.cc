@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/logging.h"
 #include "net/der/tag.h"
+
+#include "base/logging.h"
 
 namespace net {
 
@@ -20,16 +21,8 @@ Tag ContextSpecificPrimitive(uint8_t base) {
   return (base & kTagNumberMask) | kTagPrimitive | kTagContextSpecific;
 }
 
-bool IsContextSpecific(Tag tag) {
-  return (tag & kTagClassMask) == kTagContextSpecific;
-}
-
 bool IsConstructed(Tag tag) {
   return (tag & kTagConstructionMask) == kTagConstructed;
-}
-
-uint8_t GetTagNumber(Tag tag) {
-  return tag & kTagNumberMask;
 }
 
 }  // namespace der

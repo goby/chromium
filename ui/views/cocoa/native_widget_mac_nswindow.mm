@@ -5,11 +5,17 @@
 #import "ui/views/cocoa/native_widget_mac_nswindow.h"
 
 #include "base/mac/foundation_util.h"
+#import "base/mac/sdk_forward_declarations.h"
+#import "ui/views/cocoa/bridged_native_widget.h"
 #import "ui/base/cocoa/user_interface_item_command_handler.h"
 #import "ui/views/cocoa/views_nswindow_delegate.h"
 #include "ui/views/controls/menu/menu_controller.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/widget/widget_delegate.h"
+
+@interface NSWindow (Private)
+- (BOOL)hasKeyAppearance;
+@end
 
 @interface NativeWidgetMacNSWindow ()
 - (ViewsNSWindowDelegate*)viewsNSWindowDelegate;
@@ -38,6 +44,12 @@
     commandDispatcher_.reset([[CommandDispatcher alloc] initWithOwner:self]);
   }
   return self;
+}
+
+// This override doesn't do anything, but keeping it helps diagnose lifetime
+// issues in crash stacktraces by inserting a symbol on NativeWidgetMacNSWindow.
+- (void)dealloc {
+  [super dealloc];
 }
 
 // Public methods.
@@ -83,18 +95,44 @@
   if (![self delegate])
     return NO;
 
-  // Dialogs shouldn't take large shadows away from their parent window.
+  // Dialogs and bubbles shouldn't take large shadows away from their parent.
   views::Widget* widget = [self viewsWidget];
-  return widget->CanActivate() && !widget->IsDialogBox();
+  return widget->CanActivate() &&
+         !views::NativeWidgetMac::GetBridgeForNativeWindow(self)->parent();
 }
 
-// Override sendEvent to allow key events to be forwarded to a toolkit-views
-// menu while it is active, and while still allowing any native subview to
-// retain firstResponder status.
+// Lets the traffic light buttons on the parent window keep their active state.
+- (BOOL)hasKeyAppearance {
+  if ([self delegate] && [self viewsWidget]->IsAlwaysRenderAsActive())
+    return YES;
+  return [super hasKeyAppearance];
+}
+
+// Override sendEvent to intercept window drag events and allow key events to be
+// forwarded to a toolkit-views menu while it is active, and while still
+// allowing any native subview to retain firstResponder status.
 - (void)sendEvent:(NSEvent*)event {
   // Let CommandDispatcher check if this is a redispatched event.
   if ([commandDispatcher_ preSendEvent:event])
     return;
+
+  // If a window drag event monitor is not used, query the BridgedNativeWidget
+  // to decide if a window drag should be performed.
+  if (!views::BridgedNativeWidget::ShouldUseDragEventMonitor()) {
+    views::BridgedNativeWidget* bridge =
+        views::NativeWidgetMac::GetBridgeForNativeWindow(self);
+
+    if (bridge && bridge->ShouldDragWindow(event)) {
+      // Using performWindowDragWithEvent: does not generate a
+      // NSWindowWillMoveNotification. Hence post one.
+      [[NSNotificationCenter defaultCenter]
+          postNotificationName:NSWindowWillMoveNotification
+                        object:self];
+
+      [self performWindowDragWithEvent:event];
+      return;
+    }
+  }
 
   NSEventType type = [event type];
   if ((type != NSKeyDown && type != NSKeyUp) || ![self hasViewsMenuActive]) {
@@ -110,26 +148,12 @@
     [[self contentView] keyUp:event];
 }
 
-// Override display, since this is the first opportunity Cocoa gives to detect
-// a visibility change in some cases. For example, restoring from the dock first
-// calls -[NSWindow display] before any NSWindowDelegate functions and before
-// ordering the window (and without actually calling -[NSWindow deminiaturize]).
-// By notifying the delegate that a display is about to occur, it can apply a
-// correct visibility state, before [super display] requests a draw of the
-// contentView. -[NSWindow isVisible] can still report NO at this point, so this
-// gives the delegate time to apply correct visibility before the draw occurs.
-- (void)display {
-  [[self viewsNSWindowDelegate] onWindowWillDisplay];
-  [super display];
-}
-
 // Override window order functions to intercept other visibility changes. This
 // is needed in addition to the -[NSWindow display] override because Cocoa
 // hardly ever calls display, and reports -[NSWindow isVisible] incorrectly
 // when ordering in a window for the first time.
 - (void)orderWindow:(NSWindowOrderingMode)orderingMode
          relativeTo:(NSInteger)otherWindowNumber {
-  [[self viewsNSWindowDelegate] onWindowOrderWillChange:orderingMode];
   [super orderWindow:orderingMode relativeTo:otherWindowNumber];
   [[self viewsNSWindowDelegate] onWindowOrderChanged:nil];
 }
@@ -190,9 +214,13 @@
   // command handler, defer to AppController.
   if ([item action] == @selector(commandDispatch:) ||
       [item action] == @selector(commandDispatchUsingKeyModifiers:)) {
-    return commandHandler_
-               ? [commandHandler_ validateUserInterfaceItem:item window:self]
-               : [[NSApp delegate] validateUserInterfaceItem:item];
+    if (commandHandler_)
+      return [commandHandler_ validateUserInterfaceItem:item window:self];
+
+    id appController = [NSApp delegate];
+    DCHECK([appController
+        conformsToProtocol:@protocol(NSUserInterfaceValidations)]);
+    return [appController validateUserInterfaceItem:item];
   }
 
   return [super validateUserInterfaceItem:item];

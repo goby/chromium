@@ -5,8 +5,11 @@
 #ifndef CHROME_BROWSER_SSL_CHROME_SSL_HOST_STATE_DELEGATE_H_
 #define CHROME_BROWSER_SSL_CHROME_SSL_HOST_STATE_DELEGATE_H_
 
+#include <memory>
+#include <set>
+
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/public/browser/ssl_host_state_delegate.h"
 
@@ -30,14 +33,19 @@ class ChromeSSLHostStateDelegate : public content::SSLHostStateDelegate {
   void AllowCert(const std::string& host,
                  const net::X509Certificate& cert,
                  net::CertStatus error) override;
-  void Clear() override;
+  void Clear(
+      const base::Callback<bool(const std::string&)>& host_filter) override;
   CertJudgment QueryPolicy(const std::string& host,
                            const net::X509Certificate& cert,
                            net::CertStatus error,
                            bool* expired_previous_decision) override;
-  void HostRanInsecureContent(const std::string& host, int pid) override;
-  bool DidHostRunInsecureContent(const std::string& host,
-                                 int pid) const override;
+  void HostRanInsecureContent(const std::string& host,
+                              int child_id,
+                              InsecureContentType content_type) override;
+  bool DidHostRunInsecureContent(
+      const std::string& host,
+      int child_id,
+      InsecureContentType content_type) const override;
 
   // Revokes all SSL certificate error allow exceptions made by the user for
   // |host| in the given Profile.
@@ -57,7 +65,7 @@ class ChromeSSLHostStateDelegate : public content::SSLHostStateDelegate {
 
  protected:
   // SetClock takes ownership of the passed in clock.
-  void SetClock(scoped_ptr<base::Clock> clock);
+  void SetClock(std::unique_ptr<base::Clock> clock);
 
  private:
   FRIEND_TEST_ALL_PREFIXES(DefaultMemorySSLHostStateDelegateTest, AfterRestart);
@@ -100,18 +108,22 @@ class ChromeSSLHostStateDelegate : public content::SSLHostStateDelegate {
       CreateDictionaryEntriesDisposition create_entries,
       bool* expired_previous_decision);
 
-  scoped_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Clock> clock_;
   RememberSSLExceptionDecisionsDisposition should_remember_ssl_decisions_;
   Profile* profile_;
 
-  // A BrokenHostEntry is a pair of (host, process_id) that indicates the host
+  // A BrokenHostEntry is a pair of (host, child_id) that indicates the host
   // contains insecure content in that renderer process.
   typedef std::pair<std::string, int> BrokenHostEntry;
 
-  // Hosts which have been contaminated with insecure content in the
+  // Hosts which have been contaminated with insecure mixed content in the
   // specified process.  Note that insecure content can travel between
   // same-origin frames in one processs but cannot jump between processes.
-  std::set<BrokenHostEntry> ran_insecure_content_hosts_;
+  std::set<BrokenHostEntry> ran_mixed_content_hosts_;
+
+  // Hosts which have been contaminated with content with certificate errors in
+  // the specific process.
+  std::set<BrokenHostEntry> ran_content_with_cert_errors_hosts_;
 
   // This is a GUID to mark this unique session. Whenever a certificate decision
   // expiration is set, the GUID is saved as well so Chrome can tell if it was

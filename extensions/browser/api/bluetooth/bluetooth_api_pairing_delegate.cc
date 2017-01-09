@@ -4,7 +4,9 @@
 
 #include "extensions/browser/api/bluetooth/bluetooth_api_pairing_delegate.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
 #include "base/values.h"
 #include "content/public/browser/browser_context.h"
 #include "device/bluetooth/bluetooth_device.h"
@@ -62,7 +64,7 @@ void BluetoothApiPairingDelegate::DisplayPinCode(
 
 void BluetoothApiPairingDelegate::DisplayPasskey(
     device::BluetoothDevice* device,
-    uint32 passkey) {
+    uint32_t passkey) {
   bt_private::PairingEvent event;
   PopulatePairingEvent(
       device, bt_private::PAIRING_EVENT_TYPE_DISPLAYPASSKEY, &event);
@@ -71,7 +73,7 @@ void BluetoothApiPairingDelegate::DisplayPasskey(
 }
 
 void BluetoothApiPairingDelegate::KeysEntered(device::BluetoothDevice* device,
-                                              uint32 entered) {
+                                              uint32_t entered) {
   bt_private::PairingEvent event;
   PopulatePairingEvent(
       device, bt_private::PAIRING_EVENT_TYPE_KEYSENTERED, &event);
@@ -81,7 +83,7 @@ void BluetoothApiPairingDelegate::KeysEntered(device::BluetoothDevice* device,
 
 void BluetoothApiPairingDelegate::ConfirmPasskey(
     device::BluetoothDevice* device,
-    uint32 passkey) {
+    uint32_t passkey) {
   bt_private::PairingEvent event;
   PopulatePairingEvent(
       device, bt_private::PAIRING_EVENT_TYPE_CONFIRMPASSKEY, &event);
@@ -99,12 +101,12 @@ void BluetoothApiPairingDelegate::AuthorizePairing(
 
 void BluetoothApiPairingDelegate::DispatchPairingEvent(
     const bt_private::PairingEvent& pairing_event) {
-  scoped_ptr<base::ListValue> args =
+  std::unique_ptr<base::ListValue> args =
       bt_private::OnPairing::Create(pairing_event);
-  scoped_ptr<Event> event(new Event(events::BLUETOOTH_PRIVATE_ON_PAIRING,
-                                    bt_private::OnPairing::kEventName,
-                                    args.Pass()));
-  EventRouter::Get(browser_context_)->BroadcastEvent(event.Pass());
+  std::unique_ptr<Event> event(new Event(events::BLUETOOTH_PRIVATE_ON_PAIRING,
+                                         bt_private::OnPairing::kEventName,
+                                         std::move(args)));
+  EventRouter::Get(browser_context_)->BroadcastEvent(std::move(event));
 }
 
 }  // namespace extensions

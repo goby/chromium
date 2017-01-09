@@ -28,116 +28,105 @@
 #define LifecycleNotifier_h
 
 #include "platform/heap/Handle.h"
+#include "wtf/AutoReset.h"
 #include "wtf/HashSet.h"
-#include "wtf/TemporaryChange.h"
 
 namespace blink {
 
-template<typename T, typename Observer>
-class LifecycleNotifier : public virtual WillBeGarbageCollectedMixin {
-public:
-    virtual ~LifecycleNotifier();
+template <typename T, typename Observer>
+class LifecycleNotifier : public virtual GarbageCollectedMixin {
+ public:
+  virtual ~LifecycleNotifier();
 
-    void addObserver(Observer*);
-    void removeObserver(Observer*);
+  void addObserver(Observer*);
+  void removeObserver(Observer*);
 
-    // notifyContextDestroyed() should be explicitly dispatched from an
-    // observed context to notify observers that contextDestroyed().
-    //
-    // When contextDestroyed() is called, the observer's lifecycleContext()
-    // is still valid and safe to use during the notification.
-    virtual void notifyContextDestroyed();
+  // notifyContextDestroyed() should be explicitly dispatched from an
+  // observed context to notify observers that contextDestroyed().
+  //
+  // When contextDestroyed() is called, the observer's lifecycleContext()
+  // is still valid and safe to use during the notification.
+  virtual void notifyContextDestroyed();
 
-    DEFINE_INLINE_VIRTUAL_TRACE()
-    {
-#if ENABLE(OILPAN)
-        visitor->trace(m_observers);
-#endif
-    }
+  DEFINE_INLINE_VIRTUAL_TRACE() { visitor->trace(m_observers); }
 
-    bool isIteratingOverObservers() const { return m_iterating != IteratingNone; }
+  bool isIteratingOverObservers() const {
+    return m_iterationState != NotIterating;
+  }
 
-protected:
-    LifecycleNotifier()
-        : m_iterating(IteratingNone)
-        , m_didCallContextDestroyed(false)
-    {
-    }
+ protected:
+  LifecycleNotifier() : m_iterationState(NotIterating) {}
 
-    enum IterationType {
-        IteratingNone,
-        IteratingOverAll,
-    };
+  T* context() { return static_cast<T*>(this); }
 
-    IterationType m_iterating;
+  using ObserverSet = HeapHashSet<WeakMember<Observer>>;
 
-protected:
-    using ObserverSet = WillBeHeapHashSet<RawPtrWillBeWeakMember<Observer>>;
+  void removePending(ObserverSet&);
 
-    ObserverSet m_observers;
+  enum IterationState {
+    AllowingNone = 0,
+    AllowingAddition = 1,
+    AllowingRemoval = 2,
+    NotIterating = AllowingAddition | AllowingRemoval,
+    AllowPendingRemoval = 4,
+  };
 
-#if ENABLE(ASSERT)
-    T* context() { return static_cast<T*>(this); }
-#endif
-
-private:
-    bool m_didCallContextDestroyed;
+  // Iteration state is recorded while iterating the observer set,
+  // optionally barring add or remove mutations.
+  IterationState m_iterationState;
+  ObserverSet m_observers;
 };
 
-template<typename T, typename Observer>
-inline LifecycleNotifier<T, Observer>::~LifecycleNotifier()
-{
-    // FIXME: Enable the following ASSERT. Also see a FIXME in Document::detach().
-    // ASSERT(!m_observers.size() || m_didCallContextDestroyed);
-
-#if !ENABLE(OILPAN)
-    TemporaryChange<IterationType> scope(m_iterating, IteratingOverAll);
-    for (Observer* observer : m_observers) {
-        observer->clearLifecycleContext();
-    }
-#endif
+template <typename T, typename Observer>
+inline LifecycleNotifier<T, Observer>::~LifecycleNotifier() {
+  // FIXME: Enable the following ASSERT. Also see a FIXME in
+  // Document::detachLayoutTree().
+  // ASSERT(!m_observers.size());
 }
 
-template<typename T, typename Observer>
-inline void LifecycleNotifier<T, Observer>::notifyContextDestroyed()
-{
-    // Don't notify contextDestroyed() twice.
-    if (m_didCallContextDestroyed)
-        return;
-
-    TemporaryChange<IterationType> scope(m_iterating, IteratingOverAll);
-    Vector<RawPtrWillBeUntracedMember<Observer>> snapshotOfObservers;
-    copyToVector(m_observers, snapshotOfObservers);
-    for (Observer* observer : snapshotOfObservers) {
-        // FIXME: Oilpan: At the moment, it's possible that the Observer is
-        // destructed during the iteration.
-        // Once we enable Oilpan by default for Observers *and*
-        // Observer::contextDestroyed() does not call removeObserver(),
-        // we can remove the hack by making m_observers
-        // a HeapHashSet<WeakMember<Observers>>. (i.e., we can just iterate
-        // m_observers without taking a snapshot).
-        if (m_observers.contains(observer)) {
-            ASSERT(observer->lifecycleContext() == context());
-            observer->contextDestroyed();
-        }
-    }
-
-    m_didCallContextDestroyed = true;
+template <typename T, typename Observer>
+inline void LifecycleNotifier<T, Observer>::notifyContextDestroyed() {
+  // Observer unregistration is allowed, but effectively a no-op.
+  AutoReset<IterationState> scope(&m_iterationState, AllowingRemoval);
+  ObserverSet observers;
+  m_observers.swap(observers);
+  for (Observer* observer : observers) {
+    DCHECK(observer->lifecycleContext() == context());
+    observer->contextDestroyed();
+    observer->clearContext();
+  }
 }
 
-template<typename T, typename Observer>
-inline void LifecycleNotifier<T, Observer>::addObserver(Observer* observer)
-{
-    RELEASE_ASSERT(m_iterating != IteratingOverAll);
+template <typename T, typename Observer>
+inline void LifecycleNotifier<T, Observer>::addObserver(Observer* observer) {
+  RELEASE_ASSERT(m_iterationState & AllowingAddition);
+  m_observers.add(observer);
+}
+
+template <typename T, typename Observer>
+inline void LifecycleNotifier<T, Observer>::removeObserver(Observer* observer) {
+  // If immediate removal isn't currently allowed,
+  // |observer| is recorded for pending removal.
+  if (m_iterationState & AllowPendingRemoval) {
     m_observers.add(observer);
+    return;
+  }
+  RELEASE_ASSERT(m_iterationState & AllowingRemoval);
+  m_observers.remove(observer);
 }
 
-template<typename T, typename Observer>
-inline void LifecycleNotifier<T, Observer>::removeObserver(Observer* observer)
-{
-    m_observers.remove(observer);
+template <typename T, typename Observer>
+inline void LifecycleNotifier<T, Observer>::removePending(
+    ObserverSet& observers) {
+  if (m_observers.size()) {
+    // Prevent allocation (==shrinking) while removing;
+    // the table is likely to become garbage soon.
+    ThreadState::NoAllocationScope scope(ThreadState::current());
+    observers.removeAll(m_observers);
+  }
+  m_observers.swap(observers);
 }
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LifecycleNotifier_h
+#endif  // LifecycleNotifier_h

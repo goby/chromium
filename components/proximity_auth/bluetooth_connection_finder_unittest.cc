@@ -4,14 +4,18 @@
 
 #include "components/proximity_auth/bluetooth_connection_finder.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
+#include "components/cryptauth/remote_device.h"
 #include "components/proximity_auth/proximity_auth_test_util.h"
-#include "components/proximity_auth/remote_device.h"
 #include "components/proximity_auth/wire_message.h"
 #include "device/bluetooth/bluetooth_adapter_factory.h"
 #include "device/bluetooth/bluetooth_uuid.h"
@@ -49,7 +53,7 @@ class MockConnection : public Connection {
 
  private:
   void Disconnect() override {}
-  void SendMessageImpl(scoped_ptr<WireMessage> message) override {}
+  void SendMessageImpl(std::unique_ptr<WireMessage> message) override {}
 
   // If true, we do not expect |this| object to be destroyed until this value is
   // toggled back to false.
@@ -74,7 +78,7 @@ class MockBluetoothConnectionFinder : public BluetoothConnectionFinder {
   // NOTE: The returned connection's lifetime is managed by the connection
   // finder.
   MockConnection* ExpectCreateConnection() {
-    scoped_ptr<MockConnection> connection(new NiceMock<MockConnection>());
+    std::unique_ptr<MockConnection> connection(new NiceMock<MockConnection>());
     MockConnection* connection_alias = connection.get();
     EXPECT_CALL(*this, CreateConnectionProxy())
         .WillOnce(Return(connection.release()));
@@ -96,8 +100,8 @@ class MockBluetoothConnectionFinder : public BluetoothConnectionFinder {
 
  protected:
   // BluetoothConnectionFinder:
-  scoped_ptr<Connection> CreateConnection() override {
-    return make_scoped_ptr(CreateConnectionProxy());
+  std::unique_ptr<Connection> CreateConnection() override {
+    return base::WrapUnique(CreateConnectionProxy());
   }
 
   void SeekDeviceByAddress(
@@ -124,7 +128,7 @@ class ProximityAuthBluetoothConnectionFinderTest : public testing::Test {
       : adapter_(new NiceMock<device::MockBluetoothAdapter>),
         bluetooth_device_(new NiceMock<device::MockBluetoothDevice>(
             adapter_.get(),
-            device::BluetoothDevice::DEVICE_PHONE,
+            static_cast<uint32_t>(device::BluetoothDeviceType::PHONE),
             kTestRemoteDeviceName,
             kTestRemoteDeviceBluetoothAddress,
             true,
@@ -146,9 +150,9 @@ class ProximityAuthBluetoothConnectionFinderTest : public testing::Test {
   }
 
   MOCK_METHOD1(OnConnectionFoundProxy, void(Connection* connection));
-  void OnConnectionFound(scoped_ptr<Connection> connection) {
+  void OnConnectionFound(std::unique_ptr<Connection> connection) {
     OnConnectionFoundProxy(connection.get());
-    last_found_connection_ = connection.Pass();
+    last_found_connection_ = std::move(connection);
   }
 
   // Starts |connection_finder_|. If |expect_connection| is true, then we set an
@@ -173,12 +177,12 @@ class ProximityAuthBluetoothConnectionFinderTest : public testing::Test {
 
   scoped_refptr<device::MockBluetoothAdapter> adapter_;
   StrictMock<MockBluetoothConnectionFinder> connection_finder_;
-  scoped_ptr<device::MockBluetoothDevice> bluetooth_device_;
+  std::unique_ptr<device::MockBluetoothDevice> bluetooth_device_;
   ConnectionFinder::ConnectionCallback connection_callback_;
 
  private:
   // Save a pointer to the last found connection, to extend its lifetime.
-  scoped_ptr<Connection> last_found_connection_;
+  std::unique_ptr<Connection> last_found_connection_;
 
   base::MessageLoop message_loop_;
 };

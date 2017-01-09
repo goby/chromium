@@ -4,15 +4,18 @@
 
 #include "chrome/browser/ui/views/bookmarks/bookmark_context_menu.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
@@ -23,6 +26,7 @@
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/bookmarks/managed/managed_bookmark_service.h"
 #include "components/bookmarks/test/bookmark_test_helpers.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -66,7 +70,7 @@ class BookmarkContextMenuTest : public testing::Test {
     profile_.reset(new TestingProfile());
     profile_->CreateBookmarkModel(true);
 
-    model_ = BookmarkModelFactory::GetForProfile(profile_.get());
+    model_ = BookmarkModelFactory::GetForBrowserContext(profile_.get());
     bookmarks::test::WaitForBookmarkModelToLoad(model_);
 
     AddTestData();
@@ -80,7 +84,7 @@ class BookmarkContextMenuTest : public testing::Test {
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
+  std::unique_ptr<TestingProfile> profile_;
   BookmarkModel* model_;
   TestingPageNavigator navigator_;
 
@@ -129,7 +133,8 @@ TEST_F(BookmarkContextMenuTest, DeleteURL) {
 // Tests open all on a folder with a couple of bookmarks.
 TEST_F(BookmarkContextMenuTest, OpenAll) {
   const BookmarkNode* folder = model_->bookmark_bar_node()->GetChild(1);
-  chrome::OpenAll(NULL, &navigator_, folder, NEW_FOREGROUND_TAB, NULL);
+  chrome::OpenAll(NULL, &navigator_, folder,
+                  WindowOpenDisposition::NEW_FOREGROUND_TAB, NULL);
 
   // Should have navigated to F1's child but not F11's child.
   ASSERT_EQ(static_cast<size_t>(2), navigator_.urls_.size());
@@ -137,9 +142,10 @@ TEST_F(BookmarkContextMenuTest, OpenAll) {
 }
 
 // Tests open all on a folder with a couple of bookmarks in incognito window.
-TEST_F(BookmarkContextMenuTest, OpenAllIngonito) {
+TEST_F(BookmarkContextMenuTest, OpenAllIncognito) {
   const BookmarkNode* folder = model_->bookmark_bar_node()->GetChild(1);
-  chrome::OpenAll(NULL, &navigator_, folder, OFF_THE_RECORD, NULL);
+  chrome::OpenAll(NULL, &navigator_, folder,
+                  WindowOpenDisposition::OFF_THE_RECORD, profile_.get());
 
   // Should have navigated to only f1a but not f2a.
   ASSERT_EQ(static_cast<size_t>(1), navigator_.urls_.size());
@@ -302,7 +308,7 @@ TEST_F(BookmarkContextMenuTest, CutCopyPasteNode) {
   const BookmarkNode* bb_node = model_->bookmark_bar_node();
   std::vector<const BookmarkNode*> nodes;
   nodes.push_back(bb_node->GetChild(0));
-  scoped_ptr<BookmarkContextMenu> controller(new BookmarkContextMenu(
+  std::unique_ptr<BookmarkContextMenu> controller(new BookmarkContextMenu(
       NULL, NULL, profile_.get(), NULL, nodes[0]->parent(), nodes, false));
   EXPECT_TRUE(controller->IsCommandEnabled(IDC_COPY));
   EXPECT_TRUE(controller->IsCommandEnabled(IDC_CUT));
@@ -335,7 +341,7 @@ TEST_F(BookmarkContextMenuTest, ShowManagedBookmarks) {
   const BookmarkNode* bb_node = model_->bookmark_bar_node();
   std::vector<const BookmarkNode*> nodes;
   nodes.push_back(bb_node->GetChild(0));
-  scoped_ptr<BookmarkContextMenu> controller(new BookmarkContextMenu(
+  std::unique_ptr<BookmarkContextMenu> controller(new BookmarkContextMenu(
       NULL, NULL, profile_.get(), NULL, nodes[0]->parent(), nodes, false));
 
   // Verify that there are no managed nodes yet.
@@ -355,11 +361,11 @@ TEST_F(BookmarkContextMenuTest, ShowManagedBookmarks) {
   EXPECT_TRUE(menu->GetMenuItemByID(IDC_BOOKMARK_BAR_NEW_FOLDER)->visible());
 
   // Now set the managed bookmarks policy.
-  base::DictionaryValue* dict = new base::DictionaryValue;
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetString("name", "Google");
   dict->SetString("url", "http://google.com");
   base::ListValue list;
-  list.Append(dict);
+  list.Append(std::move(dict));
   EXPECT_TRUE(managed->managed_node()->empty());
   profile_->GetPrefs()->Set(bookmarks::prefs::kManagedBookmarks, list);
   EXPECT_FALSE(managed->managed_node()->empty());

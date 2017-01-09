@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_SIGNIN_MUTABLE_PROFILE_OAUTH2_TOKEN_SERVICE_DELEGATE_H_
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/threading/thread_checker.h"
 #include "components/signin/core/browser/account_tracker_service.h"
@@ -61,6 +62,9 @@ class MutableProfileOAuth2TokenServiceDelegate
   // Overridden from OAuth2TokenServiceDelegate.
   const net::BackoffEntry* BackoffEntry() const override;
 
+  // Returns the account's refresh token used for testing purposes.
+  std::string GetRefreshTokenForTest(const std::string& account_id) const;
+
  private:
   friend class MutableProfileOAuth2TokenServiceDelegateTest;
 
@@ -109,8 +113,9 @@ class MutableProfileOAuth2TokenServiceDelegate
                            ShutdownService);
 
   // WebDataServiceConsumer implementation:
-  void OnWebDataServiceRequestDone(WebDataServiceBase::Handle handle,
-                                   const WDTypedResult* result) override;
+  void OnWebDataServiceRequestDone(
+      WebDataServiceBase::Handle handle,
+      std::unique_ptr<WDTypedResult> result) override;
 
   // Loads credentials into in memory stucture.
   void LoadAllCredentialsIntoMemory(

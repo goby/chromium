@@ -5,9 +5,11 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_WEBDATA_AUTOFILL_WEBDATA_BACKEND_IMPL_H_
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_WEBDATA_AUTOFILL_WEBDATA_BACKEND_IMPL_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_delete_on_message_loop.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "base/supports_user_data.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata.h"
@@ -50,7 +52,8 @@ class AutofillWebDataBackendImpl
       scoped_refptr<WebDatabaseBackend> web_database_backend,
       scoped_refptr<base::SingleThreadTaskRunner> ui_thread,
       scoped_refptr<base::SingleThreadTaskRunner> db_thread,
-      const base::Closure& on_changed_callback);
+      const base::Closure& on_changed_callback,
+      const base::Callback<void(syncer::ModelType)>& on_sync_started_callback);
 
   // AutofillWebDataBackend implementation.
   void AddObserver(AutofillWebDataServiceObserverOnDBThread* observer) override;
@@ -59,6 +62,7 @@ class AutofillWebDataBackendImpl
   WebDatabase* GetDatabase() override;
   void RemoveExpiredFormElements() override;
   void NotifyOfMultipleAutofillChanges() override;
+  void NotifyThatSyncHasStarted(syncer::ModelType model_type) override;
 
   // Returns a SupportsUserData objects that may be used to store data
   // owned by the DB thread on this object. Should be called only from
@@ -74,7 +78,7 @@ class AutofillWebDataBackendImpl
 
   // Returns a vector of values which have been entered in form input fields
   // named |name|.
-  scoped_ptr<WDTypedResult> GetFormValuesForElementName(
+  std::unique_ptr<WDTypedResult> GetFormValuesForElementName(
       const base::string16& name,
       const base::string16& prefix,
       int limit,
@@ -108,13 +112,13 @@ class AutofillWebDataBackendImpl
                                            WebDatabase* db);
 
   // Returns the local/server Autofill profiles from the web database.
-  scoped_ptr<WDTypedResult> GetAutofillProfiles(WebDatabase* db);
-  scoped_ptr<WDTypedResult> GetServerProfiles(WebDatabase* db);
+  std::unique_ptr<WDTypedResult> GetAutofillProfiles(WebDatabase* db);
+  std::unique_ptr<WDTypedResult> GetServerProfiles(WebDatabase* db);
 
   // Returns the number of values such that all for autofill entries with that
   // value, the interval between creation date and last usage is entirely
   // contained between [|begin|, |end|).
-  scoped_ptr<WDTypedResult> GetCountOfValuesContainedBetween(
+  std::unique_ptr<WDTypedResult> GetCountOfValuesContainedBetween(
       const base::Time& begin,
       const base::Time& end,
       WebDatabase* db);
@@ -137,8 +141,8 @@ class AutofillWebDataBackendImpl
                                       WebDatabase* db);
 
   // Returns a vector of local/server credit cards from the web database.
-  scoped_ptr<WDTypedResult> GetCreditCards(WebDatabase* db);
-  scoped_ptr<WDTypedResult> GetServerCreditCards(WebDatabase* db);
+  std::unique_ptr<WDTypedResult> GetCreditCards(WebDatabase* db);
+  std::unique_ptr<WDTypedResult> GetServerCreditCards(WebDatabase* db);
 
   // Server credit cards can be masked (only last 4 digits stored) or unmasked
   // (all data stored). These toggle between the two states.
@@ -154,6 +158,10 @@ class AutofillWebDataBackendImpl
 
   WebDatabase::State UpdateServerAddressUsageStats(
       const AutofillProfile& profile,
+      WebDatabase* db);
+
+  WebDatabase::State UpdateServerCardBillingAddress(
+      const CreditCard& card,
       WebDatabase* db);
 
   WebDatabase::State ClearAllServerData(WebDatabase* db);
@@ -201,14 +209,9 @@ class AutofillWebDataBackendImpl
   // Storage for user data to be accessed only on the DB thread. May
   // be used e.g. for SyncableService subclasses that need to be owned
   // by this object. Is created on first call to |GetDBUserData()|.
-  scoped_ptr<SupportsUserDataAggregatable> user_data_;
+  std::unique_ptr<SupportsUserDataAggregatable> user_data_;
 
   WebDatabase::State RemoveExpiredFormElementsImpl(WebDatabase* db);
-
-  // Callbacks to ensure that sensitive info is destroyed if request is
-  // cancelled.
-  void DestroyAutofillProfileResult(const WDTypedResult* result);
-  void DestroyAutofillCreditCardResult(const WDTypedResult* result);
 
   base::ObserverList<AutofillWebDataServiceObserverOnDBThread>
       db_observer_list_;
@@ -218,6 +221,7 @@ class AutofillWebDataBackendImpl
   scoped_refptr<WebDatabaseBackend> web_database_backend_;
 
   base::Closure on_changed_callback_;
+  base::Callback<void(syncer::ModelType)> on_sync_started_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(AutofillWebDataBackendImpl);
 };

@@ -4,33 +4,36 @@
 
 #include "chrome/browser/ui/views/infobars/confirm_infobar.h"
 
+#include <utility>
+
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/views/elevation_icon_setter.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
-#include "ui/base/resource/material_design/material_design_controller.h"
+#include "ui/base/material_design/material_design_controller.h"
 #include "ui/base/window_open_disposition.h"
 #include "ui/views/controls/button/label_button.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 
 // InfoBarService -------------------------------------------------------------
 
-scoped_ptr<infobars::InfoBar> InfoBarService::CreateConfirmInfoBar(
-    scoped_ptr<ConfirmInfoBarDelegate> delegate) {
-  return make_scoped_ptr(new ConfirmInfoBar(delegate.Pass()));
+std::unique_ptr<infobars::InfoBar> InfoBarService::CreateConfirmInfoBar(
+    std::unique_ptr<ConfirmInfoBarDelegate> delegate) {
+  return base::MakeUnique<ConfirmInfoBar>(std::move(delegate));
 }
 
 
 // ConfirmInfoBar -------------------------------------------------------------
 
-ConfirmInfoBar::ConfirmInfoBar(scoped_ptr<ConfirmInfoBarDelegate> delegate)
-    : InfoBarView(delegate.Pass()),
-      label_(NULL),
-      ok_button_(NULL),
-      cancel_button_(NULL),
-      link_(NULL) {
-}
+ConfirmInfoBar::ConfirmInfoBar(std::unique_ptr<ConfirmInfoBarDelegate> delegate)
+    : InfoBarView(std::move(delegate)),
+      label_(nullptr),
+      ok_button_(nullptr),
+      cancel_button_(nullptr),
+      link_(nullptr) {}
 
 ConfirmInfoBar::~ConfirmInfoBar() {
   // Ensure |elevation_icon_setter_| is destroyed before |ok_button_|.
@@ -63,33 +66,46 @@ void ConfirmInfoBar::Layout() {
 
 void ConfirmInfoBar::ViewHierarchyChanged(
     const ViewHierarchyChangedDetails& details) {
-  if (details.is_add && details.child == this && (label_ == NULL)) {
+  if (details.is_add && details.child == this && (label_ == nullptr)) {
     ConfirmInfoBarDelegate* delegate = GetDelegate();
     label_ = CreateLabel(delegate->GetMessageText());
-    AddChildView(label_);
+    AddViewToContentArea(label_);
 
     if (delegate->GetButtons() & ConfirmInfoBarDelegate::BUTTON_OK) {
-      ok_button_ = CreateLabelButton(
+      ok_button_ = views::MdTextButton::Create(
           this, delegate->GetButtonLabel(ConfirmInfoBarDelegate::BUTTON_OK));
-      if (delegate->OKButtonTriggersUACPrompt())
+      ok_button_->SetProminent(true);
+      if (delegate->OKButtonTriggersUACPrompt()) {
         elevation_icon_setter_.reset(new ElevationIconSetter(
             ok_button_,
             base::Bind(&ConfirmInfoBar::Layout, base::Unretained(this))));
-      AddChildView(ok_button_);
+      }
+      AddViewToContentArea(ok_button_);
       ok_button_->SizeToPreferredSize();
     }
 
     if (delegate->GetButtons() & ConfirmInfoBarDelegate::BUTTON_CANCEL) {
-      cancel_button_ = CreateLabelButton(
+      cancel_button_ = views::MdTextButton::Create(
           this,
           delegate->GetButtonLabel(ConfirmInfoBarDelegate::BUTTON_CANCEL));
-      AddChildView(cancel_button_);
+      if (delegate->GetButtons() == ConfirmInfoBarDelegate::BUTTON_CANCEL) {
+        // Apply prominent styling only if the cancel button is the only button.
+        cancel_button_->SetProminent(true);
+      } else {
+        // Otherwise set the bg color to white and the text color to black.
+        // TODO(estade): These should be removed and moved into the native
+        // theme. Also, infobars should always use the normal (non-incognito)
+        // native theme.
+        cancel_button_->SetBgColorOverride(SK_ColorWHITE);
+        cancel_button_->SetEnabledTextColors(kTextColor);
+      }
+      AddViewToContentArea(cancel_button_);
       cancel_button_->SizeToPreferredSize();
     }
 
     base::string16 link_text(delegate->GetLinkText());
     link_ = CreateLink(link_text, this);
-    AddChildView(link_);
+    AddViewToContentArea(link_);
   }
 
   // This must happen after adding all other children so InfoBarView can ensure

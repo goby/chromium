@@ -5,13 +5,14 @@
 #include "chrome/browser/media/protected_media_identifier_permission_context.h"
 
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
-#include "base/strings/stringprintf.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
 #include "chrome/browser/permissions/permission_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/permission_type.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/user_metrics.h"
 #include "content/public/browser/web_contents.h"
@@ -36,6 +37,7 @@ using chromeos::attestation::PlatformVerificationDialog;
 ProtectedMediaIdentifierPermissionContext::
     ProtectedMediaIdentifierPermissionContext(Profile* profile)
     : PermissionContextBase(profile,
+                            content::PermissionType::PROTECTED_MEDIA_IDENTIFIER,
                             CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER)
 #if defined(OS_CHROMEOS)
       ,
@@ -49,50 +51,14 @@ ProtectedMediaIdentifierPermissionContext::
 }
 
 #if defined(OS_CHROMEOS)
-void ProtectedMediaIdentifierPermissionContext::RequestPermission(
+void ProtectedMediaIdentifierPermissionContext::DecidePermission(
     content::WebContents* web_contents,
     const PermissionRequestID& id,
     const GURL& requesting_origin,
+    const GURL& embedding_origin,
     bool user_gesture,
     const BrowserPermissionCallback& callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-  // First check if this permission has been disabled. This check occurs before
-  // the call to GetPermissionStatus, which will return CONTENT_SETTING_BLOCK
-  // if the kill switch is on.
-  //
-  // TODO(xhwang): Remove this kill switch block when crbug.com/454847 is fixed
-  // and we no longer call GetPermissionStatus before
-  // PermissionContextBase::RequestPermission.
-  if (IsPermissionKillSwitchOn()) {
-    // Log to the developer console.
-    web_contents->GetMainFrame()->AddMessageToConsole(
-        content::CONSOLE_MESSAGE_LEVEL_LOG,
-        base::StringPrintf("%s permission has been blocked.",
-            PermissionUtil::GetPermissionString(
-                CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER).c_str()));
-    // The kill switch is enabled for this permission; Block all requests and
-    // run the callback immediately.
-    callback.Run(CONTENT_SETTING_BLOCK);
-    return;
-  }
-
-  GURL embedding_origin = web_contents->GetLastCommittedURL().GetOrigin();
-
-  DVLOG(1) << __FUNCTION__ << ": (" << requesting_origin.spec() << ", "
-           << embedding_origin.spec() << ")";
-
-  ContentSetting content_setting =
-      GetPermissionStatus(requesting_origin, embedding_origin);
-
-  if (content_setting == CONTENT_SETTING_ALLOW ||
-      content_setting == CONTENT_SETTING_BLOCK) {
-    NotifyPermissionSet(id, requesting_origin, embedding_origin, callback,
-                        false /* persist */, content_setting);
-    return;
-  }
-
-  DCHECK_EQ(CONTENT_SETTING_ASK, content_setting);
 
   // Since the dialog is modal, we only support one prompt per |web_contents|.
   // Reject the new one if there is already one pending. See
@@ -120,7 +86,7 @@ void ProtectedMediaIdentifierPermissionContext::RequestPermission(
 ContentSetting ProtectedMediaIdentifierPermissionContext::GetPermissionStatus(
       const GURL& requesting_origin,
       const GURL& embedding_origin) const {
-  DVLOG(1) << __FUNCTION__ << ": (" << requesting_origin.spec() << ", "
+  DVLOG(1) << __func__ << ": (" << requesting_origin.spec() << ", "
            << embedding_origin.spec() << ")";
 
   if (!requesting_origin.is_valid() || !embedding_origin.is_valid() ||
@@ -239,6 +205,7 @@ void ProtectedMediaIdentifierPermissionContext::
   bool persist = false; // Whether the ContentSetting should be saved.
   switch (response) {
     case PlatformVerificationDialog::CONSENT_RESPONSE_NONE:
+      VLOG(1) << "Platform verification dismissed by user.";
       content_setting = CONTENT_SETTING_ASK;
       persist = false;
       break;

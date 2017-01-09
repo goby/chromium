@@ -5,11 +5,11 @@
 #ifndef COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_UTILS_H_
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_UTILS_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/content_settings_types.h"
@@ -18,13 +18,9 @@ namespace base {
 class Value;
 }
 
-class GURL;
 class HostContentSettingsMap;
 
 namespace content_settings {
-
-class ProviderInterface;
-class RuleIterator;
 
 typedef std::pair<ContentSettingsPattern, ContentSettingsPattern> PatternPair;
 
@@ -77,32 +73,17 @@ std::string CreatePatternString(
     const ContentSettingsPattern& item_pattern,
     const ContentSettingsPattern& top_level_frame_pattern);
 
-// Caller takes the ownership of the returned |base::Value*|.
-base::Value* GetContentSettingValueAndPatterns(
-    RuleIterator* rule_iterator,
-    const GURL& primary_url,
-    const GURL& secondary_url,
-    ContentSettingsPattern* primary_pattern,
-    ContentSettingsPattern* secondary_pattern);
-
 // Returns a |base::Value*| representation of |setting| if |setting| is
 // a valid content setting. Otherwise, returns a nullptr.
-scoped_ptr<base::Value> ContentSettingToValue(ContentSetting setting);
-
-base::Value* GetContentSettingValueAndPatterns(
-    const ProviderInterface* provider,
-    const GURL& primary_url,
-    const GURL& secondary_url,
-    ContentSettingsType content_type,
-    const std::string& resource_identifier,
-    bool include_incognito,
-    ContentSettingsPattern* primary_pattern,
-    ContentSettingsPattern* secondary_pattern);
+std::unique_ptr<base::Value> ContentSettingToValue(ContentSetting setting);
 
 // Populates |rules| with content setting rules for content types that are
 // handled by the renderer.
 void GetRendererContentSettingRules(const HostContentSettingsMap* map,
                                     RendererContentSettingRules* rules);
+
+// Returns true if setting |a| is more permissive than setting |b|.
+bool IsMorePermissive(ContentSetting a, ContentSetting b);
 
 }  // namespace content_settings
 

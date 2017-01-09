@@ -4,124 +4,71 @@
 
 #include "courgette/disassembler.h"
 
-#include <algorithm>
-#include <string>
-#include <vector>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
-
 #include "courgette/assembly_program.h"
-#include "courgette/courgette.h"
-#include "courgette/disassembler_elf_32_arm.h"
-#include "courgette/disassembler_elf_32_x86.h"
-#include "courgette/disassembler_win32_x64.h"
-#include "courgette/disassembler_win32_x86.h"
-#include "courgette/encoded_program.h"
 
 namespace courgette {
 
-////////////////////////////////////////////////////////////////////////////////
-
-Disassembler* DetectDisassembler(const void* buffer, size_t length) {
-  Disassembler* disassembler = NULL;
-
-  disassembler = new DisassemblerWin32X86(buffer, length);
-  if (disassembler->ParseHeader())
-    return disassembler;
-  else
-    delete disassembler;
-
-  disassembler = new DisassemblerWin32X64(buffer, length);
-  if (disassembler->ParseHeader())
-    return disassembler;
-  else
-    delete disassembler;
-
-  disassembler = new DisassemblerElf32X86(buffer, length);
-  if (disassembler->ParseHeader())
-    return disassembler;
-  else
-    delete disassembler;
-
-  disassembler = new DisassemblerElf32ARM(buffer, length);
-  if (disassembler->ParseHeader())
-    return disassembler;
-  else
-    delete disassembler;
-
-  return NULL;
+Disassembler::RvaVisitor_Abs32::RvaVisitor_Abs32(
+    const std::vector<RVA>& rva_locations,
+    const AddressTranslator& translator)
+    : VectorRvaVisitor<RVA>(rva_locations), translator_(translator) {
 }
 
-Status DetectExecutableType(const void* buffer, size_t length,
-                            ExecutableType* type,
-                            size_t* detected_length) {
-
-  Disassembler* disassembler = DetectDisassembler(buffer, length);
-
-  if (disassembler) {
-    *type = disassembler->kind();
-    *detected_length = disassembler->length();
-    delete disassembler;
-    return C_OK;
-  }
-
-  // We failed to detect anything
-  *type = EXE_UNKNOWN;
-  *detected_length = 0;
-  return C_INPUT_NOT_RECOGNIZED;
+RVA Disassembler::RvaVisitor_Abs32::Get() const {
+  // For Abs32 targets, get target RVA from architecture-dependent functions.
+  return translator_.PointerToTargetRVA(translator_.RVAToPointer(*it_));
 }
 
-Status ParseDetectedExecutable(const void* buffer, size_t length,
-                               AssemblyProgram** output) {
-  *output = NULL;
-
-  Disassembler* disassembler = DetectDisassembler(buffer, length);
-
-  if (!disassembler) {
-    return C_INPUT_NOT_RECOGNIZED;
-  }
-
-  AssemblyProgram* program = new AssemblyProgram(disassembler->kind());
-
-  if (!disassembler->Disassemble(program)) {
-    delete program;
-    delete disassembler;
-    return C_DISASSEMBLY_FAILED;
-  }
-
-  delete disassembler;
-  *output = program;
-  return C_OK;
+Disassembler::RvaVisitor_Rel32::RvaVisitor_Rel32(
+    const std::vector<RVA>& rva_locations,
+    const AddressTranslator& translator)
+    : VectorRvaVisitor<RVA>(rva_locations), translator_(translator) {
 }
 
-void DeleteAssemblyProgram(AssemblyProgram* program) {
-  delete program;
+RVA Disassembler::RvaVisitor_Rel32::Get() const {
+  // For Rel32 targets, only handle 32-bit offsets.
+  return *it_ + 4 + Read32LittleEndian(translator_.RVAToPointer(*it_));
 }
 
-Disassembler::Disassembler(const void* start, size_t length)
-  : failure_reason_("uninitialized") {
-
-  start_ = reinterpret_cast<const uint8*>(start);
+Disassembler::Disassembler(const uint8_t* start, size_t length)
+    : failure_reason_("uninitialized") {
+  start_ = start;
   length_ = length;
   end_ = start_ + length_;
 };
 
 Disassembler::~Disassembler() {};
 
-const uint8* Disassembler::OffsetToPointer(size_t offset) const {
-  assert(start_ + offset <= end_);
-  return start_ + offset;
+const uint8_t* Disassembler::FileOffsetToPointer(FileOffset file_offset) const {
+  CHECK_LE(file_offset, static_cast<FileOffset>(end_ - start_));
+  return start_ + file_offset;
+}
+
+const uint8_t* Disassembler::RVAToPointer(RVA rva) const {
+  FileOffset file_offset = RVAToFileOffset(rva);
+  if (file_offset == kNoFileOffset)
+    return nullptr;
+
+  return FileOffsetToPointer(file_offset);
 }
 
 bool Disassembler::Good() {
-  failure_reason_ = NULL;
+  failure_reason_ = nullptr;
   return true;
 }
 
 bool Disassembler::Bad(const char* reason) {
   failure_reason_ = reason;
   return false;
+}
+
+void Disassembler::PrecomputeLabels(AssemblyProgram* program) {
+  std::unique_ptr<RvaVisitor> abs32_visitor(CreateAbs32TargetRvaVisitor());
+  std::unique_ptr<RvaVisitor> rel32_visitor(CreateRel32TargetRvaVisitor());
+  program->PrecomputeLabels(abs32_visitor.get(), rel32_visitor.get());
 }
 
 void Disassembler::ReduceLength(size_t reduced_length) {

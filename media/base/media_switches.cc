@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "build/build_config.h"
 #include "media/base/media_switches.h"
+#include "ppapi/features/features.h"
 
 namespace switches {
 
@@ -12,18 +14,18 @@ const char kAudioBufferSize[] = "audio-buffer-size";
 // Set number of threads to use for video decoding.
 const char kVideoThreads[] = "video-threads";
 
+// Suspend media pipeline on background tabs.
+const char kEnableMediaSuspend[] = "enable-media-suspend";
+const char kDisableMediaSuspend[] = "disable-media-suspend";
+
+// Force to report VP9 as an unsupported MIME type.
+const char kReportVp9AsAnUnsupportedMimeType[] =
+    "report-vp9-as-an-unsupported-mime-type";
+
 #if defined(OS_ANDROID)
-// Sets the MediaSource player that uses UI thread for frame processing.
-const char kDisableMediaThreadForMediaPlayback[] =
-    "disable-media-thread-for-media-playback";
-
-// Sets the MediaSource player that uses the separate media thread
-const char kEnableMediaThreadForMediaPlayback[] =
-    "enable-media-thread-for-media-playback";
-
-// Use WebMediaPlayerImpl instead of WebMediaPlayerAndroid. This is a temporary
-// switch for experimenting with unifying the Android playback pipeline.
-const char kEnableUnifiedMediaPipeline[] = "enable-unified-media-pipeline";
+// Use WebMediaPlayerAndroid instead of WebMediaPlayerImpl. This is a temporary
+// switch for holding back the new unified media pipeline.
+const char kDisableUnifiedMediaPipeline[] = "disable-unified-media-pipeline";
 #endif
 
 #if defined(OS_LINUX) || defined(OS_FREEBSD) || defined(OS_SOLARIS)
@@ -33,27 +35,6 @@ const char kAlsaInputDevice[] = "alsa-input-device";
 const char kAlsaOutputDevice[] = "alsa-output-device";
 #endif
 
-// Use GpuMemoryBuffers for Video Capture when this is an option for the device.
-// Experimental, see http://crbug.com/503835 and http://crbug.com/440843.
-const char kUseGpuMemoryBuffersForCapture[] =
-    "use-gpu-memory-buffers-for-capture";
-
-#if defined(OS_MACOSX)
-// AVFoundation is available in versions 10.7 and onwards, and is to be used
-// http://crbug.com/288562 for both audio and video device monitoring and for
-// video capture. Being a dynamically loaded NSBundle and library, it hits the
-// Chrome startup time (http://crbug.com/311325 and http://crbug.com/311437);
-// for experimentation purposes, in particular library load time issue, the
-// usage of this library can be enabled by using this flag.
-const char kEnableAVFoundation[] = "enable-avfoundation";
-
-// QTKit is the media capture API predecessor to AVFoundation, available up and
-// until Mac OS X 10.9 (despite being deprecated in this last one). This flag
-// is used for troubleshooting and testing, and forces QTKit in builds and
-// configurations where AVFoundation would be used otherwise.
-const char kForceQTKit[] = "force-qtkit";
-#endif
-
 #if defined(OS_WIN)
 // Use exclusive mode audio streaming for Windows Vista and higher.
 // Leads to lower latencies for audio streams which uses the
@@ -61,12 +42,6 @@ const char kForceQTKit[] = "force-qtkit";
 // See http://msdn.microsoft.com/en-us/library/windows/desktop/dd370844.aspx
 // for details.
 const char kEnableExclusiveAudio[] = "enable-exclusive-audio";
-
-// Used to troubleshoot problems with different video capture implementations
-// on Windows.  By default we use the Media Foundation API on Windows 7 and up,
-// but specifying this switch will force use of DirectShow always.
-// See bug: http://crbug.com/268412
-const char kForceDirectShowVideoCapture[] = "force-directshow";
 
 // Force the use of MediaFoundation for video capture. This is only supported in
 // Windows 7 and above. Used, like |kForceDirectShowVideoCapture|, to
@@ -92,10 +67,19 @@ const char kWaveOutBuffers[] = "waveout-buffers";
 const char kUseCras[] = "use-cras";
 #endif
 
-// Enables the audio thread hang monitor.  Allows us to find users in the field
-// who have stuck audio threads.  See crbug.com/422522 and crbug.com/478932.
-// TODO(dalecurtis): This should be removed once those issues are resolved.
-const char kEnableAudioHangMonitor[] = "enable-audio-hang-monitor";
+#if !defined(OS_ANDROID) || BUILDFLAG(ENABLE_PLUGINS)
+// Use a media session for each tabs in a way that two tabs can't play on top of
+// each other. This is different from the Media Session API as it is enabling a
+// default behaviour for the browser. The allowed values are: "" (empty),
+// |kEnableDefaultMediaSessionDuckFlash|.
+const char kEnableDefaultMediaSession[] = "enable-default-media-session";
+#endif  // !defined(OS_ANDROID) || BUILDFLAG(ENABLE_PLUGINS)
+
+#if BUILDFLAG(ENABLE_PLUGINS)
+// This value is used as an option for |kEnableDefaultMediaSession|. Flash will
+// be ducked when losing audio focus.
+const char kEnableDefaultMediaSessionDuckFlash[] = "duck-flash";
+#endif  // BUILDFLAG(ENABLE_PLUGINS)
 
 // Use fake device for Media Stream to replace actual camera and microphone.
 const char kUseFakeDeviceForMediaStream[] = "use-fake-device-for-media-stream";
@@ -108,7 +92,8 @@ const char kUseFileForFakeVideoCapture[] = "use-file-for-fake-video-capture";
 // the bits as if they came from the microphone, which means you should disable
 // audio processing (lest your audio file will play back distorted). The input
 // file is converted to suit Chrome's audio buses if necessary, so most sane
-// .wav files should work.
+// .wav files should work. You can pass either <path> to play the file looping
+// or <path>%noloop to stop after playing the file to completion.
 const char kUseFileForFakeAudioCapture[] = "use-file-for-fake-audio-capture";
 
 // Enables support for inband text tracks in media content.
@@ -129,4 +114,82 @@ const char kVideoUnderflowThresholdMs[] = "video-underflow-threshold-ms";
 const char kDisableRTCSmoothnessAlgorithm[] =
     "disable-rtc-smoothness-algorithm";
 
+// Enables demuxing of vp9 in mp4. Note that this flag will not have any effect
+// if MP4 demuxing is not enabled in the build.
+const char kEnableVp9InMp4[] = "enable-vp9-in-mp4";
+
+// Force media player using SurfaceView instead of SurfaceTexture on Android.
+const char kForceVideoOverlays[] = "force-video-overlays";
+
+// Allows explicitly specifying MSE audio/video buffer sizes.
+// Default values are 150M for video and 12M for audio.
+const char kMSEAudioBufferSizeLimit[] = "mse-audio-buffer-size-limit";
+const char kMSEVideoBufferSizeLimit[] = "mse-video-buffer-size-limit";
+
 }  // namespace switches
+
+namespace media {
+
+#if defined(OS_WIN)
+// Enables video decode acceleration using the D3D11 video decoder api.
+// This is completely insecure - DO NOT USE except for testing.
+const base::Feature kD3D11VideoDecoding{"D3D11VideoDecoding",
+                                        base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables H264 HW encode acceleration using Media Foundation for Windows.
+const base::Feature kMediaFoundationH264Encoding{
+    "MediaFoundationH264Encoding", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif  // defined(OS_WIN)
+
+// Use new audio rendering mixer.
+const base::Feature kNewAudioRenderingMixingStrategy{
+    "NewAudioRenderingMixingStrategy", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Only used for disabling overlay fullscreen (aka SurfaceView) in Clank.
+const base::Feature kOverlayFullscreenVideo{"overlay-fullscreen-video",
+                                            base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Let videos be resumed via remote controls (for example, the notification)
+// when in background.
+const base::Feature kResumeBackgroundVideo {
+  "resume-background-video",
+#if defined(OS_ANDROID)
+      base::FEATURE_ENABLED_BY_DEFAULT
+#else
+      base::FEATURE_DISABLED_BY_DEFAULT
+#endif
+};
+
+// Let video track be unselected when video is playing in the background.
+const base::Feature kBackgroundVideoTrackOptimization{
+    "BackgroundVideoTrackOptimization", base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Use shared block-based buffering for media.
+const base::Feature kUseNewMediaCache{"use-new-media-cache",
+                                      base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Correct video colors based on output display?
+const base::Feature kVideoColorManagement{"video-color-management",
+                                          base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Inform video blitter of video color space.
+const base::Feature kVideoBlitColorAccuracy{"video-blit-color-accuracy",
+                                            base::FEATURE_DISABLED_BY_DEFAULT};
+
+// Enables support for External Clear Key (ECK) key system for testing on
+// supported platforms. On platforms that do not support ECK, this feature has
+// no effect.
+const base::Feature kExternalClearKeyForTesting{
+    "external-clear-key-for-testing", base::FEATURE_DISABLED_BY_DEFAULT};
+
+#if defined(OS_ANDROID)
+// Replaces WPMA by the MediaPlayerRenderer for HLS and fallback playback.
+const base::Feature kAndroidMediaPlayerRenderer{
+    "android-media-player-renderer", base::FEATURE_ENABLED_BY_DEFAULT};
+
+// Lock the screen orientation when a video goes fullscreen.
+const base::Feature kVideoFullscreenOrientationLock{
+    "VideoFullscreenOrientationLock", base::FEATURE_DISABLED_BY_DEFAULT};
+#endif
+
+}  // namespace media

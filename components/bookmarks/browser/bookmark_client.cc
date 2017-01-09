@@ -8,6 +8,8 @@
 
 namespace bookmarks {
 
+void BookmarkClient::Init(BookmarkModel* model) {}
+
 bool BookmarkClient::PreferTouchIcon() {
   return false;
 }
@@ -20,13 +22,12 @@ base::CancelableTaskTracker::TaskId BookmarkClient::GetFaviconImageForPageURL(
   return base::CancelableTaskTracker::kBadTaskId;
 }
 
-bool BookmarkClient::SupportsTypedCountForNodes() {
+bool BookmarkClient::SupportsTypedCountForUrls() {
   return false;
 }
 
-void BookmarkClient::GetTypedCountForNodes(
-    const NodeSet& nodes,
-    NodeTypedCountPairs* node_typed_count_pairs) {
+void BookmarkClient::GetTypedCountForUrls(
+    UrlTypedCountMap* url_typed_count_map) {
   NOTREACHED();
 }
 

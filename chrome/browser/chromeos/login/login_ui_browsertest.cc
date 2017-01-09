@@ -3,7 +3,6 @@
 // found in the LICENSE file.
 
 #include "base/command_line.h"
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
@@ -13,6 +12,7 @@
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
 #include "chrome/browser/ui/webui/chromeos/login/signin_screen_handler.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
@@ -74,7 +74,7 @@ IN_PROC_BROWSER_TEST_F(LoginUITest, PRE_InterruptedAutoStartEnrollment) {
 // Tests that the default first screen is the network screen after OOBE
 // when auto enrollment is enabled and device is not yet enrolled.
 IN_PROC_BROWSER_TEST_F(LoginUITest, InterruptedAutoStartEnrollment) {
-  OobeScreenWaiter(OobeDisplay::SCREEN_OOBE_NETWORK).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_OOBE_NETWORK).Wait();
 }
 
 IN_PROC_BROWSER_TEST_F(LoginUITest, OobeNoExceptions) {
@@ -88,7 +88,7 @@ IN_PROC_BROWSER_TEST_F(LoginUITest, PRE_LoginNoExceptions) {
 }
 
 IN_PROC_BROWSER_TEST_F(LoginUITest, LoginNoExceptions) {
-  OobeScreenWaiter(OobeDisplay::SCREEN_ACCOUNT_PICKER).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_ACCOUNT_PICKER).Wait();
   JSExpect("cr.ErrorStore.getInstance().length == 0");
 }
 

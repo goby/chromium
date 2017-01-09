@@ -7,9 +7,12 @@
 #include <algorithm>
 #include <iomanip>
 #include <limits>
+#include <memory>
 
+#include "base/macros.h"
 #include "media/formats/mp4/rcheck.h"
 #include "media/formats/mp4/sample_to_group_iterator.h"
+#include "media/media_features.h"
 
 namespace media {
 namespace mp4 {
@@ -34,6 +37,12 @@ struct TrackRunInfo {
   const VideoSampleEntry* video_description;
   const SampleGroupDescription* track_sample_encryption_group;
 
+  // Stores sample encryption entries, which is populated from 'senc' box if it
+  // is available, otherwise will try to load from cenc auxiliary information.
+  std::vector<SampleEncryptionEntry> sample_encryption_entries;
+
+  // These variables are useful to load |sample_encryption_entries| from cenc
+  // auxiliary information when 'senc' box is not available.
   int64_t aux_info_start_offset;  // Only valid if aux_info_total_size > 0.
   int aux_info_default_size;
   std::vector<uint8_t> aux_info_sizes;  // Populated if default_size == 0.
@@ -135,13 +144,13 @@ static bool PopulateSampleInfo(const TrackExtends& trex,
   uint32_t flags;
   if (i < trun.sample_flags.size()) {
     flags = trun.sample_flags[i];
-    DVLOG(4) << __FUNCTION__ << " trun sample flags "  << HexFlags(flags);
+    DVLOG(4) << __func__ << " trun sample flags " << HexFlags(flags);
   } else if (tfhd.has_default_sample_flags) {
     flags = tfhd.default_sample_flags;
-    DVLOG(4) << __FUNCTION__ << " tfhd sample flags "  << HexFlags(flags);
+    DVLOG(4) << __func__ << " tfhd sample flags " << HexFlags(flags);
   } else {
     flags = trex.default_sample_flags;
-    DVLOG(4) << __FUNCTION__ << " trex sample flags "  << HexFlags(flags);
+    DVLOG(4) << __func__ << " trex sample flags " << HexFlags(flags);
   }
 
   SampleDependsOn sample_depends_on =
@@ -149,7 +158,7 @@ static bool PopulateSampleInfo(const TrackExtends& trex,
   if (sample_depends_on == kSampleDependsOnUnknown) {
     sample_depends_on = sdtp_sample_depends_on;
   }
-  DVLOG(4) << __FUNCTION__ << " sample_depends_on "  << sample_depends_on;
+  DVLOG(4) << __func__ << " sample_depends_on " << sample_depends_on;
   if (sample_depends_on == kSampleDependsOnReserved) {
     MEDIA_LOG(ERROR, media_log) << "Reserved value used in sample dependency"
                                    " info.";
@@ -171,10 +180,9 @@ static bool PopulateSampleInfo(const TrackExtends& trex,
   sample_info->is_keyframe = sample_is_sync_sample &&
                              (!sample_depends_on_others || is_audio);
 
-  DVLOG(4) << __FUNCTION__ << " is_kf:" << sample_info->is_keyframe
+  DVLOG(4) << __func__ << " is_kf:" << sample_info->is_keyframe
            << " is_sync:" << sample_is_sync_sample
-           << " deps:" << sample_depends_on_others
-           << " audio:" << is_audio;
+           << " deps:" << sample_depends_on_others << " audio:" << is_audio;
 
   return true;
 }
@@ -271,6 +279,16 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
     RCHECK(desc_idx > 0);  // Descriptions are one-indexed in the file
     desc_idx -= 1;
 
+    const std::vector<uint8_t>& sample_encryption_data =
+        traf.sample_encryption.sample_encryption_data;
+    std::unique_ptr<BufferReader> sample_encryption_reader;
+    uint32_t sample_encryption_entries_count = 0;
+    if (!sample_encryption_data.empty()) {
+      sample_encryption_reader.reset(new BufferReader(
+          sample_encryption_data.data(), sample_encryption_data.size()));
+      RCHECK(sample_encryption_reader->Read4(&sample_encryption_entries_count));
+    }
+
     // Process edit list to remove CTS offset introduced in the presence of
     // B-frames (those that contain a single edit with a nonnegative media
     // time). Other uses of edit lists are not supported, as they are
@@ -292,7 +310,7 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
     bool is_sample_to_group_valid = sample_to_group_itr.IsValid();
 
     int64_t run_start_dts = traf.decode_time.decode_time;
-    int sample_count_sum = 0;
+    uint64_t sample_count_sum = 0;
     for (size_t j = 0; j < traf.runs.size(); j++) {
       const TrackFragmentRun& trun = traf.runs[j];
       TrackRunInfo tri;
@@ -305,23 +323,27 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
       tri.fragment_sample_encryption_info =
           traf.sample_group_description.entries;
 
+      const TrackEncryption* track_encryption;
       tri.is_audio = (stsd.type == kAudio);
       if (tri.is_audio) {
         RCHECK(!stsd.audio_entries.empty());
         if (desc_idx > stsd.audio_entries.size())
           desc_idx = 0;
         tri.audio_description = &stsd.audio_entries[desc_idx];
+        track_encryption = &tri.audio_description->sinf.info.track_encryption;
       } else {
         RCHECK(!stsd.video_entries.empty());
         if (desc_idx > stsd.video_entries.size())
           desc_idx = 0;
         tri.video_description = &stsd.video_entries[desc_idx];
+        track_encryption = &tri.video_description->sinf.info.track_encryption;
       }
-
-      // Collect information from the auxiliary_offset entry with the same index
-      // in the 'saiz' container as the current run's index in the 'trun'
-      // container, if it is present.
-      if (traf.auxiliary_offset.offsets.size() > j) {
+      // Initialize aux_info variables only if no sample encryption entries.
+      if (sample_encryption_entries_count == 0 &&
+          traf.auxiliary_offset.offsets.size() > j) {
+        // Collect information from the auxiliary_offset entry with the same
+        // index in the 'saiz' container as the current run's index in the
+        // 'trun' container, if it is present.
         // There should be an auxiliary info entry corresponding to each sample
         // in the auxiliary offset entry's corresponding track run.
         RCHECK(traf.auxiliary_size.sample_count >=
@@ -332,8 +354,8 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
         if (tri.aux_info_default_size == 0) {
           const std::vector<uint8_t>& sizes =
               traf.auxiliary_size.sample_info_sizes;
-          tri.aux_info_sizes.insert(tri.aux_info_sizes.begin(),
-              sizes.begin() + sample_count_sum,
+          tri.aux_info_sizes.insert(
+              tri.aux_info_sizes.begin(), sizes.begin() + sample_count_sum,
               sizes.begin() + sample_count_sum + trun.sample_count);
         }
 
@@ -377,6 +399,54 @@ bool TrackRunIterator::Init(const MovieFragment& moof) {
           RCHECK(GetSampleEncryptionInfoEntry(tri, index));
         is_sample_to_group_valid = sample_to_group_itr.Advance();
       }
+      if (sample_encryption_entries_count > 0) {
+        RCHECK(sample_encryption_entries_count >=
+               sample_count_sum + trun.sample_count);
+        tri.sample_encryption_entries.resize(trun.sample_count);
+        for (size_t k = 0; k < trun.sample_count; k++) {
+          uint32_t index = tri.samples[k].cenc_group_description_index;
+          const CencSampleEncryptionInfoEntry* info_entry =
+              index == 0 ? nullptr : GetSampleEncryptionInfoEntry(tri, index);
+          const uint8_t iv_size = index == 0 ? track_encryption->default_iv_size
+                                             : info_entry->iv_size;
+          SampleEncryptionEntry& entry = tri.sample_encryption_entries[k];
+          RCHECK(entry.Parse(sample_encryption_reader.get(), iv_size,
+                             traf.sample_encryption.use_subsample_encryption));
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+          // If we don't have a per-sample IV, get the constant IV.
+          bool is_encrypted = index == 0 ? track_encryption->is_encrypted
+                                         : info_entry->is_encrypted;
+          // We only support setting the pattern values in the 'tenc' box for
+          // the track (not varying on per sample group basis).
+          // Thus we need to verify that the settings in the sample group match
+          // those in the 'tenc'.
+          if (is_encrypted && index != 0) {
+            RCHECK_MEDIA_LOGGED(info_entry->crypt_byte_block ==
+                                    track_encryption->default_crypt_byte_block,
+                                media_log_,
+                                "Pattern value (crypt byte block) for the "
+                                "sample group does not match that in the tenc "
+                                "box . This is not currently supported.");
+            RCHECK_MEDIA_LOGGED(info_entry->skip_byte_block ==
+                                    track_encryption->default_skip_byte_block,
+                                media_log_,
+                                "Pattern value (skip byte block) for the "
+                                "sample group does not match that in the tenc "
+                                "box . This is not currently supported.");
+          }
+          if (is_encrypted && !iv_size) {
+            const uint8_t constant_iv_size =
+                index == 0 ? track_encryption->default_constant_iv_size
+                           : info_entry->constant_iv_size;
+            RCHECK(constant_iv_size != 0);
+            const uint8_t* constant_iv =
+                index == 0 ? track_encryption->default_constant_iv
+                           : info_entry->constant_iv;
+            memcpy(entry.initialization_vector, constant_iv, constant_iv_size);
+          }
+#endif
+        }
+      }
       runs_.push_back(tri);
       sample_count_sum += trun.sample_count;
     }
@@ -401,7 +471,6 @@ void TrackRunIterator::ResetRun() {
   sample_dts_ = run_itr_->start_dts;
   sample_offset_ = run_itr_->sample_start_offset;
   sample_itr_ = run_itr_->samples.begin();
-  cenc_info_.clear();
 }
 
 void TrackRunIterator::AdvanceSample() {
@@ -415,14 +484,17 @@ void TrackRunIterator::AdvanceSample() {
 // info is available in the stream.
 bool TrackRunIterator::AuxInfoNeedsToBeCached() {
   DCHECK(IsRunValid());
-  return aux_info_size() > 0 && cenc_info_.size() == 0;
+  return is_encrypted() && aux_info_size() > 0 &&
+         run_itr_->sample_encryption_entries.size() == 0;
 }
 
 // This implementation currently only caches CENC auxiliary info.
 bool TrackRunIterator::CacheAuxInfo(const uint8_t* buf, int buf_size) {
   RCHECK(AuxInfoNeedsToBeCached() && buf_size >= aux_info_size());
 
-  cenc_info_.resize(run_itr_->samples.size());
+  std::vector<SampleEncryptionEntry>& sample_encryption_entries =
+      runs_[run_itr_ - runs_.begin()].sample_encryption_entries;
+  sample_encryption_entries.resize(run_itr_->samples.size());
   int64_t pos = 0;
   for (size_t i = 0; i < run_itr_->samples.size(); i++) {
     int info_size = run_itr_->aux_info_default_size;
@@ -431,7 +503,16 @@ bool TrackRunIterator::CacheAuxInfo(const uint8_t* buf, int buf_size) {
 
     if (IsSampleEncrypted(i)) {
       BufferReader reader(buf + pos, info_size);
-      RCHECK(cenc_info_[i].Parse(GetIvSize(i), &reader));
+      const uint8_t iv_size = GetIvSize(i);
+      const bool has_subsamples = info_size > iv_size;
+      SampleEncryptionEntry& entry = sample_encryption_entries[i];
+      RCHECK(entry.Parse(&reader, iv_size, has_subsamples));
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+      // if we don't have a per-sample IV, get the constant IV.
+      if (!iv_size) {
+        RCHECK(ApplyConstantIv(i, &entry));
+      }
+#endif
     }
     pos += info_size;
   }
@@ -546,33 +627,48 @@ const TrackEncryption& TrackRunIterator::track_encryption() const {
   return video_description().sinf.info.track_encryption;
 }
 
-scoped_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
+std::unique_ptr<DecryptConfig> TrackRunIterator::GetDecryptConfig() {
   DCHECK(is_encrypted());
+  size_t sample_idx = sample_itr_ - run_itr_->samples.begin();
+  const std::vector<uint8_t>& kid = GetKeyId(sample_idx);
 
-  if (cenc_info_.empty()) {
+  if (run_itr_->sample_encryption_entries.empty()) {
     DCHECK_EQ(0, aux_info_size());
-    MEDIA_LOG(ERROR, media_log_) << "Aux Info is not available.";
-    return scoped_ptr<DecryptConfig>();
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+    // The 'cbcs' scheme allows empty aux info when a constant IV is in use
+    // with full sample encryption. That case will fall through to here.
+    SampleEncryptionEntry sample_encryption_entry;
+    if (ApplyConstantIv(sample_idx, &sample_encryption_entry)) {
+      return std::unique_ptr<DecryptConfig>(new DecryptConfig(
+          std::string(reinterpret_cast<const char*>(&kid[0]), kid.size()),
+          std::string(reinterpret_cast<const char*>(
+                          sample_encryption_entry.initialization_vector),
+                      arraysize(sample_encryption_entry.initialization_vector)),
+          sample_encryption_entry.subsamples));
+    }
+#endif
+    MEDIA_LOG(ERROR, media_log_) << "Sample encryption info is not available.";
+    return std::unique_ptr<DecryptConfig>();
   }
 
-  size_t sample_idx = sample_itr_ - run_itr_->samples.begin();
-  DCHECK_LT(sample_idx, cenc_info_.size());
-  const FrameCENCInfo& cenc_info = cenc_info_[sample_idx];
+  DCHECK_LT(sample_idx, run_itr_->sample_encryption_entries.size());
+  const SampleEncryptionEntry& sample_encryption_entry =
+      run_itr_->sample_encryption_entries[sample_idx];
 
   size_t total_size = 0;
-  if (!cenc_info.subsamples.empty() &&
-      (!cenc_info.GetTotalSizeOfSubsamples(&total_size) ||
+  if (!sample_encryption_entry.subsamples.empty() &&
+      (!sample_encryption_entry.GetTotalSizeOfSubsamples(&total_size) ||
        total_size != static_cast<size_t>(sample_size()))) {
     MEDIA_LOG(ERROR, media_log_) << "Incorrect CENC subsample size.";
-    return scoped_ptr<DecryptConfig>();
+    return std::unique_ptr<DecryptConfig>();
   }
 
-  const std::vector<uint8_t>& kid = GetKeyId(sample_idx);
-  return scoped_ptr<DecryptConfig>(new DecryptConfig(
+  return std::unique_ptr<DecryptConfig>(new DecryptConfig(
       std::string(reinterpret_cast<const char*>(&kid[0]), kid.size()),
-      std::string(reinterpret_cast<const char*>(cenc_info.iv),
-                  arraysize(cenc_info.iv)),
-      cenc_info.subsamples));
+      std::string(reinterpret_cast<const char*>(
+                      sample_encryption_entry.initialization_vector),
+                  arraysize(sample_encryption_entry.initialization_vector)),
+      sample_encryption_entry.subsamples));
 }
 
 uint32_t TrackRunIterator::GetGroupDescriptionIndex(
@@ -601,6 +697,25 @@ uint8_t TrackRunIterator::GetIvSize(size_t sample_index) const {
   return (index == 0) ? track_encryption().default_iv_size
                       : GetSampleEncryptionInfoEntry(*run_itr_, index)->iv_size;
 }
+
+#if BUILDFLAG(ENABLE_CBCS_ENCRYPTION_SCHEME)
+bool TrackRunIterator::ApplyConstantIv(size_t sample_index,
+                                       SampleEncryptionEntry* entry) const {
+  DCHECK(IsSampleEncrypted(sample_index));
+  uint32_t index = GetGroupDescriptionIndex(sample_index);
+  const uint8_t constant_iv_size =
+      index == 0
+          ? track_encryption().default_constant_iv_size
+          : GetSampleEncryptionInfoEntry(*run_itr_, index)->constant_iv_size;
+  RCHECK(constant_iv_size != 0);
+  const uint8_t* constant_iv =
+      index == 0 ? track_encryption().default_constant_iv
+                 : GetSampleEncryptionInfoEntry(*run_itr_, index)->constant_iv;
+  RCHECK(constant_iv != nullptr);
+  memcpy(entry->initialization_vector, constant_iv, kInitializationVectorSize);
+  return true;
+}
+#endif
 
 }  // namespace mp4
 }  // namespace media

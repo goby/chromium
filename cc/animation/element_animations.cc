@@ -4,266 +4,489 @@
 
 #include "cc/animation/element_animations.h"
 
+#include <stddef.h>
+
+#include <algorithm>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "cc/animation/animation_delegate.h"
+#include "cc/animation/animation_events.h"
 #include "cc/animation/animation_host.h"
 #include "cc/animation/animation_player.h"
-#include "cc/animation/animation_registrar.h"
-#include "cc/animation/layer_animation_value_observer.h"
+#include "cc/animation/keyframed_animation_curve.h"
+#include "cc/output/filter_operations.h"
 #include "cc/trees/mutator_host_client.h"
+#include "ui/gfx/geometry/box_f.h"
 
 namespace cc {
 
-class ElementAnimations::ValueObserver : public LayerAnimationValueObserver {
- public:
-  ValueObserver(ElementAnimations* element_animation, LayerTreeType tree_type)
-      : element_animations_(element_animation), tree_type_(tree_type) {
-    DCHECK(element_animations_);
-  }
-
-  // LayerAnimationValueObserver implementation.
-  void OnFilterAnimated(const FilterOperations& filters) override {
-    element_animations_->SetFilterMutated(tree_type_, filters);
-  }
-
-  void OnOpacityAnimated(float opacity) override {
-    element_animations_->SetOpacityMutated(tree_type_, opacity);
-  }
-
-  void OnTransformAnimated(const gfx::Transform& transform) override {
-    element_animations_->SetTransformMutated(tree_type_, transform);
-  }
-
-  void OnScrollOffsetAnimated(const gfx::ScrollOffset& scroll_offset) override {
-    element_animations_->SetScrollOffsetMutated(tree_type_, scroll_offset);
-  }
-
-  void OnAnimationWaitingForDeletion() override {
-    // TODO(loyso): See Layer::OnAnimationWaitingForDeletion. But we always do
-    // PushProperties for AnimationTimelines for now.
-  }
-
-  void OnTransformIsPotentiallyAnimatingChanged(bool is_animating) override {
-    element_animations_->SetTransformIsPotentiallyAnimatingChanged(
-        tree_type_, is_animating);
-  }
-
-  bool IsActive() const override { return tree_type_ == LayerTreeType::ACTIVE; }
-
- private:
-  ElementAnimations* element_animations_;
-  const LayerTreeType tree_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(ValueObserver);
-};
-
-scoped_ptr<ElementAnimations> ElementAnimations::Create(AnimationHost* host) {
-  return make_scoped_ptr(new ElementAnimations(host));
+scoped_refptr<ElementAnimations> ElementAnimations::Create() {
+  return make_scoped_refptr(new ElementAnimations());
 }
 
-ElementAnimations::ElementAnimations(AnimationHost* host)
-    : players_list_(make_scoped_ptr(new PlayersList())), animation_host_(host) {
-  DCHECK(animation_host_);
+ElementAnimations::ElementAnimations()
+    : animation_host_(),
+      element_id_(),
+      has_element_in_active_list_(false),
+      has_element_in_pending_list_(false),
+      needs_push_properties_(false),
+      needs_update_impl_client_state_(false) {}
+
+ElementAnimations::~ElementAnimations() {}
+
+void ElementAnimations::SetAnimationHost(AnimationHost* host) {
+  animation_host_ = host;
 }
 
-ElementAnimations::~ElementAnimations() {
-  DCHECK(!layer_animation_controller_);
+void ElementAnimations::SetElementId(ElementId element_id) {
+  element_id_ = element_id;
 }
 
-void ElementAnimations::CreateLayerAnimationController(int layer_id) {
-  DCHECK(layer_id);
-  DCHECK(!layer_animation_controller_);
+void ElementAnimations::InitAffectedElementTypes() {
+  DCHECK(element_id_);
   DCHECK(animation_host_);
 
-  AnimationRegistrar* registrar = animation_host_->animation_registrar();
-  DCHECK(registrar);
-
-  layer_animation_controller_ =
-      registrar->GetAnimationControllerForId(layer_id);
-  layer_animation_controller_->SetAnimationRegistrar(registrar);
-  layer_animation_controller_->set_layer_animation_delegate(this);
-  layer_animation_controller_->set_value_provider(this);
+  UpdatePlayersTickingState(UpdateTickingType::FORCE);
 
   DCHECK(animation_host_->mutator_host_client());
-  if (animation_host_->mutator_host_client()->IsLayerInTree(
-          layer_id, LayerTreeType::ACTIVE))
-    CreateActiveValueObserver();
-  if (animation_host_->mutator_host_client()->IsLayerInTree(
-          layer_id, LayerTreeType::PENDING))
-    CreatePendingValueObserver();
+  if (animation_host_->mutator_host_client()->IsElementInList(
+          element_id_, ElementListType::ACTIVE)) {
+    set_has_element_in_active_list(true);
+  }
+  if (animation_host_->mutator_host_client()->IsElementInList(
+          element_id_, ElementListType::PENDING)) {
+    set_has_element_in_pending_list(true);
+  }
 }
 
-void ElementAnimations::DestroyLayerAnimationController() {
+TargetProperties ElementAnimations::GetPropertiesMaskForAnimationState() {
+  TargetProperties properties;
+  properties[TargetProperty::TRANSFORM] = true;
+  properties[TargetProperty::OPACITY] = true;
+  properties[TargetProperty::FILTER] = true;
+  return properties;
+}
+
+void ElementAnimations::ClearAffectedElementTypes() {
   DCHECK(animation_host_);
 
-  if (active_value_observer_)
-    SetTransformIsPotentiallyAnimatingChanged(LayerTreeType::ACTIVE, false);
-  if (pending_value_observer_)
-    SetTransformIsPotentiallyAnimatingChanged(LayerTreeType::PENDING, false);
+  TargetProperties disable_properties = GetPropertiesMaskForAnimationState();
+  PropertyAnimationState disabled_state_mask, disabled_state;
+  disabled_state_mask.currently_running = disable_properties;
+  disabled_state_mask.potentially_animating = disable_properties;
 
-  DestroyPendingValueObserver();
-  DestroyActiveValueObserver();
-
-  if (layer_animation_controller_) {
-    layer_animation_controller_->remove_value_provider(this);
-    layer_animation_controller_->remove_layer_animation_delegate(this);
-    layer_animation_controller_->SetAnimationRegistrar(nullptr);
-    layer_animation_controller_ = nullptr;
+  if (has_element_in_active_list()) {
+    animation_host()->mutator_host_client()->ElementIsAnimatingChanged(
+        element_id(), ElementListType::ACTIVE, disabled_state_mask,
+        disabled_state);
   }
+  set_has_element_in_active_list(false);
+
+  if (has_element_in_pending_list()) {
+    animation_host()->mutator_host_client()->ElementIsAnimatingChanged(
+        element_id(), ElementListType::PENDING, disabled_state_mask,
+        disabled_state);
+  }
+  set_has_element_in_pending_list(false);
+
+  RemovePlayersFromTicking();
 }
 
-void ElementAnimations::LayerRegistered(int layer_id, LayerTreeType tree_type) {
-  DCHECK(layer_animation_controller_);
-  DCHECK_EQ(layer_animation_controller_->id(), layer_id);
+void ElementAnimations::ElementRegistered(ElementId element_id,
+                                          ElementListType list_type) {
+  DCHECK_EQ(element_id_, element_id);
 
-  if (tree_type == LayerTreeType::ACTIVE) {
-    if (!active_value_observer_)
-      CreateActiveValueObserver();
-  } else {
-    if (!pending_value_observer_)
-      CreatePendingValueObserver();
-  }
+  if (!has_element_in_any_list())
+    UpdatePlayersTickingState(UpdateTickingType::FORCE);
+
+  if (list_type == ElementListType::ACTIVE)
+    set_has_element_in_active_list(true);
+  else
+    set_has_element_in_pending_list(true);
 }
 
-void ElementAnimations::LayerUnregistered(int layer_id,
-                                          LayerTreeType tree_type) {
-  DCHECK_EQ(this->layer_id(), layer_id);
-  tree_type == LayerTreeType::ACTIVE ? DestroyActiveValueObserver()
-                                     : DestroyPendingValueObserver();
+void ElementAnimations::ElementUnregistered(ElementId element_id,
+                                            ElementListType list_type) {
+  DCHECK_EQ(this->element_id(), element_id);
+  if (list_type == ElementListType::ACTIVE)
+    set_has_element_in_active_list(false);
+  else
+    set_has_element_in_pending_list(false);
+
+  if (!has_element_in_any_list())
+    RemovePlayersFromTicking();
 }
 
 void ElementAnimations::AddPlayer(AnimationPlayer* player) {
-  players_list_->Append(player);
+  players_list_.AddObserver(player);
 }
 
 void ElementAnimations::RemovePlayer(AnimationPlayer* player) {
-  for (PlayersListNode* node = players_list_->head();
-       node != players_list_->end(); node = node->next()) {
-    if (node->value() == player) {
-      node->RemoveFromList();
-      return;
-    }
-  }
+  players_list_.RemoveObserver(player);
 }
 
 bool ElementAnimations::IsEmpty() const {
-  return players_list_->empty();
+  return !players_list_.might_have_observers();
+}
+
+void ElementAnimations::SetNeedsPushProperties() {
+  needs_push_properties_ = true;
 }
 
 void ElementAnimations::PushPropertiesTo(
-    ElementAnimations* element_animations_impl) {
-  DCHECK(layer_animation_controller_);
-  DCHECK(element_animations_impl->layer_animation_controller());
+    scoped_refptr<ElementAnimations> element_animations_impl) const {
+  DCHECK_NE(this, element_animations_impl);
 
-  layer_animation_controller_->PushAnimationUpdatesTo(
-      element_animations_impl->layer_animation_controller());
+  if (!needs_push_properties_)
+    return;
+  needs_push_properties_ = false;
+
+  // Update impl client state.
+  if (needs_update_impl_client_state_)
+    element_animations_impl->UpdateClientAnimationState();
+  needs_update_impl_client_state_ = false;
 }
 
-void ElementAnimations::SetFilterMutated(LayerTreeType tree_type,
+void ElementAnimations::UpdatePlayersTickingState(
+    UpdateTickingType update_ticking_type) const {
+  for (auto& player : players_list_)
+    player.UpdateTickingState(update_ticking_type);
+}
+
+void ElementAnimations::RemovePlayersFromTicking() const {
+  for (auto& player : players_list_)
+    player.RemoveFromTicking();
+}
+
+void ElementAnimations::NotifyAnimationStarted(const AnimationEvent& event) {
+  DCHECK(!event.is_impl_only);
+  for (auto& player : players_list_) {
+    if (player.NotifyAnimationStarted(event))
+      break;
+  }
+}
+
+void ElementAnimations::NotifyAnimationFinished(const AnimationEvent& event) {
+  DCHECK(!event.is_impl_only);
+  for (auto& player : players_list_) {
+    if (player.NotifyAnimationFinished(event))
+      break;
+  }
+}
+
+void ElementAnimations::NotifyAnimationTakeover(const AnimationEvent& event) {
+  DCHECK(!event.is_impl_only);
+  DCHECK(event.target_property == TargetProperty::SCROLL_OFFSET);
+
+  for (auto& player : players_list_)
+    player.NotifyAnimationTakeover(event);
+}
+
+void ElementAnimations::NotifyAnimationAborted(const AnimationEvent& event) {
+  DCHECK(!event.is_impl_only);
+
+  for (auto& player : players_list_) {
+    if (player.NotifyAnimationAborted(event))
+      break;
+  }
+
+  UpdateClientAnimationState();
+}
+
+void ElementAnimations::NotifyAnimationPropertyUpdate(
+    const AnimationEvent& event) {
+  DCHECK(!event.is_impl_only);
+  bool notify_active_elements = true;
+  bool notify_pending_elements = true;
+  switch (event.target_property) {
+    case TargetProperty::OPACITY:
+      NotifyClientOpacityAnimated(event.opacity, notify_active_elements,
+                                  notify_pending_elements);
+      break;
+    case TargetProperty::TRANSFORM:
+      NotifyClientTransformAnimated(event.transform, notify_active_elements,
+                                    notify_pending_elements);
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+bool ElementAnimations::HasFilterAnimationThatInflatesBounds() const {
+  for (auto& player : players_list_) {
+    if (player.HasFilterAnimationThatInflatesBounds())
+      return true;
+  }
+  return false;
+}
+
+bool ElementAnimations::HasTransformAnimationThatInflatesBounds() const {
+  for (auto& player : players_list_) {
+    if (player.HasTransformAnimationThatInflatesBounds())
+      return true;
+  }
+  return false;
+}
+
+bool ElementAnimations::FilterAnimationBoundsForBox(const gfx::BoxF& box,
+                                                    gfx::BoxF* bounds) const {
+  // TODO(avallee): Implement.
+  return false;
+}
+
+bool ElementAnimations::TransformAnimationBoundsForBox(
+    const gfx::BoxF& box,
+    gfx::BoxF* bounds) const {
+  *bounds = gfx::BoxF();
+
+  for (auto& player : players_list_) {
+    gfx::BoxF player_bounds;
+    bool success = player.TransformAnimationBoundsForBox(box, &player_bounds);
+    if (!success)
+      return false;
+    bounds->Union(player_bounds);
+  }
+  return true;
+}
+
+bool ElementAnimations::HasOnlyTranslationTransforms(
+    ElementListType list_type) const {
+  for (auto& player : players_list_) {
+    if (!player.HasOnlyTranslationTransforms(list_type))
+      return false;
+  }
+  return true;
+}
+
+bool ElementAnimations::AnimationsPreserveAxisAlignment() const {
+  for (auto& player : players_list_) {
+    if (!player.AnimationsPreserveAxisAlignment())
+      return false;
+  }
+  return true;
+}
+
+bool ElementAnimations::AnimationStartScale(ElementListType list_type,
+                                            float* start_scale) const {
+  *start_scale = 0.f;
+
+  for (auto& player : players_list_) {
+    float player_start_scale = 0.f;
+    bool success = player.AnimationStartScale(list_type, &player_start_scale);
+    if (!success)
+      return false;
+    // Union: a maximum.
+    *start_scale = std::max(*start_scale, player_start_scale);
+  }
+
+  return true;
+}
+
+bool ElementAnimations::MaximumTargetScale(ElementListType list_type,
+                                           float* max_scale) const {
+  *max_scale = 0.f;
+
+  for (auto& player : players_list_) {
+    float player_max_scale = 0.f;
+    bool success = player.MaximumTargetScale(list_type, &player_max_scale);
+    if (!success)
+      return false;
+    // Union: a maximum.
+    *max_scale = std::max(*max_scale, player_max_scale);
+  }
+
+  return true;
+}
+
+bool ElementAnimations::ScrollOffsetAnimationWasInterrupted() const {
+  for (auto& player : players_list_) {
+    if (player.scroll_offset_animation_was_interrupted())
+      return true;
+  }
+  return false;
+}
+
+void ElementAnimations::SetNeedsUpdateImplClientState() {
+  needs_update_impl_client_state_ = true;
+  SetNeedsPushProperties();
+}
+
+void ElementAnimations::NotifyClientOpacityAnimated(
+    float opacity,
+    bool notify_active_elements,
+    bool notify_pending_elements) {
+  if (notify_active_elements && has_element_in_active_list())
+    OnOpacityAnimated(ElementListType::ACTIVE, opacity);
+  if (notify_pending_elements && has_element_in_pending_list())
+    OnOpacityAnimated(ElementListType::PENDING, opacity);
+}
+
+void ElementAnimations::NotifyClientTransformAnimated(
+    const gfx::Transform& transform,
+    bool notify_active_elements,
+    bool notify_pending_elements) {
+  if (notify_active_elements && has_element_in_active_list())
+    OnTransformAnimated(ElementListType::ACTIVE, transform);
+  if (notify_pending_elements && has_element_in_pending_list())
+    OnTransformAnimated(ElementListType::PENDING, transform);
+}
+
+void ElementAnimations::NotifyClientFilterAnimated(
+    const FilterOperations& filters,
+    bool notify_active_elements,
+    bool notify_pending_elements) {
+  if (notify_active_elements && has_element_in_active_list())
+    OnFilterAnimated(ElementListType::ACTIVE, filters);
+  if (notify_pending_elements && has_element_in_pending_list())
+    OnFilterAnimated(ElementListType::PENDING, filters);
+}
+
+void ElementAnimations::NotifyClientScrollOffsetAnimated(
+    const gfx::ScrollOffset& scroll_offset,
+    bool notify_active_elements,
+    bool notify_pending_elements) {
+  if (notify_active_elements && has_element_in_active_list())
+    OnScrollOffsetAnimated(ElementListType::ACTIVE, scroll_offset);
+  if (notify_pending_elements && has_element_in_pending_list())
+    OnScrollOffsetAnimated(ElementListType::PENDING, scroll_offset);
+}
+
+void ElementAnimations::UpdateClientAnimationState() {
+  if (!element_id())
+    return;
+  DCHECK(animation_host());
+  if (!animation_host()->mutator_host_client())
+    return;
+
+  PropertyAnimationState prev_pending = pending_state_;
+  PropertyAnimationState prev_active = active_state_;
+
+  pending_state_.Clear();
+  active_state_.Clear();
+
+  for (auto& player : players_list_) {
+    PropertyAnimationState player_pending_state, player_active_state;
+    player.GetPropertyAnimationState(&player_pending_state,
+                                     &player_active_state);
+    pending_state_ |= player_pending_state;
+    active_state_ |= player_active_state;
+  }
+
+  TargetProperties allowed_properties = GetPropertiesMaskForAnimationState();
+  PropertyAnimationState allowed_state;
+  allowed_state.currently_running = allowed_properties;
+  allowed_state.potentially_animating = allowed_properties;
+
+  pending_state_ &= allowed_state;
+  active_state_ &= allowed_state;
+
+  DCHECK(pending_state_.IsValid());
+  DCHECK(active_state_.IsValid());
+
+  if (has_element_in_active_list() && prev_active != active_state_) {
+    PropertyAnimationState diff_active = prev_active ^ active_state_;
+    animation_host()->mutator_host_client()->ElementIsAnimatingChanged(
+        element_id(), ElementListType::ACTIVE, diff_active, active_state_);
+  }
+  if (has_element_in_pending_list() && prev_pending != pending_state_) {
+    PropertyAnimationState diff_pending = prev_pending ^ pending_state_;
+    animation_host()->mutator_host_client()->ElementIsAnimatingChanged(
+        element_id(), ElementListType::PENDING, diff_pending, pending_state_);
+  }
+}
+
+bool ElementAnimations::HasTickingAnimation() const {
+  for (auto& player : players_list_) {
+    if (player.HasTickingAnimation())
+      return true;
+  }
+
+  return false;
+}
+
+bool ElementAnimations::HasAnyAnimation() const {
+  for (auto& player : players_list_) {
+    if (player.has_any_animation())
+      return true;
+  }
+
+  return false;
+}
+
+bool ElementAnimations::HasAnyAnimationTargetingProperty(
+    TargetProperty::Type property) const {
+  for (auto& player : players_list_) {
+    if (player.GetAnimation(property))
+      return true;
+  }
+  return false;
+}
+
+bool ElementAnimations::IsPotentiallyAnimatingProperty(
+    TargetProperty::Type target_property,
+    ElementListType list_type) const {
+  for (auto& player : players_list_) {
+    if (player.IsPotentiallyAnimatingProperty(target_property, list_type))
+      return true;
+  }
+
+  return false;
+}
+
+bool ElementAnimations::IsCurrentlyAnimatingProperty(
+    TargetProperty::Type target_property,
+    ElementListType list_type) const {
+  for (auto& player : players_list_) {
+    if (player.IsCurrentlyAnimatingProperty(target_property, list_type))
+      return true;
+  }
+
+  return false;
+}
+
+void ElementAnimations::OnFilterAnimated(ElementListType list_type,
                                          const FilterOperations& filters) {
-  DCHECK(layer_id());
+  DCHECK(element_id());
   DCHECK(animation_host());
   DCHECK(animation_host()->mutator_host_client());
-  animation_host()->mutator_host_client()->SetLayerFilterMutated(
-      layer_id(), tree_type, filters);
+  animation_host()->mutator_host_client()->SetElementFilterMutated(
+      element_id(), list_type, filters);
 }
 
-void ElementAnimations::SetOpacityMutated(LayerTreeType tree_type,
+void ElementAnimations::OnOpacityAnimated(ElementListType list_type,
                                           float opacity) {
-  DCHECK(layer_id());
+  DCHECK(element_id());
   DCHECK(animation_host());
   DCHECK(animation_host()->mutator_host_client());
-  animation_host()->mutator_host_client()->SetLayerOpacityMutated(
-      layer_id(), tree_type, opacity);
+  animation_host()->mutator_host_client()->SetElementOpacityMutated(
+      element_id(), list_type, opacity);
 }
 
-void ElementAnimations::SetTransformMutated(LayerTreeType tree_type,
+void ElementAnimations::OnTransformAnimated(ElementListType list_type,
                                             const gfx::Transform& transform) {
-  DCHECK(layer_id());
+  DCHECK(element_id());
   DCHECK(animation_host());
   DCHECK(animation_host()->mutator_host_client());
-  animation_host()->mutator_host_client()->SetLayerTransformMutated(
-      layer_id(), tree_type, transform);
+  animation_host()->mutator_host_client()->SetElementTransformMutated(
+      element_id(), list_type, transform);
 }
 
-void ElementAnimations::SetScrollOffsetMutated(
-    LayerTreeType tree_type,
+void ElementAnimations::OnScrollOffsetAnimated(
+    ElementListType list_type,
     const gfx::ScrollOffset& scroll_offset) {
-  DCHECK(layer_id());
+  DCHECK(element_id());
   DCHECK(animation_host());
   DCHECK(animation_host()->mutator_host_client());
-  animation_host()->mutator_host_client()->SetLayerScrollOffsetMutated(
-      layer_id(), tree_type, scroll_offset);
-}
-
-void ElementAnimations::SetTransformIsPotentiallyAnimatingChanged(
-    LayerTreeType tree_type,
-    bool is_animating) {
-  DCHECK(layer_id());
-  DCHECK(animation_host());
-  DCHECK(animation_host()->mutator_host_client());
-  animation_host()
-      ->mutator_host_client()
-      ->LayerTransformIsPotentiallyAnimatingChanged(layer_id(), tree_type,
-                                                    is_animating);
-}
-
-void ElementAnimations::CreateActiveValueObserver() {
-  DCHECK(layer_animation_controller_);
-  DCHECK(!active_value_observer_);
-  active_value_observer_ =
-      make_scoped_ptr(new ValueObserver(this, LayerTreeType::ACTIVE));
-  layer_animation_controller_->AddValueObserver(active_value_observer_.get());
-}
-
-void ElementAnimations::DestroyActiveValueObserver() {
-  if (layer_animation_controller_ && active_value_observer_)
-    layer_animation_controller_->RemoveValueObserver(
-        active_value_observer_.get());
-  active_value_observer_ = nullptr;
-}
-
-void ElementAnimations::CreatePendingValueObserver() {
-  DCHECK(layer_animation_controller_);
-  DCHECK(!pending_value_observer_);
-  pending_value_observer_ =
-      make_scoped_ptr(new ValueObserver(this, LayerTreeType::PENDING));
-  layer_animation_controller_->AddValueObserver(pending_value_observer_.get());
-}
-
-void ElementAnimations::DestroyPendingValueObserver() {
-  if (layer_animation_controller_ && pending_value_observer_)
-    layer_animation_controller_->RemoveValueObserver(
-        pending_value_observer_.get());
-  pending_value_observer_ = nullptr;
-}
-
-void ElementAnimations::NotifyAnimationStarted(
-    base::TimeTicks monotonic_time,
-    Animation::TargetProperty target_property,
-    int group) {
-  for (PlayersListNode* node = players_list_->head();
-       node != players_list_->end(); node = node->next()) {
-    AnimationPlayer* player = node->value();
-    player->NotifyAnimationStarted(monotonic_time, target_property, group);
-  }
-}
-
-void ElementAnimations::NotifyAnimationFinished(
-    base::TimeTicks monotonic_time,
-    Animation::TargetProperty target_property,
-    int group) {
-  for (PlayersListNode* node = players_list_->head();
-       node != players_list_->end(); node = node->next()) {
-    AnimationPlayer* player = node->value();
-    player->NotifyAnimationFinished(monotonic_time, target_property, group);
-  }
+  animation_host()->mutator_host_client()->SetElementScrollOffsetMutated(
+      element_id(), list_type, scroll_offset);
 }
 
 gfx::ScrollOffset ElementAnimations::ScrollOffsetForAnimation() const {
-  DCHECK(layer_animation_controller_);
   if (animation_host()) {
     DCHECK(animation_host()->mutator_host_client());
     return animation_host()->mutator_host_client()->GetScrollOffsetForAnimation(
-        layer_id());
+        element_id());
   }
 
   return gfx::ScrollOffset();

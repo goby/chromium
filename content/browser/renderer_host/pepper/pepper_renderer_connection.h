@@ -5,16 +5,14 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_RENDERER_CONNECTION_H_
 #define CONTENT_BROWSER_RENDERER_HOST_PEPPER_PEPPER_RENDERER_CONNECTION_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "ppapi/c/pp_instance.h"
 #include "ppapi/c/pp_resource.h"
-
-class GURL;
 
 namespace ppapi {
 namespace proxy {
@@ -64,7 +62,7 @@ class PepperRendererConnection : public BrowserMessageFilter {
   // running. This is just a work-around allowing new style resources to work
   // with the browser when running in-process but it means that plugin-specific
   // information (like the plugin name) won't be available.
-  scoped_ptr<BrowserPpapiHostImpl> in_process_host_;
+  std::unique_ptr<BrowserPpapiHostImpl> in_process_host_;
 
   DISALLOW_COPY_AND_ASSIGN(PepperRendererConnection);
 };

@@ -5,15 +5,17 @@
 #include "net/base/network_change_notifier.h"
 
 #include <limits>
+#include <unordered_set>
 
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
-#include "net/base/net_util.h"
 #include "net/base/network_change_notifier_factory.h"
 #include "net/base/network_interfaces.h"
+#include "net/base/url_util.h"
 #include "net/dns/dns_config_service.h"
 #include "net/url_request/url_request.h"
 #include "url/gurl.h"
@@ -419,7 +421,7 @@ class NetworkChangeNotifier::NetworkChangeCalculator
     : public ConnectionTypeObserver,
       public IPAddressObserver {
  public:
-  NetworkChangeCalculator(const NetworkChangeCalculatorParams& params)
+  explicit NetworkChangeCalculator(const NetworkChangeCalculatorParams& params)
       : params_(params),
         have_announced_(false),
         last_announced_connection_type_(CONNECTION_NONE),
@@ -527,7 +529,7 @@ NetworkChangeNotifier* NetworkChangeNotifier::Create() {
 #endif
   return NULL;
 #elif defined(OS_LINUX)
-  return new NetworkChangeNotifierLinux(base::hash_set<std::string>());
+  return new NetworkChangeNotifierLinux(std::unordered_set<std::string>());
 #elif defined(OS_MACOSX)
   return new NetworkChangeNotifierMac();
 #else
@@ -729,14 +731,19 @@ void NetworkChangeNotifier::ShutdownHistogramWatcher() {
 }
 
 // static
+void NetworkChangeNotifier::FinalizingMetricsLogRecord() {
+  if (!g_network_change_notifier)
+    return;
+  g_network_change_notifier->OnFinalizingMetricsLogRecord();
+}
+
+// static
 void NetworkChangeNotifier::LogOperatorCodeHistogram(ConnectionType type) {
 #if defined(OS_ANDROID)
-  // On a connection type change to 2/3/4G, log the network operator MCC/MNC.
+  // On a connection type change to cellular, log the network operator MCC/MNC.
   // Log zero in other cases.
   unsigned mcc_mnc = 0;
-  if (type == NetworkChangeNotifier::CONNECTION_2G ||
-      type == NetworkChangeNotifier::CONNECTION_3G ||
-      type == NetworkChangeNotifier::CONNECTION_4G) {
+  if (NetworkChangeNotifier::IsConnectionCellular(type)) {
     // Log zero if not perfectly converted.
     if (!base::StringToUint(android::GetTelephonyNetworkOperator(), &mcc_mnc)) {
       mcc_mnc = 0;
@@ -757,7 +764,7 @@ NetworkChangeNotifier::GetAddressTracker() {
 
 // static
 bool NetworkChangeNotifier::IsOffline() {
-   return GetConnectionType() == CONNECTION_NONE;
+  return GetConnectionType() == CONNECTION_NONE;
 }
 
 // static

@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/files/file_enumerator.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/values.h"
 #include "chrome/browser/extensions/extension_garbage_collector.h"
@@ -15,17 +16,19 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/plugin_service.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/browser/extension_prefs.h"
+#include "ppapi/features/features.h"
 
 namespace extensions {
 
 class ExtensionGarbageCollectorUnitTest : public ExtensionServiceTestBase {
  protected:
   void InitPluginService() {
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
     content::PluginService::GetInstance()->Init();
 #endif
   }

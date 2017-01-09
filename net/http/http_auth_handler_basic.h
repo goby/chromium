@@ -23,18 +23,20 @@ class NET_EXPORT_PRIVATE HttpAuthHandlerBasic : public HttpAuthHandler {
 
     int CreateAuthHandler(HttpAuthChallengeTokenizer* challenge,
                           HttpAuth::Target target,
+                          const SSLInfo& ssl_info,
                           const GURL& origin,
                           CreateReason reason,
                           int digest_nonce_count,
-                          const BoundNetLog& net_log,
-                          scoped_ptr<HttpAuthHandler>* handler) override;
+                          const NetLogWithSource& net_log,
+                          std::unique_ptr<HttpAuthHandler>* handler) override;
   };
 
   HttpAuth::AuthorizationResult HandleAnotherChallenge(
       HttpAuthChallengeTokenizer* challenge) override;
 
  protected:
-  bool Init(HttpAuthChallengeTokenizer* challenge) override;
+  bool Init(HttpAuthChallengeTokenizer* challenge,
+            const SSLInfo& ssl_info) override;
 
   int GenerateAuthTokenImpl(const AuthCredentials* credentials,
                             const HttpRequestInfo* request,

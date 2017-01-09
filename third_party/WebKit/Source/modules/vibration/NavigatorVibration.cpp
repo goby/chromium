@@ -17,191 +17,133 @@
  *  Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "modules/vibration/NavigatorVibration.h"
 
-#include "bindings/modules/v8/UnionTypesModules.h"
+#include "bindings/core/v8/ConditionalFeatures.h"
+#include "core/dom/Document.h"
+#include "core/frame/LocalDOMWindow.h"
 #include "core/frame/LocalFrame.h"
 #include "core/frame/Navigator.h"
 #include "core/frame/UseCounter.h"
-#include "core/page/PageVisibilityState.h"
-#include "public/platform/Platform.h"
-
-// Maximum number of entries in a vibration pattern.
-const unsigned kVibrationPatternLengthMax = 99;
-
-// Maximum duration of a vibration is 10 seconds.
-const unsigned kVibrationDurationMsMax = 10000;
-
-blink::NavigatorVibration::VibrationPattern sanitizeVibrationPatternInternal(const blink::NavigatorVibration::VibrationPattern& pattern)
-{
-    blink::NavigatorVibration::VibrationPattern sanitized = pattern;
-    size_t length = sanitized.size();
-
-    // If the pattern is too long then truncate it.
-    if (length > kVibrationPatternLengthMax) {
-        sanitized.shrink(kVibrationPatternLengthMax);
-        length = kVibrationPatternLengthMax;
-    }
-
-    // If any pattern entry is too long then truncate it.
-    for (size_t i = 0; i < length; ++i) {
-        if (sanitized[i] > kVibrationDurationMsMax)
-            sanitized[i] = kVibrationDurationMsMax;
-    }
-
-    // If the last item in the pattern is a pause then discard it.
-    if (length && !(length % 2))
-        sanitized.removeLast();
-
-    return sanitized;
-}
+#include "core/page/Page.h"
+#include "modules/vibration/VibrationController.h"
+#include "platform/Histogram.h"
+#include "platform/UserGestureIndicator.h"
 
 namespace blink {
 
-NavigatorVibration::VibrationPattern NavigatorVibration::sanitizeVibrationPattern(const UnsignedLongOrUnsignedLongSequence& pattern)
-{
-    VibrationPattern sanitized;
+NavigatorVibration::NavigatorVibration(Navigator& navigator)
+    : ContextLifecycleObserver(navigator.frame()->document()) {}
 
-    if (pattern.isUnsignedLong())
-        sanitized.append(pattern.getAsUnsignedLong());
-    else if (pattern.isUnsignedLongSequence())
-        sanitized = pattern.getAsUnsignedLongSequence();
+NavigatorVibration::~NavigatorVibration() {}
 
-    return sanitizeVibrationPatternInternal(sanitized);
+// static
+NavigatorVibration& NavigatorVibration::from(Navigator& navigator) {
+  NavigatorVibration* navigatorVibration = static_cast<NavigatorVibration*>(
+      Supplement<Navigator>::from(navigator, supplementName()));
+  if (!navigatorVibration) {
+    navigatorVibration = new NavigatorVibration(navigator);
+    Supplement<Navigator>::provideTo(navigator, supplementName(),
+                                     navigatorVibration);
+  }
+  return *navigatorVibration;
 }
 
-NavigatorVibration::NavigatorVibration(Page& page)
-    : PageLifecycleObserver(&page)
-    , m_timerStart(this, &NavigatorVibration::timerStartFired)
-    , m_timerStop(this, &NavigatorVibration::timerStopFired)
-    , m_isVibrating(false)
-{
+// static
+const char* NavigatorVibration::supplementName() {
+  return "NavigatorVibration";
 }
 
-NavigatorVibration::~NavigatorVibration()
-{
-    if (m_isVibrating)
-        cancelVibration();
+// static
+bool NavigatorVibration::vibrate(Navigator& navigator, unsigned time) {
+  VibrationPattern pattern;
+  pattern.append(time);
+  return NavigatorVibration::vibrate(navigator, pattern);
 }
 
-bool NavigatorVibration::vibrate(const VibrationPattern& pattern)
-{
-    // Cancelling clears the stored pattern so do it before setting the new one.
-    if (m_isVibrating)
-        cancelVibration();
+// static
+bool NavigatorVibration::vibrate(Navigator& navigator,
+                                 const VibrationPattern& pattern) {
+  LocalFrame* frame = navigator.frame();
 
-    m_pattern = sanitizeVibrationPatternInternal(pattern);
+  // There will be no frame if the window has been closed, but a JavaScript
+  // reference to |window| or |navigator| was retained in another window.
+  if (!frame)
+    return false;
+  collectHistogramMetrics(*frame);
 
-    if (m_timerStart.isActive())
-        m_timerStart.stop();
+  DCHECK(frame->document());
+  DCHECK(frame->page());
 
-    if (!m_pattern.size())
-        return true;
+  if (!frame->page()->isPageVisible())
+    return false;
 
-    if (m_pattern.size() == 1 && !m_pattern[0]) {
-        m_pattern.clear();
-        return true;
+  // TODO(lunalu): When FeaturePolicy is ready, take out the check for the
+  // runtime flag.
+  if (!isFeatureEnabledInFrame(blink::kVibrateFeature, frame)) {
+    if (RuntimeEnabledFeatures::featurePolicyEnabled()) {
+      frame->domWindow()->printErrorMessage(
+          "Navigator.vibrate() is not enabled in feature policy for this "
+          "frame.");
+    } else {
+      frame->domWindow()->printErrorMessage(
+          "A call of navigator.vibrate will be no-op inside cross-origin "
+          "iframes: https://www.chromestatus.com/feature/5682658461876224.");
     }
+    return false;
+  }
 
-    m_timerStart.startOneShot(0, BLINK_FROM_HERE);
-    m_isVibrating = true;
-    return true;
+  return NavigatorVibration::from(navigator).controller(*frame)->vibrate(
+      pattern);
 }
 
-void NavigatorVibration::cancelVibration()
-{
-    m_pattern.clear();
-    if (m_isVibrating) {
-        Platform::current()->cancelVibration();
-        m_isVibrating = false;
-        m_timerStop.stop();
+// static
+void NavigatorVibration::collectHistogramMetrics(const LocalFrame& frame) {
+  NavigatorVibrationType type;
+  bool userGesture = UserGestureIndicator::processingUserGesture();
+  UseCounter::count(&frame, UseCounter::NavigatorVibrate);
+  if (!frame.isMainFrame()) {
+    UseCounter::count(&frame, UseCounter::NavigatorVibrateSubFrame);
+    if (frame.isCrossOriginSubframe()) {
+      if (userGesture)
+        type = NavigatorVibrationType::CrossOriginSubFrameWithUserGesture;
+      else
+        type = NavigatorVibrationType::CrossOriginSubFrameNoUserGesture;
+    } else {
+      if (userGesture)
+        type = NavigatorVibrationType::SameOriginSubFrameWithUserGesture;
+      else
+        type = NavigatorVibrationType::SameOriginSubFrameNoUserGesture;
     }
+  } else {
+    if (userGesture)
+      type = NavigatorVibrationType::MainFrameWithUserGesture;
+    else
+      type = NavigatorVibrationType::MainFrameNoUserGesture;
+  }
+  DEFINE_STATIC_LOCAL(EnumerationHistogram, NavigatorVibrateHistogram,
+                      ("Vibration.Context", NavigatorVibrationType::EnumMax));
+  NavigatorVibrateHistogram.count(type);
 }
 
-void NavigatorVibration::timerStartFired(Timer<NavigatorVibration>* timer)
-{
-    ASSERT_UNUSED(timer, timer == &m_timerStart);
+VibrationController* NavigatorVibration::controller(const LocalFrame& frame) {
+  if (!m_controller)
+    m_controller = new VibrationController(*frame.document());
 
-    if (m_pattern.size()) {
-        m_isVibrating = true;
-        Platform::current()->vibrate(m_pattern[0]);
-        m_timerStop.startOneShot(m_pattern[0] / 1000.0, BLINK_FROM_HERE);
-        m_pattern.remove(0);
-    }
+  return m_controller.get();
 }
 
-void NavigatorVibration::timerStopFired(Timer<NavigatorVibration>* timer)
-{
-    ASSERT_UNUSED(timer, timer == &m_timerStop);
-
-    if (m_pattern.isEmpty())
-        m_isVibrating = false;
-
-    if (m_pattern.size()) {
-        m_timerStart.startOneShot(m_pattern[0] / 1000.0, BLINK_FROM_HERE);
-        m_pattern.remove(0);
-    }
+void NavigatorVibration::contextDestroyed() {
+  if (m_controller) {
+    m_controller->cancel();
+    m_controller = nullptr;
+  }
 }
 
-void NavigatorVibration::pageVisibilityChanged()
-{
-    if (page()->visibilityState() != PageVisibilityStateVisible)
-        cancelVibration();
+DEFINE_TRACE(NavigatorVibration) {
+  visitor->trace(m_controller);
+  Supplement<Navigator>::trace(visitor);
+  ContextLifecycleObserver::trace(visitor);
 }
 
-void NavigatorVibration::didCommitLoad(LocalFrame* frame)
-{
-    // A new load has been committed, which means the current page will be
-    // unloaded. Cancel all running vibrations.
-    cancelVibration();
-}
-
-bool NavigatorVibration::vibrate(Navigator& navigator, unsigned time)
-{
-    VibrationPattern pattern;
-    pattern.append(time);
-    return NavigatorVibration::vibrate(navigator, pattern);
-}
-
-bool NavigatorVibration::vibrate(Navigator& navigator, const VibrationPattern& pattern)
-{
-    if (!navigator.frame())
-        return false;
-
-    UseCounter::count(navigator.frame(), UseCounter::NavigatorVibrate);
-    if (!navigator.frame()->isMainFrame())
-        UseCounter::count(navigator.frame(), UseCounter::NavigatorVibrateSubFrame);
-
-    Page* page = navigator.frame()->page();
-    if (!page)
-        return false;
-
-    if (page->visibilityState() != PageVisibilityStateVisible)
-        return false;
-
-    return NavigatorVibration::from(*page).vibrate(pattern);
-}
-
-NavigatorVibration& NavigatorVibration::from(Page& page)
-{
-    NavigatorVibration* navigatorVibration = static_cast<NavigatorVibration*>(WillBeHeapSupplement<Page>::from(page, supplementName()));
-    if (!navigatorVibration) {
-        navigatorVibration = new NavigatorVibration(page);
-        WillBeHeapSupplement<Page>::provideTo(page, supplementName(), adoptPtrWillBeNoop(navigatorVibration));
-    }
-    return *navigatorVibration;
-}
-
-const char* NavigatorVibration::supplementName()
-{
-    return "NavigatorVibration";
-}
-
-DEFINE_TRACE(NavigatorVibration)
-{
-    WillBeHeapSupplement<Page>::trace(visitor);
-    PageLifecycleObserver::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

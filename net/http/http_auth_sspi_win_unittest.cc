@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_sspi_win.h"
 #include "net/http/mock_sspi_library_win.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 namespace net {
 
@@ -47,8 +51,8 @@ TEST(HttpAuthSSPITest, DetermineMaxTokenLength_Normal) {
   mock_library.ExpectQuerySecurityPackageInfo(L"NTLM", SEC_E_OK, &package_info);
   ULONG max_token_length = kMaxTokenLength;
   int rv = DetermineMaxTokenLength(&mock_library, L"NTLM", &max_token_length);
-  EXPECT_EQ(OK, rv);
-  EXPECT_EQ(1337, max_token_length);
+  EXPECT_THAT(rv, IsOk());
+  EXPECT_EQ(1337u, max_token_length);
 }
 
 TEST(HttpAuthSSPITest, DetermineMaxTokenLength_InvalidPackage) {
@@ -57,10 +61,10 @@ TEST(HttpAuthSSPITest, DetermineMaxTokenLength_InvalidPackage) {
                                               NULL);
   ULONG max_token_length = kMaxTokenLength;
   int rv = DetermineMaxTokenLength(&mock_library, L"Foo", &max_token_length);
-  EXPECT_EQ(ERR_UNSUPPORTED_AUTH_SCHEME, rv);
+  EXPECT_THAT(rv, IsError(ERR_UNSUPPORTED_AUTH_SCHEME));
   // |DetermineMaxTokenLength()| interface states that |max_token_length| should
   // not change on failure.
-  EXPECT_EQ(100, max_token_length);
+  EXPECT_EQ(100u, max_token_length);
 }
 
 TEST(HttpAuthSSPITest, ParseChallenge_FirstRound) {
@@ -90,7 +94,7 @@ TEST(HttpAuthSSPITest, ParseChallenge_TwoRounds) {
   // Generate an auth token and create another thing.
   std::string auth_token;
   EXPECT_EQ(OK, auth_sspi.GenerateAuthToken(NULL, "HTTP/intranet.google.com",
-                                            &auth_token,
+                                            std::string(), &auth_token,
                                             base::Bind(&UnexpectedCallback)));
 
   std::string second_challenge_text = "Negotiate Zm9vYmFy";
@@ -127,7 +131,7 @@ TEST(HttpAuthSSPITest, ParseChallenge_MissingTokenSecondRound) {
 
   std::string auth_token;
   EXPECT_EQ(OK, auth_sspi.GenerateAuthToken(NULL, "HTTP/intranet.google.com",
-                                            &auth_token,
+                                            std::string(), &auth_token,
                                             base::Bind(&UnexpectedCallback)));
   std::string second_challenge_text = "Negotiate";
   HttpAuthChallengeTokenizer second_challenge(second_challenge_text.begin(),
@@ -150,7 +154,7 @@ TEST(HttpAuthSSPITest, ParseChallenge_NonBase64EncodedToken) {
 
   std::string auth_token;
   EXPECT_EQ(OK, auth_sspi.GenerateAuthToken(NULL, "HTTP/intranet.google.com",
-                                            &auth_token,
+                                            std::string(), &auth_token,
                                             base::Bind(&UnexpectedCallback)));
   std::string second_challenge_text = "Negotiate =happyjoy=";
   HttpAuthChallengeTokenizer second_challenge(second_challenge_text.begin(),

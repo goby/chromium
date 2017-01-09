@@ -4,6 +4,14 @@
 
 #include "chrome/browser/extensions/api/image_writer_private/test_utils.h"
 
+#include <string.h>
+#include <utility>
+
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
+
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/dbus_thread_manager.h"
 #include "chromeos/dbus/fake_image_burner_client.h"
@@ -31,14 +39,15 @@ class ImageWriterFakeImageBurnerClient
   void BurnImage(const std::string& from_path,
                  const std::string& to_path,
                  const ErrorCallback& error_callback) override {
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-        base::Bind(burn_progress_update_handler_, to_path, 0, 100));
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-        base::Bind(burn_progress_update_handler_, to_path, 50, 100));
-    base::MessageLoop::current()->PostTask(FROM_HERE,
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(burn_progress_update_handler_, to_path, 0, 100));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(burn_progress_update_handler_, to_path, 50, 100));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE,
         base::Bind(burn_progress_update_handler_, to_path, 100, 100));
-    base::MessageLoop::current()->PostTask(FROM_HERE,
-        base::Bind(burn_finished_handler_, to_path, true, ""));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(burn_finished_handler_, to_path, true, ""));
   }
 
  private:
@@ -61,7 +70,8 @@ FakeDiskMountManager::~FakeDiskMountManager() {}
 void FakeDiskMountManager::UnmountDeviceRecursively(
     const std::string& device_path,
     const UnmountDeviceRecursivelyCallbackType& callback) {
-  base::MessageLoop::current()->PostTask(FROM_HERE, base::Bind(callback, true));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(callback, true));
 }
 #endif
 
@@ -119,7 +129,7 @@ void FakeImageWriterClient::SetVerifyCallback(
   verify_callback_ = verify_callback;
 }
 
-void FakeImageWriterClient::Progress(int64 progress) {
+void FakeImageWriterClient::Progress(int64_t progress) {
   if (!progress_callback_.is_null())
     progress_callback_.Run(progress);
 }
@@ -150,21 +160,21 @@ void ImageWriterTestUtils::SetUp() {
 
 void ImageWriterTestUtils::SetUp(bool is_browser_test) {
   ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(),
-                                             &test_image_path_));
-  ASSERT_TRUE(base::CreateTemporaryFileInDir(temp_dir_.path(),
-                                             &test_device_path_));
+  ASSERT_TRUE(
+      base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &test_image_path_));
+  ASSERT_TRUE(
+      base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &test_device_path_));
 
   ASSERT_TRUE(FillFile(test_image_path_, kImagePattern, kTestFileSize));
   ASSERT_TRUE(FillFile(test_device_path_, kDevicePattern, kTestFileSize));
 
 #if defined(OS_CHROMEOS)
   if (!chromeos::DBusThreadManager::IsInitialized()) {
-    scoped_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
+    std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter =
         chromeos::DBusThreadManager::GetSetterForTesting();
-    scoped_ptr<chromeos::ImageBurnerClient>
-        image_burner_fake(new ImageWriterFakeImageBurnerClient());
-    dbus_setter->SetImageBurnerClient(image_burner_fake.Pass());
+    std::unique_ptr<chromeos::ImageBurnerClient> image_burner_fake(
+        new ImageWriterFakeImageBurnerClient());
+    dbus_setter->SetImageBurnerClient(std::move(image_burner_fake));
   }
 
   FakeDiskMountManager* disk_manager = new FakeDiskMountManager();
@@ -207,7 +217,7 @@ void ImageWriterTestUtils::TearDown() {
 }
 
 const base::FilePath& ImageWriterTestUtils::GetTempDir() {
-  return temp_dir_.path();
+  return temp_dir_.GetPath();
 }
 
 const base::FilePath& ImageWriterTestUtils::GetImagePath() {
@@ -225,8 +235,8 @@ FakeImageWriterClient* ImageWriterTestUtils::GetUtilityClient() {
 #endif
 
 bool ImageWriterTestUtils::ImageWrittenToDevice() {
-  scoped_ptr<char[]> image_buffer(new char[kTestFileSize]);
-  scoped_ptr<char[]> device_buffer(new char[kTestFileSize]);
+  std::unique_ptr<char[]> image_buffer(new char[kTestFileSize]);
+  std::unique_ptr<char[]> device_buffer(new char[kTestFileSize]);
 
   int image_bytes_read =
       ReadFile(test_image_path_, image_buffer.get(), kTestFileSize);
@@ -246,7 +256,7 @@ bool ImageWriterTestUtils::ImageWrittenToDevice() {
 bool ImageWriterTestUtils::FillFile(const base::FilePath& file,
                                     const int pattern,
                                     const int length) {
-  scoped_ptr<char[]> buffer(new char[length]);
+  std::unique_ptr<char[]> buffer(new char[length]);
   memset(buffer.get(), pattern, length);
 
   return base::WriteFile(file, buffer.get(), length) == length;

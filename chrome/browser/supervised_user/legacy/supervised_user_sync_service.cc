@@ -4,29 +4,34 @@
 
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service.h"
 
+#include <stddef.h>
+
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/prefs/scoped_user_pref_update.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/signin/signin_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/sync_error_factory.h"
-#include "sync/api/sync_merge_result.h"
-#include "sync/protocol/sync.pb.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/sync_error_factory.h"
+#include "components/sync/model/sync_merge_result.h"
+#include "components/sync/protocol/sync.pb.h"
 
 #if defined(OS_CHROMEOS)
-#include "components/user_manager/user_image/default_user_images.h"
+#include "chrome/browser/chromeos/login/users/default_user_image/default_user_images.h"
 #endif
 
 using base::DictionaryValue;
@@ -165,9 +170,10 @@ bool SupervisedUserSyncService::GetAvatarIndex(const std::string& avatar_str,
   const int kChromeOSDummyAvatarIndex = -111;
 
 #if defined(OS_CHROMEOS)
-  return (*avatar_index == kChromeOSDummyAvatarIndex ||
-          (*avatar_index >= user_manager::kFirstDefaultImageIndex &&
-           *avatar_index < user_manager::kDefaultImagesCount));
+  return (
+      *avatar_index == kChromeOSDummyAvatarIndex ||
+      (*avatar_index >= chromeos::default_user_image::kFirstDefaultImageIndex &&
+       *avatar_index < chromeos::default_user_image::kDefaultImagesCount));
 #else
   // Check if the Chrome avatar index is set to a dummy value. Some early
   // supervised user profiles on ChromeOS stored a dummy avatar index as a
@@ -203,13 +209,13 @@ void SupervisedUserSyncService::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-scoped_ptr<base::DictionaryValue> SupervisedUserSyncService::CreateDictionary(
-    const std::string& name,
-    const std::string& master_key,
-    const std::string& signature_key,
-    const std::string& encryption_key,
-    int avatar_index) {
-  scoped_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue>
+SupervisedUserSyncService::CreateDictionary(const std::string& name,
+                                            const std::string& master_key,
+                                            const std::string& signature_key,
+                                            const std::string& encryption_key,
+                                            int avatar_index) {
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
   result->SetString(kName, name);
   result->SetString(kMasterKey, master_key);
   result->SetString(kPasswordSignatureKey, signature_key);
@@ -225,7 +231,7 @@ scoped_ptr<base::DictionaryValue> SupervisedUserSyncService::CreateDictionary(
 #endif
   result->SetString(kChromeAvatar, chrome_avatar);
   result->SetString(kChromeOsAvatar, chromeos_avatar);
-  return result.Pass();
+  return result;
 }
 
 void SupervisedUserSyncService::AddSupervisedUser(
@@ -270,7 +276,7 @@ void SupervisedUserSyncService::UpdateSupervisedUserImpl(
     bool add_user) {
   DictionaryPrefUpdate update(prefs_, prefs::kSupervisedUsers);
   base::DictionaryValue* dict = update.Get();
-  scoped_ptr<base::DictionaryValue> value = CreateDictionary(
+  std::unique_ptr<base::DictionaryValue> value = CreateDictionary(
       name, master_key, signature_key, encryption_key, avatar_index);
 
   DCHECK_EQ(add_user, !dict->HasKey(id));
@@ -403,11 +409,11 @@ void SupervisedUserSyncService::Shutdown() {
 SyncMergeResult SupervisedUserSyncService::MergeDataAndStartSyncing(
     ModelType type,
     const SyncDataList& initial_sync_data,
-    scoped_ptr<SyncChangeProcessor> sync_processor,
-    scoped_ptr<SyncErrorFactory> error_handler) {
+    std::unique_ptr<SyncChangeProcessor> sync_processor,
+    std::unique_ptr<SyncErrorFactory> error_handler) {
   DCHECK_EQ(SUPERVISED_USERS, type);
-  sync_processor_ = sync_processor.Pass();
-  error_handler_ = error_handler.Pass();
+  sync_processor_ = std::move(sync_processor);
+  error_handler_ = std::move(error_handler);
 
   SyncChangeList change_list;
   SyncMergeResult result(SUPERVISED_USERS);
@@ -422,7 +428,8 @@ SyncMergeResult SupervisedUserSyncService::MergeDataAndStartSyncing(
     DCHECK_EQ(SUPERVISED_USERS, sync_data.GetDataType());
     const ManagedUserSpecifics& supervised_user =
         sync_data.GetSpecifics().managed_user();
-    base::DictionaryValue* value = new base::DictionaryValue();
+    std::unique_ptr<base::DictionaryValue> value =
+        base::MakeUnique<base::DictionaryValue>();
     value->SetString(kName, supervised_user.name());
     value->SetBoolean(kAcknowledged, supervised_user.acknowledged());
     value->SetString(kMasterKey, supervised_user.master_key());
@@ -436,7 +443,7 @@ SyncMergeResult SupervisedUserSyncService::MergeDataAndStartSyncing(
       num_items_modified++;
     else
       num_items_added++;
-    dict->SetWithoutPathExpansion(supervised_user.id(), value);
+    dict->SetWithoutPathExpansion(supervised_user.id(), std::move(value));
     seen_ids.insert(supervised_user.id());
   }
 
@@ -511,7 +518,8 @@ SyncError SupervisedUserSyncService::ProcessSyncChanges(
         if (old_value && !old_value->HasKey(kAcknowledged))
           NotifySupervisedUserAcknowledged(supervised_user.id());
 
-        base::DictionaryValue* value = new base::DictionaryValue;
+        std::unique_ptr<base::DictionaryValue> value =
+            base::MakeUnique<base::DictionaryValue>();
         value->SetString(kName, supervised_user.name());
         value->SetBoolean(kAcknowledged, supervised_user.acknowledged());
         value->SetString(kMasterKey, supervised_user.master_key());
@@ -521,7 +529,7 @@ SyncError SupervisedUserSyncService::ProcessSyncChanges(
                          supervised_user.password_signature_key());
         value->SetString(kPasswordEncryptionKey,
                          supervised_user.password_encryption_key());
-        dict->SetWithoutPathExpansion(supervised_user.id(), value);
+        dict->SetWithoutPathExpansion(supervised_user.id(), std::move(value));
 
         NotifySupervisedUsersChanged();
         break;
@@ -543,8 +551,6 @@ SyncError SupervisedUserSyncService::ProcessSyncChanges(
 void SupervisedUserSyncService::GoogleSignedOut(
     const std::string& account_id,
     const std::string& username) {
-  DCHECK(!sync_processor_);
-
   // Clear all data on signout, to avoid supervised users from one custodian
   // appearing in another one's profile.
   prefs_->ClearPref(prefs::kSupervisedUsers);
@@ -552,19 +558,18 @@ void SupervisedUserSyncService::GoogleSignedOut(
 
 void SupervisedUserSyncService::NotifySupervisedUserAcknowledged(
     const std::string& supervised_user_id) {
-  FOR_EACH_OBSERVER(SupervisedUserSyncServiceObserver, observers_,
-                    OnSupervisedUserAcknowledged(supervised_user_id));
+  for (SupervisedUserSyncServiceObserver& observer : observers_)
+    observer.OnSupervisedUserAcknowledged(supervised_user_id);
 }
 
 void SupervisedUserSyncService::NotifySupervisedUsersSyncingStopped() {
-  FOR_EACH_OBSERVER(SupervisedUserSyncServiceObserver, observers_,
-                    OnSupervisedUsersSyncingStopped());
+  for (SupervisedUserSyncServiceObserver& observer : observers_)
+    observer.OnSupervisedUsersSyncingStopped();
 }
 
 void SupervisedUserSyncService::NotifySupervisedUsersChanged() {
-  FOR_EACH_OBSERVER(SupervisedUserSyncServiceObserver,
-                    observers_,
-                    OnSupervisedUsersChanged());
+  for (SupervisedUserSyncServiceObserver& observer : observers_)
+    observer.OnSupervisedUsersChanged();
 }
 
 void SupervisedUserSyncService::DispatchCallbacks() {

@@ -4,6 +4,8 @@
 
 #include "gpu/command_buffer/service/mailbox_manager_impl.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "gpu/command_buffer/service/texture_manager.h"
@@ -23,7 +25,7 @@ bool MailboxManagerImpl::UsesSync() {
   return false;
 }
 
-Texture* MailboxManagerImpl::ConsumeTexture(const Mailbox& mailbox) {
+TextureBase* MailboxManagerImpl::ConsumeTexture(const Mailbox& mailbox) {
   MailboxToTextureMap::iterator it =
       mailbox_to_textures_.find(mailbox);
   if (it != mailbox_to_textures_.end())
@@ -33,7 +35,7 @@ Texture* MailboxManagerImpl::ConsumeTexture(const Mailbox& mailbox) {
 }
 
 void MailboxManagerImpl::ProduceTexture(const Mailbox& mailbox,
-                                        Texture* texture) {
+                                        TextureBase* texture) {
   MailboxToTextureMap::iterator it = mailbox_to_textures_.find(mailbox);
   if (it != mailbox_to_textures_.end()) {
     if (it->second->first == texture)
@@ -42,11 +44,12 @@ void MailboxManagerImpl::ProduceTexture(const Mailbox& mailbox,
     mailbox_to_textures_.erase(it);
     textures_to_mailboxes_.erase(texture_it);
   }
-  InsertTexture(mailbox, texture);
+  if (texture)
+    InsertTexture(mailbox, texture);
 }
 
 void MailboxManagerImpl::InsertTexture(const Mailbox& mailbox,
-                                       Texture* texture) {
+                                       TextureBase* texture) {
   texture->SetMailboxManager(this);
   TextureToMailboxMap::iterator texture_it =
       textures_to_mailboxes_.insert(std::make_pair(texture, mailbox));
@@ -54,7 +57,7 @@ void MailboxManagerImpl::InsertTexture(const Mailbox& mailbox,
   DCHECK_EQ(mailbox_to_textures_.size(), textures_to_mailboxes_.size());
 }
 
-void MailboxManagerImpl::TextureDeleted(Texture* texture) {
+void MailboxManagerImpl::TextureDeleted(TextureBase* texture) {
   std::pair<TextureToMailboxMap::iterator,
             TextureToMailboxMap::iterator> range =
       textures_to_mailboxes_.equal_range(texture);

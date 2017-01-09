@@ -4,6 +4,8 @@
 
 #include "components/gcm_driver/gcm_account_mapper.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/time.h"
@@ -92,9 +94,6 @@ class CustomFakeGCMDriver : public FakeGCMDriver {
   // GCMDriver implementation:
   void UpdateAccountMapping(const AccountMapping& account_mapping) override;
   void RemoveAccountMapping(const std::string& account_id) override;
-  void AddAppHandler(const std::string& app_id,
-                     GCMAppHandler* handler) override;
-  void RemoveAppHandler(const std::string& app_id) override;
   void RegisterImpl(const std::string& app_id,
                     const std::vector<std::string>& sender_ids) override;
 
@@ -154,15 +153,6 @@ void CustomFakeGCMDriver::UpdateAccountMapping(
 
 void CustomFakeGCMDriver::RemoveAccountMapping(const std::string& account_id) {
   last_removed_account_id_ = account_id;
-}
-
-void CustomFakeGCMDriver::AddAppHandler(const std::string& app_id,
-                                        GCMAppHandler* handler) {
-  GCMDriver::AddAppHandler(app_id, handler);
-}
-
-void CustomFakeGCMDriver::RemoveAppHandler(const std::string& app_id) {
-  GCMDriver::RemoveAppHandler(app_id);
 }
 
 void CustomFakeGCMDriver::RegisterImpl(
@@ -273,7 +263,7 @@ class GCMAccountMapperTest : public testing::Test {
 
  private:
   CustomFakeGCMDriver gcm_driver_;
-  scoped_ptr<GCMAccountMapper> account_mapper_;
+  std::unique_ptr<GCMAccountMapper> account_mapper_;
   base::SimpleTestClock* clock_;
   std::string last_received_app_id_;
   IncomingMessage last_received_message_;
@@ -291,9 +281,9 @@ void GCMAccountMapperTest::Restart() {
     account_mapper_->ShutdownHandler();
   gcm_driver_.RemoveAppHandler(kGCMAccountMapperAppId);
   account_mapper_.reset(new GCMAccountMapper(&gcm_driver_));
-  scoped_ptr<base::SimpleTestClock> clock(new base::SimpleTestClock);
+  std::unique_ptr<base::SimpleTestClock> clock(new base::SimpleTestClock);
   clock_ = clock.get();
-  account_mapper_->SetClockForTesting(clock.Pass());
+  account_mapper_->SetClockForTesting(std::move(clock));
 }
 
 void GCMAccountMapperTest::Initialize(

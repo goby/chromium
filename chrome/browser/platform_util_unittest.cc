@@ -4,12 +4,15 @@
 
 #include "chrome/browser/platform_util.h"
 
+#include <memory>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/platform_util_internal.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -19,6 +22,7 @@
 #include "chrome/browser/chrome_content_browser_client.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/fileapi/file_system_backend.h"
+#include "chrome/browser/chromeos/fileapi/file_system_backend_delegate.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "chrome/test/base/browser_with_test_window_test.h"
 #include "content/public/browser/browser_context.h"
@@ -52,7 +56,7 @@ class PlatformUtilTestContentBrowserClient : public ChromeContentBrowserClient {
 
     // New FileSystemBackend that uses our MockSpecialStoragePolicy.
     chromeos::FileSystemBackend* backend = new chromeos::FileSystemBackend(
-        nullptr, nullptr, nullptr, external_mount_points,
+        nullptr, nullptr, nullptr, nullptr, external_mount_points,
         storage::ExternalMountPoints::GetSystemInstance());
     additional_backends->push_back(backend);
   }
@@ -92,7 +96,7 @@ class PlatformUtilTestBase : public BrowserWithTestWindowTest {
         "    }"
         "}";
     JSONStringValueDeserializer json_string_deserializer(json_manifest);
-    scoped_ptr<base::Value> manifest =
+    std::unique_ptr<base::Value> manifest =
         json_string_deserializer.Deserialize(&error_code, &error);
     base::DictionaryValue* manifest_dictionary;
 
@@ -120,7 +124,7 @@ class PlatformUtilTestBase : public BrowserWithTestWindowTest {
   }
 
  private:
-  scoped_ptr<content::ContentBrowserClient> content_browser_client_;
+  std::unique_ptr<content::ContentBrowserClient> content_browser_client_;
   content::ContentBrowserClient* old_content_browser_client_ = nullptr;
 };
 
@@ -154,19 +158,19 @@ class PlatformUtilTest : public PlatformUtilTestBase {
     ASSERT_TRUE(directory_.CreateUniqueTempDir());
 
     // A valid file.
-    existing_file_ = directory_.path().AppendASCII("test_file.txt");
+    existing_file_ = directory_.GetPath().AppendASCII("test_file.txt");
     ASSERT_EQ(
         kTestFileDataLength,
         base::WriteFile(existing_file_, kTestFileData, kTestFileDataLength));
 
     // A valid folder.
-    existing_folder_ = directory_.path().AppendASCII("test_folder");
+    existing_folder_ = directory_.GetPath().AppendASCII("test_folder");
     ASSERT_TRUE(base::CreateDirectory(existing_folder_));
 
     // A non-existent path.
-    nowhere_ = directory_.path().AppendASCII("nowhere");
+    nowhere_ = directory_.GetPath().AppendASCII("nowhere");
 
-    SetUpPlatformFixture(directory_.path());
+    SetUpPlatformFixture(directory_.GetPath());
   }
 
   OpenOperationResult CallOpenItem(const base::FilePath& path,
@@ -188,7 +192,7 @@ class PlatformUtilTest : public PlatformUtilTestBase {
   base::ScopedTempDir directory_;
 
  private:
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   static void OnOpenOperationDone(const base::Closure& closure,
                                   OpenOperationResult* store_result,
@@ -222,11 +226,11 @@ class PlatformUtilPosixTest : public PlatformUtilTest {
   void SetUp() override {
     ASSERT_NO_FATAL_FAILURE(PlatformUtilTest::SetUp());
 
-    symlink_to_file_ = directory_.path().AppendASCII("l_file.txt");
+    symlink_to_file_ = directory_.GetPath().AppendASCII("l_file.txt");
     ASSERT_TRUE(base::CreateSymbolicLink(existing_file_, symlink_to_file_));
-    symlink_to_folder_ = directory_.path().AppendASCII("l_folder");
+    symlink_to_folder_ = directory_.GetPath().AppendASCII("l_folder");
     ASSERT_TRUE(base::CreateSymbolicLink(existing_folder_, symlink_to_folder_));
-    symlink_to_nowhere_ = directory_.path().AppendASCII("l_nowhere");
+    symlink_to_nowhere_ = directory_.GetPath().AppendASCII("l_nowhere");
     ASSERT_TRUE(base::CreateSymbolicLink(nowhere_, symlink_to_nowhere_));
   }
 
@@ -261,7 +265,7 @@ TEST_F(PlatformUtilPosixTest, OpenFolderWithPosixSymlinksChromeOS) {
 
 TEST_F(PlatformUtilTest, OpenFileWithUnhandledFileType) {
   base::FilePath unhandled_file =
-      directory_.path().AppendASCII("myfile.filetype");
+      directory_.GetPath().AppendASCII("myfile.filetype");
   ASSERT_EQ(3, base::WriteFile(unhandled_file, "cat", 3));
   EXPECT_EQ(OPEN_FAILED_NO_HANLDER_FOR_FILE_TYPE,
             CallOpenItem(unhandled_file, OPEN_FILE));

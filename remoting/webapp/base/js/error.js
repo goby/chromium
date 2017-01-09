@@ -48,6 +48,8 @@ remoting.Error.prototype.toConnectionError = function() {
       return ConnectionError.CLIENT_SUSPENDED;
     case Tag.INVALID_ACCESS_CODE:
       return ConnectionError.INVALID_ACCESS_CODE;
+    case Tag.INVALID_ACCOUNT:
+      return ConnectionError.INVALID_ACCOUNT;
     case Tag.MISSING_PLUGIN:
       return ConnectionError.MISSING_PLUGIN;
     case Tag.AUTHENTICATION_FAILED:
@@ -72,6 +74,8 @@ remoting.Error.prototype.toConnectionError = function() {
       return ConnectionError.NACL_DISABLED;
     case Tag.UNEXPECTED:
       return ConnectionError.UNEXPECTED;
+    case Tag.NACL_PLUGIN_CRASHED:
+      return ConnectionError.NACL_PLUGIN_CRASHED;
     // For errors that don't have a corresponding ConnectionError mapping,
     // default to Error.UNKNOWN_ERROR.
     case Tag.SERVICE_UNAVAILABLE:
@@ -167,7 +171,9 @@ remoting.Error.Tag = {
   CLIENT_SUSPENDED: /*i18n-content*/ 'ERROR_NETWORK_FAILURE',
 
   INVALID_ACCESS_CODE: /*i18n-content*/ 'ERROR_INVALID_ACCESS_CODE',
+  INVALID_ACCOUNT: /*i18n-content*/ 'ERROR_INVALID_ACCOUNT',
   MISSING_PLUGIN: /*i18n-content*/ 'ERROR_MISSING_PLUGIN',
+  NACL_PLUGIN_CRASHED: /*i18n-content*/ 'ERROR_NACL_PLUGIN_CRASHED',
   AUTHENTICATION_FAILED: /*i18n-content*/ 'ERROR_AUTHENTICATION_FAILED',
   HOST_IS_OFFLINE: /*i18n-content*/ 'ERROR_HOST_IS_OFFLINE',
   INCOMPATIBLE_PROTOCOL: /*i18n-content*/ 'ERROR_INCOMPATIBLE_PROTOCOL',

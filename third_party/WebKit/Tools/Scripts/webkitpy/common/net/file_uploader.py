@@ -27,10 +27,9 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import mimetypes
-import time
 import urllib2
 
-from webkitpy.common.net.networktransaction import NetworkTransaction, NetworkTimeout
+from webkitpy.common.net.networktransaction import NetworkTransaction
 
 
 def get_mime_type(filename):
@@ -80,6 +79,7 @@ def _encode_multipart_form_data(fields, files):
 
 
 class FileUploader(object):
+
     def __init__(self, url, timeout_seconds):
         self._url = url
         self._timeout_seconds = timeout_seconds

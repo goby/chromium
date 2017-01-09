@@ -13,13 +13,26 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
+#include "cc/surfaces/surface_id.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
+#include "content/public/browser/web_contents_delegate.h"
+#include "content/public/common/file_chooser_params.h"
+#include "content/public/test/browser_test_utils.h"
 #include "url/gurl.h"
+
+namespace cc {
+class SurfaceManager;
+}
 
 namespace content {
 
 class FrameTreeNode;
+class MessageLoopRunner;
+class RenderFrameHost;
+class RenderWidgetHostViewChildFrame;
 class Shell;
 class SiteInstance;
 class ToRenderFrameHost;
@@ -27,6 +40,13 @@ class ToRenderFrameHost;
 // Navigates the frame represented by |node| to |url|, blocking until the
 // navigation finishes.
 void NavigateFrameToURL(FrameTreeNode* node, const GURL& url);
+
+// Sets the DialogManager to proceed by default or not when showing a
+// BeforeUnload dialog.
+void SetShouldProceedOnBeforeUnload(Shell* shell, bool proceed);
+
+// Extends the ToRenderFrameHost mechanism to FrameTreeNodes.
+RenderFrameHost* ConvertToRenderFrameHost(FrameTreeNode* frame_tree_node);
 
 // Creates compact textual representations of the state of the frame tree that
 // is appropriate for use in assertions.
@@ -95,6 +115,93 @@ class NavigationStallDelegate : public ResourceDispatcherHostDelegate {
       ScopedVector<content::ResourceThrottle>* throttles) override;
 
   GURL url_;
+};
+
+// Helper class to assist with hit testing surfaces in multiple processes.
+// WaitForSurfaceReady() will only return after a Surface from |target_view|
+// has been composited in the top-level frame's Surface. At that point,
+// browser process hit testing to target_view's Surface can succeed.
+class SurfaceHitTestReadyNotifier {
+ public:
+  SurfaceHitTestReadyNotifier(RenderWidgetHostViewChildFrame* target_view);
+  ~SurfaceHitTestReadyNotifier() {}
+
+  void WaitForSurfaceReady();
+
+ private:
+  bool ContainsSurfaceId(cc::SurfaceId container_surface_id);
+
+  cc::SurfaceManager* surface_manager_;
+  cc::SurfaceId root_surface_id_;
+  RenderWidgetHostViewChildFrame* target_view_;
+
+  DISALLOW_COPY_AND_ASSIGN(SurfaceHitTestReadyNotifier);
+};
+
+// Helper for mocking choosing a file via a file dialog.
+class FileChooserDelegate : public WebContentsDelegate {
+ public:
+  // Constructs a WebContentsDelegate that mocks a file dialog.
+  // The mocked file dialog will always reply that the user selected |file|.
+  FileChooserDelegate(const base::FilePath& file);
+
+  // Implementation of WebContentsDelegate::RunFileChooser.
+  void RunFileChooser(RenderFrameHost* render_frame_host,
+                      const FileChooserParams& params) override;
+
+  // Whether the file dialog was shown.
+  bool file_chosen() const { return file_chosen_; }
+
+  // Copy of the params passed to RunFileChooser.
+  FileChooserParams params() const { return params_; }
+
+ private:
+  base::FilePath file_;
+  bool file_chosen_;
+  FileChooserParams params_;
+};
+
+// This class is a TestNavigationManager that only monitors notifications within
+// the given frame tree node.
+class FrameTestNavigationManager : public TestNavigationManager {
+ public:
+  FrameTestNavigationManager(int frame_tree_node_id,
+                             WebContents* web_contents,
+                             const GURL& url);
+
+ private:
+  // TestNavigationManager:
+  bool ShouldMonitorNavigation(NavigationHandle* handle) override;
+
+  // Notifications are filtered so only this frame is monitored.
+  int filtering_frame_tree_node_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(FrameTestNavigationManager);
+};
+
+// An observer that can wait for a specific URL to be committed in a specific
+// frame.
+// Note: it does not track the start of a navigation, unlike other observers.
+class UrlCommitObserver : WebContentsObserver {
+ public:
+  explicit UrlCommitObserver(FrameTreeNode* frame_tree_node, const GURL& url);
+  ~UrlCommitObserver() override;
+
+  void Wait();
+
+ private:
+  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
+
+  // The id of the FrameTreeNode in which navigations are peformed.
+  int frame_tree_node_id_;
+
+  // The URL this observer is expecting to be committed.
+  GURL url_;
+
+  // The MessageLoopRunner used to spin the message loop.
+  scoped_refptr<MessageLoopRunner> message_loop_runner_;
+
+  DISALLOW_COPY_AND_ASSIGN(UrlCommitObserver);
 };
 
 }  // namespace content

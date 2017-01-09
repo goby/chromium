@@ -4,12 +4,16 @@
 
 #include "cc/debug/rendering_stats_instrumentation.h"
 
+#include <stdint.h>
+
+#include "base/memory/ptr_util.h"
+
 namespace cc {
 
 // static
-scoped_ptr<RenderingStatsInstrumentation>
-    RenderingStatsInstrumentation::Create() {
-  return make_scoped_ptr(new RenderingStatsInstrumentation());
+std::unique_ptr<RenderingStatsInstrumentation>
+RenderingStatsInstrumentation::Create() {
+  return base::WrapUnique(new RenderingStatsInstrumentation());
 }
 
 RenderingStatsInstrumentation::RenderingStatsInstrumentation()
@@ -37,7 +41,7 @@ void RenderingStatsInstrumentation::AccumulateAndClearImplThreadStats() {
   impl_thread_rendering_stats_ = RenderingStats();
 }
 
-void RenderingStatsInstrumentation::IncrementFrameCount(int64 count) {
+void RenderingStatsInstrumentation::IncrementFrameCount(int64_t count) {
   if (!record_rendering_stats_)
     return;
 
@@ -45,7 +49,7 @@ void RenderingStatsInstrumentation::IncrementFrameCount(int64 count) {
   impl_thread_rendering_stats_.frame_count += count;
 }
 
-void RenderingStatsInstrumentation::AddVisibleContentArea(int64 area) {
+void RenderingStatsInstrumentation::AddVisibleContentArea(int64_t area) {
   if (!record_rendering_stats_)
     return;
 
@@ -54,7 +58,7 @@ void RenderingStatsInstrumentation::AddVisibleContentArea(int64 area) {
 }
 
 void RenderingStatsInstrumentation::AddApproximatedVisibleContentArea(
-    int64 area) {
+    int64_t area) {
   if (!record_rendering_stats_)
     return;
 
@@ -63,7 +67,7 @@ void RenderingStatsInstrumentation::AddApproximatedVisibleContentArea(
 }
 
 void RenderingStatsInstrumentation::AddCheckerboardedVisibleContentArea(
-    int64 area) {
+    int64_t area) {
   if (!record_rendering_stats_)
     return;
 
@@ -72,7 +76,7 @@ void RenderingStatsInstrumentation::AddCheckerboardedVisibleContentArea(
 }
 
 void RenderingStatsInstrumentation::AddCheckerboardedNoRecordingContentArea(
-    int64 area) {
+    int64_t area) {
   if (!record_rendering_stats_)
     return;
 
@@ -81,7 +85,7 @@ void RenderingStatsInstrumentation::AddCheckerboardedNoRecordingContentArea(
 }
 
 void RenderingStatsInstrumentation::AddCheckerboardedNeedsRasterContentArea(
-    int64 area) {
+    int64_t area) {
   if (!record_rendering_stats_)
     return;
 
@@ -102,16 +106,13 @@ void RenderingStatsInstrumentation::AddDrawDuration(
 }
 
 void RenderingStatsInstrumentation::AddBeginMainFrameToCommitDuration(
-    base::TimeDelta begin_main_frame_to_commit_duration,
-    base::TimeDelta begin_main_frame_to_commit_duration_estimate) {
+    base::TimeDelta begin_main_frame_to_commit_duration) {
   if (!record_rendering_stats_)
     return;
 
   base::AutoLock scoped_lock(lock_);
   impl_thread_rendering_stats_.begin_main_frame_to_commit_duration.Append(
       begin_main_frame_to_commit_duration);
-  impl_thread_rendering_stats_.begin_main_frame_to_commit_duration_estimate
-      .Append(begin_main_frame_to_commit_duration_estimate);
 }
 
 void RenderingStatsInstrumentation::AddCommitToActivateDuration(

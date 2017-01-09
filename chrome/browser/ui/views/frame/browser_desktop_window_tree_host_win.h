@@ -8,6 +8,7 @@
 #include <windows.h>
 #include <uxtheme.h>
 
+#include "base/macros.h"
 #include "chrome/browser/ui/views/frame/browser_desktop_window_tree_host.h"
 #include "chrome/browser/ui/views/frame/minimize_button_metrics_win.h"
 #include "ui/views/widget/desktop_aura/desktop_window_tree_host_win.h"
@@ -50,12 +51,13 @@ class BrowserDesktopWindowTreeHostWin : public BrowserDesktopWindowTreeHost,
                     LPARAM l_param,
                     LRESULT* result) override;
   void PostHandleMSG(UINT message, WPARAM w_param, LPARAM l_param) override;
-  bool IsUsingCustomFrame() const override;
+  views::FrameMode GetFrameMode() const override;
   bool ShouldUseNativeFrame() const override;
+  bool ShouldWindowContentsBeTransparent() const override;
   void FrameTypeChanged() override;
 
   void UpdateDWMFrame();
-
+  gfx::Insets GetClientEdgeThicknesses() const;
   MARGINS GetDWMFrameMargins() const;
 
   BrowserView* browser_view_;
@@ -63,10 +65,11 @@ class BrowserDesktopWindowTreeHostWin : public BrowserDesktopWindowTreeHost,
 
   MinimizeButtonMetrics minimize_button_metrics_;
 
-  scoped_ptr<BrowserWindowPropertyManager> browser_window_property_manager_;
+  std::unique_ptr<BrowserWindowPropertyManager>
+      browser_window_property_manager_;
 
   // The wrapped system menu itself.
-  scoped_ptr<views::NativeMenuWin> system_menu_;
+  std::unique_ptr<views::NativeMenuWin> system_menu_;
 
   // Necessary to avoid corruption on NC paint in Aero mode.
   bool did_gdi_clear_;

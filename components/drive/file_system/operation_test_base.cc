@@ -4,18 +4,18 @@
 
 #include "components/drive/file_system/operation_test_base.h"
 
-#include "base/prefs/testing_pref_service.h"
 #include "base/threading/sequenced_worker_pool.h"
-#include "components/drive/change_list_loader.h"
+#include "components/drive/chromeos/change_list_loader.h"
+#include "components/drive/chromeos/fake_free_disk_space_getter.h"
+#include "components/drive/chromeos/file_cache.h"
+#include "components/drive/chromeos/file_system/operation_delegate.h"
+#include "components/drive/chromeos/resource_metadata.h"
 #include "components/drive/event_logger.h"
-#include "components/drive/fake_free_disk_space_getter.h"
-#include "components/drive/file_cache.h"
 #include "components/drive/file_change.h"
-#include "components/drive/file_system/operation_delegate.h"
 #include "components/drive/job_scheduler.h"
-#include "components/drive/resource_metadata.h"
 #include "components/drive/service/fake_drive_service.h"
 #include "components/drive/service/test_util.h"
+#include "components/prefs/testing_pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "google_apis/drive/test_util.h"
@@ -85,7 +85,7 @@ void OperationTestBase::SetUp() {
       blocking_task_runner_.get()));
 
   metadata_storage_.reset(new internal::ResourceMetadataStorage(
-      temp_dir_.path(), blocking_task_runner_.get()));
+      temp_dir_.GetPath(), blocking_task_runner_.get()));
   bool success = false;
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(),
@@ -97,10 +97,9 @@ void OperationTestBase::SetUp() {
   ASSERT_TRUE(success);
 
   fake_free_disk_space_getter_.reset(new FakeFreeDiskSpaceGetter);
-  cache_.reset(new internal::FileCache(metadata_storage_.get(),
-                                       temp_dir_.path(),
-                                       blocking_task_runner_.get(),
-                                       fake_free_disk_space_getter_.get()));
+  cache_.reset(new internal::FileCache(
+      metadata_storage_.get(), temp_dir_.GetPath(), blocking_task_runner_.get(),
+      fake_free_disk_space_getter_.get()));
   success = false;
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(),
@@ -146,11 +145,10 @@ FileError OperationTestBase::GetLocalResourceEntry(const base::FilePath& path,
                                                    ResourceEntry* entry) {
   FileError error = FILE_ERROR_FAILED;
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner(),
-      FROM_HERE,
+      blocking_task_runner(), FROM_HERE,
       base::Bind(&internal::ResourceMetadata::GetResourceEntryByPath,
                  base::Unretained(metadata()), path, entry),
-      base::Bind(google_apis::test_util::CreateCopyResultCallback(&error)));
+      google_apis::test_util::CreateCopyResultCallback(&error));
   content::RunAllBlockingPoolTasksUntilIdle();
   return error;
 }
@@ -160,11 +158,10 @@ FileError OperationTestBase::GetLocalResourceEntryById(
     ResourceEntry* entry) {
   FileError error = FILE_ERROR_FAILED;
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner(),
-      FROM_HERE,
+      blocking_task_runner(), FROM_HERE,
       base::Bind(&internal::ResourceMetadata::GetResourceEntryById,
                  base::Unretained(metadata()), local_id, entry),
-      base::Bind(google_apis::test_util::CreateCopyResultCallback(&error)));
+      google_apis::test_util::CreateCopyResultCallback(&error));
   content::RunAllBlockingPoolTasksUntilIdle();
   return error;
 }
@@ -173,11 +170,10 @@ std::string OperationTestBase::GetLocalId(const base::FilePath& path) {
   std::string local_id;
   FileError error = FILE_ERROR_FAILED;
   base::PostTaskAndReplyWithResult(
-      blocking_task_runner(),
-      FROM_HERE,
+      blocking_task_runner(), FROM_HERE,
       base::Bind(&internal::ResourceMetadata::GetIdByPath,
                  base::Unretained(metadata()), path, &local_id),
-      base::Bind(google_apis::test_util::CreateCopyResultCallback(&error)));
+      google_apis::test_util::CreateCopyResultCallback(&error));
   content::RunAllBlockingPoolTasksUntilIdle();
   EXPECT_EQ(FILE_ERROR_OK, error) << path.value();
   return local_id;

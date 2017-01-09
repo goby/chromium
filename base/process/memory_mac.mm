@@ -5,11 +5,13 @@
 #include "base/process/memory.h"
 
 #include <CoreFoundation/CoreFoundation.h>
+#import <Foundation/Foundation.h>
 #include <errno.h>
 #include <mach/mach.h>
 #include <mach/mach_vm.h>
 #include <malloc/malloc.h>
 #import <objc/runtime.h>
+#include <stddef.h>
 
 #include <new>
 
@@ -18,6 +20,7 @@
 #include "base/mac/mac_util.h"
 #include "base/mac/mach_logging.h"
 #include "base/scoped_clear_errno.h"
+#include "build/build_config.h"
 #include "third_party/apple_apsl/CFBase.h"
 #include "third_party/apple_apsl/malloc.h"
 
@@ -246,27 +249,14 @@ void oom_killer_new() {
 // === Core Foundation CFAllocators ===
 
 bool CanGetContextForCFAllocator() {
-  return !base::mac::IsOSLaterThanElCapitan_DontCallThis();
+  return !base::mac::IsOSLaterThan10_12_DontCallThis();
 }
 
 CFAllocatorContext* ContextForCFAllocator(CFAllocatorRef allocator) {
-  if (base::mac::IsOSSnowLeopard()) {
-    ChromeCFAllocatorLeopards* our_allocator =
-        const_cast<ChromeCFAllocatorLeopards*>(
-            reinterpret_cast<const ChromeCFAllocatorLeopards*>(allocator));
-    return &our_allocator->_context;
-  } else if (base::mac::IsOSLion() ||
-             base::mac::IsOSMountainLion() ||
-             base::mac::IsOSMavericks() ||
-             base::mac::IsOSYosemite() ||
-             base::mac::IsOSElCapitan()) {
-    ChromeCFAllocatorLions* our_allocator =
-        const_cast<ChromeCFAllocatorLions*>(
-            reinterpret_cast<const ChromeCFAllocatorLions*>(allocator));
-    return &our_allocator->_context;
-  } else {
-    return NULL;
-  }
+  ChromeCFAllocatorLions* our_allocator =
+      const_cast<ChromeCFAllocatorLions*>(
+          reinterpret_cast<const ChromeCFAllocatorLions*>(allocator));
+  return &our_allocator->_context;
 }
 
 CFAllocatorAllocateCallBack g_old_cfallocator_system_default;

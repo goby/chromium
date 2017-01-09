@@ -5,6 +5,7 @@
 #include "net/url_request/test_url_request_interceptor.h"
 
 #include "base/files/file_util.h"
+#include "base/macros.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "net/url_request/url_request.h"
@@ -58,7 +59,7 @@ class TestURLRequestInterceptor::Delegate : public URLRequestInterceptor {
 
   void Register() {
     URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-        scheme_, hostname_, scoped_ptr<URLRequestInterceptor>(this));
+        scheme_, hostname_, std::unique_ptr<URLRequestInterceptor>(this));
   }
 
   static void Unregister(const std::string& scheme,

@@ -4,20 +4,24 @@
 
 #include "content/shell/browser/shell_devtools_manager_delegate.h"
 
+#include <stdint.h>
+
 #include <vector>
 
+#include "base/atomicops.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "components/devtools_discovery/basic_target_descriptor.h"
-#include "components/devtools_discovery/devtools_discovery_manager.h"
-#include "components/devtools_http_handler/devtools_http_handler.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/devtools_agent_host.h"
 #include "content/public/browser/devtools_frontend_host.h"
+#include "content/public/browser/devtools_socket_factory.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/render_view_host.h"
@@ -29,6 +33,7 @@
 #include "content/shell/common/shell_content_client.h"
 #include "grit/shell_resources.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/tcp_server_socket.h"
 #include "ui/base/resource/resource_bundle.h"
 
@@ -36,8 +41,6 @@
 #include "content/public/browser/android/devtools_auth.h"
 #include "net/socket/unix_domain_server_socket_posix.h"
 #endif
-
-using devtools_http_handler::DevToolsHttpHandler;
 
 namespace content {
 
@@ -50,24 +53,29 @@ const char kFrontEndURL[] =
 
 const int kBackLog = 10;
 
+base::subtle::Atomic32 g_last_used_port;
+
 #if defined(OS_ANDROID)
-class UnixDomainServerSocketFactory
-    : public DevToolsHttpHandler::ServerSocketFactory {
+class UnixDomainServerSocketFactory : public content::DevToolsSocketFactory {
  public:
   explicit UnixDomainServerSocketFactory(const std::string& socket_name)
       : socket_name_(socket_name) {}
 
  private:
-  // DevToolsHttpHandler::ServerSocketFactory.
-  scoped_ptr<net::ServerSocket> CreateForHttpServer() override {
-    scoped_ptr<net::ServerSocket> socket(
-        new net::UnixDomainServerSocket(
-            base::Bind(&CanUserConnectToDevTools),
-            true /* use_abstract_namespace */));
-    if (socket->ListenWithAddressAndPort(socket_name_, 0, kBackLog) != net::OK)
-      return scoped_ptr<net::ServerSocket>();
+  // content::DevToolsSocketFactory.
+  std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
+    std::unique_ptr<net::UnixDomainServerSocket> socket(
+        new net::UnixDomainServerSocket(base::Bind(&CanUserConnectToDevTools),
+                                        true /* use_abstract_namespace */));
+    if (socket->BindAndListen(socket_name_, kBackLog) != net::OK)
+      return std::unique_ptr<net::ServerSocket>();
 
-    return socket;
+    return std::move(socket);
+  }
+
+  std::unique_ptr<net::ServerSocket> CreateForTethering(
+      std::string* out_name) override {
+    return nullptr;
   }
 
   std::string socket_name_;
@@ -75,33 +83,39 @@ class UnixDomainServerSocketFactory
   DISALLOW_COPY_AND_ASSIGN(UnixDomainServerSocketFactory);
 };
 #else
-class TCPServerSocketFactory
-    : public DevToolsHttpHandler::ServerSocketFactory {
+class TCPServerSocketFactory : public content::DevToolsSocketFactory {
  public:
-  TCPServerSocketFactory(const std::string& address, uint16 port)
-      : address_(address), port_(port) {
-  }
+  TCPServerSocketFactory(const std::string& address, uint16_t port)
+      : address_(address), port_(port) {}
 
  private:
-  // DevToolsHttpHandler::ServerSocketFactory.
-  scoped_ptr<net::ServerSocket> CreateForHttpServer() override {
-    scoped_ptr<net::ServerSocket> socket(
-        new net::TCPServerSocket(nullptr, net::NetLog::Source()));
+  // content::DevToolsSocketFactory.
+  std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
+    std::unique_ptr<net::ServerSocket> socket(
+        new net::TCPServerSocket(nullptr, net::NetLogSource()));
     if (socket->ListenWithAddressAndPort(address_, port_, kBackLog) != net::OK)
-      return scoped_ptr<net::ServerSocket>();
+      return std::unique_ptr<net::ServerSocket>();
+
+    net::IPEndPoint endpoint;
+    if (socket->GetLocalAddress(&endpoint) == net::OK)
+      base::subtle::NoBarrier_Store(&g_last_used_port, endpoint.port());
 
     return socket;
   }
 
+  std::unique_ptr<net::ServerSocket> CreateForTethering(
+      std::string* out_name) override {
+    return nullptr;
+  }
+
   std::string address_;
-  uint16 port_;
+  uint16_t port_;
 
   DISALLOW_COPY_AND_ASSIGN(TCPServerSocketFactory);
 };
 #endif
 
-scoped_ptr<DevToolsHttpHandler::ServerSocketFactory>
-CreateSocketFactory() {
+std::unique_ptr<content::DevToolsSocketFactory> CreateSocketFactory() {
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
 #if defined(OS_ANDROID)
@@ -110,115 +124,56 @@ CreateSocketFactory() {
     socket_name = command_line.GetSwitchValueASCII(
         switches::kRemoteDebuggingSocketName);
   }
-  return scoped_ptr<DevToolsHttpHandler::ServerSocketFactory>(
+  return std::unique_ptr<content::DevToolsSocketFactory>(
       new UnixDomainServerSocketFactory(socket_name));
 #else
   // See if the user specified a port on the command line (useful for
   // automation). If not, use an ephemeral port by specifying 0.
-  uint16 port = 0;
+  uint16_t port = 0;
   if (command_line.HasSwitch(switches::kRemoteDebuggingPort)) {
     int temp_port;
     std::string port_str =
         command_line.GetSwitchValueASCII(switches::kRemoteDebuggingPort);
     if (base::StringToInt(port_str, &temp_port) &&
         temp_port >= 0 && temp_port < 65535) {
-      port = static_cast<uint16>(temp_port);
+      port = static_cast<uint16_t>(temp_port);
     } else {
       DLOG(WARNING) << "Invalid http debugger port number " << temp_port;
     }
   }
-  return scoped_ptr<DevToolsHttpHandler::ServerSocketFactory>(
+  return std::unique_ptr<content::DevToolsSocketFactory>(
       new TCPServerSocketFactory("127.0.0.1", port));
 #endif
 }
 
-scoped_ptr<devtools_discovery::DevToolsTargetDescriptor>
-CreateNewShellTarget(BrowserContext* browser_context, const GURL& url) {
-  Shell* shell = Shell::CreateNewWindow(browser_context,
-                                        url,
-                                        nullptr,
-                                        gfx::Size());
-  return make_scoped_ptr(new devtools_discovery::BasicTargetDescriptor(
-      DevToolsAgentHost::GetOrCreateFor(shell->web_contents())));
-}
-
-// ShellDevToolsDelegate ----------------------------------------------------
-
-class ShellDevToolsDelegate :
-    public devtools_http_handler::DevToolsHttpHandlerDelegate {
- public:
-  explicit ShellDevToolsDelegate(BrowserContext* browser_context);
-  ~ShellDevToolsDelegate() override;
-
-  // devtools_http_handler::DevToolsHttpHandlerDelegate implementation.
-  std::string GetDiscoveryPageHTML() override;
-  std::string GetFrontendResource(const std::string& path) override;
-  std::string GetPageThumbnailData(const GURL& url) override;
-  DevToolsExternalAgentProxyDelegate*
-      HandleWebSocketConnection(const std::string& path) override;
-
- private:
-  BrowserContext* browser_context_;
-
-  DISALLOW_COPY_AND_ASSIGN(ShellDevToolsDelegate);
-};
-
-ShellDevToolsDelegate::ShellDevToolsDelegate(BrowserContext* browser_context)
-    : browser_context_(browser_context) {
-  devtools_discovery::DevToolsDiscoveryManager::GetInstance()->
-      SetCreateCallback(base::Bind(&CreateNewShellTarget,
-                                   base::Unretained(browser_context)));
-}
-
-ShellDevToolsDelegate::~ShellDevToolsDelegate() {
-  devtools_discovery::DevToolsDiscoveryManager::GetInstance()->
-      SetCreateCallback(
-          devtools_discovery::DevToolsDiscoveryManager::CreateCallback());
-}
-
-std::string ShellDevToolsDelegate::GetDiscoveryPageHTML() {
-#if defined(OS_ANDROID)
-  return std::string();
-#else
-  return ResourceBundle::GetSharedInstance().GetRawDataResource(
-      IDR_CONTENT_SHELL_DEVTOOLS_DISCOVERY_PAGE).as_string();
-#endif
-}
-
-std::string ShellDevToolsDelegate::GetFrontendResource(
-    const std::string& path) {
-  return content::DevToolsFrontendHost::GetFrontendResource(path).as_string();
-}
-
-std::string ShellDevToolsDelegate::GetPageThumbnailData(const GURL& url) {
-  return std::string();
-}
-
-DevToolsExternalAgentProxyDelegate*
-ShellDevToolsDelegate::HandleWebSocketConnection(const std::string& path) {
-  return nullptr;
-}
-
-}  // namespace
+} //  namespace
 
 // ShellDevToolsManagerDelegate ----------------------------------------------
 
 // static
-DevToolsHttpHandler*
-ShellDevToolsManagerDelegate::CreateHttpHandler(
+int ShellDevToolsManagerDelegate::GetHttpHandlerPort() {
+  return base::subtle::NoBarrier_Load(&g_last_used_port);
+}
+
+// static
+void ShellDevToolsManagerDelegate::StartHttpHandler(
     BrowserContext* browser_context) {
   std::string frontend_url;
 #if defined(OS_ANDROID)
   frontend_url = base::StringPrintf(kFrontEndURL, GetWebKitRevision().c_str());
 #endif
-  return new DevToolsHttpHandler(
+  DevToolsAgentHost::StartRemoteDebuggingServer(
       CreateSocketFactory(),
       frontend_url,
-      new ShellDevToolsDelegate(browser_context),
       browser_context->GetPath(),
       base::FilePath(),
       std::string(),
       GetShellUserAgent());
+}
+
+// static
+void ShellDevToolsManagerDelegate::StopHttpHandler() {
+  DevToolsAgentHost::StopRemoteDebuggingServer();
 }
 
 ShellDevToolsManagerDelegate::ShellDevToolsManagerDelegate(
@@ -229,10 +184,27 @@ ShellDevToolsManagerDelegate::ShellDevToolsManagerDelegate(
 ShellDevToolsManagerDelegate::~ShellDevToolsManagerDelegate() {
 }
 
-base::DictionaryValue* ShellDevToolsManagerDelegate::HandleCommand(
-    DevToolsAgentHost* agent_host,
-    base::DictionaryValue* command) {
-  return NULL;
+scoped_refptr<DevToolsAgentHost>
+ShellDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
+  Shell* shell = Shell::CreateNewWindow(browser_context_,
+                                        url,
+                                        nullptr,
+                                        gfx::Size());
+  return DevToolsAgentHost::GetOrCreateFor(shell->web_contents());
+}
+
+std::string ShellDevToolsManagerDelegate::GetDiscoveryPageHTML() {
+#if defined(OS_ANDROID)
+  return std::string();
+#else
+  return ResourceBundle::GetSharedInstance().GetRawDataResource(
+      IDR_CONTENT_SHELL_DEVTOOLS_DISCOVERY_PAGE).as_string();
+#endif
+}
+
+std::string ShellDevToolsManagerDelegate::GetFrontendResource(
+    const std::string& path) {
+  return content::DevToolsFrontendHost::GetFrontendResource(path).as_string();
 }
 
 }  // namespace content

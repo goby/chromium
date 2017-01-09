@@ -5,11 +5,11 @@
 #ifndef UI_VIEWS_CONTROLS_TREE_TREE_VIEW_VIEWS_H_
 #define UI_VIEWS_CONTROLS_TREE_TREE_VIEW_VIEWS_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/base/models/tree_node_model.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image_skia.h"
@@ -24,9 +24,9 @@ class Rect;
 
 namespace views {
 
+class PrefixSelector;
 class Textfield;
 class TreeViewController;
-class PrefixSelector;
 
 // TreeView displays hierarchical data as returned from a TreeModel. The user
 // can expand, collapse and edit the items. A Controller may be attached to
@@ -35,7 +35,8 @@ class PrefixSelector;
 // Note on implementation. This implementation doesn't scale well. In particular
 // it does not store any row information, but instead calculates it as
 // necessary. But it's more than adequate for current uses.
-class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
+class VIEWS_EXPORT TreeView : public View,
+                              public ui::TreeModelObserver,
                               public TextfieldController,
                               public FocusChangeListener,
                               public PrefixDelegate {
@@ -127,7 +128,7 @@ class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
   void OnGestureEvent(ui::GestureEvent* event) override;
   void ShowContextMenu(const gfx::Point& p,
                        ui::MenuSourceType source_type) override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   const char* GetClassName() const override;
 
   // TreeModelObserver overrides:
@@ -294,15 +295,28 @@ class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
       ui::TreeModelNode* model_node,
       GetInternalNodeCreateType create_type);
 
-  // Returns the bounds for a node.
-  gfx::Rect GetBoundsForNode(InternalNode* node);
+  // Returns the bounds for a node's background.
+  gfx::Rect GetBackgroundBoundsForNode(InternalNode* node);
 
-  // Implementation of GetBoundsForNode. Separated out as some callers already
-  // know the row/depth.
-  gfx::Rect GetBoundsForNodeImpl(InternalNode* node, int row, int depth);
+  // Return the bounds for a node's foreground, which is the part containing the
+  // expand/collapse symbol (if any), the icon (if any), and the text label.
+  gfx::Rect GetForegroundBoundsForNode(InternalNode* node);
+
+  // Returns the bounds for a node's text label.
+  gfx::Rect GetTextBoundsForNode(InternalNode* node);
+
+  // Implementation of GetTextBoundsForNode. Separated out as some callers
+  // already know the row/depth.
+  gfx::Rect GetForegroundBoundsForNodeImpl(InternalNode* node,
+                                           int row,
+                                           int depth);
 
   // Returns the row and depth of a node.
   int GetRowForInternalNode(InternalNode* node, int* depth);
+
+  // Returns the InternalNode (if any) whose foreground bounds contain |point|.
+  // If no node's foreground contains |point|, this function returns nullptr.
+  InternalNode* GetNodeAtPoint(const gfx::Point& point);
 
   // Returns the row and depth of the specified node.
   InternalNode* GetNodeByRow(int row, int* depth);
@@ -322,7 +336,7 @@ class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
   void CollapseOrSelectParent();
 
   // If the selected node is collapsed, it's expanded. Otherwise the first child
-  // is seleected.
+  // is selected.
   void ExpandOrSelectChild();
 
   // Implementation of Expand(). Returns true if at least one node was expanded
@@ -330,6 +344,15 @@ class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
   bool ExpandImpl(ui::TreeModelNode* model_node);
 
   PrefixSelector* GetPrefixSelector();
+
+  // Returns whether |point| is in the bounds of |node|'s expand/collapse
+  // control.
+  bool IsPointInExpandControl(InternalNode* node, const gfx::Point& point);
+
+  // Sets whether a focus ring is visible on this control or not. This function
+  // does nothing if focus rings aren't enabled in general or if the platform's
+  // style does not use focus rings on TreeViews.
+  void SetHasFocusRing(bool);
 
   // The model, may be null.
   ui::TreeModel* model_;
@@ -386,7 +409,7 @@ class VIEWS_EXPORT TreeView : public ui::TreeModelObserver,
   // control, icon and offsets.
   int text_offset_;
 
-  scoped_ptr<PrefixSelector> selector_;
+  std::unique_ptr<PrefixSelector> selector_;
 
   DISALLOW_COPY_AND_ASSIGN(TreeView);
 };

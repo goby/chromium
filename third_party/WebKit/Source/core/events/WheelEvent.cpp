@@ -21,7 +21,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/events/WheelEvent.h"
 
 #include "core/clipboard/DataTransfer.h"
@@ -30,109 +29,193 @@
 
 namespace blink {
 
-inline static unsigned convertDeltaMode(const PlatformWheelEvent& event)
-{
-    return event.granularity() == ScrollByPageWheelEvent ? WheelEvent::DOM_DELTA_PAGE : WheelEvent::DOM_DELTA_PIXEL;
+inline static unsigned convertDeltaMode(const PlatformWheelEvent& event) {
+  return event.granularity() == ScrollByPageWheelEvent
+             ? WheelEvent::kDomDeltaPage
+             : WheelEvent::kDomDeltaPixel;
 }
 
-PassRefPtrWillBeRawPtr<WheelEvent> WheelEvent::create(const PlatformWheelEvent& event, PassRefPtrWillBeRawPtr<AbstractView> view)
-{
-    return adoptRefWillBeNoop(new WheelEvent(FloatPoint(event.wheelTicksX(), event.wheelTicksY()), FloatPoint(event.deltaX(), event.deltaY()),
-        convertDeltaMode(event), view, event.globalPosition(), event.position(),
-        event.modifiers(),
-        MouseEvent::platformModifiersToButtons(event.modifiers()), event.timestamp(),
-        event.canScroll(), event.resendingPluginId(), event.hasPreciseScrollingDeltas(),
-        static_cast<Event::RailsMode>(event.railsMode())));
+// Negate a long value without integer overflow.
+inline static long negateIfPossible(long value) {
+  if (value == LONG_MIN)
+    return value;
+  return -value;
+}
+
+WheelEvent* WheelEvent::create(const PlatformWheelEvent& event,
+                               AbstractView* view) {
+  return new WheelEvent(
+      FloatPoint(event.wheelTicksX(), event.wheelTicksY()),
+      FloatPoint(event.deltaX(), event.deltaY()), convertDeltaMode(event), view,
+      event.globalPosition(), event.position(), event.getModifiers(),
+      MouseEvent::platformModifiersToButtons(event.getModifiers()),
+      event.timestamp(), event.resendingPluginId(),
+      event.hasPreciseScrollingDeltas(),
+      static_cast<Event::RailsMode>(event.getRailsMode()), event.cancelable()
+#if OS(MACOSX)
+                                                               ,
+      static_cast<WheelEventPhase>(event.phase()),
+      static_cast<WheelEventPhase>(event.momentumPhase())
+#endif
+          );
 }
 
 WheelEvent::WheelEvent()
-    : m_deltaX(0)
-    , m_deltaY(0)
-    , m_deltaZ(0)
-    , m_deltaMode(DOM_DELTA_PIXEL)
-    , m_canScroll(true)
-    , m_resendingPluginId(-1)
-    , m_hasPreciseScrollingDeltas(false)
-    , m_railsMode(RailsModeFree)
+    : m_deltaX(0),
+      m_deltaY(0),
+      m_deltaZ(0),
+      m_deltaMode(kDomDeltaPixel),
+      m_resendingPluginId(-1),
+      m_hasPreciseScrollingDeltas(false),
+      m_railsMode(RailsModeFree) {}
+
+WheelEvent::WheelEvent(const AtomicString& type,
+                       const WheelEventInit& initializer)
+    : MouseEvent(type, initializer),
+      m_wheelDelta(initializer.wheelDeltaX() ? initializer.wheelDeltaX()
+                                             : -initializer.deltaX(),
+                   initializer.wheelDeltaY() ? initializer.wheelDeltaY()
+                                             : -initializer.deltaY()),
+      m_deltaX(initializer.deltaX()
+                   ? initializer.deltaX()
+                   : negateIfPossible(initializer.wheelDeltaX())),
+      m_deltaY(initializer.deltaY()
+                   ? initializer.deltaY()
+                   : negateIfPossible(initializer.wheelDeltaY())),
+      m_deltaZ(initializer.deltaZ()),
+      m_deltaMode(initializer.deltaMode()),
+      m_resendingPluginId(-1),
+      m_hasPreciseScrollingDeltas(false),
+      m_railsMode(RailsModeFree)
+#if OS(MACOSX)
+      ,
+      m_phase(WheelEventPhaseNone),
+      m_momentumPhase(WheelEventPhaseNone)
+#endif
 {
 }
 
-WheelEvent::WheelEvent(const AtomicString& type, const WheelEventInit& initializer)
-    : MouseEvent(type, initializer)
-    , m_wheelDelta(initializer.wheelDeltaX() ? initializer.wheelDeltaX() : -initializer.deltaX(), initializer.wheelDeltaY() ? initializer.wheelDeltaY() : -initializer.deltaY())
-    , m_deltaX(initializer.deltaX() ? initializer.deltaX() : -initializer.wheelDeltaX())
-    , m_deltaY(initializer.deltaY() ? initializer.deltaY() : -initializer.wheelDeltaY())
-    , m_deltaZ(initializer.deltaZ())
-    , m_deltaMode(initializer.deltaMode())
-    , m_canScroll(true)
-    , m_resendingPluginId(-1)
-    , m_hasPreciseScrollingDeltas(false)
-    , m_railsMode(RailsModeFree)
+WheelEvent::WheelEvent(const FloatPoint& wheelTicks,
+                       const FloatPoint& rawDelta,
+                       unsigned deltaMode,
+                       AbstractView* view,
+                       const IntPoint& screenLocation,
+                       const IntPoint& windowLocation,
+                       PlatformEvent::Modifiers modifiers,
+                       unsigned short buttons,
+                       double platformTimeStamp,
+                       int resendingPluginId,
+                       bool hasPreciseScrollingDeltas,
+                       RailsMode railsMode,
+                       bool cancelable)
+    : MouseEvent(EventTypeNames::wheel,
+                 true,
+                 cancelable,
+                 view,
+                 0,
+                 screenLocation.x(),
+                 screenLocation.y(),
+                 windowLocation.x(),
+                 windowLocation.y(),
+                 0,
+                 0,
+                 modifiers,
+                 0,
+                 buttons,
+                 nullptr,
+                 platformTimeStamp,
+                 PlatformMouseEvent::RealOrIndistinguishable,
+                 // TODO(zino): Should support canvas hit region because the
+                 // wheel event is a kind of mouse event. Please see
+                 // http://crbug.com/594075
+                 String(),
+                 nullptr),
+      m_wheelDelta(wheelTicks.x() * TickMultiplier,
+                   wheelTicks.y() * TickMultiplier),
+      m_deltaX(-rawDelta.x()),
+      m_deltaY(-rawDelta.y()),
+      m_deltaZ(0),
+      m_deltaMode(deltaMode),
+      m_resendingPluginId(resendingPluginId),
+      m_hasPreciseScrollingDeltas(hasPreciseScrollingDeltas),
+      m_railsMode(railsMode)
+#if OS(MACOSX)
+      ,
+      m_phase(WheelEventPhaseNone),
+      m_momentumPhase(WheelEventPhaseNone)
+#endif
 {
 }
 
-WheelEvent::WheelEvent(const FloatPoint& wheelTicks, const FloatPoint& rawDelta, unsigned deltaMode,
-    PassRefPtrWillBeRawPtr<AbstractView> view, const IntPoint& screenLocation, const IntPoint& windowLocation,
-    PlatformEvent::Modifiers modifiers, unsigned short buttons, double platformTimeStamp,
-    bool canScroll, int resendingPluginId, bool hasPreciseScrollingDeltas, RailsMode railsMode)
-    : MouseEvent(EventTypeNames::wheel, true, true, view, 0, screenLocation.x(), screenLocation.y(),
-        windowLocation.x(), windowLocation.y(), 0, 0, modifiers, 0, buttons,
-        nullptr, platformTimeStamp, PlatformMouseEvent::RealOrIndistinguishable)
-    , m_wheelDelta(wheelTicks.x() * TickMultiplier, wheelTicks.y() * TickMultiplier)
-    , m_deltaX(-rawDelta.x())
-    , m_deltaY(-rawDelta.y())
-    , m_deltaZ(0)
-    , m_deltaMode(deltaMode)
-    , m_canScroll(canScroll)
-    , m_resendingPluginId(resendingPluginId)
-    , m_hasPreciseScrollingDeltas(hasPreciseScrollingDeltas)
-    , m_railsMode(railsMode)
-{
+#if OS(MACOSX)
+WheelEvent::WheelEvent(const FloatPoint& wheelTicks,
+                       const FloatPoint& rawDelta,
+                       unsigned deltaMode,
+                       AbstractView* view,
+                       const IntPoint& screenLocation,
+                       const IntPoint& windowLocation,
+                       PlatformEvent::Modifiers modifiers,
+                       unsigned short buttons,
+                       double platformTimeStamp,
+                       int resendingPluginId,
+                       bool hasPreciseScrollingDeltas,
+                       RailsMode railsMode,
+                       bool cancelable,
+                       WheelEventPhase phase,
+                       WheelEventPhase momentumPhase)
+    : MouseEvent(EventTypeNames::wheel,
+                 true,
+                 cancelable,
+                 view,
+                 0,
+                 screenLocation.x(),
+                 screenLocation.y(),
+                 windowLocation.x(),
+                 windowLocation.y(),
+                 0,
+                 0,
+                 modifiers,
+                 0,
+                 buttons,
+                 nullptr,
+                 platformTimeStamp,
+                 PlatformMouseEvent::RealOrIndistinguishable,
+                 // TODO(zino): Should support canvas hit region because the
+                 // wheel event is a kind of mouse event. Please see
+                 // http://crbug.com/594075
+                 String(),
+                 nullptr),
+      m_wheelDelta(wheelTicks.x() * TickMultiplier,
+                   wheelTicks.y() * TickMultiplier),
+      m_deltaX(-rawDelta.x()),
+      m_deltaY(-rawDelta.y()),
+      m_deltaZ(0),
+      m_deltaMode(deltaMode),
+      m_resendingPluginId(resendingPluginId),
+      m_hasPreciseScrollingDeltas(hasPreciseScrollingDeltas),
+      m_railsMode(railsMode),
+      m_phase(phase),
+      m_momentumPhase(momentumPhase) {}
+#endif
+
+const AtomicString& WheelEvent::interfaceName() const {
+  return EventNames::WheelEvent;
 }
 
-const AtomicString& WheelEvent::interfaceName() const
-{
-    return EventNames::WheelEvent;
+bool WheelEvent::isMouseEvent() const {
+  return false;
 }
 
-bool WheelEvent::isMouseEvent() const
-{
-    return false;
+bool WheelEvent::isWheelEvent() const {
+  return true;
 }
 
-bool WheelEvent::isWheelEvent() const
-{
-    return true;
+EventDispatchMediator* WheelEvent::createMediator() {
+  return EventDispatchMediator::create(this);
 }
 
-PassRefPtrWillBeRawPtr<EventDispatchMediator> WheelEvent::createMediator()
-{
-    return WheelEventDispatchMediator::create(this);
+DEFINE_TRACE(WheelEvent) {
+  MouseEvent::trace(visitor);
 }
 
-DEFINE_TRACE(WheelEvent)
-{
-    MouseEvent::trace(visitor);
-}
-
-PassRefPtrWillBeRawPtr<WheelEventDispatchMediator> WheelEventDispatchMediator::create(PassRefPtrWillBeRawPtr<WheelEvent> event)
-{
-    return adoptRefWillBeNoop(new WheelEventDispatchMediator(event));
-}
-
-WheelEventDispatchMediator::WheelEventDispatchMediator(PassRefPtrWillBeRawPtr<WheelEvent> event)
-    : EventDispatchMediator(event)
-{
-}
-
-WheelEvent& WheelEventDispatchMediator::event() const
-{
-    return toWheelEvent(EventDispatchMediator::event());
-}
-
-bool WheelEventDispatchMediator::dispatchEvent(EventDispatcher& dispatcher) const
-{
-    return EventDispatchMediator::dispatchEvent(dispatcher) && !event().defaultHandled();
-}
-
-} // namespace blink
+}  // namespace blink

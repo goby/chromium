@@ -5,10 +5,13 @@
 #ifndef MEDIA_CAST_SENDER_H264_VT_ENCODER_H_
 #define MEDIA_CAST_SENDER_H264_VT_ENCODER_H_
 
+#include <stdint.h>
+
 #include "base/mac/scoped_cftyperef.h"
+#include "base/macros.h"
 #include "base/power_monitor/power_observer.h"
 #include "base/threading/thread_checker.h"
-#include "media/base/mac/videotoolbox_glue.h"
+#include "media/base/mac/videotoolbox_helpers.h"
 #include "media/cast/sender/size_adaptable_video_encoder_base.h"
 #include "media/cast/sender/video_encoder.h"
 
@@ -22,18 +25,14 @@ namespace cast {
 // compression session when the host process is suspended.
 class H264VideoToolboxEncoder : public VideoEncoder,
                                 public base::PowerObserver {
-  typedef CoreMediaGlue::CMSampleBufferRef CMSampleBufferRef;
-  typedef VideoToolboxGlue::VTCompressionSessionRef VTCompressionSessionRef;
-  typedef VideoToolboxGlue::VTEncodeInfoFlags VTEncodeInfoFlags;
-
  public:
   // Returns true if the current platform and system configuration supports
   // using H264VideoToolboxEncoder with the given |video_config|.
-  static bool IsSupported(const VideoSenderConfig& video_config);
+  static bool IsSupported(const FrameSenderConfig& video_config);
 
   H264VideoToolboxEncoder(
       const scoped_refptr<CastEnvironment>& cast_environment,
-      const VideoSenderConfig& video_config,
+      const FrameSenderConfig& video_config,
       const StatusChangeCallback& status_change_cb);
   ~H264VideoToolboxEncoder() final;
 
@@ -44,7 +43,7 @@ class H264VideoToolboxEncoder : public VideoEncoder,
       const FrameEncodedCallback& frame_encoded_callback) final;
   void SetBitRate(int new_bit_rate) final;
   void GenerateKeyFrame() final;
-  scoped_ptr<VideoFrameFactory> CreateVideoFrameFactory() final;
+  std::unique_ptr<VideoFrameFactory> CreateVideoFrameFactory() final;
   void EmitFrames() final;
 
   // base::PowerObserver
@@ -72,11 +71,6 @@ class H264VideoToolboxEncoder : public VideoEncoder,
   // session. This will also update the video frame factory.
   void UpdateFrameSize(const gfx::Size& size_needed);
 
-  // Set a compression session property.
-  bool SetSessionProperty(CFStringRef key, int32_t value);
-  bool SetSessionProperty(CFStringRef key, bool value);
-  bool SetSessionProperty(CFStringRef key, CFStringRef value);
-
   // Compression session callback function to handle compressed frames.
   static void CompressionCallback(void* encoder_opaque,
                                   void* request_opaque,
@@ -87,13 +81,10 @@ class H264VideoToolboxEncoder : public VideoEncoder,
   // The cast environment (contains worker threads & more).
   const scoped_refptr<CastEnvironment> cast_environment_;
 
-  // VideoToolboxGlue provides access to VideoToolbox at runtime.
-  const VideoToolboxGlue* const videotoolbox_glue_;
-
   // VideoSenderConfig copy so we can create compression sessions on demand.
   // This is needed to recover from backgrounding and other events that can
   // invalidate compression sessions.
-  const VideoSenderConfig video_config_;
+  const FrameSenderConfig video_config_;
 
   // Frame size of the current compression session. Can be changed by submitting
   // a frame of a different size, which will cause a compression session reset.
@@ -111,8 +102,8 @@ class H264VideoToolboxEncoder : public VideoEncoder,
   // Video frame factory tied to the encoder.
   scoped_refptr<VideoFrameFactoryImpl> video_frame_factory_;
 
-  // The ID of the last frame that was emitted.
-  uint32 last_frame_id_;
+  // The ID for the next frame to be emitted.
+  FrameId next_frame_id_;
 
   // Force next frame to be a keyframe.
   bool encode_next_frame_as_keyframe_;

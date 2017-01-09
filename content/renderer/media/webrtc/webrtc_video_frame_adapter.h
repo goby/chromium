@@ -5,6 +5,9 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_WEBRTC_VIDEO_FRAME_ADAPTER_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_WEBRTC_VIDEO_FRAME_ADAPTER_H_
 
+#include <stdint.h>
+
+#include "base/callback.h"
 #include "media/base/video_frame.h"
 #include "third_party/webrtc/common_video/include/video_frame_buffer.h"
 
@@ -15,16 +18,25 @@ namespace content {
 // different threads, but that's safe since it's read-only.
 class WebRtcVideoFrameAdapter : public webrtc::VideoFrameBuffer {
  public:
-  explicit WebRtcVideoFrameAdapter(
-      const scoped_refptr<media::VideoFrame>& frame);
+  using CopyTextureFrameCallback =
+      base::Callback<void(const scoped_refptr<media::VideoFrame>&,
+                          scoped_refptr<media::VideoFrame>*)>;
+
+  WebRtcVideoFrameAdapter(
+      const scoped_refptr<media::VideoFrame>& frame,
+      const CopyTextureFrameCallback& copy_texture_callback);
 
  private:
   int width() const override;
   int height() const override;
 
-  const uint8_t* data(webrtc::PlaneType type) const override;
+  const uint8_t* DataY() const override;
+  const uint8_t* DataU() const override;
+  const uint8_t* DataV() const override;
 
-  int stride(webrtc::PlaneType type) const override;
+  int StrideY() const override;
+  int StrideU() const override;
+  int StrideV() const override;
 
   void* native_handle() const override;
 
@@ -36,6 +48,7 @@ class WebRtcVideoFrameAdapter : public webrtc::VideoFrameBuffer {
   ~WebRtcVideoFrameAdapter() override;
 
   scoped_refptr<media::VideoFrame> frame_;
+  const CopyTextureFrameCallback copy_texture_callback_;
 };
 
 }  // namespace content

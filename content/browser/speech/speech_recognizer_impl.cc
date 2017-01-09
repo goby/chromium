@@ -4,13 +4,15 @@
 
 #include "content/browser/speech/speech_recognizer_impl.h"
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/browser/browser_main_loop.h"
 #include "content/browser/media/media_internals.h"
 #include "content/browser/speech/audio_buffer.h"
-#include "content/browser/speech/google_one_shot_remote_engine.h"
 #include "content/public/browser/speech_recognition_event_listener.h"
 #include "media/base/audio_converter.h"
 
@@ -46,14 +48,14 @@ class SpeechRecognizerImpl::OnDataConverter
 
  private:
   // media::AudioConverter::InputCallback implementation.
-  double ProvideInput(AudioBus* dest, base::TimeDelta buffer_delay) override;
+  double ProvideInput(AudioBus* dest, uint32_t frames_delayed) override;
 
   // Handles resampling, buffering, and channel mixing between input and output
   // parameters.
   AudioConverter audio_converter_;
 
-  scoped_ptr<AudioBus> input_bus_;
-  scoped_ptr<AudioBus> output_bus_;
+  std::unique_ptr<AudioBus> input_bus_;
+  std::unique_ptr<AudioBus> output_bus_;
   const AudioParameters input_parameters_;
   const AudioParameters output_parameters_;
   bool data_was_converted_;
@@ -69,9 +71,10 @@ namespace {
 const float kUpSmoothingFactor = 1.0f;
 // Multiplier used when new volume is lesser than previous level.
 const float kDownSmoothingFactor = 0.7f;
-// RMS dB value of a maximum (unclipped) sine wave for int16 samples.
+// RMS dB value of a maximum (unclipped) sine wave for int16_t samples.
 const float kAudioMeterMaxDb = 90.31f;
-// This value corresponds to RMS dB for int16 with 6 most-significant-bits = 0.
+// This value corresponds to RMS dB for int16_t with 6 most-significant-bits =
+// 0.
 // Values lower than this will display as empty level-meter.
 const float kAudioMeterMinDb = 30.0f;
 const float kAudioMeterDbRange = kAudioMeterMaxDb - kAudioMeterMinDb;
@@ -82,7 +85,7 @@ const float kAudioMeterRangeMaxUnclipped = 47.0f / 48.0f;
 // Returns true if more than 5% of the samples are at min or max value.
 bool DetectClipping(const AudioChunk& chunk) {
   const int num_samples = chunk.NumSamples();
-  const int16* samples = chunk.SamplesData16();
+  const int16_t* samples = chunk.SamplesData16();
   const int kThreshold = num_samples / 20;
   int clipping_samples = 0;
 
@@ -157,7 +160,8 @@ scoped_refptr<AudioChunk> SpeechRecognizerImpl::OnDataConverter::Convert(
 }
 
 double SpeechRecognizerImpl::OnDataConverter::ProvideInput(
-    AudioBus* dest, base::TimeDelta buffer_delay) {
+    AudioBus* dest,
+    uint32_t frames_delayed) {
   // Read from the input bus to feed the converter.
   input_bus_->CopyTo(dest);
   // Indicate that the recorded audio has in fact been used by the converter.
@@ -196,7 +200,7 @@ SpeechRecognizerImpl::SpeechRecognizerImpl(
   } else {
     // In continuous recognition, the session is automatically ended after 15
     // seconds of silence.
-    const int64 cont_timeout_us = base::Time::kMicrosecondsPerSecond * 15;
+    const int64_t cont_timeout_us = base::Time::kMicrosecondsPerSecond * 15;
     endpointer_.set_speech_input_complete_silence_length(cont_timeout_us);
     endpointer_.set_long_speech_length(0);  // Use only a single timeout.
   }
@@ -789,7 +793,8 @@ void SpeechRecognizerImpl::CloseAudioControllerAsynchronously() {
   // Close has completed (in the audio thread) and automatically destroy it
   // afterwards (upon return from OnAudioClosed).
   audio_controller_->Close(base::Bind(&SpeechRecognizerImpl::OnAudioClosed,
-                                      this, audio_controller_));
+                                      this,
+                                      base::RetainedRef(audio_controller_)));
   audio_controller_ = NULL;  // The controller is still refcounted by Bind.
   audio_log_->OnClosed(0);
 }
@@ -830,6 +835,9 @@ SpeechRecognizerImpl::FSMEventArgs::FSMEventArgs(FSMEvent event_value)
       audio_data(NULL),
       engine_error(SPEECH_RECOGNITION_ERROR_NONE) {
 }
+
+SpeechRecognizerImpl::FSMEventArgs::FSMEventArgs(const FSMEventArgs& other) =
+    default;
 
 SpeechRecognizerImpl::FSMEventArgs::~FSMEventArgs() {
 }

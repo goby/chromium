@@ -33,30 +33,34 @@
 
 namespace blink {
 
-class ContextLifecycleNotifier;
+class LocalFrame;
 
-class CORE_EXPORT ContextLifecycleObserver : public LifecycleObserver<ExecutionContext, ContextLifecycleObserver, ContextLifecycleNotifier> {
-public:
-    ExecutionContext* executionContext() const { return lifecycleContext(); }
+class CORE_EXPORT ContextLifecycleObserver
+    : public LifecycleObserver<ExecutionContext, ContextLifecycleObserver> {
+ public:
+  // Returns null after the observing context is detached.
+  ExecutionContext* getExecutionContext() const { return lifecycleContext(); }
 
-    enum Type {
-        GenericType,
-        ActiveDOMObjectType,
-    };
+  // Returns null after the observing context is detached or if the context
+  // doesn't have a frame (i.e., if the context is not a Document).
+  LocalFrame* frame() const;
 
-    Type observerType() const { return m_observerType; }
+  enum Type {
+    GenericType,
+    SuspendableObjectType,
+  };
 
-protected:
-    explicit ContextLifecycleObserver(ExecutionContext* executionContext, Type type = GenericType)
-        : LifecycleObserver(executionContext)
-        , m_observerType(type)
-    {
-    }
+  Type observerType() const { return m_observerType; }
 
-private:
-    Type m_observerType;
+ protected:
+  explicit ContextLifecycleObserver(ExecutionContext* executionContext,
+                                    Type type = GenericType)
+      : LifecycleObserver(executionContext), m_observerType(type) {}
+
+ private:
+  Type m_observerType;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // ContextLifecycleObserver_h
+#endif  // ContextLifecycleObserver_h

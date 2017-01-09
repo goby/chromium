@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include <list>
+#include <memory>
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
-#include "content/browser/speech/google_streaming_remote_engine.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "content/browser/speech/speech_recognition_engine.h"
 #include "content/browser/speech/speech_recognition_manager_impl.h"
 #include "content/browser/speech/speech_recognizer_impl.h"
 #include "content/public/browser/browser_thread.h"
@@ -75,7 +79,7 @@ class SpeechRecognitionBrowserTest :
     const int capture_packet_interval_ms =
         (1000 * controller->audio_parameters().frames_per_buffer()) /
         controller->audio_parameters().sample_rate();
-    ASSERT_EQ(GoogleStreamingRemoteEngine::kAudioPacketIntervalMs,
+    ASSERT_EQ(SpeechRecognitionEngine::kAudioPacketIntervalMs,
         capture_packet_interval_ms);
     FeedAudioController(500 /* ms */, /*noise=*/ false);
     FeedAudioController(1000 /* ms */, /*noise=*/ true);
@@ -116,9 +120,10 @@ class SpeechRecognitionBrowserTest :
 
   void SetUpOnMainThread() override {
     ASSERT_TRUE(SpeechRecognitionManagerImpl::GetInstance());
-    SpeechRecognizerImpl::SetAudioManagerForTesting(
-        new media::MockAudioManager(BrowserThread::GetMessageLoopProxyForThread(
-            BrowserThread::IO)));
+    media::AudioManager::StartHangMonitorIfNeeded(
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO));
+    SpeechRecognizerImpl::SetAudioManagerForTesting(new media::MockAudioManager(
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)));
   }
 
   void TearDownOnMainThread() override {
@@ -137,16 +142,16 @@ class SpeechRecognitionBrowserTest :
       bool fill_with_noise) {
     DCHECK(controller.get());
     const media::AudioParameters& audio_params = controller->audio_parameters();
-    scoped_ptr<uint8[]> audio_buffer(new uint8[buffer_size]);
+    std::unique_ptr<uint8_t[]> audio_buffer(new uint8_t[buffer_size]);
     if (fill_with_noise) {
       for (size_t i = 0; i < buffer_size; ++i)
-        audio_buffer[i] = static_cast<uint8>(127 * sin(i * 3.14F /
-            (16 * buffer_size)));
+        audio_buffer[i] =
+            static_cast<uint8_t>(127 * sin(i * 3.14F / (16 * buffer_size)));
     } else {
       memset(audio_buffer.get(), 0, buffer_size);
     }
 
-    scoped_ptr<media::AudioBus> audio_bus =
+    std::unique_ptr<media::AudioBus> audio_bus =
         media::AudioBus::Create(audio_params);
     audio_bus->FromInterleaved(&audio_buffer.get()[0],
                                audio_bus->frames(),
@@ -185,7 +190,7 @@ class SpeechRecognitionBrowserTest :
   }
 
   StreamingServerState streaming_server_state_;
-  scoped_ptr<MockGoogleStreamingServer> mock_streaming_server_;
+  std::unique_ptr<MockGoogleStreamingServer> mock_streaming_server_;
   media::TestAudioInputControllerFactory test_audio_input_controller_factory_;
 };
 

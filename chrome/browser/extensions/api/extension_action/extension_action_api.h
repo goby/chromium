@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/extension_action.h"
@@ -77,16 +78,6 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
   void SetBrowserActionVisibility(const std::string& extension_id,
                                   bool visible);
 
-  // BrowserContextKeyedAPI implementation.
-  // Executes the action of the given |extension| on the |browser|'s active
-  // web contents. If |grant_tab_permissions| is true, this will also grant
-  // activeTab to the extension (so this should only be done if this is through
-  // a direct user action). Returns the action that should be taken.
-  ExtensionAction::ShowAction ExecuteExtensionAction(
-      const Extension* extension,
-      Browser* browser,
-      bool grant_active_tab_permissions);
-
   // Opens the popup for the given |extension| in the given |browser|'s window.
   // If |grant_active_tab_permissions| is true, this grants the extension
   // activeTab (so this should only be done if this is through a direct user
@@ -95,15 +86,14 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
                                 Browser* browser,
                                 bool grant_active_tab_permissions);
 
-  // Returns true if the given |extension| wants to run on the tab pointed to
-  // by |web_contents|.
-  bool ExtensionWantsToRun(const Extension* extension,
-                           content::WebContents* web_contents);
-
   // Notifies that there has been a change in the given |extension_action|.
   void NotifyChange(ExtensionAction* extension_action,
                     content::WebContents* web_contents,
                     content::BrowserContext* browser_context);
+
+  // Dispatches the onClicked event for extension that owns the given action.
+  void DispatchExtensionActionClicked(const ExtensionAction& extension_action,
+                                      content::WebContents* web_contents);
 
   // Clears the values for all ExtensionActions for the tab associated with the
   // given |web_contents| (and signals that page actions changed).
@@ -128,12 +118,7 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
                                 const std::string& extension_id,
                                 events::HistogramValue histogram_value,
                                 const std::string& event_name,
-                                scoped_ptr<base::ListValue> event_args);
-
-  // Called when either a browser or page action is executed. Figures out which
-  // event to send based on what the extension wants.
-  void ExtensionActionExecuted(const ExtensionAction& extension_action,
-                               content::WebContents* web_contents);
+                                std::unique_ptr<base::ListValue> event_args);
 
   // BrowserContextKeyedAPI implementation.
   void Shutdown() override;
@@ -155,7 +140,7 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
 // tabIds while browserAction's are optional, they have different internal
 // browser notification requirements, and not all functions are defined for all
 // APIs).
-class ExtensionActionFunction : public ChromeSyncExtensionFunction {
+class ExtensionActionFunction : public UIThreadExtensionFunction {
  public:
   static bool ParseCSSColorString(const std::string& color_string,
                                   SkColor* result);
@@ -163,12 +148,13 @@ class ExtensionActionFunction : public ChromeSyncExtensionFunction {
  protected:
   ExtensionActionFunction();
   ~ExtensionActionFunction() override;
-  bool RunSync() override;
-  virtual bool RunExtensionAction() = 0;
+  ResponseAction Run() override;
+
+  virtual ResponseAction RunExtensionAction() = 0;
 
   bool ExtractDataFromArguments();
   void NotifyChange();
-  bool SetVisible(bool visible);
+  void SetVisible(bool visible);
 
   // All the extension action APIs take a single argument called details that
   // is a dictionary.
@@ -196,42 +182,42 @@ class ExtensionActionFunction : public ChromeSyncExtensionFunction {
 class ExtensionActionShowFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionShowFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // hide
 class ExtensionActionHideFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionHideFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // setIcon
 class ExtensionActionSetIconFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionSetIconFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // setTitle
 class ExtensionActionSetTitleFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionSetTitleFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // setPopup
 class ExtensionActionSetPopupFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionSetPopupFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // setBadgeText
 class ExtensionActionSetBadgeTextFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionSetBadgeTextFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // setBadgeBackgroundColor
@@ -239,28 +225,28 @@ class ExtensionActionSetBadgeBackgroundColorFunction
     : public ExtensionActionFunction {
  protected:
   ~ExtensionActionSetBadgeBackgroundColorFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // getTitle
 class ExtensionActionGetTitleFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionGetTitleFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // getPopup
 class ExtensionActionGetPopupFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionGetPopupFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // getBadgeText
 class ExtensionActionGetBadgeTextFunction : public ExtensionActionFunction {
  protected:
   ~ExtensionActionGetBadgeTextFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 // getBadgeBackgroundColor
@@ -268,7 +254,7 @@ class ExtensionActionGetBadgeBackgroundColorFunction
     : public ExtensionActionFunction {
  protected:
   ~ExtensionActionGetBadgeBackgroundColorFunction() override {}
-  bool RunExtensionAction() override;
+  ResponseAction RunExtensionAction() override;
 };
 
 //

@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "cc/debug/lap_timer.h"
 #include "cc/raster/texture_compressor.h"
@@ -75,7 +77,7 @@ class TextureCompressorPerfTest
 
  protected:
   LapTimer timer_;
-  scoped_ptr<TextureCompressor> compressor_;
+  std::unique_ptr<TextureCompressor> compressor_;
   uint8_t src_[kImageSizeInBytes];
   uint8_t dst_[kImageSizeInBytes];
 };

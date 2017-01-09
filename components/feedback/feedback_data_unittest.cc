@@ -4,15 +4,17 @@
 
 #include "components/feedback/feedback_data.h"
 
+#include <memory>
 #include <set>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/testing_pref_service.h"
 #include "base/run_loop.h"
 #include "components/feedback/feedback_uploader.h"
 #include "components/feedback/feedback_uploader_factory.h"
 #include "components/keyed_service/core/keyed_service.h"
+#include "components/prefs/testing_pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread.h"
@@ -25,9 +27,6 @@ const char kHistograms[] = "";
 const char kImageData[] = "";
 const char kFileData[] = "";
 
-const base::TimeDelta kRetryDelayForTest =
-    base::TimeDelta::FromMilliseconds(100);
-
 using content::BrowserThread;
 
 class MockUploader : public feedback::FeedbackUploader, public KeyedService {
@@ -39,15 +38,15 @@ class MockUploader : public feedback::FeedbackUploader, public KeyedService {
   MOCK_METHOD1(DispatchReport, void(const std::string&));
 };
 
-scoped_ptr<KeyedService> CreateFeedbackUploaderService(
+std::unique_ptr<KeyedService> CreateFeedbackUploaderService(
     content::BrowserContext* context) {
-  scoped_ptr<MockUploader> uploader(new MockUploader(context));
+  std::unique_ptr<MockUploader> uploader(new MockUploader(context));
   EXPECT_CALL(*uploader, DispatchReport(testing::_)).Times(1);
-  return uploader.Pass();
+  return std::move(uploader);
 }
 
-scoped_ptr<std::string> MakeScoped(const char* str) {
-  return scoped_ptr<std::string>(new std::string(str));
+std::unique_ptr<std::string> MakeScoped(const char* str) {
+  return base::MakeUnique<std::string>(str);
 }
 
 }  // namespace
@@ -92,18 +91,18 @@ class FeedbackDataTest : public testing::Test {
   }
 
   base::Closure quit_closure_;
-  scoped_ptr<base::RunLoop> run_loop_;
-  scoped_ptr<content::TestBrowserContext> context_;
-  scoped_ptr<PrefService> prefs_;
+  std::unique_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<content::TestBrowserContext> context_;
+  std::unique_ptr<PrefService> prefs_;
   scoped_refptr<FeedbackData> data_;
   base::MessageLoop message_loop_;
   content::TestBrowserThread ui_thread_;
 };
 
 TEST_F(FeedbackDataTest, ReportSending) {
-  data_->SetAndCompressHistograms(MakeScoped(kHistograms).Pass());
-  data_->set_image(MakeScoped(kImageData).Pass());
-  data_->AttachAndCompressFileData(MakeScoped(kFileData).Pass());
+  data_->SetAndCompressHistograms(MakeScoped(kHistograms));
+  data_->set_image(MakeScoped(kImageData));
+  data_->AttachAndCompressFileData(MakeScoped(kFileData));
   Send();
   RunMessageLoop();
   EXPECT_TRUE(data_->IsDataComplete());

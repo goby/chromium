@@ -6,6 +6,7 @@
 
 #include <set>
 #include <string>
+#include <utility>
 
 #include "chrome/browser/devtools/devtools_network_controller.h"
 #include "chrome/browser/devtools/devtools_network_transaction.h"
@@ -30,14 +31,14 @@ DevToolsNetworkTransactionFactory::~DevToolsNetworkTransactionFactory() {
 
 int DevToolsNetworkTransactionFactory::CreateTransaction(
     net::RequestPriority priority,
-    scoped_ptr<net::HttpTransaction>* trans) {
-  scoped_ptr<net::HttpTransaction> network_transaction;
+    std::unique_ptr<net::HttpTransaction>* trans) {
+  std::unique_ptr<net::HttpTransaction> network_transaction;
   int rv = network_layer_->CreateTransaction(priority, &network_transaction);
   if (rv != net::OK) {
     return rv;
   }
-  trans->reset(
-      new DevToolsNetworkTransaction(controller_, network_transaction.Pass()));
+  trans->reset(new DevToolsNetworkTransaction(controller_,
+                                              std::move(network_transaction)));
   return net::OK;
 }
 

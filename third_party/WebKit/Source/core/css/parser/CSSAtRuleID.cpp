@@ -2,85 +2,86 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "core/css/parser/CSSAtRuleID.h"
 
-#include "core/css/parser/CSSParserString.h"
 #include "core/frame/UseCounter.h"
 
 namespace blink {
 
-CSSAtRuleID cssAtRuleID(const CSSParserString& name)
-{
-    if (name.equalIgnoringCase("charset"))
-        return CSSAtRuleCharset;
-    if (name.equalIgnoringCase("font-face"))
-        return CSSAtRuleFontFace;
-    if (name.equalIgnoringCase("import"))
-        return CSSAtRuleImport;
-    if (name.equalIgnoringCase("keyframes"))
-        return CSSAtRuleKeyframes;
-    if (name.equalIgnoringCase("media"))
-        return CSSAtRuleMedia;
-    if (name.equalIgnoringCase("namespace"))
-        return CSSAtRuleNamespace;
-    if (name.equalIgnoringCase("page"))
-        return CSSAtRulePage;
-    if (name.equalIgnoringCase("supports"))
-        return CSSAtRuleSupports;
-    if (name.equalIgnoringCase("viewport"))
-        return CSSAtRuleViewport;
-    if (name.equalIgnoringCase("-webkit-keyframes"))
-        return CSSAtRuleWebkitKeyframes;
-    return CSSAtRuleInvalid;
+CSSAtRuleID cssAtRuleID(StringView name) {
+  if (equalIgnoringASCIICase(name, "charset"))
+    return CSSAtRuleCharset;
+  if (equalIgnoringASCIICase(name, "font-face"))
+    return CSSAtRuleFontFace;
+  if (equalIgnoringASCIICase(name, "import"))
+    return CSSAtRuleImport;
+  if (equalIgnoringASCIICase(name, "keyframes"))
+    return CSSAtRuleKeyframes;
+  if (equalIgnoringASCIICase(name, "media"))
+    return CSSAtRuleMedia;
+  if (equalIgnoringASCIICase(name, "namespace"))
+    return CSSAtRuleNamespace;
+  if (equalIgnoringASCIICase(name, "page"))
+    return CSSAtRulePage;
+  if (equalIgnoringASCIICase(name, "supports"))
+    return CSSAtRuleSupports;
+  if (equalIgnoringASCIICase(name, "viewport"))
+    return CSSAtRuleViewport;
+  if (equalIgnoringASCIICase(name, "-webkit-keyframes"))
+    return CSSAtRuleWebkitKeyframes;
+  if (equalIgnoringASCIICase(name, "apply"))
+    return CSSAtRuleApply;
+  return CSSAtRuleInvalid;
 }
 
-void countAtRule(UseCounter* useCounter, CSSAtRuleID ruleId)
-{
-    ASSERT(useCounter);
-    UseCounter::Feature feature;
+void countAtRule(UseCounter* useCounter, CSSAtRuleID ruleId) {
+  ASSERT(useCounter);
+  UseCounter::Feature feature;
 
-    switch (ruleId) {
+  switch (ruleId) {
     case CSSAtRuleCharset:
-        feature = UseCounter::CSSAtRuleCharset;
-        break;
+      feature = UseCounter::CSSAtRuleCharset;
+      break;
     case CSSAtRuleFontFace:
-        feature = UseCounter::CSSAtRuleFontFace;
-        break;
+      feature = UseCounter::CSSAtRuleFontFace;
+      break;
     case CSSAtRuleImport:
-        feature = UseCounter::CSSAtRuleImport;
-        break;
+      feature = UseCounter::CSSAtRuleImport;
+      break;
     case CSSAtRuleKeyframes:
-        feature = UseCounter::CSSAtRuleKeyframes;
-        break;
+      feature = UseCounter::CSSAtRuleKeyframes;
+      break;
     case CSSAtRuleMedia:
-        feature = UseCounter::CSSAtRuleMedia;
-        break;
+      feature = UseCounter::CSSAtRuleMedia;
+      break;
     case CSSAtRuleNamespace:
-        feature = UseCounter::CSSAtRuleNamespace;
-        break;
+      feature = UseCounter::CSSAtRuleNamespace;
+      break;
     case CSSAtRulePage:
-        feature = UseCounter::CSSAtRulePage;
-        break;
+      feature = UseCounter::CSSAtRulePage;
+      break;
     case CSSAtRuleSupports:
-        feature = UseCounter::CSSAtRuleSupports;
-        break;
+      feature = UseCounter::CSSAtRuleSupports;
+      break;
     case CSSAtRuleViewport:
-        feature = UseCounter::CSSAtRuleViewport;
-        break;
+      feature = UseCounter::CSSAtRuleViewport;
+      break;
 
     case CSSAtRuleWebkitKeyframes:
-        feature = UseCounter::CSSAtRuleWebkitKeyframes;
-        break;
+      feature = UseCounter::CSSAtRuleWebkitKeyframes;
+      break;
+
+    case CSSAtRuleApply:
+      feature = UseCounter::CSSAtRuleApply;
+      break;
 
     case CSSAtRuleInvalid:
-        // fallthrough
+    // fallthrough
     default:
-        ASSERT_NOT_REACHED();
-        return;
-    }
-    useCounter->count(feature);
+      ASSERT_NOT_REACHED();
+      return;
+  }
+  useCounter->count(feature);
 }
 
-} // namespace blink
-
+}  // namespace blink

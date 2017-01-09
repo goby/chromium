@@ -4,9 +4,10 @@
 
 #include "chrome/common/extensions/manifest_handlers/settings_overrides_handler.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+#include <utility>
+
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
 #include "extensions/common/error_utils.h"
@@ -29,24 +30,24 @@ namespace {
 
 const char kWwwPrefix[] = "www.";
 
-scoped_ptr<GURL> CreateManifestURL(const std::string& url) {
-  scoped_ptr<GURL> manifest_url(new GURL(url));
+std::unique_ptr<GURL> CreateManifestURL(const std::string& url) {
+  std::unique_ptr<GURL> manifest_url(new GURL(url));
   if (!manifest_url->is_valid() ||
       !manifest_url->SchemeIsHTTPOrHTTPS())
-    return scoped_ptr<GURL>();
-  return manifest_url.Pass();
+    return std::unique_ptr<GURL>();
+  return manifest_url;
 }
 
-scoped_ptr<GURL> ParseHomepage(const ChromeSettingsOverrides& overrides,
-                               base::string16* error) {
+std::unique_ptr<GURL> ParseHomepage(const ChromeSettingsOverrides& overrides,
+                                    base::string16* error) {
   if (!overrides.homepage)
-    return scoped_ptr<GURL>();
-  scoped_ptr<GURL> manifest_url = CreateManifestURL(*overrides.homepage);
+    return std::unique_ptr<GURL>();
+  std::unique_ptr<GURL> manifest_url = CreateManifestURL(*overrides.homepage);
   if (!manifest_url) {
     *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
         manifest_errors::kInvalidHomepageOverrideURL, *overrides.homepage);
   }
-  return manifest_url.Pass();
+  return manifest_url;
 }
 
 std::vector<GURL> ParseStartupPage(const ChromeSettingsOverrides& overrides,
@@ -58,7 +59,7 @@ std::vector<GURL> ParseStartupPage(const ChromeSettingsOverrides& overrides,
   for (std::vector<std::string>::const_iterator i =
        overrides.startup_pages->begin(); i != overrides.startup_pages->end();
        ++i) {
-    scoped_ptr<GURL> manifest_url = CreateManifestURL(*i);
+    std::unique_ptr<GURL> manifest_url = CreateManifestURL(*i);
     if (!manifest_url) {
       *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
           manifest_errors::kInvalidStartupOverrideURL, *i);
@@ -70,34 +71,34 @@ std::vector<GURL> ParseStartupPage(const ChromeSettingsOverrides& overrides,
   return urls;
 }
 
-scoped_ptr<ChromeSettingsOverrides::Search_provider> ParseSearchEngine(
+std::unique_ptr<ChromeSettingsOverrides::Search_provider> ParseSearchEngine(
     ChromeSettingsOverrides* overrides,
     base::string16* error) {
   if (!overrides->search_provider)
-    return scoped_ptr<ChromeSettingsOverrides::Search_provider>();
+    return std::unique_ptr<ChromeSettingsOverrides::Search_provider>();
   if (!CreateManifestURL(overrides->search_provider->search_url)) {
     *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
         manifest_errors::kInvalidSearchEngineURL,
         overrides->search_provider->search_url);
-    return scoped_ptr<ChromeSettingsOverrides::Search_provider>();
+    return std::unique_ptr<ChromeSettingsOverrides::Search_provider>();
   }
   if (overrides->search_provider->prepopulated_id)
-    return overrides->search_provider.Pass();
+    return std::move(overrides->search_provider);
   if (!overrides->search_provider->name ||
       !overrides->search_provider->keyword ||
       !overrides->search_provider->encoding ||
       !overrides->search_provider->favicon_url) {
     *error =
         base::ASCIIToUTF16(manifest_errors::kInvalidSearchEngineMissingKeys);
-    return scoped_ptr<ChromeSettingsOverrides::Search_provider>();
+    return std::unique_ptr<ChromeSettingsOverrides::Search_provider>();
   }
   if (!CreateManifestURL(*overrides->search_provider->favicon_url)) {
     *error = extensions::ErrorUtils::FormatErrorMessageUTF16(
         manifest_errors::kInvalidSearchEngineURL,
         *overrides->search_provider->favicon_url);
-    return scoped_ptr<ChromeSettingsOverrides::Search_provider>();
+    return std::unique_ptr<ChromeSettingsOverrides::Search_provider>();
   }
-  return overrides->search_provider.Pass();
+  return std::move(overrides->search_provider);
 }
 
 // A www. prefix is not informative and thus not worth the limited real estate
@@ -129,12 +130,12 @@ bool SettingsOverridesHandler::Parse(Extension* extension,
                                      base::string16* error) {
   const base::Value* dict = NULL;
   CHECK(extension->manifest()->Get(manifest_keys::kSettingsOverride, &dict));
-  scoped_ptr<ChromeSettingsOverrides> settings(
+  std::unique_ptr<ChromeSettingsOverrides> settings(
       ChromeSettingsOverrides::FromValue(*dict, error));
   if (!settings)
     return false;
 
-  scoped_ptr<SettingsOverrides> info(new SettingsOverrides);
+  std::unique_ptr<SettingsOverrides> info(new SettingsOverrides);
   info->homepage = ParseHomepage(*settings, error);
   info->search_engine = ParseSearchEngine(settings.get(), error);
   info->startup_pages = ParseStartupPage(*settings, error);
@@ -171,7 +172,7 @@ bool SettingsOverridesHandler::Parse(Extension* extension,
         extension,
         new SettingsOverrideAPIPermission(
             PermissionsInfo::GetInstance()->GetByID(APIPermission::kHomepage),
-            RemoveWwwPrefix(info->homepage.get()->GetContent())));
+            RemoveWwwPrefix(info->homepage->GetContent())));
   }
   extension->SetManifestData(manifest_keys::kSettingsOverride,
                              info.release());

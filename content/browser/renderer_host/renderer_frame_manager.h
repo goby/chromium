@@ -5,10 +5,13 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_RENDERER_FRAME_MANAGER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_RENDERER_FRAME_MANAGER_H_
 
+#include <stddef.h>
+
 #include <list>
 #include <map>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "base/memory/memory_coordinator_client.h"
 #include "base/memory/memory_pressure_listener.h"
 #include "base/memory/singleton.h"
 #include "content/common/content_export.h"
@@ -29,7 +32,8 @@ class CONTENT_EXPORT RendererFrameManagerClient {
 // between a small set of tabs faster. The limit is a soft limit, because
 // clients can lock their frame to prevent it from being discarded, e.g. if the
 // tab is visible, or while capturing a screenshot.
-class CONTENT_EXPORT RendererFrameManager {
+class CONTENT_EXPORT RendererFrameManager :
+    public base::MemoryCoordinatorClient {
  public:
   static RendererFrameManager* GetInstance();
 
@@ -51,18 +55,24 @@ class CONTENT_EXPORT RendererFrameManager {
   friend class RenderWidgetHostViewAuraTest;
 
   RendererFrameManager();
-  ~RendererFrameManager();
+  ~RendererFrameManager() override;
+
+  // base::MemoryCoordinatorClient implementation:
+  void OnMemoryStateChange(base::MemoryState state) override;
+
   void CullUnlockedFrames(size_t saved_frame_limit);
 
   // React on memory pressure events to adjust the number of cached frames.
   void OnMemoryPressure(
       base::MemoryPressureListener::MemoryPressureLevel memory_pressure_level);
 
+  void PurgeMemory(int percentage);
+
   friend struct base::DefaultSingletonTraits<RendererFrameManager>;
 
   // Listens for system under pressure notifications and adjusts number of
   // cached frames accordingly.
-  base::MemoryPressureListener memory_pressure_listener_;
+  std::unique_ptr<base::MemoryPressureListener> memory_pressure_listener_;
 
   std::map<RendererFrameManagerClient*, size_t> locked_frames_;
   std::list<RendererFrameManagerClient*> unlocked_frames_;

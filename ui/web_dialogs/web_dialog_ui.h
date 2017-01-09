@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "content/public/browser/web_contents_delegate.h"
 #include "content/public/browser/web_ui_controller.h"
@@ -18,12 +19,6 @@
 
 namespace content {
 class WebContents;
-class WebUIMessageHandler;
-struct ContextMenuParams;
-}
-
-namespace gfx {
-class Size;
 }
 
 namespace ui {
@@ -68,7 +63,7 @@ class WEB_DIALOGS_EXPORT WebDialogUI : public content::WebUIController {
 
  private:
   // WebUIController
-  void RenderViewCreated(content::RenderViewHost* render_view_host) override;
+  void RenderFrameCreated(content::RenderFrameHost* render_frame_host) override;
 
   // Gets the delegate for the WebContent set with SetDelegate.
   static WebDialogDelegate* GetDelegate(content::WebContents* web_contents);

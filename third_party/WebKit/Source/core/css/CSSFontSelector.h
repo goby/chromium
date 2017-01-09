@@ -28,7 +28,6 @@
 
 #include "core/CoreExport.h"
 #include "core/css/FontFaceCache.h"
-#include "core/css/FontLoader.h"
 #include "platform/fonts/FontSelector.h"
 #include "platform/fonts/GenericFontFamilySettings.h"
 #include "platform/heap/Handle.h"
@@ -43,61 +42,59 @@ class Document;
 class FontDescription;
 
 class CORE_EXPORT CSSFontSelector : public FontSelector {
-public:
-    static PassRefPtrWillBeRawPtr<CSSFontSelector> create(Document* document)
-    {
-        return adoptRefWillBeNoop(new CSSFontSelector(document));
-    }
-    ~CSSFontSelector() override;
+ public:
+  static CSSFontSelector* create(Document* document) {
+    return new CSSFontSelector(document);
+  }
+  ~CSSFontSelector() override;
 
-    unsigned version() const override { return m_fontFaceCache.version(); }
+  unsigned version() const override { return m_fontFaceCache.version(); }
 
-    PassRefPtr<FontData> getFontData(const FontDescription&, const AtomicString&) override;
-    void willUseFontData(const FontDescription&, const AtomicString& family, UChar32) override;
-    void willUseRange(const FontDescription&, const AtomicString& familyName, const FontDataRange&) override;
-    bool isPlatformFontAvailable(const FontDescription&, const AtomicString& family);
+  PassRefPtr<FontData> getFontData(const FontDescription&,
+                                   const AtomicString&) override;
+  void willUseFontData(const FontDescription&,
+                       const AtomicString& family,
+                       const String& text) override;
+  void willUseRange(const FontDescription&,
+                    const AtomicString& familyName,
+                    const FontDataForRangeSet&) override;
+  bool isPlatformFontAvailable(const FontDescription&,
+                               const AtomicString& family);
 
-#if !ENABLE(OILPAN)
-    void clearDocument();
-#endif
+  void fontFaceInvalidated();
 
-    void fontFaceInvalidated();
+  // FontCacheClient implementation
+  void fontCacheInvalidated() override;
 
-    // FontCacheClient implementation
-    void fontCacheInvalidated() override;
+  void registerForInvalidationCallbacks(CSSFontSelectorClient*);
+  void unregisterForInvalidationCallbacks(CSSFontSelectorClient*);
 
-    void registerForInvalidationCallbacks(CSSFontSelectorClient*);
-#if !ENABLE(OILPAN)
-    void unregisterForInvalidationCallbacks(CSSFontSelectorClient*);
-#endif
+  Document* document() const { return m_document; }
+  FontFaceCache* fontFaceCache() { return &m_fontFaceCache; }
 
-    Document* document() const { return m_document; }
-    FontFaceCache* fontFaceCache() { return &m_fontFaceCache; }
-    FontLoader* fontLoader() { return m_fontLoader.get(); }
+  const GenericFontFamilySettings& genericFontFamilySettings() const {
+    return m_genericFontFamilySettings;
+  }
+  void updateGenericFontFamilySettings(Document&);
 
-    const GenericFontFamilySettings& genericFontFamilySettings() const { return m_genericFontFamilySettings; }
-    void updateGenericFontFamilySettings(Document&);
+  DECLARE_VIRTUAL_TRACE();
 
-    DECLARE_VIRTUAL_TRACE();
+ protected:
+  explicit CSSFontSelector(Document*);
 
-protected:
-    explicit CSSFontSelector(Document*);
+  void dispatchInvalidationCallbacks();
 
-    void dispatchInvalidationCallbacks();
-
-private:
-    // FIXME: Oilpan: Ideally this should just be a traced Member but that will
-    // currently leak because ComputedStyle and its data are not on the heap.
-    // See crbug.com/383860 for details.
-    RawPtrWillBeWeakMember<Document> m_document;
-    // FIXME: Move to Document or StyleEngine.
-    FontFaceCache m_fontFaceCache;
-    WillBeHeapHashSet<RawPtrWillBeWeakMember<CSSFontSelectorClient>> m_clients;
-
-    RefPtrWillBeMember<FontLoader> m_fontLoader;
-    GenericFontFamilySettings m_genericFontFamilySettings;
+ private:
+  // TODO(Oilpan): Ideally this should just be a traced Member but that will
+  // currently leak because ComputedStyle and its data are not on the heap.
+  // See crbug.com/383860 for details.
+  WeakMember<Document> m_document;
+  // FIXME: Move to Document or StyleEngine.
+  FontFaceCache m_fontFaceCache;
+  HeapHashSet<WeakMember<CSSFontSelectorClient>> m_clients;
+  GenericFontFamilySettings m_genericFontFamilySettings;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSFontSelector_h
+#endif  // CSSFontSelector_h

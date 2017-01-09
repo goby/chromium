@@ -6,13 +6,15 @@
 
 #include "base/command_line.h"
 #include "base/message_loop/message_loop.h"
+#include "build/build_config.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/compositor_switches.h"
+#include "ui/compositor/layer.h"
 #include "ui/gfx/gfx_paths.h"
 #include "ui/gl/test/gl_surface_test_support.h"
 
 #if defined(OS_WIN)
-#include "ui/gfx/win/dpi.h"
+#include "ui/display/win/dpi.h"
 #endif
 
 namespace ui {
@@ -25,12 +27,12 @@ CompositorTestSuite::~CompositorTestSuite() {}
 
 void CompositorTestSuite::Initialize() {
   base::TestSuite::Initialize();
-  gfx::GLSurfaceTestSupport::InitializeOneOff();
+  gl::GLSurfaceTestSupport::InitializeOneOff();
 
   gfx::RegisterPathProvider();
 
 #if defined(OS_WIN)
-  gfx::InitDeviceScaleFactor(1.0f);
+  display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
 
   message_loop_.reset(new base::MessageLoopForUI);

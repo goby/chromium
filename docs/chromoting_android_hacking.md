@@ -21,7 +21,7 @@ display log messages to the `LogCat` pane.
 
 ### Eclipse
 
-1.  Go to http://developer.android.com/sdk/index.html and click "Download the
+1.  Go to https://developer.android.com/sdk/index.html and click "Download the
     SDK ADT Bundle for Linux"
 1.  Configure eclipse
     1.  Select General > Workspace from the tree on the left.
@@ -72,8 +72,6 @@ display log messages to the `LogCat` pane.
 <classpathentry kind="src" path="mojo/public/java/src"/>
 <classpathentry kind="src" path="mojo/android/system/src"/>
 <classpathentry kind="src" path="mojo/android/javatests/src"/>
-<classpathentry kind="src" path="mojo/shell/android/apk/src"/>
-<classpathentry kind="src" path="mojo/services/native_viewport/android/src"/>
 <classpathentry kind="src" path="testing/android/java/src"/>
 <classpathentry kind="src" path="printing/android/java/src"/>
 <classpathentry kind="src" path="tools/binary_size/java/src"/>

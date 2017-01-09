@@ -4,6 +4,8 @@
 
 #include "extensions/browser/api/web_request/form_data_parser.h"
 
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/lazy_instance.h"
@@ -13,7 +15,7 @@
 #include "base/values.h"
 #include "net/base/escape.h"
 #include "net/url_request/url_request.h"
-#include "third_party/re2/re2/re2.h"
+#include "third_party/re2/src/re2/re2.h"
 
 using base::DictionaryValue;
 using base::ListValue;
@@ -35,7 +37,9 @@ const char kEscapeClosingQuote[] = "\\\\E";
 // A wrapper struct for static RE2 objects to be held as LazyInstance.
 struct Patterns {
   Patterns();
-  ~Patterns();
+  // Patterns is only instantiated as a leaky LazyInstance, so the destructor
+  // is never called.
+  ~Patterns() = delete;
   const RE2 transfer_padding_pattern;
   const RE2 crlf_pattern;
   const RE2 closing_pattern;
@@ -67,8 +71,6 @@ Patterns::Patterns()
                           kCharacterPattern +
                           "*)") {
 }
-
-Patterns::~Patterns() {}
 
 base::LazyInstance<Patterns>::Leaky g_patterns = LAZY_INSTANCE_INITIALIZER;
 
@@ -294,7 +296,7 @@ FormDataParser::Result::~Result() {}
 FormDataParser::~FormDataParser() {}
 
 // static
-scoped_ptr<FormDataParser> FormDataParser::Create(
+std::unique_ptr<FormDataParser> FormDataParser::Create(
     const net::URLRequest& request) {
   std::string value;
   const bool found = request.extra_request_headers().GetHeader(
@@ -303,7 +305,7 @@ scoped_ptr<FormDataParser> FormDataParser::Create(
 }
 
 // static
-scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
+std::unique_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
     const std::string* content_type_header) {
   enum ParserChoice {URL_ENCODED, MULTIPART, ERROR_CHOICE};
   ParserChoice choice = ERROR_CHOICE;
@@ -324,7 +326,7 @@ scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
       size_t offset = content_type_header->find(kBoundaryString);
       if (offset == std::string::npos) {
         // Malformed header.
-        return scoped_ptr<FormDataParser>();
+        return std::unique_ptr<FormDataParser>();
       }
       offset += sizeof(kBoundaryString) - 1;
       boundary = content_type_header->substr(
@@ -337,20 +339,22 @@ scoped_ptr<FormDataParser> FormDataParser::CreateFromContentTypeHeader(
 
   switch (choice) {
     case URL_ENCODED:
-      return scoped_ptr<FormDataParser>(new FormDataParserUrlEncoded());
+      return std::unique_ptr<FormDataParser>(new FormDataParserUrlEncoded());
     case MULTIPART:
-      return scoped_ptr<FormDataParser>(new FormDataParserMultipart(boundary));
+      return std::unique_ptr<FormDataParser>(
+          new FormDataParserMultipart(boundary));
     case ERROR_CHOICE:
-      return scoped_ptr<FormDataParser>();
+      return std::unique_ptr<FormDataParser>();
   }
   NOTREACHED();  // Some compilers do not believe this is unreachable.
-  return scoped_ptr<FormDataParser>();
+  return std::unique_ptr<FormDataParser>();
 }
 
 FormDataParser::FormDataParser() {}
 
 const net::UnescapeRule::Type FormDataParserUrlEncoded::unescape_rules_ =
-    net::UnescapeRule::URL_SPECIAL_CHARS |
+    net::UnescapeRule::PATH_SEPARATORS |
+    net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
     net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS | net::UnescapeRule::SPACES |
     net::UnescapeRule::REPLACE_PLUS_WITH_SPACE;
 
@@ -517,8 +521,10 @@ bool FormDataParserMultipart::GetNextNameValue(Result* result) {
   }
 
   std::string unescaped_name = net::UnescapeURLComponent(
-      name.as_string(), net::UnescapeRule::URL_SPECIAL_CHARS |
-                            net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS);
+      name.as_string(),
+      net::UnescapeRule::PATH_SEPARATORS |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS |
+          net::UnescapeRule::SPOOFING_AND_CONTROL_CHARS);
   result->set_name(unescaped_name);
   result->set_value(value);
 

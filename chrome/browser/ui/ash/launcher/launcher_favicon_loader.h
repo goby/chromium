@@ -5,13 +5,13 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_LAUNCHER_FAVICON_LOADER_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_LAUNCHER_FAVICON_LOADER_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "content/public/common/favicon_url.h"
 
-class GURL;
 class SkBitmap;
 
 namespace internal {
@@ -52,7 +52,7 @@ class LauncherFaviconLoader {
 
  private:
   content::WebContents* web_contents_;
-  scoped_ptr<internal::FaviconRawBitmapHandler> favicon_handler_;
+  std::unique_ptr<internal::FaviconRawBitmapHandler> favicon_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(LauncherFaviconLoader);
 };

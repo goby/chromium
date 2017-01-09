@@ -5,9 +5,10 @@
 #ifndef PPAPI_PROXY_AUDIO_ENCODER_RESOURCE_H_
 #define PPAPI_PROXY_AUDIO_ENCODER_RESOURCE_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "ppapi/proxy/connection.h"
 #include "ppapi/proxy/plugin_resource.h"

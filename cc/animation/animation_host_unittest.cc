@@ -7,19 +7,27 @@
 #include "cc/animation/animation_id_provider.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/test/animation_test_common.h"
+#include "cc/test/animation_timelines_test_common.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace cc {
 namespace {
 
+class AnimationHostTest : public AnimationTimelinesTest {
+ public:
+  AnimationHostTest() {}
+  ~AnimationHostTest() override {}
+};
+
 // See AnimationPlayer tests on layer registration/unregistration in
 // animation_player_unittest.cc.
 
-TEST(AnimationHostTest, SyncTimelinesAddRemove) {
-  scoped_ptr<AnimationHost> host(AnimationHost::Create(ThreadInstance::MAIN));
-  scoped_ptr<AnimationHost> host_impl(
-      AnimationHost::Create(ThreadInstance::IMPL));
+TEST_F(AnimationHostTest, SyncTimelinesAddRemove) {
+  std::unique_ptr<AnimationHost> host(
+      AnimationHost::CreateForTesting(ThreadInstance::MAIN));
+  std::unique_ptr<AnimationHost> host_impl(
+      AnimationHost::CreateForTesting(ThreadInstance::IMPL));
 
   const int timeline_id = AnimationIdProvider::NextTimelineId();
   scoped_refptr<AnimationTimeline> timeline(
@@ -48,10 +56,11 @@ TEST(AnimationHostTest, SyncTimelinesAddRemove) {
   EXPECT_FALSE(timeline_impl->animation_host());
 }
 
-TEST(AnimationHostTest, ImplOnlyTimeline) {
-  scoped_ptr<AnimationHost> host(AnimationHost::Create(ThreadInstance::MAIN));
-  scoped_ptr<AnimationHost> host_impl(
-      AnimationHost::Create(ThreadInstance::IMPL));
+TEST_F(AnimationHostTest, ImplOnlyTimeline) {
+  std::unique_ptr<AnimationHost> host(
+      AnimationHost::CreateForTesting(ThreadInstance::MAIN));
+  std::unique_ptr<AnimationHost> host_impl(
+      AnimationHost::CreateForTesting(ThreadInstance::IMPL));
 
   const int timeline_id1 = AnimationIdProvider::NextTimelineId();
   const int timeline_id2 = AnimationIdProvider::NextTimelineId();
@@ -69,6 +78,32 @@ TEST(AnimationHostTest, ImplOnlyTimeline) {
 
   EXPECT_TRUE(host->GetTimelineById(timeline_id1));
   EXPECT_TRUE(host_impl->GetTimelineById(timeline_id2));
+}
+
+TEST_F(AnimationHostTest, ImplOnlyScrollAnimationUpdateTargetIfDetached) {
+  client_.RegisterElement(element_id_, ElementListType::ACTIVE);
+  client_impl_.RegisterElement(element_id_, ElementListType::PENDING);
+
+  gfx::ScrollOffset target_offset(0., 2.);
+  gfx::ScrollOffset current_offset(0., 1.);
+  host_impl_->ImplOnlyScrollAnimationCreate(element_id_, target_offset,
+                                            current_offset, base::TimeDelta());
+
+  gfx::Vector2dF scroll_delta(0, 0.5);
+  gfx::ScrollOffset max_scroll_offset(0., 3.);
+
+  base::TimeTicks time;
+
+  time += base::TimeDelta::FromSecondsD(0.1);
+  EXPECT_TRUE(host_impl_->ImplOnlyScrollAnimationUpdateTarget(
+      element_id_, scroll_delta, max_scroll_offset, time, base::TimeDelta()));
+
+  // Detach all players from layers and timelines.
+  host_impl_->ClearMutators();
+
+  time += base::TimeDelta::FromSecondsD(0.1);
+  EXPECT_FALSE(host_impl_->ImplOnlyScrollAnimationUpdateTarget(
+      element_id_, scroll_delta, max_scroll_offset, time, base::TimeDelta()));
 }
 
 }  // namespace

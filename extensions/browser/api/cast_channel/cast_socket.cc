@@ -7,14 +7,20 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/format_macros.h"
 #include "base/lazy_instance.h"
+#include "base/location.h"
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "extensions/browser/api/cast_channel/cast_auth_util.h"
 #include "extensions/browser/api/cast_channel/cast_framer.h"
@@ -26,10 +32,14 @@
 #include "net/base/address_list.h"
 #include "net/base/host_port_pair.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/cert/cert_verifier.h"
+#include "net/cert/cert_verify_result.h"
+#include "net/cert/ct_policy_enforcer.h"
+#include "net/cert/multi_log_ct_verifier.h"
 #include "net/cert/x509_certificate.h"
 #include "net/http/transport_security_state.h"
+#include "net/log/net_log.h"
+#include "net/log/net_log_source_type.h"
 #include "net/socket/client_socket_factory.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/ssl_client_socket.h"
@@ -38,10 +48,13 @@
 #include "net/ssl/ssl_config_service.h"
 #include "net/ssl/ssl_info.h"
 
+// Helper for logging data with remote host IP and authentication state.
 // Assumes |ip_endpoint_| of type net::IPEndPoint and |channel_auth_| of enum
 // type ChannelAuthType are available in the current scope.
-#define VLOG_WITH_CONNECTION(level) VLOG(level) << "[" << \
-    ip_endpoint_.ToString() << ", auth=" << channel_auth_ << "] "
+#define CONNECTION_INFO() \
+  "[" << ip_endpoint_.ToString() << ", auth=" << channel_auth_ << "] "
+#define VLOG_WITH_CONNECTION(level) VLOG(level) << CONNECTION_INFO()
+#define LOG_WITH_CONNECTION(level) LOG(level) << CONNECTION_INFO()
 
 namespace extensions {
 static base::LazyInstance<BrowserContextKeyedAPIFactory<
@@ -60,21 +73,28 @@ namespace api {
 namespace cast_channel {
 namespace {
 
-const int kMaxSelfSignedCertLifetimeInDays = 4;
-
-std::string FormatTimeForLogging(base::Time time) {
-  base::Time::Exploded exploded_time;
-  time.UTCExplode(&exploded_time);
-  return base::StringPrintf(
-      "%04d-%02d-%02d %02d:%02d:%02d.%03d UTC", exploded_time.year,
-      exploded_time.month, exploded_time.day_of_month, exploded_time.hour,
-      exploded_time.minute, exploded_time.second, exploded_time.millisecond);
-}
-
 bool IsTerminalState(proto::ConnectionState state) {
   return state == proto::CONN_STATE_FINISHED ||
          state == proto::CONN_STATE_ERROR || state == proto::CONN_STATE_TIMEOUT;
 }
+
+// Cert verifier which blindly accepts all certificates, regardless of validity.
+class FakeCertVerifier : public net::CertVerifier {
+ public:
+  FakeCertVerifier() {}
+  ~FakeCertVerifier() override {}
+
+  int Verify(const RequestParams& params,
+             net::CRLSet*,
+             net::CertVerifyResult* verify_result,
+             const net::CompletionCallback&,
+             std::unique_ptr<Request>*,
+             const net::NetLogWithSource&) override {
+    verify_result->Reset();
+    verify_result->verified_cert = params.certificate();
+    return net::OK;
+  }
+};
 
 }  // namespace
 
@@ -93,7 +113,7 @@ CastSocketImpl::CastSocketImpl(const std::string& owner_extension_id,
                                const base::TimeDelta& timeout,
                                bool keep_alive,
                                const scoped_refptr<Logger>& logger,
-                               uint64 device_capabilities)
+                               uint64_t device_capabilities)
     : CastSocket(owner_extension_id),
       owner_extension_id_(owner_extension_id),
       channel_id_(0),
@@ -114,7 +134,7 @@ CastSocketImpl::CastSocketImpl(const std::string& owner_extension_id,
   DCHECK(net_log_);
   DCHECK(channel_auth_ == CHANNEL_AUTH_TYPE_SSL ||
          channel_auth_ == CHANNEL_AUTH_TYPE_SSL_VERIFIED);
-  net_log_source_.type = net::NetLog::SOURCE_SOCKET;
+  net_log_source_.type = net::NetLogSourceType::SOCKET;
   net_log_source_.id = net_log_->NextID();
 }
 
@@ -156,84 +176,56 @@ bool CastSocketImpl::audio_only() const {
   return audio_only_;
 }
 
-scoped_ptr<net::TCPClientSocket> CastSocketImpl::CreateTcpSocket() {
+std::unique_ptr<net::TCPClientSocket> CastSocketImpl::CreateTcpSocket() {
   net::AddressList addresses(ip_endpoint_);
-  return scoped_ptr<net::TCPClientSocket>(
-      new net::TCPClientSocket(addresses, net_log_, net_log_source_));
+  return std::unique_ptr<net::TCPClientSocket>(
+      new net::TCPClientSocket(addresses, nullptr, net_log_, net_log_source_));
   // Options cannot be set on the TCPClientSocket yet, because the
   // underlying platform socket will not be created until Bind()
   // or Connect() is called.
 }
 
-scoped_ptr<net::SSLClientSocket> CastSocketImpl::CreateSslSocket(
-    scoped_ptr<net::StreamSocket> socket) {
+std::unique_ptr<net::SSLClientSocket> CastSocketImpl::CreateSslSocket(
+    std::unique_ptr<net::StreamSocket> socket) {
   net::SSLConfig ssl_config;
-  // If a peer cert was extracted in a previous attempt to connect, then
-  // whitelist that cert.
-  if (!peer_cert_.empty()) {
-    net::SSLConfig::CertAndStatus cert_and_status;
-    cert_and_status.cert_status = net::CERT_STATUS_AUTHORITY_INVALID;
-    cert_and_status.der_cert = peer_cert_;
-    ssl_config.allowed_bad_certs.push_back(cert_and_status);
-    logger_->LogSocketEvent(channel_id_, proto::SSL_CERT_WHITELISTED);
-  }
-
-  cert_verifier_ = net::CertVerifier::CreateDefault();
+  cert_verifier_ = base::WrapUnique(new FakeCertVerifier);
   transport_security_state_.reset(new net::TransportSecurityState);
+  cert_transparency_verifier_.reset(new net::MultiLogCTVerifier());
+  ct_policy_enforcer_.reset(new net::CTPolicyEnforcer());
+
+  // Note that |context| fields remain owned by CastSocketImpl.
   net::SSLClientSocketContext context;
-  // CertVerifier and TransportSecurityState are owned by us, not the
-  // context object.
   context.cert_verifier = cert_verifier_.get();
   context.transport_security_state = transport_security_state_.get();
+  context.cert_transparency_verifier = cert_transparency_verifier_.get();
+  context.ct_policy_enforcer = ct_policy_enforcer_.get();
 
-  scoped_ptr<net::ClientSocketHandle> connection(new net::ClientSocketHandle);
-  connection->SetSocket(socket.Pass());
+  std::unique_ptr<net::ClientSocketHandle> connection(
+      new net::ClientSocketHandle);
+  connection->SetSocket(std::move(socket));
   net::HostPortPair host_and_port = net::HostPortPair::FromIPEndPoint(
       ip_endpoint_);
 
   return net::ClientSocketFactory::GetDefaultFactory()->CreateSSLClientSocket(
-      connection.Pass(), host_and_port, ssl_config, context);
+      std::move(connection), host_and_port, ssl_config, context);
 }
 
-bool CastSocketImpl::ExtractPeerCert(std::string* cert) {
-  DCHECK(cert);
-  DCHECK(peer_cert_.empty());
+scoped_refptr<net::X509Certificate> CastSocketImpl::ExtractPeerCert() {
   net::SSLInfo ssl_info;
   if (!socket_->GetSSLInfo(&ssl_info) || !ssl_info.cert.get()) {
-    return false;
+    return nullptr;
   }
 
   logger_->LogSocketEvent(channel_id_, proto::SSL_INFO_OBTAINED);
 
-  // Ensure that the peer cert (which is self-signed) doesn't have an excessive
-  // remaining life-time.
-  base::Time expiry = ssl_info.cert->valid_expiry();
-  base::Time lifetimeLimit =
-      base::Time::Now() +
-      base::TimeDelta::FromDays(kMaxSelfSignedCertLifetimeInDays);
-  if (expiry.is_null() || expiry > lifetimeLimit) {
-    logger_->LogSocketEventWithDetails(channel_id_,
-                                       proto::SSL_CERT_EXCESSIVE_LIFETIME,
-                                       FormatTimeForLogging(expiry));
-    return false;
-  }
-
-  bool result = net::X509Certificate::GetDEREncoded(
-     ssl_info.cert->os_cert_handle(), cert);
-  if (result) {
-    VLOG_WITH_CONNECTION(1) << "Successfully extracted peer certificate";
-  }
-
-  logger_->LogSocketEventWithRv(
-      channel_id_, proto::DER_ENCODED_CERT_OBTAIN, result ? 1 : 0);
-  return result;
+  return ssl_info.cert;
 }
 
 bool CastSocketImpl::VerifyChannelPolicy(const AuthResult& result) {
   audio_only_ = (result.channel_policies & AuthResult::POLICY_AUDIO_ONLY) != 0;
   if (audio_only_ &&
       (device_capabilities_ & CastDeviceCapability::VIDEO_OUT) != 0) {
-    LOG(ERROR)
+    LOG_WITH_CONNECTION(ERROR)
         << "Audio only channel policy enforced for video out capable device";
     logger_->LogSocketEventWithDetails(
         channel_id_, proto::CHANNEL_POLICY_ENFORCED, std::string());
@@ -243,7 +235,9 @@ bool CastSocketImpl::VerifyChannelPolicy(const AuthResult& result) {
 }
 
 bool CastSocketImpl::VerifyChallengeReply() {
-  AuthResult result = AuthenticateChallengeReply(*challenge_reply_, peer_cert_);
+  DCHECK(peer_cert_);
+  AuthResult result =
+      AuthenticateChallengeReply(*challenge_reply_, *peer_cert_);
   logger_->LogSocketChallengeReplyEvent(channel_id_, result);
   if (result.success()) {
     VLOG(1) << result.error_message;
@@ -255,17 +249,17 @@ bool CastSocketImpl::VerifyChallengeReply() {
 }
 
 void CastSocketImpl::SetTransportForTesting(
-    scoped_ptr<CastTransport> transport) {
-  transport_ = transport.Pass();
+    std::unique_ptr<CastTransport> transport) {
+  transport_ = std::move(transport);
 }
 
-void CastSocketImpl::Connect(scoped_ptr<CastTransport::Delegate> delegate,
+void CastSocketImpl::Connect(std::unique_ptr<CastTransport::Delegate> delegate,
                              base::Callback<void(ChannelError)> callback) {
   DCHECK(CalledOnValidThread());
   VLOG_WITH_CONNECTION(1) << "Connect readyState = " << ready_state_;
   DCHECK_EQ(proto::CONN_STATE_START_CONNECT, connect_state_);
 
-  delegate_ = delegate.Pass();
+  delegate_ = std::move(delegate);
 
   if (ready_state_ != READY_STATE_NONE) {
     logger_->LogSocketEventWithDetails(
@@ -310,8 +304,8 @@ void CastSocketImpl::PostTaskToStartConnectLoop(int result) {
   DCHECK(connect_loop_callback_.IsCancelled());
   connect_loop_callback_.Reset(base::Bind(&CastSocketImpl::DoConnectLoop,
                                           base::Unretained(this), result));
-  base::MessageLoop::current()->PostTask(FROM_HERE,
-                                         connect_loop_callback_.callback());
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, connect_loop_callback_.callback());
 }
 
 // This method performs the state machine transitions for connection flow.
@@ -321,7 +315,7 @@ void CastSocketImpl::PostTaskToStartConnectLoop(int result) {
 void CastSocketImpl::DoConnectLoop(int result) {
   connect_loop_callback_.Cancel();
   if (is_canceled_) {
-    LOG(ERROR) << "CANCELLED - Aborting DoConnectLoop.";
+    LOG_WITH_CONNECTION(ERROR) << "CANCELLED - Aborting DoConnectLoop.";
     return;
   }
 
@@ -410,7 +404,7 @@ int CastSocketImpl::DoSslConnect() {
   DCHECK(connect_loop_callback_.IsCancelled());
   VLOG_WITH_CONNECTION(1) << "DoSslConnect";
   SetConnectState(proto::CONN_STATE_SSL_CONNECT_COMPLETE);
-  socket_ = CreateSslSocket(tcp_socket_.Pass());
+  socket_ = CreateSslSocket(std::move(tcp_socket_));
 
   int rv = socket_->Connect(
       base::Bind(&CastSocketImpl::DoConnectLoop, base::Unretained(this)));
@@ -422,11 +416,16 @@ int CastSocketImpl::DoSslConnectComplete(int result) {
   logger_->LogSocketEventWithRv(channel_id_, proto::SSL_SOCKET_CONNECT_COMPLETE,
                                 result);
   VLOG_WITH_CONNECTION(1) << "DoSslConnectComplete: " << result;
-  if (result == net::ERR_CERT_AUTHORITY_INVALID &&
-      peer_cert_.empty() && ExtractPeerCert(&peer_cert_)) {
-    // Peer certificate fallback - try the connection again, from the top.
-    SetConnectState(proto::CONN_STATE_TCP_CONNECT);
-  } else if (result == net::OK) {
+  if (result == net::OK) {
+    peer_cert_ = ExtractPeerCert();
+
+    if (!peer_cert_) {
+      LOG_WITH_CONNECTION(WARNING) << "Could not extract peer cert.";
+      SetConnectState(proto::CONN_STATE_FINISHED);
+      SetErrorState(CHANNEL_ERROR_AUTHENTICATION_ERROR);
+      return net::ERR_CERT_INVALID;
+    }
+
     // SSL connection succeeded.
     if (!transport_.get()) {
       // Create a channel transport if one wasn't already set (e.g. by test
@@ -436,7 +435,7 @@ int CastSocketImpl::DoSslConnectComplete(int result) {
                                              logger_));
     }
     auth_delegate_ = new AuthTransportDelegate(this);
-    transport_->SetReadDelegate(make_scoped_ptr(auth_delegate_));
+    transport_->SetReadDelegate(base::WrapUnique(auth_delegate_));
     if (channel_auth_ == CHANNEL_AUTH_TYPE_SSL_VERIFIED) {
       // Additionally verify the connection with a handshake.
       SetConnectState(proto::CONN_STATE_AUTH_CHALLENGE_SEND);
@@ -557,7 +556,7 @@ void CastSocketImpl::DoConnectCallback() {
 
   if (error_state_ == CHANNEL_ERROR_NONE) {
     SetReadyState(READY_STATE_OPEN);
-    transport_->SetReadDelegate(delegate_.Pass());
+    transport_->SetReadDelegate(std::move(delegate_));
   } else {
     CloseInternal();
   }

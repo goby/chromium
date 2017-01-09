@@ -4,14 +4,16 @@
 
 #include "storage/browser/fileapi/sandbox_file_system_backend.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/test/test_file_system_options.h"
 #include "storage/browser/fileapi/file_system_backend.h"
 #include "storage/browser/fileapi/file_system_url.h"
@@ -54,11 +56,9 @@ const struct RootPathFileURITest {
   storage::FileSystemType type;
   const char* origin_url;
   const char* expected_path;
-  const char* virtual_path;
 } kRootPathFileURITestCases[] = {
-      {storage::kFileSystemTypeTemporary, "file:///", "000" PS "t", NULL},
-      {storage::kFileSystemTypePersistent, "file:///", "000" PS "p", NULL},
-};
+    {storage::kFileSystemTypeTemporary, "file:///", "000" PS "t"},
+    {storage::kFileSystemTypePersistent, "file:///", "000" PS "p"}};
 
 void DidOpenFileSystem(base::File::Error* error_out,
                        const GURL& origin_url,
@@ -79,7 +79,7 @@ class SandboxFileSystemBackendTest : public testing::Test {
   void SetUpNewDelegate(const storage::FileSystemOptions& options) {
     delegate_.reset(new SandboxFileSystemBackendDelegate(
         NULL /* quota_manager_proxy */,
-        base::ThreadTaskRunnerHandle::Get().get(), data_dir_.path(),
+        base::ThreadTaskRunnerHandle::Get().get(), data_dir_.GetPath(),
         NULL /* special_storage_policy */, options));
   }
 
@@ -122,20 +122,20 @@ class SandboxFileSystemBackendTest : public testing::Test {
   }
 
   base::FilePath file_system_path() const {
-    return data_dir_.path().Append(
+    return data_dir_.GetPath().Append(
         SandboxFileSystemBackendDelegate::kFileSystemDirectory);
   }
 
   base::ScopedTempDir data_dir_;
   base::MessageLoop message_loop_;
-  scoped_ptr<storage::SandboxFileSystemBackendDelegate> delegate_;
-  scoped_ptr<storage::SandboxFileSystemBackend> backend_;
+  std::unique_ptr<storage::SandboxFileSystemBackendDelegate> delegate_;
+  std::unique_ptr<storage::SandboxFileSystemBackend> backend_;
 };
 
 TEST_F(SandboxFileSystemBackendTest, Empty) {
   SetUpNewBackend(CreateAllowFileAccessOptions());
-  scoped_ptr<SandboxFileSystemBackendDelegate::OriginEnumerator> enumerator(
-      CreateOriginEnumerator());
+  std::unique_ptr<SandboxFileSystemBackendDelegate::OriginEnumerator>
+      enumerator(CreateOriginEnumerator());
   ASSERT_TRUE(enumerator->Next().is_empty());
 }
 
@@ -167,8 +167,8 @@ TEST_F(SandboxFileSystemBackendTest, EnumerateOrigins) {
     persistent_set.insert(GURL(persistent_origins[i]));
   }
 
-  scoped_ptr<SandboxFileSystemBackendDelegate::OriginEnumerator> enumerator(
-      CreateOriginEnumerator());
+  std::unique_ptr<SandboxFileSystemBackendDelegate::OriginEnumerator>
+      enumerator(CreateOriginEnumerator());
   size_t temporary_actual_size = 0;
   size_t persistent_actual_size = 0;
   GURL current;

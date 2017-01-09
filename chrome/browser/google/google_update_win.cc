@@ -6,14 +6,18 @@
 
 #include <atlbase.h>
 #include <atlcom.h>
+#include <stdint.h>
+#include <string.h>
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner_helpers.h"
@@ -21,13 +25,15 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "base/version.h"
 #include "base/win/scoped_bstr.h"
 #include "base/win/windows_version.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/installer/util/browser_distribution.h"
+#include "chrome/installer/util/google_update_settings.h"
 #include "chrome/installer/util/helper.h"
 #include "chrome/installer/util/install_util.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -68,6 +74,16 @@ const HRESULT GOOPDATE_E_APP_UPDATE_DISABLED_BY_POLICY = 0x80040813;
 const HRESULT GOOPDATE_E_APP_UPDATE_DISABLED_BY_POLICY_MANUAL = 0x8004081f;
 const HRESULT GOOPDATE_E_APP_USING_EXTERNAL_UPDATER = 0xA043081D;
 const HRESULT GOOPDATEINSTALL_E_INSTALLER_FAILED = 0x80040902;
+
+// Older versions of GoogleUpdate require elevation for system-level updates.
+bool IsElevationRequiredForSystemLevelUpdates() {
+  const base::Version kMinGUVersionNoElevationRequired("1.3.29.1");
+  const base::Version current_version(
+      GoogleUpdateSettings::GetGoogleUpdateVersion(true));
+
+  return !current_version.IsValid() ||
+         current_version < kMinGUVersionNoElevationRequired;
+}
 
 // Check if the currently running instance can be updated by Google Update.
 // Returns GOOGLE_UPDATE_NO_ERROR only if the instance running is a Google
@@ -160,14 +176,18 @@ HRESULT CreateGoogleUpdate3WebClass(
 
   // For a user-level install, update checks and updates can both be done by a
   // normal user with the UserClass. For a system-level install, update checks
-  // can be done by a normal user with the MachineClass.
-  if (!system_level_install || !install_update_if_possible) {
+  // can be done by a normal user with the MachineClass. Newer versions of
+  // GoogleUpdate allow normal users to also install system-level updates
+  // without requiring elevation.
+  if (!system_level_install ||
+      !install_update_if_possible ||
+      !IsElevationRequiredForSystemLevelUpdates()) {
     hresult = ::CoGetClassObject(google_update_clsid, CLSCTX_ALL, nullptr,
                                  base::win::ScopedComPtr<IClassFactory>::iid(),
                                  class_factory.ReceiveVoid());
   } else {
-    // For a system-level install, an update requires Admin privileges for
-    // writing to %ProgramFiles%. Elevate while instantiating the MachineClass.
+    // With older versions of GoogleUpdate, a system-level update requires Admin
+    // privileges. Elevate while instantiating the MachineClass.
     hresult = CoGetClassObjectAsAdmin(
         google_update_clsid, base::win::ScopedComPtr<IClassFactory>::iid(),
         elevation_window, class_factory.ReceiveVoid());
@@ -192,7 +212,7 @@ class UpdateCheckDriver {
   // Runs an update check on |task_runner|, invoking methods of |delegate| on
   // the caller's thread to report progress and final results.
   static void RunUpdateCheck(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const std::string& locale,
       bool install_update_if_possible,
       gfx::AcceleratedWidget elevation_window,
@@ -202,7 +222,7 @@ class UpdateCheckDriver {
   friend class base::DeleteHelper<UpdateCheckDriver>;
 
   UpdateCheckDriver(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       const std::string& locale,
       bool install_update_if_possible,
       gfx::AcceleratedWidget elevation_window,
@@ -211,11 +231,23 @@ class UpdateCheckDriver {
   // Invokes a completion or error method on all delegates, as appropriate.
   ~UpdateCheckDriver();
 
+  // If an UpdateCheckDriver is already running, the delegate is added to the
+  // existing one instead of creating a new one.
+  void AddDelegate(const base::WeakPtr<UpdateCheckDelegate>& delegate);
+
+  // Notifies delegates of an update's progress. |progress|, a number between 0
+  // and 100 (inclusive), is an estimation as to what percentage of the upgrade
+  // has completed. |new_version| indicates the version that is being download
+  // and installed.
+  void NotifyUpgradeProgress(int progress, const base::string16& new_version);
+
   // Starts an update check.
   void BeginUpdateCheck();
 
   // Returns the result of initiating an update check. Sets |error_code| if the
-  // result is any kind of failure.
+  // result is any kind of failure. On failure, the instance is left in a
+  // consistent state so that this method can be invoked later to retry the
+  // steps that failed.
   HRESULT BeginUpdateCheckInternal(GoogleUpdateErrorCode* error_code);
 
   // Sets status_ to UPGRADE_ERROR, error_code_ to |error_code|, hresult_ to
@@ -284,10 +316,7 @@ class UpdateCheckDriver {
   // previous notification) and another future poll will be scheduled.
   void PollGoogleUpdate();
 
-  // If an UpdateCheckDriver is already running, the delegate is added to the
-  // existing one instead of creating a new one.
-  void AddDelegate(const base::WeakPtr<UpdateCheckDelegate>& delegate);
-
+  // The global driver instance. Accessed only on the caller's thread.
   static UpdateCheckDriver* driver_;
 
   // The task runner on which the update checks runs.
@@ -306,7 +335,8 @@ class UpdateCheckDriver {
   // A parent window in case any UX is required (e.g., an elevation prompt).
   gfx::AcceleratedWidget elevation_window_;
 
-  // Contains all delegates by which feedback is conveyed.
+  // Contains all delegates by which feedback is conveyed. Accessed only on the
+  // caller's thread.
   std::vector<base::WeakPtr<UpdateCheckDelegate>> delegates_;
 
   // Number of remaining retries allowed when errors occur.
@@ -343,7 +373,7 @@ UpdateCheckDriver* UpdateCheckDriver::driver_ = nullptr;
 
 // static
 void UpdateCheckDriver::RunUpdateCheck(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
@@ -367,25 +397,24 @@ void UpdateCheckDriver::RunUpdateCheck(
 
 // Runs on the caller's thread.
 UpdateCheckDriver::UpdateCheckDriver(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
     const base::WeakPtr<UpdateCheckDelegate>& delegate)
-    : task_runner_(task_runner),
+    : task_runner_(std::move(task_runner)),
       result_runner_(base::ThreadTaskRunnerHandle::Get()),
       locale_(locale),
       install_update_if_possible_(install_update_if_possible),
       elevation_window_(elevation_window),
+      delegates_(1, delegate),
       allowed_retries_(kGoogleAllowedRetries),
       system_level_install_(false),
       last_reported_progress_(0),
       status_(UPGRADE_ERROR),
       error_code_(GOOGLE_UPDATE_NO_ERROR),
       hresult_(S_OK),
-      installer_exit_code_(-1) {
-  delegates_.push_back(delegate);
-}
+      installer_exit_code_(-1) {}
 
 UpdateCheckDriver::~UpdateCheckDriver() {
   DCHECK(result_runner_->BelongsToCurrentThread());
@@ -406,7 +435,7 @@ UpdateCheckDriver::~UpdateCheckDriver() {
 
   // Clear the driver before calling the delegates because they might call
   // BeginUpdateCheck() and they must not add themselves to the current
-  // instance of UpdateCheckDriver, which is currently being destroyed.
+  // instance of UpdateCheckDriver, which is being destroyed.
   driver_ = nullptr;
 
   for (const auto& delegate : delegates_) {
@@ -421,6 +450,23 @@ UpdateCheckDriver::~UpdateCheckDriver() {
   }
 }
 
+void UpdateCheckDriver::AddDelegate(
+    const base::WeakPtr<UpdateCheckDelegate>& delegate) {
+  DCHECK(result_runner_->BelongsToCurrentThread());
+  delegates_.push_back(delegate);
+}
+
+void UpdateCheckDriver::NotifyUpgradeProgress(
+    int progress,
+    const base::string16& new_version) {
+  DCHECK(result_runner_->BelongsToCurrentThread());
+
+  for (const auto& delegate : delegates_) {
+    if (delegate)
+      delegate->OnUpgradeProgress(progress, new_version);
+  }
+}
+
 void UpdateCheckDriver::BeginUpdateCheck() {
   GoogleUpdateErrorCode error_code = GOOGLE_UPDATE_NO_ERROR;
   HRESULT hresult = BeginUpdateCheckInternal(&error_code);
@@ -429,85 +475,124 @@ void UpdateCheckDriver::BeginUpdateCheck() {
     task_runner_->PostTask(FROM_HERE,
                            base::Bind(&UpdateCheckDriver::PollGoogleUpdate,
                                       base::Unretained(this)));
-  } else {
-    // Return results immediately since the driver is not polling Google Update.
-    OnUpgradeError(error_code, hresult, -1, base::string16());
-    result_runner_->DeleteSoon(FROM_HERE, this);
+    return;
   }
+  if (hresult == GOOPDATE_E_APP_USING_EXTERNAL_UPDATER) {
+    // This particular transient error is worth retrying.
+    if (allowed_retries_) {
+      --allowed_retries_;
+      task_runner_->PostDelayedTask(
+          FROM_HERE, base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
+                                base::Unretained(this)),
+          base::TimeDelta::FromSeconds(kGoogleRetryIntervalSeconds));
+      return;
+    }
+  }
+
+  DCHECK(FAILED(hresult));
+  OnUpgradeError(error_code, hresult, -1, base::string16());
+  result_runner_->DeleteSoon(FROM_HERE, this);
 }
 
 HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
     GoogleUpdateErrorCode* error_code) {
-  base::FilePath chrome_exe;
-  if (!PathService::Get(base::DIR_EXE, &chrome_exe))
-    NOTREACHED();
+  HRESULT hresult = S_OK;
+  // Instantiate GoogleUpdate3Web{Machine,User}Class.
+  if (!google_update_) {
+    base::FilePath chrome_exe;
+    if (!PathService::Get(base::DIR_EXE, &chrome_exe))
+      NOTREACHED();
 
-  system_level_install_ = !InstallUtil::IsPerUserInstall(chrome_exe);
+    system_level_install_ = !InstallUtil::IsPerUserInstall(chrome_exe);
 
-  // Make sure ATL is initialized in this module.
-  ui::win::CreateATLModuleIfNeeded();
+    // Make sure ATL is initialized in this module.
+    ui::win::CreateATLModuleIfNeeded();
 
-  *error_code = CanUpdateCurrentChrome(chrome_exe, system_level_install_);
-  if (*error_code != GOOGLE_UPDATE_NO_ERROR)
-    return E_FAIL;
+    *error_code = CanUpdateCurrentChrome(chrome_exe, system_level_install_);
+    if (*error_code != GOOGLE_UPDATE_NO_ERROR)
+      return E_FAIL;
 
-  HRESULT hresult = CreateGoogleUpdate3WebClass(
-      system_level_install_, install_update_if_possible_, elevation_window_,
-      &google_update_);
-  if (FAILED(hresult)) {
-    *error_code = GOOGLE_UPDATE_ONDEMAND_CLASS_NOT_FOUND;
-    return hresult;
+    hresult = CreateGoogleUpdate3WebClass(system_level_install_,
+                                          install_update_if_possible_,
+                                          elevation_window_, &google_update_);
+    if (FAILED(hresult)) {
+      *error_code = GOOGLE_UPDATE_ONDEMAND_CLASS_NOT_FOUND;
+      return hresult;
+    }
+
+    ConfigureProxyBlanket(google_update_.get());
   }
-
-  ConfigureProxyBlanket(google_update_.get());
 
   // The class was created, so all subsequent errors are reported as:
   *error_code = GOOGLE_UPDATE_ONDEMAND_CLASS_REPORTED_ERROR;
-  base::string16 app_guid =
-      installer::GetAppGuidForUpdates(system_level_install_);
-  DCHECK(!app_guid.empty());
 
-  {
+  // Create an app bundle.
+  if (!app_bundle_) {
+    base::win::ScopedComPtr<IAppBundleWeb> app_bundle;
     base::win::ScopedComPtr<IDispatch> dispatch;
     hresult = google_update_->createAppBundleWeb(dispatch.Receive());
     if (FAILED(hresult))
       return hresult;
-    hresult = dispatch.QueryInterface(app_bundle_.Receive());
+    hresult = dispatch.QueryInterface(app_bundle.Receive());
     if (FAILED(hresult))
       return hresult;
-  }
-  ConfigureProxyBlanket(app_bundle_.get());
+    dispatch.Release();
 
-  if (!locale_.empty()) {
-    // Ignore the result of this since, while setting the display language is
-    // nice to have, a failure to do so does not affect the likelihood that the
-    // update check and/or install will succeed.
-    app_bundle_->put_displayLanguage(
-        base::win::ScopedBstr(base::UTF8ToUTF16(locale_).c_str()));
+    ConfigureProxyBlanket(app_bundle.get());
+
+    if (!locale_.empty()) {
+      // Ignore the result of this since, while setting the display language is
+      // nice to have, a failure to do so does not affect the likelihood that
+      // the update check and/or install will succeed.
+      app_bundle->put_displayLanguage(
+          base::win::ScopedBstr(base::UTF8ToUTF16(locale_).c_str()));
+    }
+
+    hresult = app_bundle->initialize();
+    if (FAILED(hresult))
+      return hresult;
+    if (elevation_window_) {
+      // Likewise, a failure to set the parent window need not block an update
+      // check.
+      app_bundle->put_parentHWND(
+          reinterpret_cast<ULONG_PTR>(elevation_window_));
+    }
+    app_bundle_.swap(app_bundle);
   }
 
-  hresult = app_bundle_->initialize();
-  if (FAILED(hresult))
-    return hresult;
-  if (elevation_window_) {
-    // Likewise, a failure to set the parent window need not block an update
-    // check.
-    app_bundle_->put_parentHWND(reinterpret_cast<ULONG_PTR>(elevation_window_));
+  // Get a reference to the Chrome app in the bundle.
+  if (!app_) {
+    base::string16 app_guid =
+        installer::GetAppGuidForUpdates(system_level_install_);
+    DCHECK(!app_guid.empty());
+
+    base::win::ScopedComPtr<IDispatch> dispatch;
+    // It is common for this call to fail with APP_USING_EXTERNAL_UPDATER if
+    // an auto update is in progress.
+    hresult = app_bundle_->createInstalledApp(
+        base::win::ScopedBstr(app_guid.c_str()));
+    if (FAILED(hresult))
+      return hresult;
+    // Move the IAppBundleWeb reference into a local now so that failures from
+    // this point onward result in it being released.
+    base::win::ScopedComPtr<IAppBundleWeb> app_bundle;
+    app_bundle.swap(app_bundle_);
+    hresult = app_bundle->get_appWeb(0, dispatch.Receive());
+    if (FAILED(hresult))
+      return hresult;
+    base::win::ScopedComPtr<IAppWeb> app;
+    hresult = dispatch.QueryInterface(app.Receive());
+    if (FAILED(hresult))
+      return hresult;
+    ConfigureProxyBlanket(app.get());
+    hresult = app_bundle->checkForUpdate();
+    if (FAILED(hresult))
+      return hresult;
+    app_bundle_.swap(app_bundle);
+    app_.swap(app);
   }
 
-  base::win::ScopedComPtr<IDispatch> dispatch;
-  hresult =
-      app_bundle_->createInstalledApp(base::win::ScopedBstr(app_guid.c_str()));
-  if (FAILED(hresult))
-    return hresult;
-  hresult = app_bundle_->get_appWeb(0, dispatch.Receive());
-  if (FAILED(hresult))
-    return hresult;
-  hresult = dispatch.QueryInterface(app_.Receive());
-  if (FAILED(hresult))
-    return hresult;
-  ConfigureProxyBlanket(app_.get());
-  return app_bundle_->checkForUpdate();
+  return hresult;
 }
 
 bool UpdateCheckDriver::GetCurrentState(
@@ -703,19 +788,6 @@ void UpdateCheckDriver::PollGoogleUpdate() {
                    base::string16());
   } else if (IsErrorState(state, state_value, &error_code, &hresult,
                           &installer_exit_code, &error_string)) {
-    // Some errors can be transient.  Retry them after a short delay.
-    if (hresult == GOOPDATE_E_APP_USING_EXTERNAL_UPDATER) {
-      if (allowed_retries_ > 0) {
-        --allowed_retries_;
-        app_bundle_.Release();
-        google_update_.Release();
-        task_runner_->PostDelayedTask(
-            FROM_HERE, base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
-                                  base::Unretained(this)),
-            base::TimeDelta::FromSeconds(kGoogleRetryIntervalSeconds));
-        return;
-      }
-    }
     OnUpgradeError(error_code, hresult, installer_exit_code, error_string);
   } else if (IsFinalState(state, state_value, &upgrade_status, &new_version)) {
     status_ = upgrade_status;
@@ -735,12 +807,10 @@ void UpdateCheckDriver::PollGoogleUpdate() {
 
       // It is safe to post this task with an unretained pointer since the task
       // is guaranteed to run before a subsequent DeleteSoon is handled.
-      for (const auto& delegate : delegates_) {
-        result_runner_->PostTask(
-            FROM_HERE,
-            base::Bind(&UpdateCheckDelegate::OnUpgradeProgress, delegate,
-                       last_reported_progress_, new_version_));
-      }
+      result_runner_->PostTask(
+          FROM_HERE, base::Bind(&UpdateCheckDriver::NotifyUpgradeProgress,
+                                base::Unretained(this), last_reported_progress_,
+                                new_version_));
     }
 
     // Schedule the next check.
@@ -760,11 +830,6 @@ void UpdateCheckDriver::PollGoogleUpdate() {
   google_update_.Release();
 
   result_runner_->DeleteSoon(FROM_HERE, this);
-}
-
-void UpdateCheckDriver::AddDelegate(
-    const base::WeakPtr<UpdateCheckDelegate>& delegate) {
-  delegates_.push_back(delegate);
 }
 
 void UpdateCheckDriver::OnUpgradeError(GoogleUpdateErrorCode error_code,
@@ -807,12 +872,12 @@ void UpdateCheckDriver::OnUpgradeError(GoogleUpdateErrorCode error_code,
 // Globals ---------------------------------------------------------------------
 
 void BeginUpdateCheck(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
     const std::string& locale,
     bool install_update_if_possible,
     gfx::AcceleratedWidget elevation_window,
     const base::WeakPtr<UpdateCheckDelegate>& delegate) {
-  UpdateCheckDriver::RunUpdateCheck(task_runner, locale,
+  UpdateCheckDriver::RunUpdateCheck(std::move(task_runner), locale,
                                     install_update_if_possible,
                                     elevation_window, delegate);
 }

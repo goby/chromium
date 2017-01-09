@@ -6,7 +6,7 @@
 
 #import "base/mac/mac_util.h"
 #include "base/mac/scoped_nsobject.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/gfx/image/image.h"
@@ -20,8 +20,7 @@ class UiGfxImageTest : public CocoaTest {
 // http://crbug.com/247379
 TEST_F(UiGfxImageTest, DISABLED_CheckColor) {
   // TODO(kbr): re-enable: http://crbug.com/222296
-  if (base::mac::IsOSMountainLionOrLater())
-    return;
+  return;
 
   gfx::Image image = gfx::Image::CreateFrom1xBitmap(
       gfx::test::CreateBitmap(25, 25));

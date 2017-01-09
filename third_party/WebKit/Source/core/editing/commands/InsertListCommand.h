@@ -33,36 +33,46 @@ namespace blink {
 class HTMLElement;
 class HTMLUListElement;
 
-class InsertListCommand final : public CompositeEditCommand {
-public:
-    enum Type { OrderedList, UnorderedList };
+class CORE_EXPORT InsertListCommand final : public CompositeEditCommand {
+ public:
+  enum Type { OrderedList, UnorderedList };
 
-    static PassRefPtrWillBeRawPtr<InsertListCommand> create(Document& document, Type listType)
-    {
-        return adoptRefWillBeNoop(new InsertListCommand(document, listType));
-    }
+  static InsertListCommand* create(Document& document, Type listType) {
+    return new InsertListCommand(document, listType);
+  }
 
-    bool preservesTypingStyle() const override { return true; }
+  bool preservesTypingStyle() const override { return true; }
 
-    DECLARE_VIRTUAL_TRACE();
+  DECLARE_VIRTUAL_TRACE();
 
-private:
-    InsertListCommand(Document&, Type);
+ private:
+  InsertListCommand(Document&, Type);
 
-    void doApply() override;
-    EditAction editingAction() const override { return EditActionInsertList; }
+  void doApply(EditingState*) override;
+  InputEvent::InputType inputType() const override;
 
-    HTMLUListElement* fixOrphanedListChild(Node*);
-    bool selectionHasListOfType(const VisibleSelection&, const HTMLQualifiedName&);
-    PassRefPtrWillBeRawPtr<HTMLElement> mergeWithNeighboringLists(PassRefPtrWillBeRawPtr<HTMLElement>);
-    bool doApplyForSingleParagraph(bool forceCreateList, const HTMLQualifiedName&, Range& currentSelection);
-    void unlistifyParagraph(const VisiblePosition& originalStart, HTMLElement* listNode, Node* listChildNode);
-    PassRefPtrWillBeRawPtr<HTMLElement> listifyParagraph(const VisiblePosition& originalStart, const HTMLQualifiedName& listTag);
+  HTMLUListElement* fixOrphanedListChild(Node*, EditingState*);
+  bool selectionHasListOfType(const VisibleSelection&,
+                              const HTMLQualifiedName&);
+  HTMLElement* mergeWithNeighboringLists(HTMLElement*, EditingState*);
+  bool doApplyForSingleParagraph(bool forceCreateList,
+                                 const HTMLQualifiedName&,
+                                 Range& currentSelection,
+                                 EditingState*);
+  void unlistifyParagraph(const VisiblePosition& originalStart,
+                          HTMLElement* listNode,
+                          Node* listChildNode,
+                          EditingState*);
+  void listifyParagraph(const VisiblePosition& originalStart,
+                        const HTMLQualifiedName& listTag,
+                        EditingState*);
+  void moveParagraphOverPositionIntoEmptyListItem(const VisiblePosition&,
+                                                  HTMLLIElement*,
+                                                  EditingState*);
 
-    RefPtrWillBeMember<HTMLElement> m_listElement;
-    Type m_type;
+  Type m_type;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InsertListCommand_h
+#endif  // InsertListCommand_h

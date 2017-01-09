@@ -5,14 +5,9 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_MANAGER_DELEGATE_H_
 #define CONTENT_SHELL_BROWSER_SHELL_DEVTOOLS_MANAGER_DELEGATE_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "components/devtools_http_handler/devtools_http_handler_delegate.h"
+#include "base/macros.h"
 #include "content/public/browser/devtools_manager_delegate.h"
-
-namespace devtools_http_handler {
-class DevToolsHttpHandler;
-}
 
 namespace content {
 
@@ -20,23 +15,20 @@ class BrowserContext;
 
 class ShellDevToolsManagerDelegate : public DevToolsManagerDelegate {
  public:
-  static devtools_http_handler::DevToolsHttpHandler* CreateHttpHandler(
-      BrowserContext* browser_context);
+  static void StartHttpHandler(BrowserContext* browser_context);
+  static void StopHttpHandler();
+  static int GetHttpHandlerPort();
 
   explicit ShellDevToolsManagerDelegate(BrowserContext* browser_context);
   ~ShellDevToolsManagerDelegate() override;
 
   // DevToolsManagerDelegate implementation.
-  void Inspect(BrowserContext* browser_context,
-               DevToolsAgentHost* agent_host) override {}
-  void DevToolsAgentStateChanged(DevToolsAgentHost* agent_host,
-                                 bool attached) override {}
-  base::DictionaryValue* HandleCommand(DevToolsAgentHost* agent_host,
-                                       base::DictionaryValue* command) override;
+  scoped_refptr<DevToolsAgentHost> CreateNewTarget(const GURL& url) override;
+  std::string GetDiscoveryPageHTML() override;
+  std::string GetFrontendResource(const std::string& path) override;
 
  private:
   BrowserContext* browser_context_;
-
   DISALLOW_COPY_AND_ASSIGN(ShellDevToolsManagerDelegate);
 };
 

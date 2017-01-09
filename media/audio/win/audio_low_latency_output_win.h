@@ -95,11 +95,14 @@
 
 #include <Audioclient.h>
 #include <MMDeviceAPI.h>
+#include <stddef.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
 #include "base/win/scoped_co_mem.h"
@@ -107,7 +110,7 @@
 #include "base/win/scoped_comptr.h"
 #include "base/win/scoped_handle.h"
 #include "media/audio/audio_io.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "media/base/media_export.h"
 
 namespace media {
@@ -165,7 +168,7 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   // for exclusive audio mode.
   HRESULT ExclusiveModeInitialization(IAudioClient* client,
                                       HANDLE event_handle,
-                                      uint32* endpoint_buffer_size);
+                                      uint32_t* endpoint_buffer_size);
 
   // If |render_thread_| is valid, sets |stop_render_event_| and blocks until
   // the thread has stopped.  |stop_render_event_| is reset after the call.
@@ -180,7 +183,7 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
 
   // Rendering is driven by this thread (which has no message loop).
   // All OnMoreData() callbacks will be called from this thread.
-  scoped_ptr<base::DelegateSimpleThread> render_thread_;
+  std::unique_ptr<base::DelegateSimpleThread> render_thread_;
 
   // Contains the desired audio format which is set up at construction.
   // Extended PCM waveform format structure based on WAVEFORMATEXTENSIBLE.
@@ -202,7 +205,7 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   size_t packet_size_bytes_;
 
   // Length of the audio endpoint buffer.
-  uint32 endpoint_buffer_size_frames_;
+  uint32_t endpoint_buffer_size_frames_;
 
   // The target device id or an empty string for the default device.
   const std::string device_id_;
@@ -237,7 +240,7 @@ class MEDIA_EXPORT WASAPIAudioOutputStream :
   base::win::ScopedHandle stop_render_event_;
 
   // Container for retrieving data from AudioSourceCallback::OnMoreData().
-  scoped_ptr<AudioBus> audio_bus_;
+  std::unique_ptr<AudioBus> audio_bus_;
 
   base::win::ScopedComPtr<IAudioClock> audio_clock_;
 

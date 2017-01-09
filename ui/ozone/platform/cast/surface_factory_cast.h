@@ -5,8 +5,14 @@
 #ifndef UI_OZONE_PLATFORM_CAST_SURFACE_FACTORY_CAST_H_
 #define UI_OZONE_PLATFORM_CAST_SURFACE_FACTORY_CAST_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
+#include "ui/gl/gl_surface.h"
 #include "ui/ozone/public/surface_factory_ozone.h"
 
 namespace chromecast {
@@ -18,29 +24,37 @@ namespace ui {
 // SurfaceFactoryOzone implementation for OzonePlatformCast.
 class SurfaceFactoryCast : public SurfaceFactoryOzone {
  public:
+  SurfaceFactoryCast();
   explicit SurfaceFactoryCast(
-      scoped_ptr<chromecast::CastEglPlatform> egl_platform);
+      std::unique_ptr<chromecast::CastEglPlatform> egl_platform);
   ~SurfaceFactoryCast() override;
 
   // SurfaceFactoryOzone implementation:
-  intptr_t GetNativeDisplay() override;
-  scoped_ptr<SurfaceOzoneEGL> CreateEGLSurfaceForWidget(
+  scoped_refptr<gl::GLSurface> CreateViewGLSurface(
+      gl::GLImplementation implementation,
       gfx::AcceleratedWidget widget) override;
-  const int32* GetEGLSurfaceProperties(const int32* desired_list) override;
+  scoped_refptr<gl::GLSurface> CreateOffscreenGLSurface(
+      gl::GLImplementation implementation,
+      const gfx::Size& size) override;
+  std::unique_ptr<SurfaceOzoneCanvas> CreateCanvasForWidget(
+      gfx::AcceleratedWidget widget) override;
+  intptr_t GetNativeDisplay() override;
   scoped_refptr<NativePixmap> CreateNativePixmap(
-      gfx::AcceleratedWidget w,
+      gfx::AcceleratedWidget widget,
       gfx::Size size,
       gfx::BufferFormat format,
       gfx::BufferUsage usage) override;
-  bool LoadEGLGLES2Bindings(
-      AddGLLibraryCallback add_gl_library,
-      SetGLGetProcAddressProcCallback set_gl_get_proc_address) override;
+  bool LoadEGLGLES2Bindings() override;
 
   intptr_t GetNativeWindow();
   bool ResizeDisplay(gfx::Size viewport_size);
   void ChildDestroyed();
   void TerminateDisplay();
   void ShutdownHardware();
+
+  // API for keeping track of overlays per frame for logging purposes
+  void OnSwapBuffers();
+  void OnOverlayScheduled(const gfx::Rect& display_bounds);
 
  private:
   enum HardwareState { kUninitialized, kInitialized, kFailed };
@@ -55,8 +69,13 @@ class SurfaceFactoryCast : public SurfaceFactoryOzone {
   bool have_display_type_;
   void* window_;
   gfx::Size display_size_;
-  gfx::Size new_display_size_;
-  scoped_ptr<chromecast::CastEglPlatform> egl_platform_;
+  std::unique_ptr<chromecast::CastEglPlatform> egl_platform_;
+
+  // Overlays scheduled in current and previous frames:
+  int overlay_count_;
+  gfx::Rect overlay_bounds_;
+  int previous_frame_overlay_count_;
+  gfx::Rect previous_frame_overlay_bounds_;
 
   DISALLOW_COPY_AND_ASSIGN(SurfaceFactoryCast);
 };

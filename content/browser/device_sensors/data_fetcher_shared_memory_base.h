@@ -6,12 +6,14 @@
 #define CONTENT_BROWSER_DEVICE_SENSORS_DATA_FETCHER_SHARED_MEMORY_BASE_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/message_loop/message_loop.h"
 #include "content/browser/device_sensors/device_sensors_consts.h"
 #include "content/common/content_export.h"
+#include "mojo/public/cpp/system/buffer.h"
 
 namespace content {
 
@@ -35,12 +37,11 @@ class CONTENT_EXPORT DataFetcherSharedMemoryBase {
   // sensors are unregistered.
   virtual void Shutdown();
 
-  // Returns the shared memory handle of the device sensor data
-  // duplicated into the given process. This method should only be
-  // called after a call to StartFetchingDeviceData method with
+  // Returns the shared memory handle of the device sensor data. This method
+  // should only be called after a call to StartFetchingDeviceData method with
   // corresponding |consumer_type| parameter.
-  base::SharedMemoryHandle GetSharedMemoryHandleForProcess(
-      ConsumerType consumer_type, base::ProcessHandle process);
+  mojo::ScopedSharedBufferHandle GetSharedMemoryHandle(
+      ConsumerType consumer_type);
 
   enum FetcherType {
     // Fetcher runs on the same thread as its creator.
@@ -83,15 +84,15 @@ class CONTENT_EXPORT DataFetcherSharedMemoryBase {
 
  private:
   bool InitAndStartPollingThreadIfNecessary();
-  base::SharedMemory* GetSharedMemory(ConsumerType consumer_type);
   void* GetSharedMemoryBuffer(ConsumerType consumer_type);
 
   unsigned started_consumers_;
 
-  scoped_ptr<PollingThread> polling_thread_;
+  std::unique_ptr<PollingThread> polling_thread_;
 
-  // Owning pointers. Objects in the map are deleted in dtor.
-  typedef std::map<ConsumerType, base::SharedMemory*> SharedMemoryMap;
+  using SharedMemoryMap = std::map<ConsumerType,
+                                   std::pair<mojo::ScopedSharedBufferHandle,
+                                             mojo::ScopedSharedBufferMapping>>;
   SharedMemoryMap shared_memory_map_;
 
   DISALLOW_COPY_AND_ASSIGN(DataFetcherSharedMemoryBase);

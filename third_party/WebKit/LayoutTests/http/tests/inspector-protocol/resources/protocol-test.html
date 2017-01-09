@@ -75,6 +75,25 @@ InspectorTest.sendCommandOrDie = function(command, properties, callback)
     }
 }
 
+InspectorTest.sendCommandPromise = function(method, params)
+{
+    var callback;
+    var promise = new Promise(fulfill => callback = fulfill);
+    InspectorTest.sendCommand(method, params, callback);
+    return promise;
+}
+
+InspectorTest.waitForEventPromise = function(eventName)
+{
+    return new Promise(fulfill => InspectorTest.eventHandler[eventName] = fullfillAndClearListener.bind(null, fulfill));
+
+    function fullfillAndClearListener(fulfill, result)
+    {
+        fulfill(result);
+        delete InspectorTest.eventHandler[eventName];
+    }
+}
+
 InspectorTest.domUndo = function(callback)
 {
     InspectorTest.sendCommandOrDie("DOM.undo", {}, callback);
@@ -137,6 +156,12 @@ InspectorTest.sendRawCommand = function(command, handler)
     return this._requestId;
 }
 
+InspectorTest.readyForTest = function()
+{
+    var embedderMessage = { "id": ++this._embedderRequestId, "method": "readyForTest" };
+    DevToolsHost.sendMessageToEmbedder(JSON.stringify(embedderMessage));
+}
+
 /**
  * @param {string|!Object} messageOrObject
  */
@@ -164,6 +189,20 @@ DevToolsAPI.dispatchMessage = function(messageOrObject)
 }
 
 /**
+ * @param {number} callId
+ * @param {string} script
+ */
+DevToolsAPI.evaluateForTestInFrontend = function(callId, script)
+{
+    try {
+        eval(script);
+    } catch (e) {
+        InspectorTest.log("FAIL: exception in evaluateForTestInFrontend: " + e);
+        InspectorTest.completeTest();
+    }
+}
+
+/**
 * Logs message to document.
 * @param {string} message
 */
@@ -176,8 +215,9 @@ InspectorTest.log = function(message)
 * Formats and logs object to document.
 * @param {Object} object
 * @param {string=} title
+* @param {Array<string>=} unstableKeys
 */
-InspectorTest.logObject = function(object, title)
+InspectorTest.logObject = function(object, title, unstableKeys)
 {
     var lines = [];
 
@@ -206,7 +246,10 @@ InspectorTest.logObject = function(object, title)
             if (!object.hasOwnProperty(name))
                 continue;
             var prefixWithName = "    " + prefix + name + " : ";
-            dumpValue(object[name], "    " + prefix, prefixWithName);
+            var value = object[name];
+            if (unstableKeys && unstableKeys.indexOf(name) !== -1)
+                value = "<" + typeof(value) + ">";
+            dumpValue(value, "    " + prefix, prefixWithName);
         }
         lines.push(prefix + "}");
     }
@@ -254,6 +297,11 @@ InspectorTest.evaluateInPage = function(string, callback)
             callback(message.result.result.value);
     });
 };
+
+InspectorTest.evaluateInPageAsync = function(expression)
+{
+    return InspectorTest.sendCommandPromise("Runtime.evaluate", { "expression": expression, awaitPromise: true, returnByValue: true }).then((message) => message.result.result.value);
+}
 
 InspectorTest.completeTestIfError = function(messageObject)
 {
@@ -310,77 +358,22 @@ InspectorTest.safeWrap = function(func, onexception)
     return result;
 }
 
-var lastPromiseEvalId = 0;
-var pendingPromiseEvalRequests = {};
-
-/**
- * The given function should take two callback paraters before the arguments:
- *  * resolve - called when successful (with optional result)
- *  * reject  - called when there was a failure (with optional error)
- */
-InspectorTest.invokePageFunctionPromise = function(functionName, parameters)
+InspectorTest.navigate = function(url, callback)
 {
-    return new Promise(function(resolve, reject) {
-        var id = ++lastPromiseEvalId;
-        pendingPromiseEvalRequests[id] = { resolve: InspectorTest.safeWrap(resolve), reject: InspectorTest.safeWrap(reject) };
-
-        var jsonParameters = [];
-        for (var i = 0; i < parameters.length; ++i)
-            jsonParameters.push(JSON.stringify(parameters[i]));
-        var asyncEvalWrapper = function(callId, functionName, argumentsArray)
-        {
-            function evalCallbackResolve(result)
-            {
-                testRunner.evaluateInWebInspector(2, "InspectorTest.didInvokePageFunctionPromise(" + callId + ", " + JSON.stringify(result) + ", true);");
-            }
-
-            function evalCallbackReject(result)
-            {
-                testRunner.evaluateInWebInspector(2, "InspectorTest.didInvokePageFunctionPromise(" + callId + ", " + JSON.stringify(result) + ", false);");
-            }
-
-            var args = [evalCallbackResolve, evalCallbackReject].concat(argumentsArray.map(JSON.stringify));
-            var functionCall = functionName + ".call(null, " + args.join(", ") + ")";
-            try {
-                eval(functionCall);
-            } catch(e) {
-                InspectorTest.log("Error: " + e);
-                evalCallbackReject(e);
-            }
-        }
-        var pageRequest = "(" + asyncEvalWrapper.toString() + ")(" + id + ", unescape('" + escape(functionName) + "'), [" + jsonParameters.join(", ") + "])";
-        InspectorTest.evaluateInPage(pageRequest);
-    });
+    InspectorTest._pageLoadedCallback = InspectorTest.safeWrap(callback);
+    InspectorTest.evaluateInPage("navigateProtocolTest('" + url + "')");
 }
 
-InspectorTest.didInvokePageFunctionPromise = function(callId, value, didResolve)
+InspectorTest.pageReloaded = function()
 {
-    var callbacks = pendingPromiseEvalRequests[callId];
-    if (!callbacks) {
-        InspectorTest.log("Missing callback for async eval " + callId + ", perhaps callback invoked twice?");
-        return;
-    }
-    var callback = didResolve ? callbacks.resolve : callbacks.reject;
-    delete pendingPromiseEvalRequests[callId];
-    callback(value);
+    InspectorTest.log("Page reloaded.");
+    var callback = InspectorTest._pageLoadedCallback;
+    delete InspectorTest._pageLoadedCallback;
+    if (callback)
+        callback();
 }
 
-InspectorTest.eventHandler["Inspector.evaluateForTestInFrontend"] = function(message)
-{
-    try {
-        eval(message.params.script);
-    } catch (e) {
-        InspectorTest.log("FAIL: exception in evaluateForTestInFrontend: " + e);
-        InspectorTest.completeTest();
-    }
-};
-
-function enableInspectorAgent()
-{
-    InspectorTest.sendCommand("Inspector.enable", { });
-}
-
-window.addEventListener("load", enableInspectorAgent, false);
+window.addEventListener("load", InspectorTest.readyForTest.bind(InspectorTest), false);
 
 </script>
 </head>

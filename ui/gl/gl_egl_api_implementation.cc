@@ -10,7 +10,20 @@
 #include "ui/gl/gl_context.h"
 #include "ui/gl/gl_implementation.h"
 
-namespace gfx {
+namespace gl {
+
+namespace {
+
+void GL_BINDING_CALL MarshalClearDepthToClearDepthf(GLclampd depth) {
+  glClearDepthf(static_cast<GLclampf>(depth));
+}
+
+void GL_BINDING_CALL MarshalDepthRangeToDepthRangef(GLclampd z_near,
+                                                    GLclampd z_far) {
+  glDepthRangef(static_cast<GLclampf>(z_near), static_cast<GLclampf>(z_far));
+}
+
+}  // namespace
 
 RealEGLApi* g_real_egl;
 
@@ -21,14 +34,18 @@ void InitializeStaticGLBindingsEGL() {
   }
   g_real_egl->Initialize(&g_driver_egl);
   g_current_egl_context = g_real_egl;
-  g_driver_egl.InitializeExtensionBindings();
+
+  // These two functions take single precision float rather than double
+  // precision float parameters in GLES.
+  ::gl::g_driver_gl.fn.glClearDepthFn = MarshalClearDepthToClearDepthf;
+  ::gl::g_driver_gl.fn.glDepthRangeFn = MarshalDepthRangeToDepthRangef;
 }
 
 void InitializeDebugGLBindingsEGL() {
   g_driver_egl.InitializeDebugBindings();
 }
 
-void ClearGLBindingsEGL() {
+void ClearBindingsEGL() {
   if (g_real_egl) {
     delete g_real_egl;
     g_real_egl = NULL;
@@ -111,6 +128,4 @@ bool GetGLWindowSystemBindingInfoEGL(GLWindowSystemBindingInfo* info) {
   return true;
 }
 
-}  // namespace gfx
-
-
+}  // namespace gl

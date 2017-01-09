@@ -6,6 +6,8 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
@@ -56,7 +58,7 @@ class ClipboardAuraTest : public testing::Test {
 
   base::MessageLoopForUI message_loop_;
   ClientClipboard* client_clipboard_;
-  scoped_ptr<ClipboardAura> clipboard_;
+  std::unique_ptr<ClipboardAura> clipboard_;
 };
 
 void ClipboardAuraTest::SetUp() {
@@ -76,7 +78,7 @@ void ClipboardAuraTest::SetUp() {
       << "The test timeout should be greater than the polling interval";
   clipboard_->SetPollingIntervalForTesting(kTestOverridePollingInterval);
 
-  clipboard_->Start(make_scoped_ptr(client_clipboard_));
+  clipboard_->Start(base::WrapUnique(client_clipboard_));
 }
 
 void ClipboardAuraTest::TearDown() {
@@ -118,13 +120,13 @@ TEST_F(ClipboardAuraTest, MonitorClipboardChanges) {
                                             Eq("Test data.")))).Times(1);
 
   base::RunLoop run_loop;
-  message_loop_.PostDelayedTask(
+  message_loop_.task_runner()->PostDelayedTask(
       FROM_HERE, base::Bind(&ClipboardAuraTest_MonitorClipboardChanges_Test::
                                 StopAndResetClipboard,
                             base::Unretained(this)),
       TestTimeouts::tiny_timeout());
-  message_loop_.PostDelayedTask(FROM_HERE, run_loop.QuitClosure(),
-                                TestTimeouts::tiny_timeout());
+  message_loop_.task_runner()->PostDelayedTask(
+      FROM_HERE, run_loop.QuitClosure(), TestTimeouts::tiny_timeout());
   run_loop.Run();
 }
 

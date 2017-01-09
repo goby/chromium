@@ -22,23 +22,9 @@ namespace app_list {
 
 AppsContainerView::AppsContainerView(AppListMainView* app_list_main_view,
                                      AppListModel* model)
-    : model_(model),
-      show_state_(SHOW_NONE),
-      top_icon_animation_pending_count_(0) {
+    : show_state_(SHOW_NONE), top_icon_animation_pending_count_(0) {
   apps_grid_view_ = new AppsGridView(app_list_main_view);
-  int cols;
-  int rows;
-  if (switches::IsExperimentalAppListEnabled()) {
-    cols = kExperimentalPreferredCols;
-    rows = kExperimentalPreferredRows;
-  } else if (app_list_main_view->ShouldCenterWindow()) {
-    cols = kCenteredPreferredCols;
-    rows = kCenteredPreferredRows;
-  } else {
-    cols = kPreferredCols;
-    rows = kPreferredRows;
-  }
-  apps_grid_view_->SetLayout(cols, rows);
+  apps_grid_view_->SetLayout(kPreferredCols, kPreferredRows);
   AddChildView(apps_grid_view_);
 
   folder_background_view_ = new FolderBackgroundView();
@@ -50,8 +36,8 @@ AppsContainerView::AppsContainerView(AppListMainView* app_list_main_view,
   app_list_folder_view_->SetVisible(false);
   AddChildView(app_list_folder_view_);
 
-  apps_grid_view_->SetModel(model_);
-  apps_grid_view_->SetItemList(model_->top_level_item_list());
+  apps_grid_view_->SetModel(model);
+  apps_grid_view_->SetItemList(model->top_level_item_list());
   SetShowState(SHOW_APPS, false);
 }
 

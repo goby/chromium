@@ -5,7 +5,7 @@
 #ifndef CHROME_BROWSER_CHROMEOS_POLICY_USER_CLOUD_POLICY_TOKEN_FORWARDER_H_
 #define CHROME_BROWSER_CHROMEOS_POLICY_USER_CLOUD_POLICY_TOKEN_FORWARDER_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/policy/core/common/cloud/cloud_policy_service.h"
 #include "google_apis/gaia/oauth2_token_service.h"
@@ -59,7 +59,7 @@ class UserCloudPolicyTokenForwarder : public KeyedService,
   UserCloudPolicyManagerChromeOS* manager_;
   ProfileOAuth2TokenService* token_service_;
   SigninManagerBase* signin_manager_;
-  scoped_ptr<OAuth2TokenService::Request> request_;
+  std::unique_ptr<OAuth2TokenService::Request> request_;
 
   DISALLOW_COPY_AND_ASSIGN(UserCloudPolicyTokenForwarder);
 };

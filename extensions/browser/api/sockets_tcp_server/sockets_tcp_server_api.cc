@@ -23,24 +23,23 @@ const char kSocketNotFoundError[] = "Socket not found";
 const char kPermissionError[] = "Does not have permission";
 const int kDefaultListenBacklog = SOMAXCONN;
 
-linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
-                                        ResumableTCPServerSocket* socket) {
-  linked_ptr<SocketInfo> socket_info(new SocketInfo());
+SocketInfo CreateSocketInfo(int socket_id, ResumableTCPServerSocket* socket) {
+  SocketInfo socket_info;
   // This represents what we know about the socket, and does not call through
   // to the system.
-  socket_info->socket_id = socket_id;
+  socket_info.socket_id = socket_id;
   if (!socket->name().empty()) {
-    socket_info->name.reset(new std::string(socket->name()));
+    socket_info.name.reset(new std::string(socket->name()));
   }
-  socket_info->persistent = socket->persistent();
-  socket_info->paused = socket->paused();
+  socket_info.persistent = socket->persistent();
+  socket_info.paused = socket->paused();
 
   // Grab the local address as known by the OS.
   net::IPEndPoint localAddress;
   if (socket->GetLocalAddress(&localAddress)) {
-    socket_info->local_address.reset(
+    socket_info.local_address.reset(
         new std::string(localAddress.ToStringWithoutPort()));
-    socket_info->local_port.reset(new int(localAddress.port()));
+    socket_info.local_port.reset(new int(localAddress.port()));
   }
 
   return socket_info;
@@ -49,10 +48,10 @@ linked_ptr<SocketInfo> CreateSocketInfo(int socket_id,
 void SetSocketProperties(ResumableTCPServerSocket* socket,
                          SocketProperties* properties) {
   if (properties->name.get()) {
-    socket->set_name(*properties->name.get());
+    socket->set_name(*properties->name);
   }
   if (properties->persistent.get()) {
-    socket->set_persistent(*properties->persistent.get());
+    socket->set_persistent(*properties->persistent);
   }
 }
 
@@ -63,10 +62,10 @@ namespace api {
 
 TCPServerSocketAsyncApiFunction::~TCPServerSocketAsyncApiFunction() {}
 
-scoped_ptr<SocketResourceManagerInterface>
+std::unique_ptr<SocketResourceManagerInterface>
 TCPServerSocketAsyncApiFunction::CreateSocketResourceManager() {
-  return scoped_ptr<SocketResourceManagerInterface>(
-             new SocketResourceManager<ResumableTCPServerSocket>()).Pass();
+  return std::unique_ptr<SocketResourceManagerInterface>(
+      new SocketResourceManager<ResumableTCPServerSocket>());
 }
 
 ResumableTCPServerSocket* TCPServerSocketAsyncApiFunction::GetTcpSocket(
@@ -88,8 +87,7 @@ void SocketsTcpServerCreateFunction::Work() {
   ResumableTCPServerSocket* socket =
       new ResumableTCPServerSocket(extension_->id());
 
-  sockets_tcp_server::SocketProperties* properties =
-      params_.get()->properties.get();
+  sockets_tcp_server::SocketProperties* properties = params_->properties.get();
   if (properties) {
     SetSocketProperties(socket, properties);
   }
@@ -116,7 +114,7 @@ void SocketsTcpServerUpdateFunction::Work() {
     return;
   }
 
-  SetSocketProperties(socket, &params_.get()->properties);
+  SetSocketProperties(socket, &params_->properties);
   results_ = sockets_tcp_server::Update::Results::Create();
 }
 
@@ -193,9 +191,8 @@ void SocketsTcpServerListenFunction::AsyncWorkStart() {
   }
 
   int net_result = socket->Listen(
-      params_->address,
-      params_->port,
-      params_->backlog.get() ? *params_->backlog.get() : kDefaultListenBacklog,
+      params_->address, params_->port,
+      params_->backlog.get() ? *params_->backlog : kDefaultListenBacklog,
       &error_);
   results_ = sockets_tcp_server::Listen::Results::Create(net_result);
   if (net_result == net::OK) {
@@ -227,7 +224,7 @@ void SocketsTcpServerDisconnectFunction::Work() {
     return;
   }
 
-  socket->Disconnect();
+  socket->Disconnect(false /* socket_destroying */);
   results_ = sockets_tcp_server::Disconnect::Results::Create();
 }
 
@@ -269,9 +266,9 @@ void SocketsTcpServerGetInfoFunction::Work() {
     return;
   }
 
-  linked_ptr<sockets_tcp_server::SocketInfo> socket_info =
+  sockets_tcp_server::SocketInfo socket_info =
       CreateSocketInfo(params_->socket_id, socket);
-  results_ = sockets_tcp_server::GetInfo::Results::Create(*socket_info);
+  results_ = sockets_tcp_server::GetInfo::Results::Create(socket_info);
 }
 
 SocketsTcpServerGetSocketsFunction::SocketsTcpServerGetSocketsFunction() {}
@@ -281,13 +278,10 @@ SocketsTcpServerGetSocketsFunction::~SocketsTcpServerGetSocketsFunction() {}
 bool SocketsTcpServerGetSocketsFunction::Prepare() { return true; }
 
 void SocketsTcpServerGetSocketsFunction::Work() {
-  std::vector<linked_ptr<sockets_tcp_server::SocketInfo> > socket_infos;
+  std::vector<sockets_tcp_server::SocketInfo> socket_infos;
   base::hash_set<int>* resource_ids = GetSocketIds();
   if (resource_ids != NULL) {
-    for (base::hash_set<int>::iterator it = resource_ids->begin();
-         it != resource_ids->end();
-         ++it) {
-      int socket_id = *it;
+    for (int socket_id : *resource_ids) {
       ResumableTCPServerSocket* socket = GetTcpSocket(socket_id);
       if (socket) {
         socket_infos.push_back(CreateSocketInfo(socket_id, socket));

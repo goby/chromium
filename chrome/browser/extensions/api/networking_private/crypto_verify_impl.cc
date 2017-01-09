@@ -4,16 +4,18 @@
 
 #include "chrome/browser/extensions/api/networking_private/crypto_verify_impl.h"
 
+#include <stdint.h>
+
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/networking_private/networking_private_credentials_getter.h"
-#include "chrome/common/extensions/api/networking_private/networking_private_crypto.h"
+#include "chrome/browser/extensions/api/networking_private/networking_private_crypto.h"
 #include "content/public/browser/browser_thread.h"
 #include "extensions/browser/api/networking_private/networking_private_api.h"
 #include "extensions/browser/api/networking_private/networking_private_service_client.h"
@@ -80,8 +82,10 @@ std::string DoVerifyAndEncryptData(
   }
 
   std::string base64_encoded_ciphertext;
-  base::Base64Encode(std::string(ciphertext.begin(), ciphertext.end()),
-                     &base64_encoded_ciphertext);
+  base::Base64Encode(
+      base::StringPiece(reinterpret_cast<const char*>(ciphertext.data()),
+                        ciphertext.size()),
+      &base64_encoded_ciphertext);
   return base64_encoded_ciphertext;
 }
 
@@ -134,7 +138,7 @@ bool DoVerifyAndEncryptCredentials(
   // Start getting credentials. CredentialsGetterCompleted will be called on
   // completion. On Windows it will be called from a different thread after
   // |credentials_getter| is deleted.
-  scoped_ptr<NetworkingPrivateCredentialsGetter> credentials_getter(
+  std::unique_ptr<NetworkingPrivateCredentialsGetter> credentials_getter(
       NetworkingPrivateCredentialsGetter::Create());
   credentials_getter->Start(guid, decoded_public_key,
                             base::Bind(&CredentialsGetterCompleted,
@@ -173,6 +177,8 @@ CryptoVerifyImpl::Credentials::Credentials(
   device_bssid = properties.device_bssid;
   public_key = properties.public_key;
 }
+
+CryptoVerifyImpl::Credentials::Credentials(const Credentials& other) = default;
 
 CryptoVerifyImpl::Credentials::~Credentials() {
 }

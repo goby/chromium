@@ -6,6 +6,7 @@
 
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "chrome/browser/extensions/component_migration_helper.h"
 #include "chrome/browser/media/router/media_router_feature.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -22,6 +23,9 @@ ComponentToolbarActionsFactory* testing_factory_ = nullptr;
 
 base::LazyInstance<ComponentToolbarActionsFactory> lazy_factory =
     LAZY_INSTANCE_INITIALIZER;
+
+const char kCastExtensionId[] = "boadgeojelhgndaghljhdicfkmllpafd";
+const char kCastBetaExtensionId[] = "dliochdbjfkdbacpmhlcpmleaejidimm";
 
 }  // namespace
 
@@ -40,26 +44,17 @@ ComponentToolbarActionsFactory* ComponentToolbarActionsFactory::GetInstance() {
 std::set<std::string> ComponentToolbarActionsFactory::GetInitialComponentIds(
     Profile* profile) {
   std::set<std::string> component_ids;
-
-  // This is currently behind the extension-action-redesign flag, as it is
-  // designed for the new toolbar.
-  if (!extensions::FeatureSwitch::extension_action_redesign()->IsEnabled())
-    return component_ids;
-
-  if (!profile->IsOffTheRecord() && media_router::MediaRouterEnabled(profile))
-    component_ids.insert(kMediaRouterActionId);
-
   return component_ids;
 }
 
-scoped_ptr<ToolbarActionViewController>
+std::unique_ptr<ToolbarActionViewController>
 ComponentToolbarActionsFactory::GetComponentToolbarActionForId(
     const std::string& id,
-    Browser* browser) {
+    Browser* browser,
+    ToolbarActionsBar* bar) {
   // This is currently behind the extension-action-redesign flag, as it is
   // designed for the new toolbar.
   DCHECK(extensions::FeatureSwitch::extension_action_redesign()->IsEnabled());
-  DCHECK(GetInitialComponentIds(browser->profile()).count(id));
 
   // Add component toolbar actions here.
   // This current design means that the ComponentToolbarActionsFactory is aware
@@ -69,12 +64,12 @@ ComponentToolbarActionsFactory::GetComponentToolbarActionForId(
   // e.g., RegisterChromeAction().
 #if defined(ENABLE_MEDIA_ROUTER)
   if (id == kMediaRouterActionId)
-    return scoped_ptr<ToolbarActionViewController>(
-        new MediaRouterAction(browser));
+    return std::unique_ptr<ToolbarActionViewController>(
+        new MediaRouterAction(browser, bar));
 #endif  // defined(ENABLE_MEDIA_ROUTER)
 
   NOTREACHED();
-  return scoped_ptr<ToolbarActionViewController>();
+  return std::unique_ptr<ToolbarActionViewController>();
 }
 
 // static
@@ -82,3 +77,20 @@ void ComponentToolbarActionsFactory::SetTestingFactory(
     ComponentToolbarActionsFactory* factory) {
   testing_factory_ = factory;
 }
+
+void ComponentToolbarActionsFactory::RegisterComponentMigrations(
+    extensions::ComponentMigrationHelper* helper) const {
+  helper->Register(kMediaRouterActionId, kCastExtensionId);
+  helper->Register(kMediaRouterActionId, kCastBetaExtensionId);
+}
+
+void ComponentToolbarActionsFactory::HandleComponentMigrations(
+    extensions::ComponentMigrationHelper* helper,
+    Profile* profile) const {
+  if (media_router::MediaRouterEnabled(profile)) {
+    helper->OnFeatureEnabled(kMediaRouterActionId);
+  } else {
+    helper->OnFeatureDisabled(kMediaRouterActionId);
+  }
+}
+

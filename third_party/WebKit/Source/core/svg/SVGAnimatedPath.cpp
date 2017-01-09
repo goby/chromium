@@ -28,20 +28,18 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/svg/SVGAnimatedPath.h"
-
-#include "core/svg/SVGPathElement.h"
 
 namespace blink {
 
-SVGAnimatedPath::SVGAnimatedPath(SVGPathElement* contextElement, const QualifiedName& attributeName)
-    : SVGAnimatedProperty<SVGPath>(contextElement, attributeName, SVGPath::create())
-{
-}
+SVGAnimatedPath::SVGAnimatedPath(SVGElement* contextElement,
+                                 const QualifiedName& attributeName,
+                                 CSSPropertyID cssPropertyId)
+    : SVGAnimatedProperty<SVGPath>(contextElement,
+                                   attributeName,
+                                   SVGPath::create(),
+                                   cssPropertyId) {}
 
-SVGAnimatedPath::~SVGAnimatedPath()
-{
-}
+SVGAnimatedPath::~SVGAnimatedPath() {}
 
-}
+}  // namespace blink

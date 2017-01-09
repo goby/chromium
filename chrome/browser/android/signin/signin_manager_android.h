@@ -7,19 +7,17 @@
 
 #include <jni.h>
 
+#include <memory>
 #include <string>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "base/threading/thread_checker.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/signin/core/browser/signin_manager_base.h"
 
 class Profile;
-
-namespace policy {
-class CloudPolicyClient;
-}
 
 // Android wrapper of the SigninManager which provides access from the Java
 // layer. Note that on Android, there's only a single profile, and therefore
@@ -29,7 +27,7 @@ class CloudPolicyClient;
 //
 // This class implements parts of the sign-in flow, to make sure that policy
 // is available before sign-in completes.
-class SigninManagerAndroid {
+class SigninManagerAndroid : public SigninManagerBase::Observer {
  public:
   SigninManagerAndroid(JNIEnv* env, jobject obj);
 
@@ -44,6 +42,9 @@ class SigninManagerAndroid {
   void FetchPolicyBeforeSignIn(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj);
 
+  void AbortSignIn(JNIEnv* env,
+                   const base::android::JavaParamRef<jobject>& obj);
+
   // Indicates that the user has made the choice to sign-in. |username|
   // contains the email address of the account to use as primary.
   void OnSignInCompleted(JNIEnv* env,
@@ -57,7 +58,8 @@ class SigninManagerAndroid {
       const base::android::JavaParamRef<jobject>& obj);
 
   void WipeProfileData(JNIEnv* env,
-                       const base::android::JavaParamRef<jobject>& obj);
+                       const base::android::JavaParamRef<jobject>& obj,
+                       const base::android::JavaParamRef<jobject>& hooks);
 
   void LogInSignedInUser(JNIEnv* env,
                          const base::android::JavaParamRef<jobject>& obj);
@@ -72,16 +74,23 @@ class SigninManagerAndroid {
   jboolean IsSignedInOnNative(JNIEnv* env,
                               const base::android::JavaParamRef<jobject>& obj);
 
- private:
-  ~SigninManagerAndroid();
+  // SigninManagerBase::Observer implementation.
+  void GoogleSigninFailed(const GoogleServiceAuthError& error) override;
+  void GoogleSigninSucceeded(const std::string& account_id,
+                             const std::string& username,
+                             const std::string& password) override;
+  void GoogleSignedOut(const std::string& account_id,
+                       const std::string& username) override;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
+ private:
+  ~SigninManagerAndroid() override;
+
   void OnPolicyRegisterDone(const std::string& dm_token,
                             const std::string& client_id);
   void OnPolicyFetchDone(bool success);
-#endif
 
-  void OnBrowsingDataRemoverDone();
+  void OnBrowsingDataRemoverDone(
+      const base::android::ScopedJavaGlobalRef<jobject>& callback);
 
   void ClearLastSignedInUser();
 
@@ -92,7 +101,6 @@ class SigninManagerAndroid {
   // Java-side SigninManager object.
   base::android::ScopedJavaGlobalRef<jobject> java_signin_manager_;
 
-#if defined(ENABLE_CONFIGURATION_POLICY)
   // CloudPolicy credentials stored during a pending sign-in, awaiting user
   // confirmation before starting to fetch policies.
   std::string dm_token_;
@@ -101,9 +109,10 @@ class SigninManagerAndroid {
   // Username that is pending sign-in. This is used to extract the domain name
   // for the policy dialog, when |username_| corresponds to a managed account.
   std::string username_;
-#endif
 
   PrefChangeRegistrar pref_change_registrar_;
+
+  base::ThreadChecker thread_checker_;
 
   base::WeakPtrFactory<SigninManagerAndroid> weak_factory_;
 

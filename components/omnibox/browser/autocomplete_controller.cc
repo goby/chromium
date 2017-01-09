@@ -4,15 +4,19 @@
 
 #include "components/omnibox/browser/autocomplete_controller.h"
 
+#include <stddef.h>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/metrics/histogram.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/trace_event/trace_event.h"
 #include "build/build_config.h"
 #include "components/omnibox/browser/autocomplete_controller_delegate.h"
 #include "components/omnibox/browser/bookmark_provider.h"
@@ -22,6 +26,7 @@
 #include "components/omnibox/browser/history_url_provider.h"
 #include "components/omnibox/browser/keyword_provider.h"
 #include "components/omnibox/browser/omnibox_field_trial.h"
+#include "components/omnibox/browser/physical_web_provider.h"
 #include "components/omnibox/browser/search_provider.h"
 #include "components/omnibox/browser/shortcuts_provider.h"
 #include "components/omnibox/browser/zero_suggest_provider.h"
@@ -123,6 +128,22 @@ void AutocompleteMatchToAssistedQuery(
       *subtype = 39;
       return;
     }
+    case AutocompleteMatchType::CALCULATOR: {
+      *type = 6;
+      return;
+    }
+    case AutocompleteMatchType::CLIPBOARD: {
+      *subtype = 177;
+      return;
+    }
+    case AutocompleteMatchType::PHYSICAL_WEB: {
+      *subtype = 190;
+      return;
+    }
+    case AutocompleteMatchType::PHYSICAL_WEB_OVERFLOW: {
+      *subtype = 191;
+      return;
+    }
     default: {
       // This value indicates a native chrome suggestion with no named subtype
       // (yet).
@@ -166,15 +187,15 @@ bool AutocompleteMatchHasCustomDescription(const AutocompleteMatch& match) {
 }  // namespace
 
 AutocompleteController::AutocompleteController(
-    scoped_ptr<AutocompleteProviderClient> provider_client,
+    std::unique_ptr<AutocompleteProviderClient> provider_client,
     AutocompleteControllerDelegate* delegate,
     int provider_types)
     : delegate_(delegate),
-      provider_client_(provider_client.Pass()),
-      history_url_provider_(NULL),
-      keyword_provider_(NULL),
-      search_provider_(NULL),
-      zero_suggest_provider_(NULL),
+      provider_client_(std::move(provider_client)),
+      history_url_provider_(nullptr),
+      keyword_provider_(nullptr),
+      search_provider_(nullptr),
+      zero_suggest_provider_(nullptr),
       stop_timer_duration_(OmniboxFieldTrial::StopTimerFieldTrialDuration()),
       done_(true),
       in_start_(false),
@@ -202,8 +223,8 @@ AutocompleteController::AutocompleteController(
   if (provider_types & AutocompleteProvider::TYPE_SHORTCUTS)
     providers_.push_back(new ShortcutsProvider(provider_client_.get()));
   if (provider_types & AutocompleteProvider::TYPE_ZERO_SUGGEST) {
-    zero_suggest_provider_ =
-        ZeroSuggestProvider::Create(provider_client_.get(), this);
+    zero_suggest_provider_ = ZeroSuggestProvider::Create(
+        provider_client_.get(), history_url_provider_, this);
     if (zero_suggest_provider_)
       providers_.push_back(zero_suggest_provider_);
   }
@@ -212,8 +233,15 @@ AutocompleteController::AutocompleteController(
         ClipboardRecentContent::GetInstance();
     if (clipboard_recent_content) {
       providers_.push_back(new ClipboardURLProvider(provider_client_.get(),
+                                                    history_url_provider_,
                                                     clipboard_recent_content));
     }
+  }
+  if (provider_types & AutocompleteProvider::TYPE_PHYSICAL_WEB) {
+    PhysicalWebProvider* physical_web_provider = PhysicalWebProvider::Create(
+        provider_client_.get(), history_url_provider_);
+    if (physical_web_provider)
+      providers_.push_back(physical_web_provider);
   }
 }
 
@@ -229,7 +257,10 @@ AutocompleteController::~AutocompleteController() {
 }
 
 void AutocompleteController::Start(const AutocompleteInput& input) {
+  TRACE_EVENT1("omnibox", "AutocompleteController::Start",
+               "text", base::UTF16ToUTF8(input.text()));
   const base::string16 old_input_text(input_.text());
+  const bool old_allow_exact_keyword_match = input_.allow_exact_keyword_match();
   const bool old_want_asynchronous_matches = input_.want_asynchronous_matches();
   const bool old_from_omnibox_focus = input_.from_omnibox_focus();
   input_ = input;
@@ -245,6 +276,7 @@ void AutocompleteController::Start(const AutocompleteInput& input) {
   // can change the text string (e.g. by stripping off a leading '?').
   const bool minimal_changes =
       (input_.text() == old_input_text) &&
+      (input_.allow_exact_keyword_match() == old_allow_exact_keyword_match) &&
       (input_.want_asynchronous_matches() == old_want_asynchronous_matches) &&
       (input.from_omnibox_focus() == old_from_omnibox_focus);
 
@@ -393,6 +425,7 @@ void AutocompleteController::UpdateMatchDestinationURL(
 void AutocompleteController::UpdateResult(
     bool regenerate_result,
     bool force_notify_default_match_changed) {
+  TRACE_EVENT0("omnibox", "AutocompleteController::UpdateResult");
   const bool last_default_was_valid = result_.default_match() != result_.end();
   // The following three variables are only set and used if
   // |last_default_was_valid|.
@@ -401,9 +434,10 @@ void AutocompleteController::UpdateResult(
   if (last_default_was_valid) {
     last_default_fill_into_edit = result_.default_match()->fill_into_edit;
     last_default_keyword = result_.default_match()->keyword;
-    if (result_.default_match()->associated_keyword != NULL)
+    if (result_.default_match()->associated_keyword) {
       last_default_associated_keyword =
           result_.default_match()->associated_keyword->keyword;
+    }
   }
 
   if (regenerate_result)
@@ -417,8 +451,7 @@ void AutocompleteController::UpdateResult(
     result_.AppendMatches(input_, (*i)->matches());
 
   // Sort the matches and trim to a small number of "best" matches.
-  result_.SortAndCull(input_, provider_client_->GetAcceptLanguages(),
-                      template_url_service_);
+  result_.SortAndCull(input_, template_url_service_);
 
   // Need to validate before invoking CopyOldMatches as the old matches are not
   // valid against the current input.
@@ -429,8 +462,7 @@ void AutocompleteController::UpdateResult(
   if (!done_) {
     // This conditional needs to match the conditional in Start that invokes
     // StartExpireTimer.
-    result_.CopyOldMatches(input_, provider_client_->GetAcceptLanguages(),
-                           last_result, template_url_service_);
+    result_.CopyOldMatches(input_, last_result, template_url_service_);
   }
 
   UpdateKeywordDescriptions(&result_);
@@ -442,7 +474,7 @@ void AutocompleteController::UpdateResult(
   const bool default_is_valid = result_.default_match() != result_.end();
   base::string16 default_associated_keyword;
   if (default_is_valid &&
-      (result_.default_match()->associated_keyword != NULL)) {
+      result_.default_match()->associated_keyword) {
     default_associated_keyword =
         result_.default_match()->associated_keyword->keyword;
   }
@@ -474,8 +506,8 @@ void AutocompleteController::UpdateAssociatedKeywords(
     return;
 
   // Determine if the user's input is an exact keyword match.
-  base::string16 exact_keyword = keyword_provider_->GetKeywordForText(
-      TemplateURLService::CleanUserInputKeyword(input_.text()));
+  base::string16 exact_keyword =
+      keyword_provider_->GetKeywordForText(input_.text());
 
   std::set<base::string16> keywords;
   for (ACMatches::iterator match(result->begin()); match != result->end();
@@ -537,7 +569,7 @@ void AutocompleteController::UpdateKeywordDescriptions(
           // name -- don't assume that the normal search keyword description is
           // applicable.
           i->description = template_url->AdjustedShortNameForLocaleDirection();
-          if (template_url->GetType() != TemplateURL::OMNIBOX_API_EXTENSION) {
+          if (template_url->type() != TemplateURL::OMNIBOX_API_EXTENSION) {
             i->description = l10n_util::GetStringFUTF16(
                 IDS_AUTOCOMPLETE_SEARCH_DESCRIPTION, i->description);
           }

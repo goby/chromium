@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_WEBCRYPTO_ALGORITHMS_SECRET_KEY_UTIL_
 #define COMPONENTS_WEBCRYPTO_ALGORITHMS_SECRET_KEY_UTIL_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
@@ -38,11 +40,6 @@ Status CreateWebCryptoSecretKey(const CryptoData& key_data,
                                 bool extractable,
                                 blink::WebCryptoKeyUsageMask usages,
                                 blink::WebCryptoKey* key);
-
-// Checks that |actual_usages| is a non-empty subset of |all_possible_usages|.
-Status CheckSecretKeyCreationUsages(
-    blink::WebCryptoKeyUsageMask all_possible_usages,
-    blink::WebCryptoKeyUsageMask actual_usages);
 
 // Writes a JWK-formatted symmetric key to |jwk_key_data|.
 //  * raw_key_data: The actual key data

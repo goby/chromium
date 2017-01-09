@@ -8,81 +8,80 @@
 #include "base/callback_helpers.h"
 #include "base/lazy_instance.h"
 #include "base/trace_event/trace_event.h"
+#include "cc/output/context_cache_controller.h"
 #include "cc/output/managed_memory_policy.h"
-#include "gpu/blink/webgraphicscontext3d_impl.h"
-#include "gpu/command_buffer/client/gl_in_process_context.h"
 #include "gpu/command_buffer/client/gles2_implementation.h"
 #include "gpu/command_buffer/client/gles2_lib.h"
+#include "gpu/command_buffer/client/shared_memory_limits.h"
+#include "gpu/ipc/gl_in_process_context.h"
 #include "gpu/skia_bindings/gl_bindings_skia_cmd_buffer.h"
 #include "third_party/skia/include/gpu/GrContext.h"
 #include "third_party/skia/include/gpu/gl/GrGLInterface.h"
 
 namespace android_webview {
 
-namespace {
-
-// Singleton used to initialize and terminate the gles2 library.
-class GLES2Initializer {
- public:
-  GLES2Initializer() { gles2::Initialize(); }
-
-  ~GLES2Initializer() { gles2::Terminate(); }
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(GLES2Initializer);
-};
-
-base::LazyInstance<GLES2Initializer> g_gles2_initializer =
-    LAZY_INSTANCE_INITIALIZER;
-
-}  // namespace
-
 // static
 scoped_refptr<AwRenderThreadContextProvider>
 AwRenderThreadContextProvider::Create(
-    scoped_refptr<gfx::GLSurface> surface,
+    scoped_refptr<gl::GLSurface> surface,
     scoped_refptr<gpu::InProcessCommandBuffer::Service> service) {
   return new AwRenderThreadContextProvider(surface, service);
 }
 
 AwRenderThreadContextProvider::AwRenderThreadContextProvider(
-    scoped_refptr<gfx::GLSurface> surface,
+    scoped_refptr<gl::GLSurface> surface,
     scoped_refptr<gpu::InProcessCommandBuffer::Service> service) {
   DCHECK(main_thread_checker_.CalledOnValidThread());
 
-  blink::WebGraphicsContext3D::Attributes attributes;
-  attributes.antialias = false;
-  attributes.depth = false;
-  attributes.stencil = false;
-  attributes.shareResources = true;
-  attributes.noAutomaticFlushes = true;
-  gpu::gles2::ContextCreationAttribHelper attribs_for_gles2;
-  gpu_blink::WebGraphicsContext3DImpl::ConvertAttributes(attributes,
-                                                         &attribs_for_gles2);
-  attribs_for_gles2.lose_context_when_out_of_memory = true;
+  // This is an onscreen context, wrapping the GLSurface given to us from
+  // the Android OS. The widget we pass here will be ignored since we're
+  // providing the GLSurface to the context already.
+  DCHECK(!surface->IsOffscreen());
+  gpu::gles2::ContextCreationAttribHelper attributes;
+  // The context is wrapping an already allocated surface, so we can't control
+  // what buffers it has from these attributes. We do expect an alpha and
+  // stencil buffer to exist for webview, as the display compositor requires
+  // having them both in order to integrate its output with the content behind
+  // it.
+  attributes.alpha_size = 8;
+  attributes.stencil_size = 8;
+  // The depth buffer may exist due to having a stencil buffer, but we don't
+  // need one, so use -1 for it.
+  attributes.depth_size = -1;
+  attributes.samples = 0;
+  attributes.sample_buffers = 0;
+  attributes.bind_generates_resource = false;
+
+  gpu::SharedMemoryLimits limits;
+  // This context is only used for the display compositor, and there are no
+  // uploads done with it at all. We choose a small transfer buffer limit
+  // here, the minimums match the display compositor context for the android
+  // browser. We don't set the max since we expect the transfer buffer to be
+  // relatively unused.
+  limits.start_transfer_buffer_size = 64 * 1024;
+  limits.min_transfer_buffer_size = 64 * 1024;
 
   context_.reset(gpu::GLInProcessContext::Create(
-      service,
-      surface,
-      surface->IsOffscreen(),
-      gfx::kNullAcceleratedWidget,
-      surface->GetSize(),
-      NULL /* share_context */,
-      false /* share_resources */,
-      attribs_for_gles2,
-      gfx::PreferDiscreteGpu,
-      gpu::GLInProcessContextSharedMemoryLimits(),
-      nullptr,
+      service, surface, surface->IsOffscreen(), gpu::kNullSurfaceHandle,
+      nullptr /* share_context */, attributes, limits, nullptr, nullptr,
       nullptr));
 
-  context_->SetContextLostCallback(base::Bind(
+  context_->GetImplementation()->SetLostContextCallback(base::Bind(
       &AwRenderThreadContextProvider::OnLostContext, base::Unretained(this)));
 
-  capabilities_.gpu = context_->GetImplementation()->capabilities();
+  cache_controller_.reset(
+      new cc::ContextCacheController(context_->GetImplementation(), nullptr));
 }
 
 AwRenderThreadContextProvider::~AwRenderThreadContextProvider() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
+  if (gr_context_)
+    gr_context_->releaseResourcesAndAbandonContext();
+}
+
+uint32_t AwRenderThreadContextProvider::GetCopyTextureInternalFormat() {
+  // The attributes used in the constructor included an alpha channel.
+  return GL_RGBA;
 }
 
 bool AwRenderThreadContextProvider::BindToCurrentThread() {
@@ -92,11 +91,9 @@ bool AwRenderThreadContextProvider::BindToCurrentThread() {
   return true;
 }
 
-cc::ContextProvider::Capabilities
-AwRenderThreadContextProvider::ContextCapabilities() {
+gpu::Capabilities AwRenderThreadContextProvider::ContextCapabilities() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
-
-  return capabilities_;
+  return context_->GetImplementation()->capabilities();
 }
 
 gpu::gles2::GLES2Interface* AwRenderThreadContextProvider::ContextGL() {
@@ -111,59 +108,37 @@ gpu::ContextSupport* AwRenderThreadContextProvider::ContextSupport() {
   return context_->GetImplementation();
 }
 
-static void BindGrContextCallback(const GrGLInterface* interface) {
-  cc::ContextProvider* context_provider =
-      reinterpret_cast<AwRenderThreadContextProvider*>(
-          interface->fCallbackData);
-
-  gles2::SetGLContext(context_provider->ContextGL());
-}
-
 class GrContext* AwRenderThreadContextProvider::GrContext() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
 
   if (gr_context_)
     return gr_context_.get();
 
-  // The GrGLInterface factory will make GL calls using the C GLES2 interface.
-  // Make sure the gles2 library is initialized first on exactly one thread.
-  g_gles2_initializer.Get();
-  gles2::SetGLContext(ContextGL());
-
-  skia::RefPtr<GrGLInterface> interface = skia::AdoptRef(new GrGLInterface);
-  skia_bindings::InitCommandBufferSkiaGLBinding(interface.get());
-  interface->fCallback = BindGrContextCallback;
-  interface->fCallbackData = reinterpret_cast<GrGLInterfaceCallbackData>(this);
-
-  gr_context_ = skia::AdoptRef(GrContext::Create(
+  sk_sp<GrGLInterface> interface(
+      skia_bindings::CreateGLES2InterfaceBindings(ContextGL()));
+  gr_context_ = sk_sp<::GrContext>(GrContext::Create(
+      // GrContext takes ownership of |interface|.
       kOpenGL_GrBackend, reinterpret_cast<GrBackendContext>(interface.get())));
-
+  cache_controller_->SetGrContext(gr_context_.get());
   return gr_context_.get();
+}
+
+cc::ContextCacheController* AwRenderThreadContextProvider::CacheController() {
+  DCHECK(main_thread_checker_.CalledOnValidThread());
+  return cache_controller_.get();
 }
 
 void AwRenderThreadContextProvider::InvalidateGrContext(uint32_t state) {
   DCHECK(main_thread_checker_.CalledOnValidThread());
 
   if (gr_context_)
-    gr_context_.get()->resetContext(state);
-}
-
-void AwRenderThreadContextProvider::SetupLock() {
-  context_->SetLock(&context_lock_);
+    gr_context_->resetContext(state);
 }
 
 base::Lock* AwRenderThreadContextProvider::GetLock() {
-  return &context_lock_;
-}
-
-void AwRenderThreadContextProvider::DeleteCachedResources() {
-  DCHECK(main_thread_checker_.CalledOnValidThread());
-
-  if (gr_context_) {
-    TRACE_EVENT_INSTANT0("gpu", "GrContext::freeGpuResources",
-                         TRACE_EVENT_SCOPE_THREAD);
-    gr_context_->freeGpuResources();
-  }
+  // This context provider is not used on multiple threads.
+  NOTREACHED();
+  return nullptr;
 }
 
 void AwRenderThreadContextProvider::SetLostContextCallback(
@@ -175,7 +150,7 @@ void AwRenderThreadContextProvider::OnLostContext() {
   DCHECK(main_thread_checker_.CalledOnValidThread());
 
   if (!lost_context_callback_.is_null())
-    base::ResetAndReturn(&lost_context_callback_).Run();
+    lost_context_callback_.Run();
   if (gr_context_)
     gr_context_->abandonContext();
 }

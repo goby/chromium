@@ -5,7 +5,9 @@
 #ifndef CONTENT_RENDERER_MEDIA_AEC_DUMP_MESSAGE_FILTER_H_
 #define CONTENT_RENDERER_MEDIA_AEC_DUMP_MESSAGE_FILTER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/renderer/render_thread_impl.h"
 #include "ipc/ipc_platform_file.h"
@@ -64,7 +66,7 @@ class CONTENT_EXPORT AecDumpMessageFilter : public IPC::MessageFilter {
 
   // IPC::MessageFilter override. Called on |io_task_runner|.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnFilterAdded(IPC::Sender* sender) override;
+  void OnFilterAdded(IPC::Channel* channel) override;
   void OnFilterRemoved() override;
   void OnChannelClosing() override;
 

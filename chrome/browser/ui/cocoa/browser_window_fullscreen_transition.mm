@@ -6,11 +6,14 @@
 
 #include <QuartzCore/QuartzCore.h>
 
+#include <memory>
+
 #include "base/mac/bind_objc_block.h"
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #import "base/mac/sdk_forward_declarations.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#import "chrome/browser/ui/cocoa/browser_window_controller.h"
 #import "chrome/browser/ui/cocoa/framed_browser_window.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_background_view.h"
 
@@ -21,8 +24,10 @@ NSString* const kSnapshotWindowAnimationID = @"SnapshotWindowAnimationID";
 NSString* const kAnimationIDKey = @"AnimationIDKey";
 
 // The fraction of the duration from AppKit's startCustomAnimation methods
-// that we want our animation to run in.
+// that we want our animation to run in. Yosemite's fraction is smaller
+// since its fullscreen transition is significantly slower.
 CGFloat const kAnimationDurationFraction = 0.5;
+CGFloat const kAnimationDurationFractionYosemite = 0.3;
 
 // This class has two simultaneous animations to resize and reposition layers.
 // These animations must use the same timing function, otherwise there will be
@@ -83,12 +88,16 @@ class FrameAndStyleLock {
 
 @end
 
-@interface BrowserWindowFullscreenTransition () {
+@interface BrowserWindowFullscreenTransition ()
+    <CAAnimationDelegate, CALayerDelegate> {
   // Flag to keep track of whether we are entering or exiting fullscreen.
   BOOL isEnteringFullscreen_;
 
   // The window which is undergoing the fullscreen transition.
   base::scoped_nsobject<FramedBrowserWindow> primaryWindow_;
+
+  // The window which is undergoing the fullscreen transition.
+  BrowserWindowController* controller_; // weak
 
   // A layer that holds a snapshot of the original state of |primaryWindow_|.
   base::scoped_nsobject<CALayer> snapshotLayer_;
@@ -113,9 +122,6 @@ class FrameAndStyleLock {
   // The initial origin of the content view.
   NSPoint initialContentViewOrigin_;
 
-  // The initial value of the content view's autoresizeSubviews property.
-  BOOL initialContentViewAutoresizesSubviews_;
-
   // Whether the instance is in the process of changing the size of
   // |primaryWindow_|.
   BOOL changingPrimaryWindowSize_;
@@ -132,7 +138,11 @@ class FrameAndStyleLock {
       fullscreenTabStripBackgroundView_;
 
   // Locks and unlocks the FullSizeContentWindow.
-  scoped_ptr<FrameAndStyleLock> lock_;
+  std::unique_ptr<FrameAndStyleLock> lock_;
+
+  // Flag that indicates if the animation was completed. Sets to true at the
+  // end of the animation.
+  BOOL completedTransition_;
 }
 
 // Takes a snapshot of |primaryWindow_| and puts it in |snapshotLayer_|.
@@ -155,8 +165,9 @@ class FrameAndStyleLock {
 // Sets |primaryWindow_|'s frame to the expected frame.
 - (void)changePrimaryWindowToFinalFrame;
 
-// Override of CAAnimation delegate method.
-- (void)animationDidStop:(CAAnimation*)theAnimation finished:(BOOL)flag;
+// Overrides of CAAnimation delegate methods.
+- (void)animationDidStart:(CAAnimation*)theAnimation;
+- (void)animationDidStop:(CAAnimation*)theAnimation finished:(BOOL)finished;
 
 // Returns the layer of the root view of |window|.
 - (CALayer*)rootLayerOfWindow:(NSWindow*)window;
@@ -182,11 +193,14 @@ class FrameAndStyleLock {
 
 // -------------------------Public Methods----------------------------
 
-- (instancetype)initEnterWithWindow:(FramedBrowserWindow*)window {
-  DCHECK(window);
-  DCHECK([self rootLayerOfWindow:window]);
+- (instancetype)initEnterWithController:(BrowserWindowController*)controller {
+  DCHECK(controller);
+  DCHECK([self rootLayerOfWindow:[controller window]]);
   if ((self = [super init])) {
-    primaryWindow_.reset([window retain]);
+    controller_ = controller;
+    FramedBrowserWindow* framedBrowserWindow =
+        base::mac::ObjCCast<FramedBrowserWindow>([controller window]);
+    primaryWindow_.reset([framedBrowserWindow retain]);
 
     isEnteringFullscreen_ = YES;
     initialFrame_ = [primaryWindow_ frame];
@@ -195,19 +209,21 @@ class FrameAndStyleLock {
   return self;
 }
 
-- (instancetype)initExitWithWindow:(FramedBrowserWindow*)window
-                             frame:(NSRect)frame
-            tabStripBackgroundView:(NSView*)view {
-  DCHECK(window);
-  DCHECK([self rootLayerOfWindow:window]);
+- (instancetype)initExitWithController:(BrowserWindowController*)controller {
+  DCHECK(controller);
+  DCHECK([self rootLayerOfWindow:[controller window]]);
   if ((self = [super init])) {
-    primaryWindow_.reset([window retain]);
-    tabStripBackgroundView_.reset([view retain]);
-    isEnteringFullscreen_ = NO;
-    finalFrame_ = frame;
-    initialFrame_ = [[primaryWindow_ screen] frame];
+    controller_ = controller;
+    FramedBrowserWindow* framedBrowserWindow =
+        base::mac::ObjCCast<FramedBrowserWindow>([controller window]);
+    primaryWindow_.reset([framedBrowserWindow retain]);
 
-    lock_.reset(new FrameAndStyleLock(window));
+    isEnteringFullscreen_ = NO;
+    initialFrame_ = [[primaryWindow_ screen] frame];
+    finalFrame_ = [controller savedRegularWindowFrame];
+    tabStripBackgroundView_.reset([[controller tabStripBackgroundView] retain]);
+
+    lock_.reset(new FrameAndStyleLock(framedBrowserWindow));
   }
   return self;
 }
@@ -218,8 +234,15 @@ class FrameAndStyleLock {
   return @[ primaryWindow_.get(), snapshotWindow_.get() ];
 }
 
+- (BOOL)isTransitionCompleted {
+  return completedTransition_;
+}
+
 - (void)startCustomFullScreenAnimationWithDuration:(NSTimeInterval)duration {
-  CGFloat animationDuration = duration * kAnimationDurationFraction;
+  CGFloat durationFraction = base::mac::IsOS10_10()
+                                 ? kAnimationDurationFractionYosemite
+                                 : kAnimationDurationFraction;
+  CGFloat animationDuration = duration * durationFraction;
   [self preparePrimaryWindowForAnimation];
   [self animatePrimaryWindowWithDuration:animationDuration];
   [self animateSnapshotWindowWithDuration:animationDuration];
@@ -232,6 +255,14 @@ class FrameAndStyleLock {
 - (NSSize)desiredWindowLayoutSize {
   return isEnteringFullscreen_ ? [primaryWindow_ frame].size
                                : [[primaryWindow_ contentView] bounds].size;
+}
+
+- (void)browserWillBeDestroyed {
+  CALayer* root = [self rootLayerOfWindow:primaryWindow_];
+  [root removeAllAnimations];
+  [snapshotLayer_ removeAllAnimations];
+
+  controller_ = nil;
 }
 
 // -------------------------Private Methods----------------------------
@@ -292,7 +323,6 @@ class FrameAndStyleLock {
     // As soon as the style mask includes the flag NSFullScreenWindowMask, the
     // window is expected to receive fullscreen layout. This must be set before
     // the window is resized, as that causes a relayout.
-
     CALayer* root = [self rootLayerOfWindow:primaryWindow_];
     root.opacity = 0;
 
@@ -330,14 +360,6 @@ class FrameAndStyleLock {
         NSMakeRect(contentViewOrigin.x, contentViewOrigin.y,
                    finalFrame_.size.width, finalFrame_.size.height);
     [primaryWindow_ forceContentViewFrame:relativeContentFinalFrame];
-
-    // In OSX 10.11, when the NSFullScreenWindowMask is added or removed,
-    // the window's frame and layer changes slightly which causes a janky
-    // movement. As a result, we should disable the content view's autoresize
-    // at the beginning of the animation and set it back to its original value
-    // at the end of the animation.
-    initialContentViewAutoresizesSubviews_ = [contentView autoresizesSubviews];
-    [contentView setAutoresizesSubviews:NO];
 
     fullscreenTabStripBackgroundView_.reset(
         [[FullscreenTabStripBackgroundView alloc]
@@ -462,7 +484,11 @@ class FrameAndStyleLock {
   changingPrimaryWindowSize_ = NO;
 }
 
-- (void)animationDidStop:(CAAnimation*)theAnimation finished:(BOOL)flag {
+- (void)animationDidStart:(CAAnimation*)theAnimation {
+  // CAAnimationDelegate method added on OSX 10.12.
+}
+
+- (void)animationDidStop:(CAAnimation*)theAnimation finished:(BOOL)finished {
   NSString* animationID = [theAnimation valueForKey:kAnimationIDKey];
 
   // Remove the snapshot window.
@@ -491,13 +517,15 @@ class FrameAndStyleLock {
       NSView* content = [primaryWindow_ contentView];
       [content setFrameOrigin:initialContentViewOrigin_];
       [self changePrimaryWindowToFinalFrame];
-      [content setAutoresizesSubviews:initialContentViewAutoresizesSubviews_];
 
       [tabStripBackgroundView_ setHidden:NO];
       [fullscreenTabStripBackgroundView_ removeFromSuperview];
     }
 
-    // Checks if the contentView size is correct.
+    // Check if the contentView size is correct.
+    // TODO (spqchan): Currently, a popup window will fail this check since
+    // AppKit will shift the contentView up right after the window is resized.
+    // This will create a small janky movement at the end of the animation.
     NSSize expectedSize = finalFrame_.size;
     NSView* content = [primaryWindow_ contentView];
     DCHECK_EQ(NSHeight(content.frame), expectedSize.height);
@@ -510,6 +538,11 @@ class FrameAndStyleLock {
     CALayer* root = [self rootLayerOfWindow:primaryWindow_];
     [root removeAnimationForKey:kPrimaryWindowAnimationID];
     root.opacity = 1;
+
+    completedTransition_ = YES;
+
+    if (!isEnteringFullscreen_)
+      [controller_ exitFullscreenAnimationFinished];
   }
 }
 

@@ -6,22 +6,25 @@
 
 #include <atlbase.h>
 #include <atlcom.h>
+#include <stddef.h>
 
 #include <stdint.h>
 #include <functional>
 #include <iomanip>
 #include <limits>
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/files/file_util.h"
+#include "base/location.h"
 #include "base/macros.h"
+#include "base/sequenced_task_runner.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
 #include "base/win/scoped_co_mem.h"
 #include "components/update_client/utils.h"
-#include "ui/base/win/atl_module.h"
 #include "url/gurl.h"
 
 using base::win::ScopedCoMem;
@@ -312,7 +315,7 @@ HRESULT FindBitsJobIf(Predicate pred,
 // is older than |num_days|.
 class JobCreationOlderThanDays {
  public:
-  JobCreationOlderThanDays(int num_days) : num_days_(num_days) {}
+  explicit JobCreationOlderThanDays(int num_days) : num_days_(num_days) {}
   bool operator()(IBackgroundCopyJob* job) const;
 
  private:
@@ -335,7 +338,7 @@ bool JobCreationOlderThanDays::operator()(IBackgroundCopyJob* job) const {
 // of any file in a job matches the argument.
 class JobFileUrlEqual {
  public:
-  JobFileUrlEqual(const base::string16& remote_name)
+  explicit JobFileUrlEqual(const base::string16& remote_name)
       : remote_name_(remote_name) {}
   bool operator()(IBackgroundCopyJob* job) const;
 
@@ -416,13 +419,11 @@ HRESULT CleanupStaleJobs(
 }  // namespace
 
 BackgroundDownloader::BackgroundDownloader(
-    scoped_ptr<CrxDownloader> successor,
+    std::unique_ptr<CrxDownloader> successor,
     net::URLRequestContextGetter* context_getter,
     const scoped_refptr<base::SequencedTaskRunner>& task_runner)
-    : CrxDownloader(successor.Pass()),
-      main_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+    : CrxDownloader(task_runner, std::move(successor)),
       context_getter_(context_getter),
-      task_runner_(task_runner),
       git_cookie_bits_manager_(0),
       git_cookie_job_(0) {}
 
@@ -439,23 +440,27 @@ void BackgroundDownloader::StartTimer() {
 
 void BackgroundDownloader::OnTimer() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  task_runner_->PostTask(
+  task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&BackgroundDownloader::OnDownloading, base::Unretained(this)));
 }
 
+bool BackgroundDownloader::TimerIsRunning() const {
+  return timer_.get() && timer_->IsRunning();
+}
+
 void BackgroundDownloader::DoStartDownload(const GURL& url) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&BackgroundDownloader::BeginDownload,
-                                    base::Unretained(this), url));
+  task_runner()->PostTask(FROM_HERE,
+                          base::Bind(&BackgroundDownloader::BeginDownload,
+                                     base::Unretained(this), url));
 }
 
 // Called one time when this class is asked to do a download.
 void BackgroundDownloader::BeginDownload(const GURL& url) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
-  download_start_time_ = base::Time::Now();
+  download_start_time_ = base::TimeTicks::Now();
   job_stuck_begin_time_ = download_start_time_;
 
   HRESULT hr = BeginDownloadHelper(url);
@@ -465,7 +470,7 @@ void BackgroundDownloader::BeginDownload(const GURL& url) {
   }
 
   ResetInterfacePointers();
-  main_task_runner_->PostTask(
+  main_task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&BackgroundDownloader::StartTimer, base::Unretained(this)));
 }
@@ -499,7 +504,7 @@ HRESULT BackgroundDownloader::BeginDownloadHelper(const GURL& url) {
 
 // Called any time the timer fires.
 void BackgroundDownloader::OnDownloading() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
   HRESULT hr = UpdateInterfacePointers();
   if (FAILED(hr)) {
@@ -556,7 +561,7 @@ void BackgroundDownloader::OnDownloading() {
     return;
 
   ResetInterfacePointers();
-  main_task_runner_->PostTask(
+  main_task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&BackgroundDownloader::StartTimer, base::Unretained(this)));
 }
@@ -564,11 +569,11 @@ void BackgroundDownloader::OnDownloading() {
 // Completes the BITS download, picks up the file path of the response, and
 // notifies the CrxDownloader. The function should be called only once.
 void BackgroundDownloader::EndDownload(HRESULT error) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
-  DCHECK(!timer_->IsRunning());
+  DCHECK(!TimerIsRunning());
 
-  const base::Time download_end_time(base::Time::Now());
+  const base::TimeTicks download_end_time(base::TimeTicks::Now());
   const base::TimeDelta download_time =
       download_end_time >= download_start_time_
           ? download_end_time - download_start_time_
@@ -607,7 +612,7 @@ void BackgroundDownloader::EndDownload(HRESULT error) {
   result.response = response_;
   result.downloaded_bytes = downloaded_bytes;
   result.total_bytes = total_bytes;
-  main_task_runner_->PostTask(
+  main_task_runner()->PostTask(
       FROM_HERE,
       base::Bind(&BackgroundDownloader::OnDownloadComplete,
                  base::Unretained(this), is_handled, result, download_metrics));
@@ -686,7 +691,7 @@ bool BackgroundDownloader::OnStateQueued() {
 bool BackgroundDownloader::OnStateTransferring() {
   // Resets the baseline for detecting a stuck job since the job is transferring
   // data and it is making progress.
-  job_stuck_begin_time_ = base::Time::Now();
+  job_stuck_begin_time_ = base::TimeTicks::Now();
 
   int64_t downloaded_bytes = -1;
   int64_t total_bytes = -1;
@@ -698,7 +703,7 @@ bool BackgroundDownloader::OnStateTransferring() {
   result.downloaded_bytes = downloaded_bytes;
   result.total_bytes = total_bytes;
 
-  main_task_runner_->PostTask(
+  main_task_runner()->PostTask(
       FROM_HERE, base::Bind(&BackgroundDownloader::OnDownloadProgress,
                             base::Unretained(this), result));
   return false;
@@ -708,7 +713,7 @@ bool BackgroundDownloader::OnStateTransferring() {
 // install a job observer but continues on if an observer can't be set up.
 HRESULT BackgroundDownloader::QueueBitsJob(const GURL& url,
                                            IBackgroundCopyJob** job) {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
   ScopedComPtr<IBackgroundCopyJob> p;
   HRESULT hr = CreateOrOpenJob(url, p.Receive());
@@ -795,7 +800,7 @@ HRESULT BackgroundDownloader::InitializeNewJob(
 bool BackgroundDownloader::IsStuck() {
   const base::TimeDelta job_stuck_timeout(
       base::TimeDelta::FromMinutes(kJobStuckTimeoutMin));
-  return job_stuck_begin_time_ + job_stuck_timeout < base::Time::Now();
+  return job_stuck_begin_time_ + job_stuck_timeout < base::TimeTicks::Now();
 }
 
 HRESULT BackgroundDownloader::CompleteJob() {
@@ -829,7 +834,7 @@ HRESULT BackgroundDownloader::CompleteJob() {
 }
 
 HRESULT BackgroundDownloader::UpdateInterfacePointers() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
   ScopedComPtr<IGlobalInterfaceTable> git;
   HRESULT hr = GetGit(&git);
@@ -855,7 +860,7 @@ void BackgroundDownloader::ResetInterfacePointers() {
 }
 
 HRESULT BackgroundDownloader::ClearGit() {
-  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+  DCHECK(task_runner()->RunsTasksOnCurrentThread());
 
   ResetInterfacePointers();
 
@@ -869,8 +874,8 @@ HRESULT BackgroundDownloader::ClearGit() {
   };
 
   for (auto cookie : cookies) {
-    hr = git->RevokeInterfaceFromGlobal(cookie);
-    DCHECK(SUCCEEDED(hr));
+    // TODO(sorin): check the result of the call, see crbug.com/644857.
+    git->RevokeInterfaceFromGlobal(cookie);
   }
 
   return S_OK;

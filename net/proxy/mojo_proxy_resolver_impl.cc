@@ -4,12 +4,12 @@
 
 #include "net/proxy/mojo_proxy_resolver_impl.h"
 
-#include "base/stl_util.h"
-#include "mojo/common/url_type_converters.h"
+#include <utility>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "net/base/net_errors.h"
-#include "net/log/net_log.h"
 #include "net/proxy/mojo_proxy_resolver_v8_tracing_bindings.h"
-#include "net/proxy/mojo_proxy_type_converters.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_resolver_script_data.h"
 #include "net/proxy/proxy_resolver_v8_tracing.h"
@@ -37,35 +37,34 @@ class MojoProxyResolverImpl::Job {
   interfaces::ProxyResolverRequestClientPtr client_;
   ProxyInfo result_;
   GURL url_;
-  net::ProxyResolver::RequestHandle request_handle_;
+  std::unique_ptr<net::ProxyResolver::Request> request_;
   bool done_;
 
   DISALLOW_COPY_AND_ASSIGN(Job);
 };
 
 MojoProxyResolverImpl::MojoProxyResolverImpl(
-    scoped_ptr<ProxyResolverV8Tracing> resolver)
-    : resolver_(resolver.Pass()) {
-}
+    std::unique_ptr<ProxyResolverV8Tracing> resolver)
+    : resolver_(std::move(resolver)) {}
 
 MojoProxyResolverImpl::~MojoProxyResolverImpl() {
-  STLDeleteElements(&resolve_jobs_);
 }
 
 void MojoProxyResolverImpl::GetProxyForUrl(
-    const mojo::String& url,
+    const GURL& url,
     interfaces::ProxyResolverRequestClientPtr client) {
   DVLOG(1) << "GetProxyForUrl(" << url << ")";
-  Job* job = new Job(client.Pass(), this, url.To<GURL>());
-  bool inserted = resolve_jobs_.insert(job).second;
-  DCHECK(inserted);
-  job->Start();
+  std::unique_ptr<Job> job =
+      base::MakeUnique<Job>(std::move(client), this, url);
+  Job* job_ptr = job.get();
+  resolve_jobs_[job_ptr] = std::move(job);
+  job_ptr->Start();
 }
 
 void MojoProxyResolverImpl::DeleteJob(Job* job) {
-  size_t num_erased = resolve_jobs_.erase(job);
-  DCHECK(num_erased);
-  delete job;
+  auto it = resolve_jobs_.find(job);
+  DCHECK(it != resolve_jobs_.end());
+  resolve_jobs_.erase(it);
 }
 
 MojoProxyResolverImpl::Job::Job(
@@ -73,22 +72,17 @@ MojoProxyResolverImpl::Job::Job(
     MojoProxyResolverImpl* resolver,
     const GURL& url)
     : resolver_(resolver),
-      client_(client.Pass()),
+      client_(std::move(client)),
       url_(url),
-      request_handle_(nullptr),
       done_(false) {}
 
-MojoProxyResolverImpl::Job::~Job() {
-  if (request_handle_ && !done_)
-    resolver_->resolver_->CancelRequest(request_handle_);
-}
+MojoProxyResolverImpl::Job::~Job() {}
 
 void MojoProxyResolverImpl::Job::Start() {
   resolver_->resolver_->GetProxyForURL(
       url_, &result_, base::Bind(&Job::GetProxyDone, base::Unretained(this)),
-      &request_handle_,
-      make_scoped_ptr(new MojoProxyResolverV8TracingBindings<
-                      interfaces::ProxyResolverRequestClient>(client_.get())));
+      &request_, base::MakeUnique<MojoProxyResolverV8TracingBindings<
+                     interfaces::ProxyResolverRequestClient>>(client_.get()));
   client_.set_connection_error_handler(base::Bind(
       &MojoProxyResolverImpl::Job::OnConnectionError, base::Unretained(this)));
 }
@@ -100,12 +94,11 @@ void MojoProxyResolverImpl::Job::GetProxyDone(int error) {
   for (const auto& proxy : result_.proxy_list().GetAll()) {
     DVLOG(1) << proxy.ToURI();
   }
-  mojo::Array<interfaces::ProxyServerPtr> result;
-  if (error == OK) {
-    result = mojo::Array<interfaces::ProxyServerPtr>::From(
-        result_.proxy_list().GetAll());
-  }
-  client_->ReportResult(error, result.Pass());
+  if (error == OK)
+    client_->ReportResult(error, result_);
+  else
+    client_->ReportResult(error, ProxyInfo());
+
   resolver_->DeleteJob(this);
 }
 

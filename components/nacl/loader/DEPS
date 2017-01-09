@@ -9,8 +9,11 @@ include_rules = [
   "+sandbox/linux/services",
   "+sandbox/linux/suid",
   "+sandbox/linux/system_headers",
+  "+sandbox/sandbox_features.h",
   "+sandbox/win/src",
   "+ppapi/c",  # header files only
+
+  "+mojo/edk/embedder",
 
   "+native_client/src/include",
   "+native_client/src/public",
@@ -29,6 +32,4 @@ include_rules = [
 
   # For sending PpapiHostMsg_ChannelCreated in nacl_ipc_adapter.cc:
   "+ppapi/proxy/ppapi_messages.h",
-
-  "+third_party/mojo/src/mojo/edk",
 ]

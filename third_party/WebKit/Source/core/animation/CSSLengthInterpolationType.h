@@ -7,37 +7,46 @@
 
 #include "core/animation/CSSInterpolationType.h"
 #include "core/animation/LengthPropertyFunctions.h"
+#include <memory>
 
 namespace blink {
 
 class ComputedStyle;
 
 class CSSLengthInterpolationType : public CSSInterpolationType {
-public:
-    CSSLengthInterpolationType(CSSPropertyID);
+ public:
+  CSSLengthInterpolationType(PropertyHandle);
 
-    PassOwnPtr<InterpolationValue> maybeConvertUnderlyingValue(const InterpolationEnvironment&) const final;
-    void composite(UnderlyingValue&, double underlyingFraction, const InterpolationValue&) const final;
-    void apply(const InterpolableValue&, const NonInterpolableValue*, InterpolationEnvironment&) const final;
+  InterpolationValue maybeConvertUnderlyingValue(
+      const InterpolationEnvironment&) const final;
+  void composite(UnderlyingValueOwner&,
+                 double underlyingFraction,
+                 const InterpolationValue&,
+                 double interpolationFraction) const final;
+  void apply(const InterpolableValue&,
+             const NonInterpolableValue*,
+             InterpolationEnvironment&) const final;
 
-    static Length resolveInterpolableLength(const InterpolableValue&, const NonInterpolableValue*, const CSSToLengthConversionData&, ValueRange = ValueRangeAll);
-    static PassOwnPtr<InterpolableValue> createInterpolablePixels(double pixels);
-    static InterpolationComponent maybeConvertCSSValue(const CSSValue&);
+ private:
+  float effectiveZoom(const ComputedStyle&) const;
 
-private:
-    float effectiveZoom(const ComputedStyle&) const;
+  InterpolationValue maybeConvertNeutral(const InterpolationValue& underlying,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertInitial(const StyleResolverState&,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertInherit(const StyleResolverState&,
+                                         ConversionCheckers&) const final;
+  InterpolationValue maybeConvertValue(const CSSValue&,
+                                       const StyleResolverState&,
+                                       ConversionCheckers&) const final;
 
-    PassOwnPtr<InterpolationValue> maybeConvertLength(const Length&, float zoom) const;
-    PassOwnPtr<InterpolationValue> maybeConvertNeutral(const UnderlyingValue&, ConversionCheckers&) const final;
-    PassOwnPtr<InterpolationValue> maybeConvertInitial() const final;
-    PassOwnPtr<InterpolationValue> maybeConvertInherit(const StyleResolverState&, ConversionCheckers&) const final;
-    PassOwnPtr<InterpolationValue> maybeConvertValue(const CSSValue&, const StyleResolverState&, ConversionCheckers&) const final;
+  PairwiseInterpolationValue maybeMergeSingles(
+      InterpolationValue&& start,
+      InterpolationValue&& end) const final;
 
-    PassOwnPtr<PairwisePrimitiveInterpolation> mergeSingleConversions(InterpolationValue&, InterpolationValue&) const final;
-
-    const ValueRange m_valueRange;
+  const ValueRange m_valueRange;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSLengthInterpolationType_h
+#endif  // CSSLengthInterpolationType_h

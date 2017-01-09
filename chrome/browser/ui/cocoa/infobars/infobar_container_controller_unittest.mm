@@ -6,12 +6,14 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <utility>
+
 #include "base/mac/scoped_nsobject.h"
 #include "chrome/browser/infobars/infobar_service.h"
-#include "chrome/browser/ui/cocoa/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/infobars/confirm_infobar_controller.h"
 #include "chrome/browser/ui/cocoa/infobars/infobar_cocoa.h"
 #include "chrome/browser/ui/cocoa/infobars/mock_confirm_infobar_delegate.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_profile_test.h"
 #import "chrome/browser/ui/cocoa/view_resizer_pong.h"
 #include "chrome/test/base/testing_profile.h"
 #import "content/public/browser/web_contents.h"
@@ -44,7 +46,7 @@ class InfoBarContainerControllerTest : public CocoaProfileTest {
  public:
   base::scoped_nsobject<ViewResizerPong> resizeDelegate_;
   base::scoped_nsobject<InfoBarContainerController> controller_;
-  scoped_ptr<content::WebContents> web_contents_;
+  std::unique_ptr<content::WebContents> web_contents_;
 };
 
 TEST_VIEW(InfoBarContainerControllerTest, [controller_ view])
@@ -60,9 +62,10 @@ TEST_F(InfoBarContainerControllerTest, BWCPong) {
 TEST_F(InfoBarContainerControllerTest, AddAndRemoveInfoBars) {
   NSView* view = [controller_ view];
 
-  scoped_ptr<infobars::InfoBarDelegate> confirm_delegate(
+  std::unique_ptr<infobars::InfoBarDelegate> confirm_delegate(
       new MockConfirmInfoBarDelegate(NULL));
-  scoped_ptr<InfoBarCocoa> infobar(new InfoBarCocoa(confirm_delegate.Pass()));
+  std::unique_ptr<InfoBarCocoa> infobar(
+      new InfoBarCocoa(std::move(confirm_delegate)));
   base::scoped_nsobject<ConfirmInfoBarController> controller(
       [[ConfirmInfoBarController alloc] initWithInfoBar:infobar.get()]);
   infobar->set_controller(controller);

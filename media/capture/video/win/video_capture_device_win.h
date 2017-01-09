@@ -5,23 +5,25 @@
 // Windows specific implementation of VideoCaptureDevice. DirectShow is used for
 // capturing. DirectShow provide its own threads for capturing.
 
-#ifndef MEDIA_VIDEO_CAPTURE_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_
-#define MEDIA_VIDEO_CAPTURE_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_
+#ifndef MEDIA_CAPTURE_VIDEO_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_
+#define MEDIA_CAPTURE_VIDEO_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_
 
 // Avoid including strsafe.h via dshow as it will cause build warnings.
 #define NO_DSHOW_STRSAFE
 #include <dshow.h>
+#include <stdint.h>
 
 #include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/threading/thread_checker.h"
 #include "base/win/scoped_comptr.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/win/capability_list_win.h"
 #include "media/capture/video/win/sink_filter_win.h"
 #include "media/capture/video/win/sink_input_pin_win.h"
+#include "media/capture/video_capture_types.h"
 
 namespace tracked_objects {
 class Location;
@@ -62,15 +64,18 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
   static VideoPixelFormat TranslateMediaSubtypeToPixelFormat(
       const GUID& sub_type);
 
-  explicit VideoCaptureDeviceWin(const Name& device_name);
+  explicit VideoCaptureDeviceWin(
+      const VideoCaptureDeviceDescriptor& device_descriptor);
   ~VideoCaptureDeviceWin() override;
   // Opens the device driver for this device.
   bool Init();
 
   // VideoCaptureDevice implementation.
-  void AllocateAndStart(const VideoCaptureParams& params,
-                        scoped_ptr<VideoCaptureDevice::Client> client) override;
+  void AllocateAndStart(
+      const VideoCaptureParams& params,
+      std::unique_ptr<VideoCaptureDevice::Client> client) override;
   void StopAndDeAllocate() override;
+  void TakePhoto(TakePhotoCallback callback) override;
 
  private:
   enum InternalState {
@@ -81,17 +86,20 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
   };
 
   // Implements SinkFilterObserver.
-  void FrameReceived(const uint8* buffer, int length,
-                     base::TimeTicks timestamp) override;
+  void FrameReceived(const uint8_t* buffer,
+                     int length,
+                     const VideoCaptureFormat& format,
+                     base::TimeDelta timestamp) override;
 
   bool CreateCapabilityMap();
   void SetAntiFlickerInCaptureFilter(const VideoCaptureParams& params);
   void SetErrorState(const tracked_objects::Location& from_here,
-                     const std::string& reason);
+                     const std::string& reason,
+                     HRESULT hr);
 
-  const Name device_name_;
+  const VideoCaptureDeviceDescriptor device_descriptor_;
   InternalState state_;
-  scoped_ptr<VideoCaptureDevice::Client> client_;
+  std::unique_ptr<VideoCaptureDevice::Client> client_;
 
   base::win::ScopedComPtr<IBaseFilter> capture_filter_;
 
@@ -106,7 +114,10 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
 
   // Map of all capabilities this device support.
   CapabilityList capabilities_;
-  VideoCaptureFormat capture_format_;
+
+  base::TimeTicks first_ref_time_;
+
+  std::queue<TakePhotoCallback> take_photo_callbacks_;
 
   base::ThreadChecker thread_checker_;
 
@@ -115,4 +126,4 @@ class VideoCaptureDeviceWin : public VideoCaptureDevice,
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_
+#endif  // MEDIA_CAPTURE_VIDEO_WIN_VIDEO_CAPTURE_DEVICE_WIN_H_

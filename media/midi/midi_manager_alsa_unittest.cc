@@ -4,9 +4,11 @@
 
 #include "media/midi/midi_manager_alsa.h"
 
+#include <memory>
+#include <utility>
+
 #include "testing/gtest/include/gtest/gtest.h"
 
-namespace media {
 namespace midi {
 
 class MidiManagerAlsaTest : public ::testing::Test {
@@ -121,28 +123,31 @@ class MidiManagerAlsaTest : public ::testing::Test {
     return count;
   }
 
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_1_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_minimal_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_output_0_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_output_1_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_1_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_minimal_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_output_0_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_output_1_;
 
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_path_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_id_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_client_name_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_port_name_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_client_id_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_port_id_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_midi_device_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_path_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_id_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_client_name_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_port_name_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_client_id_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_port_id_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_alt_midi_device_;
 
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_1_no_card_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_output_0_no_card_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_1_no_card_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_output_0_no_card_;
 
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_alt_client_name_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_alt_port_name_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_alt_client_id_;
-  scoped_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_alt_port_id_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort>
+      port_input_0_no_card_alt_client_name_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort>
+      port_input_0_no_card_alt_port_name_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort>
+      port_input_0_no_card_alt_client_id_;
+  std::unique_ptr<MidiManagerAlsa::MidiPort> port_input_0_no_card_alt_port_id_;
 
   // State fields to avoid declaring in test fixtures below.
   MidiManagerAlsa::MidiPortState midi_port_state_0_;
@@ -376,10 +381,10 @@ TEST_F(MidiManagerAlsaTest, PortIndexSet) {
   port_input_1_->set_web_port_index(5000);
   port_output_1_->set_web_port_index(5000);
 
-  midi_port_state_0_.push_back(port_input_0_.Pass());
-  midi_port_state_0_.push_back(port_output_0_.Pass());
-  midi_port_state_0_.push_back(port_input_1_.Pass());
-  midi_port_state_0_.push_back(port_output_1_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_));
+  midi_port_state_0_.push_back(std::move(port_output_0_));
+  midi_port_state_0_.push_back(std::move(port_input_1_));
+  midi_port_state_0_.push_back(std::move(port_output_1_));
 
   // First port of each type has index of 0.
   EXPECT_EQ(0U, port_input_0_tracking_pointer->web_port_index());
@@ -400,10 +405,10 @@ TEST_F(MidiManagerAlsaTest, PortIndexNotSet) {
   port_input_1_->set_web_port_index(5000);
   port_output_1_->set_web_port_index(5000);
 
-  temporary_midi_port_state_0_.push_back(port_input_0_.Pass());
-  temporary_midi_port_state_0_.push_back(port_output_0_.Pass());
-  temporary_midi_port_state_0_.push_back(port_input_1_.Pass());
-  temporary_midi_port_state_0_.push_back(port_output_1_.Pass());
+  temporary_midi_port_state_0_.push_back(std::move(port_input_0_));
+  temporary_midi_port_state_0_.push_back(std::move(port_output_0_));
+  temporary_midi_port_state_0_.push_back(std::move(port_input_1_));
+  temporary_midi_port_state_0_.push_back(std::move(port_output_1_));
 
   // web_port_index is untouched.
   EXPECT_EQ(0U, port_input_0_tracking_pointer->web_port_index());
@@ -420,12 +425,12 @@ TEST_F(MidiManagerAlsaTest, SeparateInputOutput) {
   auto* port_output_1_tracking_pointer = port_input_1_.get();
 
   // First port of each type has index of 0.
-  EXPECT_EQ(0U, midi_port_state_0_.push_back(port_input_0_.Pass()));
-  EXPECT_EQ(0U, midi_port_state_0_.push_back(port_output_0_.Pass()));
+  EXPECT_EQ(0U, midi_port_state_0_.push_back(std::move(port_input_0_)));
+  EXPECT_EQ(0U, midi_port_state_0_.push_back(std::move(port_output_0_)));
 
   // Second port of each type has index of 1.
-  EXPECT_EQ(1U, midi_port_state_0_.push_back(port_input_1_.Pass()));
-  EXPECT_EQ(1U, midi_port_state_0_.push_back(port_output_1_.Pass()));
+  EXPECT_EQ(1U, midi_port_state_0_.push_back(std::move(port_input_1_)));
+  EXPECT_EQ(1U, midi_port_state_0_.push_back(std::move(port_output_1_)));
 
   // Check again that the field matches what was returned.
   EXPECT_EQ(0U, port_input_0_tracking_pointer->web_port_index());
@@ -440,7 +445,7 @@ TEST_F(MidiManagerAlsaTest, FindConnected) {
   auto* port_input_1_tracking_pointer = port_input_1_.get();
 
   // Insert port_input_0.
-  midi_port_state_0_.push_back(port_input_0_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_));
   // Look for port_input_1 (every field matches port_input_0).
   auto it = midi_port_state_0_.FindConnected(*port_input_1_tracking_pointer);
   EXPECT_EQ(port_input_0_tracking_pointer, it->get());
@@ -454,13 +459,13 @@ TEST_F(MidiManagerAlsaTest, FindConnected2) {
   auto* port_input_1_tracking_pointer = port_input_1_.get();
 
   // Insert some stuff.
-  midi_port_state_0_.push_back(port_input_0_alt_path_.Pass());
-  midi_port_state_0_.push_back(port_input_0_alt_id_.Pass());
-  midi_port_state_0_.push_back(port_input_0_alt_client_name_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_path_));
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_id_));
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_client_name_));
   // Insert port_input_0.
-  midi_port_state_0_.push_back(port_input_0_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_));
   // Insert some more stuff.
-  midi_port_state_0_.push_back(port_input_0_alt_port_id_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_port_id_));
   // Look for port_input_1 (matches to port_input_0).
   auto it = midi_port_state_0_.FindConnected(*port_input_1_tracking_pointer);
   EXPECT_EQ(port_input_0_tracking_pointer, it->get());
@@ -493,17 +498,17 @@ TEST_F(MidiManagerAlsaTest, FindDisconnected2) {
   port_input_0_->set_connected(false);
 
   // Insert some stuff.
-  midi_port_state_0_.push_back(port_input_0_alt_id_.Pass());
-  midi_port_state_0_.push_back(port_input_0_alt_path_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_id_));
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_path_));
   // Insert port_input_0.
-  midi_port_state_0_.push_back(port_input_0_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_));
 
   // Add "no card" stuff.
   port_input_1_no_card_->set_connected(false);
-  midi_port_state_0_.push_back(port_input_1_no_card_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_1_no_card_));
 
   // Insert some more stuff.
-  midi_port_state_0_.push_back(port_input_0_alt_port_id_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_port_id_));
 
   // Look for port_input_1, should trigger exact match.
   EXPECT_EQ(port_input_0_tracking_pointer,
@@ -530,12 +535,12 @@ TEST_F(MidiManagerAlsaTest, FindDisconnected3) {
   port_input_0_->set_connected(false);
 
   // Insert some stuff.
-  midi_port_state_0_.push_back(port_input_0_alt_path_.Pass());
-  midi_port_state_0_.push_back(port_input_0_alt_id_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_path_));
+  midi_port_state_0_.push_back(std::move(port_input_0_alt_id_));
 
   // Add no card stuff.
   port_input_1_no_card_->set_connected(false);
-  midi_port_state_0_.push_back(port_input_1_no_card_.Pass());
+  midi_port_state_0_.push_back(std::move(port_input_1_no_card_));
 
   // Look for port_input_0, should find port_input_0_alt_path.
   EXPECT_EQ(port_input_0_alt_path_tracking_pointer,
@@ -700,4 +705,3 @@ TEST_F(MidiManagerAlsaTest, AlsaCards) {
 // TODO(agoode): Test old -> new state event generation, using mocks.
 
 }  // namespace midi
-}  // namespace media

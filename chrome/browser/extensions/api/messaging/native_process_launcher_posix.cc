@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_file.h"
@@ -74,6 +76,7 @@ bool NativeProcessLauncher::LaunchNativeProcess(
   fd_map.push_back(std::make_pair(write_pipe_read_fd.get(), STDIN_FILENO));
 
   base::LaunchOptions options;
+  options.current_directory = command_line.GetProgram().DirName();
   options.fds_to_remap = &fd_map;
 
 #if defined(OS_LINUX) && !defined(OS_CHROMEOS)
@@ -91,7 +94,7 @@ bool NativeProcessLauncher::LaunchNativeProcess(
   write_pipe_read_fd.reset();
   read_pipe_write_fd.reset();
 
-  *process = local_process.Pass();
+  *process = std::move(local_process);
   *read_file = base::File(read_pipe_read_fd.release());
   *write_file = base::File(write_pipe_write_fd.release());
 

@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_INSPECTOR_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_INSPECTOR_HANDLER_H_
 
+#include "base/macros.h"
 #include "content/browser/devtools/protocol/devtools_protocol_dispatcher.h"
 
 namespace content {
@@ -21,16 +22,17 @@ class InspectorHandler {
   InspectorHandler();
   virtual ~InspectorHandler();
 
-  void SetClient(scoped_ptr<Client> client);
+  void SetClient(std::unique_ptr<Client> client);
   void SetRenderFrameHost(RenderFrameHostImpl* host);
 
   void TargetCrashed();
   void TargetDetached(const std::string& reason);
 
   Response Enable();
+  Response Disable();
 
  private:
-  scoped_ptr<Client> client_;
+  std::unique_ptr<Client> client_;
   RenderFrameHostImpl* host_;
 
   DISALLOW_COPY_AND_ASSIGN(InspectorHandler);

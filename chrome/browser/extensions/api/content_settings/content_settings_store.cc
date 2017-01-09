@@ -4,13 +4,14 @@
 
 #include "chrome/browser/extensions/api/content_settings/content_settings_store.h"
 
+#include <memory>
 #include <set>
 #include <utility>
 #include <vector>
 
 #include "base/debug/alias.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/values.h"
@@ -52,44 +53,48 @@ ContentSettingsStore::ContentSettingsStore() {
 }
 
 ContentSettingsStore::~ContentSettingsStore() {
-  STLDeleteValues(&entries_);
+  base::STLDeleteValues(&entries_);
 }
 
-scoped_ptr<RuleIterator> ContentSettingsStore::GetRuleIterator(
+std::unique_ptr<RuleIterator> ContentSettingsStore::GetRuleIterator(
     ContentSettingsType type,
     const content_settings::ResourceIdentifier& identifier,
     bool incognito) const {
-  std::vector<scoped_ptr<RuleIterator>> iterators;
+  std::vector<std::unique_ptr<RuleIterator>> iterators;
   // Iterate the extensions based on install time (last installed extensions
   // first).
-  ExtensionEntryMap::const_reverse_iterator entry;
+  ExtensionEntryMap::const_reverse_iterator entry_it;
 
   // The individual |RuleIterators| shouldn't lock; pass |lock_| to the
   // |ConcatenationIterator| in a locked state.
-  scoped_ptr<base::AutoLock> auto_lock(new base::AutoLock(lock_));
+  std::unique_ptr<base::AutoLock> auto_lock(new base::AutoLock(lock_));
 
-  for (entry = entries_.rbegin(); entry != entries_.rend(); ++entry) {
-    if (!entry->second->enabled)
+  for (entry_it = entries_.rbegin(); entry_it != entries_.rend(); ++entry_it) {
+    auto* entry = entry_it->second;
+    if (!entry->enabled)
       continue;
 
+    std::unique_ptr<RuleIterator> rule_it;
     if (incognito) {
-      iterators.push_back(
-          entry->second->incognito_session_only_settings.GetRuleIterator(
-              type,
-              identifier,
-              NULL));
-      iterators.push_back(
-          entry->second->incognito_persistent_settings.GetRuleIterator(
-              type,
-              identifier,
-              NULL));
+      rule_it = entry->incognito_session_only_settings.GetRuleIterator(
+          type, identifier, nullptr);
+      if (rule_it)
+        iterators.push_back(std::move(rule_it));
+      rule_it = entry->incognito_persistent_settings.GetRuleIterator(
+          type, identifier, nullptr);
+      if (rule_it)
+        iterators.push_back(std::move(rule_it));
     } else {
-      iterators.push_back(
-          entry->second->settings.GetRuleIterator(type, identifier, NULL));
+      rule_it = entry->settings.GetRuleIterator(type, identifier, nullptr);
+      if (rule_it)
+        iterators.push_back(std::move(rule_it));
     }
   }
-  return scoped_ptr<RuleIterator>(
-      new ConcatenationIterator(std::move(iterators), auto_lock.release()));
+  if (iterators.empty())
+    return nullptr;
+
+  return base::MakeUnique<ConcatenationIterator>(std::move(iterators),
+                                                 auto_lock.release());
 }
 
 void ContentSettingsStore::SetExtensionContentSetting(
@@ -111,10 +116,9 @@ void ContentSettingsStore::SetExtensionContentSetting(
     }
   }
 
-  // Send notification that content settings changed.
-  // TODO(markusheintz): Notifications should only be sent if the set content
-  // setting is effective and not hidden by another setting of another
-  // extension installed more recently.
+  // Send notification that content settings changed. (Note: This is responsible
+  // for updating the pref store, so cannot be skipped even if the setting would
+  // be masked by another extension.)
   NotifyOfContentSettingChanged(ext_id,
                                 scope != kExtensionPrefsScopeRegular);
 }
@@ -251,26 +255,30 @@ base::ListValue* ContentSettingsStore::GetSettingsForExtension(
   base::AutoLock lock(lock_);
   const OriginIdentifierValueMap* map = GetValueMap(extension_id, scope);
   if (!map)
-    return NULL;
+    return nullptr;
+
   base::ListValue* settings = new base::ListValue();
-  OriginIdentifierValueMap::EntryMap::const_iterator it;
-  for (it = map->begin(); it != map->end(); ++it) {
-    scoped_ptr<RuleIterator> rule_iterator(
-        map->GetRuleIterator(it->first.content_type,
-                             it->first.resource_identifier,
-                             NULL));  // We already hold the lock.
+  for (const auto& it : *map) {
+    const auto& key = it.first;
+    std::unique_ptr<RuleIterator> rule_iterator(
+        map->GetRuleIterator(key.content_type, key.resource_identifier,
+                             nullptr));  // We already hold the lock.
+    if (!rule_iterator)
+      continue;
+
     while (rule_iterator->HasNext()) {
       const Rule& rule = rule_iterator->Next();
-      base::DictionaryValue* setting_dict = new base::DictionaryValue();
+      std::unique_ptr<base::DictionaryValue> setting_dict(
+          new base::DictionaryValue());
       setting_dict->SetString(keys::kPrimaryPatternKey,
                               rule.primary_pattern.ToString());
       setting_dict->SetString(keys::kSecondaryPatternKey,
                               rule.secondary_pattern.ToString());
       setting_dict->SetString(
           keys::kContentSettingsTypeKey,
-          helpers::ContentSettingsTypeToString(it->first.content_type));
+          helpers::ContentSettingsTypeToString(key.content_type));
       setting_dict->SetString(keys::kResourceIdentifierKey,
-                              it->first.resource_identifier);
+                              key.resource_identifier);
       ContentSetting content_setting = ValueToContentSetting(rule.value.get());
       DCHECK_NE(CONTENT_SETTING_DEFAULT, content_setting);
 
@@ -279,7 +287,7 @@ base::ListValue* ContentSettingsStore::GetSettingsForExtension(
       DCHECK(!setting_string.empty());
 
       setting_dict->SetString(keys::kContentSettingKey, setting_string);
-      settings->Append(setting_dict);
+      settings->Append(std::move(setting_dict));
     }
   }
   return settings;
@@ -289,13 +297,12 @@ void ContentSettingsStore::SetExtensionContentSettingFromList(
     const std::string& extension_id,
     const base::ListValue* list,
     ExtensionPrefsScope scope) {
-  for (base::ListValue::const_iterator it = list->begin();
-       it != list->end(); ++it) {
-    if ((*it)->GetType() != base::Value::TYPE_DICTIONARY) {
+  for (const auto& value : *list) {
+    base::DictionaryValue* dict;
+    if (!value->GetAsDictionary(&dict)) {
       NOTREACHED();
       continue;
     }
-    base::DictionaryValue* dict = static_cast<base::DictionaryValue*>(*it);
     std::string primary_pattern_str;
     dict->GetString(keys::kPrimaryPatternKey, &primary_pattern_str);
     ContentSettingsPattern primary_pattern =
@@ -312,7 +319,18 @@ void ContentSettingsStore::SetExtensionContentSettingFromList(
     dict->GetString(keys::kContentSettingsTypeKey, &content_settings_type_str);
     ContentSettingsType content_settings_type =
         helpers::StringToContentSettingsType(content_settings_type_str);
-    DCHECK_NE(CONTENT_SETTINGS_TYPE_DEFAULT, content_settings_type);
+    if (content_settings_type == CONTENT_SETTINGS_TYPE_DEFAULT) {
+      // We'll end up with DEFAULT here if the type string isn't recognised.
+      // This could be if it's a string from an old settings type that has been
+      // deleted. DCHECK to make sure this is the case (not some random string).
+      DCHECK(content_settings_type_str == "fullscreen" ||
+             content_settings_type_str == "mouselock");
+
+      // In this case, we just skip over that setting, effectively deleting it
+      // from the in-memory model. This will implicitly delete these old
+      // settings from the pref store when it is written back.
+      continue;
+    }
 
     std::string resource_identifier;
     dict->GetString(keys::kResourceIdentifierKey, &resource_identifier);
@@ -347,10 +365,8 @@ void ContentSettingsStore::RemoveObserver(Observer* observer) {
 void ContentSettingsStore::NotifyOfContentSettingChanged(
     const std::string& extension_id,
     bool incognito) {
-  FOR_EACH_OBSERVER(
-      ContentSettingsStore::Observer,
-      observers_,
-      OnContentSettingChanged(extension_id, incognito));
+  for (auto& observer : observers_)
+    observer.OnContentSettingChanged(extension_id, incognito);
 }
 
 bool ContentSettingsStore::OnCorrectThread() {

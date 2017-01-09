@@ -4,12 +4,15 @@
 
 #include "content/renderer/pepper/pepper_video_source_host.h"
 
+#include <string.h>
+
 #include "base/bind.h"
 #include "base/numerics/safe_conversions.h"
 #include "content/public/renderer/renderer_ppapi_host.h"
 #include "content/renderer/media/video_track_to_pepper_adapter.h"
 #include "content/renderer/pepper/ppb_image_data_impl.h"
 #include "content/renderer/render_thread_impl.h"
+#include "media/base/video_util.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/host/dispatch_host_message.h"
 #include "ppapi/host/ppapi_host.h"
@@ -53,10 +56,21 @@ PepperVideoSourceHost::FrameReceiver::FrameReceiver(
 PepperVideoSourceHost::FrameReceiver::~FrameReceiver() {}
 
 void PepperVideoSourceHost::FrameReceiver::GotFrame(
-    const scoped_refptr<media::VideoFrame>& frame) {
+    const scoped_refptr<media::VideoFrame>& video_frame) {
   DCHECK(thread_checker_.CalledOnValidThread());
   if (!host_)
     return;
+
+  if (!(video_frame->format() == media::PIXEL_FORMAT_I420 ||
+        video_frame->format() == media::PIXEL_FORMAT_YV12A)) {
+    NOTREACHED();
+    return;
+  }
+  scoped_refptr<media::VideoFrame> frame = video_frame;
+  // Drop alpha channel since we do not support it yet.
+  if (frame->format() == media::PIXEL_FORMAT_YV12A)
+    frame = media::WrapAsI420VideoFrame(video_frame);
+
   // Hold a reference to the new frame and release the previous.
   host_->last_frame_ = frame;
   if (host_->get_frame_pending_)
@@ -194,21 +208,21 @@ void PepperVideoSourceHost::SendGetFrameReply() {
     }
 
     DCHECK(!shared_image_->IsMapped());  // New memory should not be mapped.
-    if (!shared_image_->Map() || !shared_image_->GetMappedBitmap() ||
-        !shared_image_->GetMappedBitmap()->getPixels()) {
+    if (!shared_image_->Map() || shared_image_->GetMappedBitmap().empty()) {
       shared_image_ = NULL;
       SendGetFrameErrorReply(PP_ERROR_FAILED);
       return;
     }
   }
 
-  const SkBitmap* bitmap = shared_image_->GetMappedBitmap();
-  if (!bitmap) {
+  SkBitmap bitmap(shared_image_->GetMappedBitmap());
+  if (bitmap.empty()) {
     SendGetFrameErrorReply(PP_ERROR_FAILED);
     return;
   }
 
-  uint8_t* bitmap_pixels = static_cast<uint8_t*>(bitmap->getPixels());
+  SkAutoLockPixels lock(bitmap);
+  uint8_t* bitmap_pixels = static_cast<uint8_t*>(bitmap.getPixels());
   if (!bitmap_pixels) {
     SendGetFrameErrorReply(PP_ERROR_FAILED);
     return;
@@ -266,7 +280,7 @@ void PepperVideoSourceHost::SendGetFrameReply() {
                      frame->visible_data(media::VideoFrame::kVPlane),
                      frame->stride(media::VideoFrame::kVPlane),
                      bitmap_pixels,
-                     bitmap->rowBytes(),
+                     bitmap.rowBytes(),
                      dst_size.width(),
                      dst_size.height());
 

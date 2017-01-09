@@ -4,7 +4,12 @@
 
 #include "extensions/browser/app_window/app_window_geometry_cache.h"
 
+#include <stdint.h>
+
+#include <utility>
+
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -52,7 +57,7 @@ void AppWindowGeometryCache::SaveGeometry(const std::string& extension_id,
   if (extension_data[window_id].bounds == bounds &&
       extension_data[window_id].window_state == window_state &&
       extension_data[window_id].screen_bounds == screen_bounds &&
-      !ContainsKey(unsynced_extensions_, extension_id))
+      !base::ContainsKey(unsynced_extensions_, extension_id))
     return;
 
   base::Time now = base::Time::Now();
@@ -102,12 +107,13 @@ void AppWindowGeometryCache::SyncToStorage() {
     const std::string& extension_id = *it;
     const ExtensionData& extension_data = cache_[extension_id];
 
-    scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+    std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
     for (ExtensionData::const_iterator it = extension_data.begin(),
                                        eit = extension_data.end();
          it != eit;
          ++it) {
-      base::DictionaryValue* value = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> value =
+          base::MakeUnique<base::DictionaryValue>();
       const gfx::Rect& bounds = it->second.bounds;
       const gfx::Rect& screen_bounds = it->second.screen_bounds;
       DCHECK(!bounds.IsEmpty());
@@ -124,15 +130,13 @@ void AppWindowGeometryCache::SyncToStorage() {
       value->SetInteger("state", it->second.window_state);
       value->SetString(
           "ts", base::Int64ToString(it->second.last_change.ToInternalValue()));
-      dict->SetWithoutPathExpansion(it->first, value);
+      dict->SetWithoutPathExpansion(it->first, std::move(value));
 
-      FOR_EACH_OBSERVER(
-          Observer,
-          observers_,
-          OnGeometryCacheChanged(extension_id, it->first, bounds));
+      for (auto& observer : observers_)
+        observer.OnGeometryCacheChanged(extension_id, it->first, bounds);
     }
 
-    prefs_->SetGeometryCache(extension_id, dict.Pass());
+    prefs_->SetGeometryCache(extension_id, std::move(dict));
   }
 }
 
@@ -244,7 +248,7 @@ void AppWindowGeometryCache::LoadGeometryFromStorage(
         }
         std::string ts_as_string;
         if (stored_window->GetString("ts", &ts_as_string)) {
-          int64 ts;
+          int64_t ts;
           if (base::StringToInt64(ts_as_string, &ts)) {
             window_data.last_change = base::Time::FromInternalValue(ts);
           }

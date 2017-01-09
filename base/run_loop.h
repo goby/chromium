@@ -7,16 +7,15 @@
 
 #include "base/base_export.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/threading/thread_checker.h"
+#include "build/build_config.h"
 
 namespace base {
 #if defined(OS_ANDROID)
 class MessagePumpForUI;
-#endif
-
-#if defined(OS_WIN)
-class MessagePumpDispatcher;
 #endif
 
 #if defined(OS_IOS)
@@ -31,15 +30,12 @@ class MessagePumpUIApplication;
 class BASE_EXPORT RunLoop {
  public:
   RunLoop();
-#if defined(OS_WIN)
-  explicit RunLoop(MessagePumpDispatcher* dispatcher);
-#endif
   ~RunLoop();
 
   // Run the current MessageLoop. This blocks until Quit is called. Before
-  // calling Run, be sure to grab an AsWeakPtr or the QuitClosure in order to
-  // stop the MessageLoop asynchronously. MessageLoop::QuitWhenIdle and QuitNow
-  // will also trigger a return from Run, but those are deprecated.
+  // calling Run, be sure to grab the QuitClosure in order to stop the
+  // MessageLoop asynchronously. MessageLoop::QuitWhenIdle and QuitNow will also
+  // trigger a return from Run, but those are deprecated.
   void Run();
 
   // Run the current MessageLoop until it doesn't find any tasks or messages in
@@ -49,26 +45,32 @@ class BASE_EXPORT RunLoop {
 
   bool running() const { return running_; }
 
-  // Quit an earlier call to Run(). There can be other nested RunLoops servicing
-  // the same task queue (MessageLoop); Quitting one RunLoop has no bearing on
-  // the others. Quit can be called before, during or after Run. If called
-  // before Run, Run will return immediately when called. Calling Quit after the
-  // RunLoop has already finished running has no effect.
+  // Quit() quits an earlier call to Run() immediately. QuitWhenIdle() quits an
+  // earlier call to Run() when there aren't any tasks or messages in the queue.
   //
-  // WARNING: You must NEVER assume that a call to Quit will terminate the
-  // targetted message loop. If a nested message loop continues running, the
-  // target may NEVER terminate. It is very easy to livelock (run forever) in
-  // such a case.
+  // There can be other nested RunLoops servicing the same task queue
+  // (MessageLoop); Quitting one RunLoop has no bearing on the others. Quit()
+  // and QuitWhenIdle() can be called before, during or after Run(). If called
+  // before Run(), Run() will return immediately when called. Calling Quit() or
+  // QuitWhenIdle() after the RunLoop has already finished running has no
+  // effect.
+  //
+  // WARNING: You must NEVER assume that a call to Quit() or QuitWhenIdle() will
+  // terminate the targetted message loop. If a nested message loop continues
+  // running, the target may NEVER terminate. It is very easy to livelock (run
+  // forever) in such a case.
   void Quit();
+  void QuitWhenIdle();
 
-  // Convenience method to get a closure that safely calls Quit (has no effect
-  // if the RunLoop instance is gone).
+  // Convenience methods to get a closure that safely calls Quit() or
+  // QuitWhenIdle() (has no effect if the RunLoop instance is gone).
   //
   // Example:
   //   RunLoop run_loop;
   //   PostTask(run_loop.QuitClosure());
   //   run_loop.Run();
   base::Closure QuitClosure();
+  base::Closure QuitWhenIdleClosure();
 
  private:
   friend class MessageLoop;
@@ -93,10 +95,6 @@ class BASE_EXPORT RunLoop {
   // Parent RunLoop or NULL if this is the top-most RunLoop.
   RunLoop* previous_run_loop_;
 
-#if defined(OS_WIN)
-  MessagePumpDispatcher* dispatcher_;
-#endif
-
   // Used to count how many nested Run() invocations are on the stack.
   int run_depth_;
 
@@ -107,6 +105,8 @@ class BASE_EXPORT RunLoop {
   // Used to record that QuitWhenIdle() was called on the MessageLoop, meaning
   // that we should quit Run once it becomes idle.
   bool quit_when_idle_received_;
+
+  base::ThreadChecker thread_checker_;
 
   // WeakPtrFactory for QuitClosure safety.
   base::WeakPtrFactory<RunLoop> weak_factory_;

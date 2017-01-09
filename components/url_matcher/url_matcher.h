@@ -5,20 +5,19 @@
 #ifndef COMPONENTS_URL_MATCHER_URL_MATCHER_H_
 #define COMPONENTS_URL_MATCHER_URL_MATCHER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "components/url_matcher/regex_set_matcher.h"
 #include "components/url_matcher/substring_set_matcher.h"
 #include "components/url_matcher/url_matcher_export.h"
 
 class GURL;
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace url_matcher {
 
@@ -212,8 +211,9 @@ class URL_MATCHER_EXPORT URLMatcherConditionFactory {
   };
   // Set to ensure that we generate only one StringPattern for each content
   // of StringPattern::pattern().
-  typedef std::set<StringPattern*, StringPatternPointerCompare>
-      PatternSingletons;
+  using PatternSingletons = std::map<StringPattern*,
+                                     std::unique_ptr<StringPattern>,
+                                     StringPatternPointerCompare>;
   PatternSingletons substring_pattern_singletons_;
   PatternSingletons regex_pattern_singletons_;
   PatternSingletons origin_and_path_regex_pattern_singletons_;
@@ -250,6 +250,7 @@ class URL_MATCHER_EXPORT URLQueryElementMatcherCondition {
                                   QueryElementType query_element_type,
                                   Type match_type,
                                   URLMatcherConditionFactory* factory);
+  URLQueryElementMatcherCondition(const URLQueryElementMatcherCondition& other);
   ~URLQueryElementMatcherCondition();
 
   bool operator<(const URLQueryElementMatcherCondition& rhs) const;
@@ -309,6 +310,7 @@ class URL_MATCHER_EXPORT URLMatcherPortFilter {
 class URL_MATCHER_EXPORT URLMatcherConditionSet
     : public base::RefCounted<URLMatcherConditionSet> {
  public:
+  // Valid IDs will be >= 0.
   typedef int ID;
   typedef std::set<URLMatcherCondition> Conditions;
   typedef std::set<URLQueryElementMatcherCondition> QueryConditions;
@@ -320,9 +322,10 @@ class URL_MATCHER_EXPORT URLMatcherConditionSet
   // Matches if all conditions in |conditions|, |scheme_filter| and
   // |port_filter| are fulfilled. |scheme_filter| and |port_filter| may be NULL,
   // in which case, no restrictions are imposed on the scheme/port of a URL.
-  URLMatcherConditionSet(ID id, const Conditions& conditions,
-                         scoped_ptr<URLMatcherSchemeFilter> scheme_filter,
-                         scoped_ptr<URLMatcherPortFilter> port_filter);
+  URLMatcherConditionSet(ID id,
+                         const Conditions& conditions,
+                         std::unique_ptr<URLMatcherSchemeFilter> scheme_filter,
+                         std::unique_ptr<URLMatcherPortFilter> port_filter);
 
   // Matches if all conditions in |conditions|, |query_conditions|,
   // |scheme_filter| and |port_filter| are fulfilled. |scheme_filter| and
@@ -331,8 +334,8 @@ class URL_MATCHER_EXPORT URLMatcherConditionSet
   URLMatcherConditionSet(ID id,
                          const Conditions& conditions,
                          const QueryConditions& query_conditions,
-                         scoped_ptr<URLMatcherSchemeFilter> scheme_filter,
-                         scoped_ptr<URLMatcherPortFilter> port_filter);
+                         std::unique_ptr<URLMatcherSchemeFilter> scheme_filter,
+                         std::unique_ptr<URLMatcherPortFilter> port_filter);
 
   ID id() const { return id_; }
   const Conditions& conditions() const { return conditions_; }
@@ -351,8 +354,8 @@ class URL_MATCHER_EXPORT URLMatcherConditionSet
   ID id_;
   Conditions conditions_;
   QueryConditions query_conditions_;
-  scoped_ptr<URLMatcherSchemeFilter> scheme_filter_;
-  scoped_ptr<URLMatcherPortFilter> port_filter_;
+  std::unique_ptr<URLMatcherSchemeFilter> scheme_filter_;
+  std::unique_ptr<URLMatcherPortFilter> port_filter_;
 
   DISALLOW_COPY_AND_ASSIGN(URLMatcherConditionSet);
 };

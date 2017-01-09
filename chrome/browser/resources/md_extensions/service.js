@@ -9,20 +9,33 @@ cr.define('extensions', function() {
    * @constructor
    * @implements {extensions.ItemDelegate}
    * @implements {extensions.SidebarDelegate}
+   * @implements {extensions.PackDialogDelegate}
+   * @implements {extensions.ErrorPageDelegate}
    */
   function Service() {}
 
   Service.prototype = {
     /** @private {boolean} */
-    promptIsShowing_: false,
+    isDeleting_: false,
 
     /** @param {extensions.Manager} manager */
     managerReady: function(manager) {
       /** @private {extensions.Manager} */
       this.manager_ = manager;
-      /** @private {extensions.Sidebar} */
-      this.sidebar_ = manager.sidebar;
-      this.sidebar_.setDelegate(this);
+      this.manager_.sidebar.setDelegate(this);
+      this.manager_.set('itemDelegate', this);
+      this.manager_.packDialog.set('delegate', this);
+      this.manager_.errorPage.delegate = this;
+      var keyboardShortcuts = this.manager_.keyboardShortcuts;
+      keyboardShortcuts.addEventListener(
+          'shortcut-updated',
+          this.onExtensionCommandUpdated_.bind(this));
+      keyboardShortcuts.addEventListener(
+          'shortcut-capture-started',
+          this.onShortcutCaptureChanged_.bind(this, true));
+      keyboardShortcuts.addEventListener(
+          'shortcut-capture-ended',
+          this.onShortcutCaptureChanged_.bind(this, false));
       chrome.developerPrivate.onProfileStateChanged.addListener(
           this.onProfileStateChanged_.bind(this));
       chrome.developerPrivate.onItemStateChanged.addListener(
@@ -34,6 +47,15 @@ cr.define('extensions', function() {
         this.extensions_ = extensions;
         for (let extension of extensions)
           this.manager_.addItem(extension);
+
+        var id = new URLSearchParams(location.search).get('id');
+        if (id) {
+          var data = this.extensions_.find(function(e) {
+            return e.id == id;
+          });
+          if (data)
+            this.manager_.showItemDetails(data);
+        }
       }.bind(this));
       chrome.developerPrivate.getProfileConfiguration(
           this.onProfileStateChanged_.bind(this));
@@ -44,8 +66,6 @@ cr.define('extensions', function() {
      * @private
      */
     onProfileStateChanged_: function(profileInfo) {
-      /** @private {chrome.developerPrivate.ProfileInfo} */
-      this.profileInfo_ = profileInfo;
       this.manager_.set('inDevMode', profileInfo.inDeveloperMode);
     },
 
@@ -91,17 +111,66 @@ cr.define('extensions', function() {
       }
     },
 
+    /**
+     * Opens a file browser dialog for the user to select a file (or directory).
+     * @param {chrome.developerPrivate.SelectType} selectType
+     * @param {chrome.developerPrivate.FileType} fileType
+     * @return {Promise<string>} The promise to be resolved with the selected
+     *     path.
+     */
+    chooseFilePath_: function(selectType, fileType) {
+      return new Promise(function(resolve, reject) {
+        chrome.developerPrivate.choosePath(
+            selectType, fileType, function(path) {
+          if (chrome.runtime.lastError &&
+              chrome.runtime.lastError != 'File selection was canceled.') {
+            reject(chrome.runtime.lastError);
+          } else {
+            resolve(path || '');
+          }
+        });
+      });
+    },
+
+    /**
+     * Updates an extension command.
+     * @param {!CustomEvent} e
+     * @private
+     */
+    onExtensionCommandUpdated_: function(e) {
+      chrome.developerPrivate.updateExtensionCommand({
+        extensionId: e.detail.item,
+        commandName: e.detail.commandName,
+        keybinding: e.detail.keybinding,
+      });
+    },
+
+    /**
+     * Called when shortcut capturing changes in order to suspend or re-enable
+     * global shortcut handling. This is important so that the shortcuts aren't
+     * processed normally as the user types them.
+     * TODO(devlin): From very brief experimentation, it looks like preventing
+     * the default handling on the event also does this. Investigate more in the
+     * future.
+     * @param {boolean} isCapturing
+     * @param {!CustomEvent} e
+     * @private
+     */
+    onShortcutCaptureChanged_: function(isCapturing, e) {
+      chrome.developerPrivate.setShortcutHandlingSuspended(isCapturing);
+    },
+
     /** @override */
     deleteItem: function(id) {
-      if (this.promptIsShowing_)
+      if (this.isDeleting_)
         return;
-      this.promptIsShowing_ = true;
+      this.isDeleting_ = true;
       chrome.management.uninstall(id, {showConfirmDialog: true}, function() {
         // The "last error" was almost certainly the user canceling the dialog.
         // Do nothing. We only check it so we don't get noisy logs.
         /** @suppress {suspiciousCode} */
         chrome.runtime.lastError;
-        this.promptIsShowing_ = false;
+        this.isDeleting_ = false;
       }.bind(this));
     },
 
@@ -111,13 +180,34 @@ cr.define('extensions', function() {
     },
 
     /** @override */
-    showItemDetails: function(id) {},
-
-    /** @override */
     setItemAllowedIncognito: function(id, isAllowedIncognito) {
       chrome.developerPrivate.updateExtensionConfiguration({
         extensionId: id,
         incognitoAccess: isAllowedIncognito,
+      });
+    },
+
+    /** @override */
+    setItemAllowedOnFileUrls: function(id, isAllowedOnFileUrls) {
+      chrome.developerPrivate.updateExtensionConfiguration({
+        extensionId: id,
+        fileAccess: isAllowedOnFileUrls,
+      });
+    },
+
+    /** @override */
+    setItemAllowedOnAllSites: function(id, isAllowedOnAllSites) {
+      chrome.developerPrivate.updateExtensionConfiguration({
+        extensionId: id,
+        runOnAllUrls: isAllowedOnAllSites,
+      });
+    },
+
+    /** @override */
+    setItemCollectsErrors: function(id, collectsErrors) {
+      chrome.developerPrivate.updateExtensionConfiguration({
+        extensionId: id,
+        errorCollection: collectsErrors,
       });
     },
 
@@ -132,6 +222,23 @@ cr.define('extensions', function() {
     },
 
     /** @override */
+    repairItem: function(id) {
+      chrome.developerPrivate.repairExtension(id);
+    },
+
+    /** @override */
+    showItemOptionsPage: function(id) {
+      var extension = this.extensions_.find(function(extension) {
+        return extension.id == id;
+      });
+      assert(extension && extension.optionsPage);
+      if (extension.optionsPage.openInTab)
+        chrome.developerPrivate.showOptions(id);
+      else
+        this.manager_.optionsDialog.show(extension);
+    },
+
+    /** @override */
     setProfileInDevMode: function(inDevMode) {
       chrome.developerPrivate.updateProfileConfiguration(
           {inDeveloperMode: inDevMode});
@@ -143,12 +250,45 @@ cr.define('extensions', function() {
     },
 
     /** @override */
-    packExtension: function() {
+    choosePackRootDirectory: function() {
+      return this.chooseFilePath_(
+          chrome.developerPrivate.SelectType.FOLDER,
+          chrome.developerPrivate.FileType.LOAD);
+    },
+
+    /** @override */
+    choosePrivateKeyPath: function() {
+      return this.chooseFilePath_(
+          chrome.developerPrivate.SelectType.FILE,
+          chrome.developerPrivate.FileType.PEM);
+    },
+
+    /** @override */
+    packExtension: function(rootPath, keyPath) {
+      chrome.developerPrivate.packDirectory(rootPath, keyPath);
     },
 
     /** @override */
     updateAllExtensions: function() {
       chrome.developerPrivate.autoUpdate();
+    },
+
+    /** @override */
+    deleteErrors: function(extensionId, errorIds, type) {
+      chrome.developerPrivate.deleteExtensionErrors({
+        extensionId: extensionId,
+        errorIds: errorIds,
+        type: type,
+      });
+    },
+
+    /** @override */
+    requestFileSource: function(args) {
+      return new Promise(function(resolve, reject) {
+        chrome.developerPrivate.requestFileSource(args, function(code) {
+          resolve(code);
+        });
+      });
     },
   };
 

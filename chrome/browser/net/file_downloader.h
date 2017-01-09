@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_NET_FILE_DOWNLOADER_H_
 #define CHROME_BROWSER_NET_FILE_DOWNLOADER_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "net/url_request/url_fetcher_delegate.h"
 
@@ -24,7 +26,15 @@ class GURL;
 // downloading anything.
 class FileDownloader : public net::URLFetcherDelegate {
  public:
-  typedef base::Callback<void(bool /* success */)> DownloadFinishedCallback;
+  enum Result {
+    // The file was successfully downloaded.
+    DOWNLOADED,
+    // A local file at the given path already existed and was kept.
+    EXISTS,
+    // Downloading failed.
+    FAILED
+  };
+  using DownloadFinishedCallback = base::Callback<void(Result)>;
 
   // Directly starts the download (if necessary) and runs |callback| when done.
   // If the instance is destroyed before it is finished, |callback| is not run.
@@ -34,6 +44,8 @@ class FileDownloader : public net::URLFetcherDelegate {
                  net::URLRequestContextGetter* request_context,
                  const DownloadFinishedCallback& callback);
   ~FileDownloader() override;
+
+  static bool IsSuccess(Result result) { return result != FAILED; }
 
  private:
   // net::URLFetcherDelegate implementation.
@@ -45,7 +57,7 @@ class FileDownloader : public net::URLFetcherDelegate {
 
   DownloadFinishedCallback callback_;
 
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   base::FilePath local_path_;
 

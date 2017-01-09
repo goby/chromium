@@ -4,27 +4,40 @@
 
 #include "base/version.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
+#include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
 TEST(VersionTest, DefaultConstructor) {
-  Version v;
+  base::Version v;
   EXPECT_FALSE(v.IsValid());
 }
 
 TEST(VersionTest, ValueSemantics) {
-  Version v1("1.2.3.4");
+  base::Version v1("1.2.3.4");
   EXPECT_TRUE(v1.IsValid());
-  Version v3;
+  base::Version v3;
   EXPECT_FALSE(v3.IsValid());
   {
-    Version v2(v1);
+    base::Version v2(v1);
     v3 = v2;
     EXPECT_TRUE(v2.IsValid());
-    EXPECT_TRUE(v1.Equals(v2));
+    EXPECT_EQ(v1, v2);
   }
-  EXPECT_TRUE(v3.Equals(v1));
+  EXPECT_EQ(v3, v1);
+}
+
+TEST(VersionTest, MoveSemantics) {
+  const std::vector<uint32_t> components = {1, 2, 3, 4};
+  base::Version v1(std::move(components));
+  EXPECT_TRUE(v1.IsValid());
+  base::Version v2("1.2.3.4");
+  EXPECT_EQ(v1, v2);
 }
 
 TEST(VersionTest, GetVersionFromString) {
@@ -63,7 +76,7 @@ TEST(VersionTest, GetVersionFromString) {
   };
 
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    Version version(cases[i].input);
+    base::Version version(cases[i].input);
     EXPECT_EQ(cases[i].success, version.IsValid());
     if (cases[i].success) {
       EXPECT_EQ(cases[i].parts, version.components().size());
@@ -92,12 +105,38 @@ TEST(VersionTest, Compare) {
     {"11.0.10", "15.5.28.130162", -1},
   };
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    Version lhs(cases[i].lhs);
-    Version rhs(cases[i].rhs);
+    base::Version lhs(cases[i].lhs);
+    base::Version rhs(cases[i].rhs);
     EXPECT_EQ(lhs.CompareTo(rhs), cases[i].expected) <<
         cases[i].lhs << " ? " << cases[i].rhs;
 
-    EXPECT_EQ(lhs.IsOlderThan(cases[i].rhs), (cases[i].expected == -1));
+    // Test comparison operators
+    switch (cases[i].expected) {
+    case -1:
+      EXPECT_LT(lhs, rhs);
+      EXPECT_LE(lhs, rhs);
+      EXPECT_NE(lhs, rhs);
+      EXPECT_FALSE(lhs == rhs);
+      EXPECT_FALSE(lhs >= rhs);
+      EXPECT_FALSE(lhs > rhs);
+      break;
+    case 0:
+      EXPECT_FALSE(lhs < rhs);
+      EXPECT_LE(lhs, rhs);
+      EXPECT_FALSE(lhs != rhs);
+      EXPECT_EQ(lhs, rhs);
+      EXPECT_GE(lhs, rhs);
+      EXPECT_FALSE(lhs > rhs);
+      break;
+    case 1:
+      EXPECT_FALSE(lhs < rhs);
+      EXPECT_FALSE(lhs <= rhs);
+      EXPECT_NE(lhs, rhs);
+      EXPECT_FALSE(lhs == rhs);
+      EXPECT_GE(lhs, rhs);
+      EXPECT_GT(lhs, rhs);
+      break;
+    }
   }
 }
 
@@ -122,7 +161,7 @@ TEST(VersionTest, CompareToWildcardString) {
     {"1.2.0.0.0.0", "1.2.*", 0},
   };
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    const Version version(cases[i].lhs);
+    const base::Version version(cases[i].lhs);
     const int result = version.CompareToWildcardString(cases[i].rhs);
     EXPECT_EQ(result, cases[i].expected) << cases[i].lhs << "?" << cases[i].rhs;
   }
@@ -146,7 +185,7 @@ TEST(VersionTest, IsValidWildcardString) {
     {"*.2", false},
   };
   for (size_t i = 0; i < arraysize(cases); ++i) {
-    EXPECT_EQ(Version::IsValidWildcardString(cases[i].version),
+    EXPECT_EQ(base::Version::IsValidWildcardString(cases[i].version),
         cases[i].expected) << cases[i].version << "?" << cases[i].expected;
   }
 }

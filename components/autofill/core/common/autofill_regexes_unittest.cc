@@ -4,6 +4,9 @@
 
 #include "components/autofill/core/common/autofill_regexes.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/core/browser/autofill_regex_constants.h"
@@ -13,7 +16,7 @@ using base::ASCIIToUTF16;
 
 namespace autofill {
 
-TEST(AutofillRegexesTest, AutofillRegexes) {
+TEST(AutofillRegexesTest, SampleRegexes) {
   struct TestCase {
     const char* const input;
     const char* const pattern;
@@ -34,8 +37,7 @@ TEST(AutofillRegexesTest, AutofillRegexes) {
     // Case-insensitive
     {"StRiNg", "string"},
   };
-  for (size_t i = 0; i < arraysize(kPositiveCases); ++i) {
-    const TestCase& test_case = kPositiveCases[i];
+  for (const auto& test_case : kPositiveCases) {
     SCOPED_TRACE(test_case.input);
     SCOPED_TRACE(test_case.pattern);
     EXPECT_TRUE(MatchesPattern(ASCIIToUTF16(test_case.input),
@@ -54,12 +56,153 @@ TEST(AutofillRegexesTest, AutofillRegexes) {
     {"string", "ring "},
     {"string", "rin$"},
   };
-  for (size_t i = 0; i < arraysize(kNegativeCases); ++i) {
-    const TestCase& test_case = kNegativeCases[i];
+  for (const auto& test_case : kNegativeCases) {
     SCOPED_TRACE(test_case.input);
     SCOPED_TRACE(test_case.pattern);
     EXPECT_FALSE(MatchesPattern(ASCIIToUTF16(test_case.input),
                                 ASCIIToUTF16(test_case.pattern)));
+  }
+}
+
+TEST(AutofillRegexesTest, ExpirationDate2DigitYearRegexes) {
+  struct TestCase {
+    const char* const input;
+  };
+
+  const base::string16 pattern = ASCIIToUTF16(kExpirationDate2DigitYearRe);
+
+  const TestCase kPositiveCases[] = {
+    // Simple two year cases
+    {"mm / yy"},
+    {"mm/ yy"},
+    {"mm /yy"},
+    {"mm/yy"},
+    {"mm - yy"},
+    {"mm- yy"},
+    {"mm -yy"},
+    {"mm-yy"},
+    {"mmyy"},
+    // Complex two year cases
+    {"Expiration Date (MM / YY)"},
+    {"Expiration Date (MM/YY)"},
+    {"Expiration Date (MM - YY)"},
+    {"Expiration Date (MM-YY)"},
+    {"Expiration Date MM / YY"},
+    {"Expiration Date MM/YY"},
+    {"Expiration Date MM - YY"},
+    {"Expiration Date MM-YY"},
+    {"expiration date yy"},
+    {"Exp Date     (MM / YY)"},
+  };
+
+  for (const auto& test_case : kPositiveCases) {
+    SCOPED_TRACE(test_case.input);
+    EXPECT_TRUE(MatchesPattern(ASCIIToUTF16(test_case.input),pattern));
+  }
+
+  const TestCase kNegativeCases[] = {
+    {""},
+    {"Look, ma' -- an invalid string!"},
+    {"mmfavouritewordyy"},
+    {"mm a yy"},
+    {"mm a yyyy"},
+    // Simple four year cases
+    {"mm / yyyy"},
+    {"mm/ yyyy"},
+    {"mm /yyyy"},
+    {"mm/yyyy"},
+    {"mm - yyyy"},
+    {"mm- yyyy"},
+    {"mm -yyyy"},
+    {"mm-yyyy"},
+    {"mmyyyy"},
+    // Complex four year cases
+    {"Expiration Date (MM / YYYY)"},
+    {"Expiration Date (MM/YYYY)"},
+    {"Expiration Date (MM - YYYY)"},
+    {"Expiration Date (MM-YYYY)"},
+    {"Expiration Date MM / YYYY"},
+    {"Expiration Date MM/YYYY"},
+    {"Expiration Date MM - YYYY"},
+    {"Expiration Date MM-YYYY"},
+    {"expiration date yyyy"},
+    {"Exp Date     (MM / YYYY)"},
+  };
+
+  for (const auto& test_case : kNegativeCases) {
+    SCOPED_TRACE(test_case.input);
+    EXPECT_FALSE(MatchesPattern(ASCIIToUTF16(test_case.input), pattern));
+  }
+}
+
+TEST(AutofillRegexesTest, ExpirationDate4DigitYearRegexes) {
+  struct TestCase {
+    const char* const input;
+  };
+
+  const base::string16 pattern = ASCIIToUTF16(kExpirationDate4DigitYearRe);
+
+  const TestCase kPositiveCases[] = {
+    // Simple four year cases
+    {"mm / yyyy"},
+    {"mm/ yyyy"},
+    {"mm /yyyy"},
+    {"mm/yyyy"},
+    {"mm - yyyy"},
+    {"mm- yyyy"},
+    {"mm -yyyy"},
+    {"mm-yyyy"},
+    {"mmyyyy"},
+    // Complex four year cases
+    {"Expiration Date (MM / YYYY)"},
+    {"Expiration Date (MM/YYYY)"},
+    {"Expiration Date (MM - YYYY)"},
+    {"Expiration Date (MM-YYYY)"},
+    {"Expiration Date MM / YYYY"},
+    {"Expiration Date MM/YYYY"},
+    {"Expiration Date MM - YYYY"},
+    {"Expiration Date MM-YYYY"},
+    {"expiration date yyyy"},
+    {"Exp Date     (MM / YYYY)"},
+  };
+
+  for (const auto& test_case : kPositiveCases) {
+    SCOPED_TRACE(test_case.input);
+    EXPECT_TRUE(MatchesPattern(ASCIIToUTF16(test_case.input),pattern));
+  }
+
+  const TestCase kNegativeCases[] = {
+    {""},
+    {"Look, ma' -- an invalid string!"},
+    {"mmfavouritewordyy"},
+    {"mm a yy"},
+    {"mm a yyyy"},
+    // Simple two year cases
+    {"mm / yy"},
+    {"mm/ yy"},
+    {"mm /yy"},
+    {"mm/yy"},
+    {"mm - yy"},
+    {"mm- yy"},
+    {"mm -yy"},
+    {"mm-yy"},
+    {"mmyy"},
+    // Complex two year cases
+    {"Expiration Date (MM / YY)"},
+    {"Expiration Date (MM/YY)"},
+    {"Expiration Date (MM - YY)"},
+    {"Expiration Date (MM-YY)"},
+    {"Expiration Date MM / YY"},
+    {"Expiration Date MM/YY"},
+    {"Expiration Date MM - YY"},
+    {"Expiration Date MM-YY"},
+    {"expiration date yy"},
+    {"Exp Date     (MM / YY)"},
+  };
+
+  for (const auto& test_case : kNegativeCases) {
+    SCOPED_TRACE(test_case.input);
+    EXPECT_FALSE(MatchesPattern(ASCIIToUTF16(test_case.input), pattern));
   }
 }
 

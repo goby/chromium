@@ -4,14 +4,20 @@
 
 #include "ui/base/resource/resource_bundle.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include "base/base_paths.h"
 #include "base/big_endian.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -24,7 +30,7 @@
 #include "ui/strings/grit/app_locale_settings.h"
 
 #if defined(OS_WIN)
-#include "ui/gfx/win/dpi.h"
+#include "ui/display/win/dpi.h"
 #endif
 
 using ::testing::_;
@@ -67,12 +73,9 @@ class MockResourceBundleDelegate : public ui::ResourceBundle::Delegate {
   MOCK_METHOD2(GetPathForLocalePack, base::FilePath(
       const base::FilePath& pack_path, const std::string& locale));
   MOCK_METHOD1(GetImageNamed, gfx::Image(int resource_id));
-  MOCK_METHOD2(GetNativeImageNamed,
-      gfx::Image(int resource_id,
-                 ui::ResourceBundle::ImageRTL rtl));
+  MOCK_METHOD1(GetNativeImageNamed, gfx::Image(int resource_id));
   MOCK_METHOD2(LoadDataResourceBytes,
-      base::RefCountedStaticMemory*(int resource_id,
-                                    ui::ScaleFactor scale_factor));
+      base::RefCountedMemory*(int resource_id, ui::ScaleFactor scale_factor));
   MOCK_METHOD2(GetRawDataResourceMock, base::StringPiece(
       int resource_id,
       ui::ScaleFactor scale_factor));
@@ -88,11 +91,6 @@ class MockResourceBundleDelegate : public ui::ResourceBundle::Delegate {
     *value = GetLocalizedStringMock(message_id);
     return true;
   }
-  MOCK_METHOD1(GetFontMock,
-               gfx::Font*(ui::ResourceBundle::FontStyle style));
-  scoped_ptr<gfx::Font> GetFont(ui::ResourceBundle::FontStyle style) override {
-    return make_scoped_ptr(GetFontMock(style));
-  }
 };
 
 // Returns |bitmap_data| with |custom_chunk| inserted after the IHDR chunk.
@@ -105,16 +103,16 @@ void AddCustomChunk(const base::StringPiece& custom_chunk,
       kPngMagic));
   std::vector<unsigned char>::iterator ihdr_start =
       bitmap_data->begin() + arraysize(kPngMagic);
-  char ihdr_length_data[sizeof(uint32)];
-  for (size_t i = 0; i < sizeof(uint32); ++i)
+  char ihdr_length_data[sizeof(uint32_t)];
+  for (size_t i = 0; i < sizeof(uint32_t); ++i)
     ihdr_length_data[i] = *(ihdr_start + i);
-  uint32 ihdr_chunk_length = 0;
+  uint32_t ihdr_chunk_length = 0;
   base::ReadBigEndian(reinterpret_cast<char*>(ihdr_length_data),
                       &ihdr_chunk_length);
-  EXPECT_TRUE(std::equal(
-      ihdr_start + sizeof(uint32),
-      ihdr_start + sizeof(uint32) + sizeof(kPngIHDRChunkType),
-      kPngIHDRChunkType));
+  EXPECT_TRUE(
+      std::equal(ihdr_start + sizeof(uint32_t),
+                 ihdr_start + sizeof(uint32_t) + sizeof(kPngIHDRChunkType),
+                 kPngIHDRChunkType));
 
   bitmap_data->insert(ihdr_start + kPngChunkMetadataSize + ihdr_chunk_length,
                       custom_chunk.begin(), custom_chunk.end());
@@ -136,7 +134,7 @@ void CreateDataPackWithSingleBitmap(const base::FilePath& path,
   if (custom_chunk.size() > 0)
     AddCustomChunk(custom_chunk, &bitmap_data);
 
-  std::map<uint16, base::StringPiece> resources;
+  std::map<uint16_t, base::StringPiece> resources;
   resources[3u] = base::StringPiece(
       reinterpret_cast<const char*>(&bitmap_data[0]), bitmap_data.size());
   DataPack::WritePack(path, resources, ui::DataPack::BINARY);
@@ -245,7 +243,7 @@ TEST_F(ResourceBundleTest, DelegateGetNativeImageNamed) {
       .Times(Between(0, 1))
       .WillOnce(Return(empty_image));
   EXPECT_CALL(delegate,
-      GetNativeImageNamed(resource_id, ui::ResourceBundle::RTL_DISABLED))
+      GetNativeImageNamed(resource_id))
       .Times(Between(0, 1))
       .WillOnce(Return(empty_image));
 
@@ -268,7 +266,7 @@ TEST_F(ResourceBundleTest, DelegateLoadDataResourceBytes) {
   EXPECT_CALL(delegate, LoadDataResourceBytes(resource_id, scale_factor))
       .Times(1).WillOnce(Return(static_memory.get()));
 
-  scoped_refptr<base::RefCountedStaticMemory> result =
+  scoped_refptr<base::RefCountedMemory> result =
       resource_bundle->LoadDataResourceBytesForScale(resource_id, scale_factor);
   EXPECT_EQ(static_memory, result);
 }
@@ -339,59 +337,6 @@ TEST_F(ResourceBundleTest, DelegateGetLocalizedStringWithOverride) {
   EXPECT_EQ(delegate_data, result);
 }
 
-#if (defined(USE_OZONE) && !defined(USE_PANGO)) || defined(OS_ANDROID)
-#define MAYBE_DelegateGetFontList DISABLED_DelegateGetFontList
-#else
-#define MAYBE_DelegateGetFontList DelegateGetFontList
-#endif
-
-TEST_F(ResourceBundleTest, MAYBE_DelegateGetFontList) {
-  MockResourceBundleDelegate delegate;
-  ResourceBundle* resource_bundle = CreateResourceBundle(&delegate);
-
-  // Should be called once for each font type. When we return NULL the default
-  // font will be created.
-  gfx::Font* test_font = NULL;
-  EXPECT_CALL(delegate, GetFontMock(_))
-      .Times(8)
-      .WillRepeatedly(Return(test_font));
-
-  const gfx::FontList* font_list =
-      &resource_bundle->GetFontList(ui::ResourceBundle::BaseFont);
-  EXPECT_TRUE(font_list);
-
-  const gfx::Font* font =
-      &resource_bundle->GetFont(ui::ResourceBundle::BaseFont);
-  EXPECT_TRUE(font);
-}
-
-#if defined(OS_CHROMEOS) && defined(USE_PANGO)
-TEST_F(ResourceBundleTest, FontListReload) {
-  MockResourceBundleDelegate delegate;
-  ResourceBundle* resource_bundle = CreateResourceBundle(&delegate);
-
-  // Should be called once for each font type. When we return NULL the default
-  // font will be created.
-  gfx::Font* test_font = nullptr;
-  EXPECT_CALL(delegate, GetFontMock(_))
-      .Times(16)
-      .WillRepeatedly(Return(test_font));
-
-  EXPECT_CALL(delegate, GetLocalizedStringMock(IDS_UI_FONT_FAMILY_CROS))
-      .WillOnce(Return(base::UTF8ToUTF16("test font, 12px")));
-  resource_bundle->ReloadFonts();
-  // Don't test the font name; it'll get mapped to something else by Fontconfig.
-  EXPECT_EQ(12, gfx::FontList().GetPrimaryFont().GetFontSize());
-  EXPECT_EQ(gfx::Font::NORMAL, gfx::FontList().GetPrimaryFont().GetStyle());
-
-  EXPECT_CALL(delegate, GetLocalizedStringMock(IDS_UI_FONT_FAMILY_CROS))
-      .WillOnce(Return(base::UTF8ToUTF16("test font 2, Bold 10px")));
-  resource_bundle->ReloadFonts();
-  EXPECT_EQ(10, gfx::FontList().GetPrimaryFont().GetFontSize());
-  EXPECT_EQ(gfx::Font::BOLD, gfx::FontList().GetPrimaryFont().GetStyle());
-}
-#endif
-
 TEST_F(ResourceBundleTest, LocaleDataPakExists) {
   ResourceBundle* resource_bundle = CreateResourceBundle(NULL);
 
@@ -427,7 +372,7 @@ class ResourceBundleImageTest : public ResourceBundleTest {
   }
 
   // Returns the path of temporary directory to write test data packs into.
-  const base::FilePath& dir_path() { return dir_.path(); }
+  const base::FilePath& dir_path() { return dir_.GetPath(); }
 
   // Returns the number of DataPacks managed by |resource_bundle|.
   size_t NumDataPacksInResourceBundle(ResourceBundle* resource_bundle) {
@@ -435,22 +380,8 @@ class ResourceBundleImageTest : public ResourceBundleTest {
     return resource_bundle->data_packs_.size();
   }
 
-  // Returns the number of DataPacks managed by |resource_bundle| which are
-  // flagged as containing only material design resources.
-  size_t NumMaterialDesignDataPacksInResourceBundle(
-      ResourceBundle* resource_bundle) {
-    DCHECK(resource_bundle);
-    size_t num_material_packs = 0;
-    for (size_t i = 0; i < resource_bundle->data_packs_.size(); i++) {
-      if (resource_bundle->data_packs_[i]->HasOnlyMaterialDesignAssets())
-        num_material_packs++;
-    }
-
-    return num_material_packs;
-  }
-
  private:
-  scoped_ptr<DataPack> locale_pack_;
+  std::unique_ptr<DataPack> locale_pack_;
   base::ScopedTempDir dir_;
 
   DISALLOW_COPY_AND_ASSIGN(ResourceBundleImageTest);
@@ -516,7 +447,7 @@ TEST_F(ResourceBundleImageTest, GetRawDataResource) {
 // via ResourceBundle::GetImageNamed().
 TEST_F(ResourceBundleImageTest, GetImageNamed) {
 #if defined(OS_WIN)
-  gfx::InitDeviceScaleFactor(2.0);
+  display::win::SetDefaultDeviceScaleFactor(2.0);
 #endif
   std::vector<ScaleFactor> supported_factors;
   supported_factors.push_back(SCALE_FACTOR_100P);
@@ -569,101 +500,6 @@ TEST_F(ResourceBundleImageTest, GetImageNamed) {
   // ImageSkia scales image if the one for the requested scale factor is not
   // available.
   EXPECT_EQ(1.4f, image_skia->GetRepresentation(1.4f).scale());
-}
-
-// Verifies that the correct number of DataPacks managed by ResourceBundle
-// are flagged as containing only material design assets.
-TEST_F(ResourceBundleImageTest, CountMaterialDesignDataPacksInResourceBundle) {
-  ResourceBundle* resource_bundle = CreateResourceBundle(nullptr);
-  EXPECT_EQ(0u, NumDataPacksInResourceBundle(resource_bundle));
-  EXPECT_EQ(0u, NumMaterialDesignDataPacksInResourceBundle(resource_bundle));
-
-  // Add a non-material data pack.
-  base::FilePath default_path = dir_path().AppendASCII("default.pak");
-  CreateDataPackWithSingleBitmap(default_path, 10, base::StringPiece());
-  resource_bundle->AddDataPackFromPath(default_path, SCALE_FACTOR_100P);
-  EXPECT_EQ(1u, NumDataPacksInResourceBundle(resource_bundle));
-  EXPECT_EQ(0u, NumMaterialDesignDataPacksInResourceBundle(resource_bundle));
-
-  // Add a material data pack.
-  base::FilePath material_path1 = dir_path().AppendASCII("material1.pak");
-  CreateDataPackWithSingleBitmap(material_path1, 10, base::StringPiece());
-  resource_bundle->AddMaterialDesignDataPackFromPath(material_path1,
-                                                     SCALE_FACTOR_100P);
-  EXPECT_EQ(2u, NumDataPacksInResourceBundle(resource_bundle));
-  EXPECT_EQ(1u, NumMaterialDesignDataPacksInResourceBundle(resource_bundle));
-}
-
-// Verifies that data packs containing material design resources are permitted
-// to have resource IDs which are present within other data packs managed by
-// ResourceBundle. This test passes if it does not trigger the DCHECK in
-// DataPack::CheckForDuplicateResources().
-TEST_F(ResourceBundleImageTest, NoCrashWithDuplicateMaterialDesignResources) {
-  // Create two data packs, each containing a single asset with the same ID.
-  base::FilePath default_path = dir_path().AppendASCII("default.pak");
-  base::FilePath material_path = dir_path().AppendASCII("material.pak");
-  CreateDataPackWithSingleBitmap(default_path, 10, base::StringPiece());
-  CreateDataPackWithSingleBitmap(material_path, 10, base::StringPiece());
-
-  // Should not crash.
-  ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
-  resource_bundle->AddMaterialDesignDataPackFromPath(material_path,
-                                                     SCALE_FACTOR_100P);
-  resource_bundle->AddDataPackFromPath(default_path, SCALE_FACTOR_100P);
-}
-
-// Verifies that ResourceBundle searches data pack A before data pack B for
-// an asset if A was added to the ResourceBundle before B.
-TEST_F(ResourceBundleImageTest, DataPackSearchOrder) {
-  // Create two .pak files, each containing a single image with the
-  // same asset ID but different sizes (note that the images must be
-  // different sizes in this test in order to correctly determine
-  // from which data pack the asset was pulled). Note also that the value
-  // of |material_size| was chosen to be divisible by 3, since iOS may
-  // use this scale factor.
-  const int default_size = 10;
-  const int material_size = 48;
-  ASSERT_NE(default_size, material_size);
-  base::FilePath default_path = dir_path().AppendASCII("default.pak");
-  base::FilePath material_path = dir_path().AppendASCII("material.pak");
-  CreateDataPackWithSingleBitmap(default_path,
-                                 default_size,
-                                 base::StringPiece());
-  CreateDataPackWithSingleBitmap(material_path,
-                                 material_size,
-                                 base::StringPiece());
-
-  ScaleFactor scale_factor = SCALE_FACTOR_100P;
-  int expected_size = material_size;
-  ResourceBundle* resource_bundle = CreateResourceBundleWithEmptyLocalePak();
-
-#if defined(OS_IOS)
-  // iOS retina devices do not use 100P scaling. See crbug.com/298406.
-  scale_factor = resource_bundle->GetMaxScaleFactor();
-  expected_size = material_size / GetScaleForScaleFactor(scale_factor);
-#endif
-
-  // Load the 'material' data pack into ResourceBundle first.
-  resource_bundle->AddMaterialDesignDataPackFromPath(material_path,
-                                                     scale_factor);
-  resource_bundle->AddDataPackFromPath(default_path, scale_factor);
-
-  // A request for the image with ID 3 should return the image from the material
-  // data pack.
-  gfx::ImageSkia* image_skia = resource_bundle->GetImageSkiaNamed(3);
-  const SkBitmap* bitmap = image_skia->bitmap();
-  ASSERT_TRUE(bitmap);
-  EXPECT_EQ(expected_size, bitmap->width());
-  EXPECT_EQ(expected_size, bitmap->height());
-
-  // A subsequent request for the image with ID 3 (i.e., after the image
-  // has been cached by ResourceBundle) should also return the image
-  // from the material data pack.
-  gfx::ImageSkia* image_skia2 = resource_bundle->GetImageSkiaNamed(3);
-  const SkBitmap* bitmap2 = image_skia2->bitmap();
-  ASSERT_TRUE(bitmap2);
-  EXPECT_EQ(expected_size, bitmap2->width());
-  EXPECT_EQ(expected_size, bitmap2->height());
 }
 
 // Test that GetImageNamed() behaves properly for images which GRIT has

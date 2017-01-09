@@ -5,6 +5,8 @@
 #include <stdlib.h>
 
 #include "base/command_line.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "content/browser/renderer_host/render_widget_host_impl.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/render_widget_host.h"
@@ -18,12 +20,7 @@
 #include "content/public/test/test_utils.h"
 #include "content/shell/browser/shell.h"
 #include "content/shell/common/shell_switches.h"
-#include "third_party/WebKit/public/platform/WebScreenInfo.h"
 #include "ui/compositor/compositor_switches.h"
-
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif // OS_WIN
 
 namespace content {
 
@@ -36,30 +33,29 @@ class ScreenOrientationBrowserTest : public ContentBrowserTest  {
   void SendFakeScreenOrientation(unsigned angle, const std::string& strType) {
     RenderWidgetHost* rwh = shell()->web_contents()->GetRenderWidgetHostView()
         ->GetRenderWidgetHost();
-    blink::WebScreenInfo screen_info;
-    rwh->GetWebScreenInfo(&screen_info);
-    screen_info.orientationAngle = angle;
+    ScreenInfo screen_info;
+    rwh->GetScreenInfo(&screen_info);
+    screen_info.orientation_angle = angle;
 
-    blink::WebScreenOrientationType type = blink::WebScreenOrientationUndefined;
+    ScreenOrientationValues type = SCREEN_ORIENTATION_VALUES_DEFAULT;
     if (strType == "portrait-primary") {
-      type = blink::WebScreenOrientationPortraitPrimary;
+      type = SCREEN_ORIENTATION_VALUES_PORTRAIT_PRIMARY;
     } else if (strType == "portrait-secondary") {
-      type = blink::WebScreenOrientationPortraitSecondary;
+      type = SCREEN_ORIENTATION_VALUES_PORTRAIT_SECONDARY;
     } else if (strType == "landscape-primary") {
-      type = blink::WebScreenOrientationLandscapePrimary;
+      type = SCREEN_ORIENTATION_VALUES_LANDSCAPE_PRIMARY;
     } else if (strType == "landscape-secondary") {
-      type = blink::WebScreenOrientationLandscapeSecondary;
+      type = SCREEN_ORIENTATION_VALUES_LANDSCAPE_SECONDARY;
     }
-    ASSERT_NE(blink::WebScreenOrientationUndefined, type);
-    screen_info.orientationType = type;
+    ASSERT_NE(SCREEN_ORIENTATION_VALUES_DEFAULT, type);
+    screen_info.orientation_type = type;
 
-    ViewMsg_Resize_Params params;
+    ResizeParams params;
     params.screen_info = screen_info;
     params.new_size = gfx::Size(0, 0);
     params.physical_backing_size = gfx::Size(300, 300);
     params.top_controls_height = 0.f;
-    params.top_controls_shrink_blink_size = false;
-    params.resizer_rect = gfx::Rect();
+    params.browser_controls_shrink_blink_size = false;
     params.is_fullscreen_granted = false;
     rwh->Send(new ViewMsg_Resize(rwh->GetRoutingID(), params));
   }
@@ -127,15 +123,6 @@ IN_PROC_BROWSER_TEST_F(ScreenOrientationBrowserTest,
   navigation_observer.Wait();
   WaitForResizeComplete(shell()->web_contents());
 
-#if defined(OS_WIN)
-  // Screen Orientation is currently disabled on Windows 8.
-  // This test will break, requiring an update when the API will be enabled.
-  if (base::win::OSInfo::GetInstance()->version() >= base::win::VERSION_WIN8) {
-    EXPECT_EQ(false, ScreenOrientationSupported());
-    return;
-  }
-#endif // defined(OS_WIN)
-
   int angle = GetOrientationAngle();
 
   for (int i = 0; i < 4; ++i) {
@@ -193,15 +180,6 @@ IN_PROC_BROWSER_TEST_F(ScreenOrientationBrowserTest, DISABLED_LockSmoke) {
   TestNavigationObserver navigation_observer(shell()->web_contents(), 2);
   shell()->LoadURL(test_url);
 
-#if defined(OS_WIN)
-  // Screen Orientation is currently disabled on Windows 8.
-  // This test will break, requiring an update when the API will be enabled.
-  if (base::win::OSInfo::GetInstance()->version() >= base::win::VERSION_WIN8) {
-    EXPECT_EQ(false, ScreenOrientationSupported());
-    return;
-  }
-#endif // defined(OS_WIN)
-
   navigation_observer.Wait();
 #if USE_AURA || defined(OS_ANDROID)
   WaitForResizeComplete(shell()->web_contents());
@@ -228,15 +206,6 @@ IN_PROC_BROWSER_TEST_F(ScreenOrientationBrowserTest, CrashTest_UseAfterDetach) {
   TestNavigationObserver navigation_observer(shell()->web_contents(), 2);
   shell()->LoadURL(test_url);
 
-#if defined(OS_WIN)
-  // Screen Orientation is currently disabled on Windows 8.
-  // When implemented, this test will break, requiring an update.
-  if (base::win::OSInfo::GetInstance()->version() >= base::win::VERSION_WIN8) {
-    EXPECT_EQ(false, ScreenOrientationSupported());
-    return;
-  }
-#endif // defined(OS_WIN)
-
   navigation_observer.Wait();
 
   // This is a success if the renderer process did not crash, thus, we end up
@@ -256,18 +225,23 @@ class ScreenOrientationLockDisabledBrowserTest : public ContentBrowserTest  {
 
 // Check that when --disable-screen-orientation-lock is passed to the command
 // line, screen.orientation.lock() correctly reports to not be supported.
-// Flaky: https://crbug.com/498236
 IN_PROC_BROWSER_TEST_F(ScreenOrientationLockDisabledBrowserTest,
-                       DISABLED_NotSupported) {
+    DISABLED_NotSupported) {
   GURL test_url = GetTestUrl("screen_orientation",
                              "screen_orientation_lock_disabled.html");
 
-  TestNavigationObserver navigation_observer(shell()->web_contents(), 2);
+  TestNavigationObserver navigation_observer(shell()->web_contents(), 1);
   shell()->LoadURL(test_url);
   navigation_observer.Wait();
 
-  EXPECT_EQ("NotSupportedError",
-            shell()->web_contents()->GetLastCommittedURL().ref());
+  {
+    ASSERT_TRUE(ExecuteScript(shell(), "run();"));
+
+    TestNavigationObserver navigation_observer(shell()->web_contents(), 1);
+    navigation_observer.Wait();
+    EXPECT_EQ("NotSupportedError",
+              shell()->web_contents()->GetLastCommittedURL().ref());
+  }
 }
 #endif // defined(OS_ANDROID)
 

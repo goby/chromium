@@ -547,10 +547,11 @@ cr.define('extensions', function() {
       });
 
       // The 'Enabled' checkbox.
-      wrapper.setupColumn('enabled', '.enable-checkbox input', 'change',
+      wrapper.setupColumn('enabled', '.enable-checkbox input', 'click',
                           function(e) {
         var checked = e.target.checked;
-        // TODO(devlin): What should we do if this fails?
+        // TODO(devlin): What should we do if this fails? Ideally we want to
+        // show some kind of error or feedback to the user if this fails.
         chrome.management.setEnabled(extension.id, checked);
 
         // This may seem counter-intuitive (to not set/clear the checkmark)
@@ -698,7 +699,7 @@ cr.define('extensions', function() {
       var isUnpacked =
           extension.location == chrome.developerPrivate.Location.UNPACKED;
       // The 'Reload' link.
-      this.updateVisibility_(wrapper, '.reload-link', isUnpacked);
+      this.updateVisibility_(wrapper, '.reload-link', isActive && isUnpacked);
 
       // The 'Launch' link.
       this.updateVisibility_(
@@ -755,7 +756,9 @@ cr.define('extensions', function() {
             extension.disableReasons.suspiciousInstall ||
             extension.disableReasons.corruptInstall ||
             extension.disableReasons.updateRequired ||
-            extension.dependentExtensions.length > 0;
+            extension.dependentExtensions.length > 0 ||
+            extension.state ==
+                chrome.developerPrivate.ExtensionState.BLACKLISTED;
         item.querySelector('input').disabled = enableCheckboxDisabled;
         item.querySelector('input').checked = isActive;
       });
@@ -835,17 +838,7 @@ cr.define('extensions', function() {
                              hasDependents, function(item) {
         var dependentList = item.querySelector('ul');
         dependentList.textContent = '';
-        extension.dependentExtensions.forEach(function(dependentId) {
-          var dependentExtension = null;
-          for (var i = 0; i < this.extensions_.length; ++i) {
-            if (this.extensions_[i].id == dependentId) {
-              dependentExtension = this.extensions_[i];
-              break;
-            }
-          }
-          if (!dependentExtension)
-            return;
-
+        extension.dependentExtensions.forEach(function(dependentExtension) {
           var depNode = cloneTemplate('dependent-list-item');
           depNode.querySelector('.dep-extension-title').textContent =
               dependentExtension.name;
@@ -875,7 +868,7 @@ cr.define('extensions', function() {
             return;
           }
           var displayName;
-          if (view.url.indexOf('chrome-extension://') == 0) {
+          if (view.url.startsWith('chrome-extension://')) {
             var pathOffset = 'chrome-extension://'.length + 32 + 1;
             displayName = view.url.substring(pathOffset);
             if (displayName == '_generated_background_page.html')

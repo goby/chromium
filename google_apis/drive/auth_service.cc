@@ -9,8 +9,10 @@
 
 #include "base/bind.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "google_apis/drive/auth_service_observer.h"
 #include "google_apis/gaia/google_service_auth_error.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -52,7 +54,7 @@ class AuthRequest : public OAuth2TokenService::Consumer {
                          const GoogleServiceAuthError& error) override;
 
   AuthStatusCallback callback_;
-  scoped_ptr<OAuth2TokenService::Request> request_;
+  std::unique_ptr<OAuth2TokenService::Request> request_;
   base::ThreadChecker thread_checker_;
 
   DISALLOW_COPY_AND_ASSIGN(AuthRequest);
@@ -143,7 +145,7 @@ void AuthService::StartAuthentication(const AuthStatusCallback& callback) {
 
   if (HasAccessToken()) {
     // We already have access token. Give it back to the caller asynchronously.
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, HTTP_SUCCESS, access_token_));
   } else if (HasRefreshToken()) {
     // We have refresh token, let's get an access token.
@@ -155,7 +157,7 @@ void AuthService::StartAuthentication(const AuthStatusCallback& callback) {
                                callback),
                     scopes_);
   } else {
-    base::MessageLoop::current()->PostTask(
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE, base::Bind(callback, DRIVE_NOT_READY, std::string()));
   }
 }
@@ -224,9 +226,8 @@ void AuthService::OnHandleRefreshToken(bool has_refresh_token) {
   access_token_.clear();
   has_refresh_token_ = has_refresh_token;
 
-  FOR_EACH_OBSERVER(AuthServiceObserver,
-                    observers_,
-                    OnOAuth2RefreshTokenChanged());
+  for (auto& observer : observers_)
+    observer.OnOAuth2RefreshTokenChanged();
 }
 
 }  // namespace google_apis

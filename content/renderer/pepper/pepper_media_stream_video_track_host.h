@@ -5,10 +5,13 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_MEDIA_STREAM_VIDEO_TRACK_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_MEDIA_STREAM_VIDEO_TRACK_HOST_H_
 
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "content/public/common/media_stream_request.h"
 #include "content/public/renderer/media_stream_video_sink.h"
-#include "content/renderer/media/media_stream_video_source.h"
 #include "content/renderer/pepper/pepper_media_stream_track_host_base.h"
 #include "media/base/video_frame.h"
 #include "ppapi/c/ppb_video_frame.h"
@@ -18,9 +21,10 @@
 
 namespace content {
 
+class MediaStreamSource;
+
 class PepperMediaStreamVideoTrackHost : public PepperMediaStreamTrackHostBase,
-                                        public MediaStreamVideoSink,
-                                        public MediaStreamVideoSource {
+                                        public MediaStreamVideoSink {
  public:
   // Input mode constructor.
   // In input mode, this class passes video frames from |track| to the
@@ -37,12 +41,17 @@ class PepperMediaStreamVideoTrackHost : public PepperMediaStreamTrackHostBase,
                                   PP_Instance instance,
                                   PP_Resource resource);
 
+  ~PepperMediaStreamVideoTrackHost() override;
+
   bool IsMediaStreamVideoTrackHost() override;
 
   blink::WebMediaStreamTrack track() { return track_; }
 
  private:
-  ~PepperMediaStreamVideoTrackHost() override;
+  // Implements a MediaStreamVideoSource that drives this host (output mode
+  // only). VideoSource holds a weak reference to the host, and sets/clears
+  // |frame_deliverer_|.
+  class VideoSource;
 
   void InitBuffers();
 
@@ -56,20 +65,6 @@ class PepperMediaStreamVideoTrackHost : public PepperMediaStreamTrackHostBase,
 
   void OnVideoFrame(const scoped_refptr<media::VideoFrame>& frame,
                     base::TimeTicks estimated_capture_time);
-
-  // MediaStreamVideoSource overrides:
-  void GetCurrentSupportedFormats(
-      int max_requested_width,
-      int max_requested_height,
-      double max_requested_frame_rate,
-      const VideoCaptureDeviceFormatsCB& callback) override;
-
-  void StartSourceImpl(
-      const media::VideoCaptureFormat& format,
-      const blink::WebMediaConstraints& constraints,
-      const VideoCaptureDeliverFrameCB& frame_callback) override;
-
-  void StopSourceImpl() override;
 
   // ResourceHost overrides:
   void DidConnectPendingHostToResource() override;
@@ -90,9 +85,6 @@ class PepperMediaStreamVideoTrackHost : public PepperMediaStreamTrackHostBase,
                       const blink::WebString& result_name);
 
   blink::WebMediaStreamTrack track_;
-
-  // True if it has been added to |blink::WebMediaStreamTrack| as a sink.
-  bool connected_;
 
   // Number of buffers.
   int32_t number_of_buffers_;
@@ -115,7 +107,6 @@ class PepperMediaStreamVideoTrackHost : public PepperMediaStreamTrackHostBase,
   // TODO(ronghuawu): Remove |type_| and split PepperMediaStreamVideoTrackHost
   // into 2 classes for read and write.
   TrackType type_;
-  bool output_started_;
 
   // Internal class used for delivering video frames on the IO-thread to
   // the MediaStreamVideoSource implementation.

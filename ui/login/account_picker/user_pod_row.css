@@ -19,6 +19,10 @@ podrow.images-loading {
   visibility: hidden;
 }
 
+pin-keyboard {
+  display: block;
+}
+
 .pod {
   -webkit-tap-highlight-color: transparent;
   background-color: white;
@@ -30,6 +34,7 @@ podrow.images-loading {
   height: 213px;
   outline: none;
   position: absolute;
+  top: 0;
   transform: scale3d(0.9, 0.9, 0.9);
   width: 180px;
   z-index: 0;
@@ -37,6 +42,22 @@ podrow.images-loading {
 
 .account-picker.flying-pods .pod {
   transition: all 180ms;
+}
+
+.pod.flying-pin-pod {
+  transition: height 180ms ease-in-out,
+              top 180ms ease-in-out;
+}
+
+.pod.pin-enabled {
+  height: 417px;
+  top: -87px !important;
+}
+
+.pod .pin-container {
+  height: 204px;
+  position: absolute;
+  top: 170px;
 }
 
 .pod.faded {
@@ -64,6 +85,11 @@ podrow[ncolumns='6'] .pod {
   left: 10px;
   position: absolute;
   top: 10px;
+  transition: height 180ms ease-in-out,
+              left 180ms ease-in-out,
+              right 180ms ease-in-out,
+              top 180ms ease-in-out,
+              width 180ms ease-in-out;
   width: 160px;
   z-index: 3;
 }
@@ -91,6 +117,7 @@ html:not([screen=login-add-user]) .pod .user-image {
   max-height: 160px;
   max-width: 160px;
   opacity: 0.7;
+  position: absolute;
 }
 
 html:not([screen=login-add-user]) .pod.focused .user-image {
@@ -110,7 +137,6 @@ html:not([screen=login-add-user]) .pod.focused .user-image {
   color: white;
   display: block;
   font-size: small;
-  padding: 3px 0;
   position: absolute;
   text-align: center;
   top: 0;
@@ -135,7 +161,35 @@ html[dir=rtl] .main-pane {
   display: flex;
   position: absolute;
   top: 160px;
+/* On chromeos we extend the width to cover the padding on the user pods. This
+ is so the submit button on chromeos can extend onto the padding as shown on
+ mocks. */
+<if expr="not chromeos">
   width: 160px;
+</if>
+<if expr="chromeos">
+  width: 170px;
+</if>
+}
+
+.auth-container .submit-button[disabled] {
+  color: #000;
+  opacity: 0.26;
+}
+
+.auth-container .submit-button {
+  box-sizing: border-box;
+  color: var(--google-blue-500);
+  height: 43px;
+  min-height: 43px;
+  min-width: 43px;
+  padding: 11.5px 10px;
+  position: relative;
+  width: 43px;
+}
+
+.auth-container .submit-button.error-shown {
+  color: #CD2A00;
 }
 
 .name-container {
@@ -194,16 +248,22 @@ html[dir=rtl] .main-pane {
   display: none;
 }
 
+<if expr="chromeos">
 .capslock-on .capslock-hint-container {
   display: block;
   flex: none;
+  height: 43px;
+  position: relative;
+  width: 20px;
 }
+</if>
 
 .capslock-hint {
   -webkit-margin-end: 6px;
   -webkit-margin-start: -2px;
+  margin: auto;
   position: relative;
-  top: 11px;
+  top: 15px;
 }
 
 .password-label,
@@ -230,6 +290,7 @@ html[dir=rtl] .main-pane {
   background-repeat: no-repeat;
   flex: none;
   height: 27px;
+  margin: 8px 0;
   width: 27px;
 }
 
@@ -343,13 +404,16 @@ html[dir=rtl] .main-pane {
   cursor: pointer;
 }
 
+.pod[auth-type='onlineSignIn'] .custom-icon-container {
+  display: none;
+}
+
 .custom-icon-container {
   display: flex;
   flex: none;
   flex-direction: column;
-  height: 40px;
-  justify-content: center;
-  width: 40px;
+  height: 43px;
+  width: 27px;
 }
 
 .launch-app-button-container {
@@ -374,8 +438,13 @@ html[dir=rtl] .main-pane {
 }
 
 .reauth-hint-container .reauth-warning {
-  color: #f4b400;
-  display: inline-flex;
+  -webkit-mask-image: url(../../../ui/webui/resources/images/warning.svg);
+  -webkit-mask-position: center;
+  -webkit-mask-repeat: no-repeat;
+  -webkit-mask-size: 20px;
+  background-color: #f4b400;
+  height: 24px;
+  width: 24px;
 }
 
 .reauth-hint-container .reauth-name-hint {
@@ -431,6 +500,16 @@ html[dir=rtl] .action-box-area {
 
 .action-box-area.active .action-box-button {
   background-image: url(chrome://theme/IDR_OOBE_ACTION_BOX_BUTTON_PRESSED);
+}
+
+.action-box-area .action-box-icon {
+  /* overriden in chrome/browser/resources/md_user_manager/user_manager.css */
+  display: none;
+}
+
+.user-image-gradient-area {
+  /* overriden in chrome/browser/resources/md_user_manager/user_manager.css */
+  display: none;
 }
 
 .user-type-icon-area {
@@ -502,7 +581,7 @@ html[dir=rtl] .user-type-icon-area {
 }
 
 .action-box-area.menu-moved-up {
-  -webkit-transform: rotate(180deg);
+  transform: rotate(180deg);
 }
 
 html[dir=rtl] .action-box-area.active ~ .action-box-menu {
@@ -515,6 +594,10 @@ html[dir=rtl] .action-box-area.active ~ .action-box-menu {
   display: flex;
   flex-direction: column;
   padding: 7px 20px;
+}
+
+.action-box-menu-title:focus {
+  outline-style: none;
 }
 
 .action-box-menu-title-name,
@@ -570,14 +653,11 @@ html[dir=rtl] .action-box-area.active ~ .action-box-menu {
   text-align: end;
 }
 
-.action-box-remove-user-warning .remove-warning-button {
-  width: 100%;
-}
-
 /* Hide dialog elements not in a correct category. Only combinations currently
    in use are included here. */
 .pod.legacy-supervised .non-sync,
 .pod.legacy-supervised .action-box-remove-user-warning-text,
+.pod.legacy-supervised .action-box-remove-non-owner-user-warning-text,
 .pod:not(.legacy-supervised)
     .action-box-remove-legacy-supervised-user-warning-text,
 .pod.synced .non-sync,
@@ -619,10 +699,12 @@ html[dir=rtl] .user-type-bubble {
 /**** Public account user pod rules *******************************************/
 
 .pod.public-account.expanded {
+  height: 230px;
   width: 500px;
 }
 
 .pod.public-account.expanded.advanced {
+  height: 280px;
   width: 610px;
 }
 
@@ -631,7 +713,7 @@ html[dir=rtl] .user-type-bubble {
 }
 
 .pod.public-account.expanded .name-container {
-  transform: translateY(-34px);
+  display: none;
 }
 
 .pod.public-account .learn-more-container {
@@ -640,7 +722,7 @@ html[dir=rtl] .user-type-bubble {
 }
 
 .pod.public-account .learn-more {
-  top: 15px;
+  top: 22px;
 }
 
 .expanded-pane {
@@ -660,7 +742,7 @@ html[dir=rtl] .user-type-bubble {
   display: flex;
   flex-direction: column;
   float: right;
-  height: 193px;
+  height: 213px;
   width: 490px;
 }
 
@@ -669,6 +751,7 @@ html[dir=rtl] .user-type-bubble {
 }
 
 .pod.public-account.expanded.advanced .expanded-pane-contents {
+  height: 263px;
   width: 600px;
 }
 
@@ -690,8 +773,12 @@ html[dir=rtl] .expanded-pane-contents {
   white-space: nowrap;
 }
 
+.expanded-pane-container {
+  color: grey;
+}
+
 .reminder {
-  font-weight: bold;
+  margin-top: 20px;
 }
 
 .language-and-input-section {
@@ -734,10 +821,14 @@ html[dir=rtl] .expanded-pane-contents {
 }
 
 .bottom-container {
-  -webkit-margin-start: 10px;
+  -webkit-margin-start: 20px;
+  align-items: center;
   display: flex;
+  flex-direction: row-reverse;
   flex: none;
   font-size: 13px;
+  justify-content: space-between;
+  margin-bottom: 4px;
 }
 
 .expanded-pane-learn-more-container,
@@ -750,6 +841,7 @@ html[dir=rtl] .expanded-pane-contents {
   background-image: url(../../webui/resources/images/business.svg);
   background-size: 18px;
   height: 18px;
+  margin-top: -10px;
   position: relative;
   width: 18px;
 }
@@ -760,10 +852,72 @@ html[dir=rtl] .expanded-pane-contents {
 
 .info {
   flex: auto;
-  margin: 5px 10px;
+  margin: -10px 25px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monitoring-container {
+  margin-top: 35px;
+}
+
+.monitoring-learn-more {
+  color: rgb(49, 106, 197);
+  text-decoration: none;
+}
+
+.monitoring-dialog-container .cr-dialog-shield {
+  background: black;
+  opacity: 0.5;
+}
+
+.monitoring-dialog-container .cr-dialog-buttons {
+  display: none;
+}
+
+.monitoring-dialog-container .cr-dialog-frame {
+  height: 170px;
+  left: -46px;
+  padding: 0px;
+  position: relative;
+  top: -24px;
+  width: 430px;
+}
+
+.monitoring-dialog-container.advanced .cr-dialog-frame {
+  left: -110px;
+  top: 0px;
+}
+
+.monitoring-dialog-container .cr-dialog-close {
+  color: grey;
+  height: 34px;
+  position: absolute;
+  top: 0px;
+  width: 34px;
+}
+
+.monitoring-dialog-container .cr-dialog-title {
+  font-size: 16px;
+  font-weight: bold;
+  left: 20px;
+  position: absolute;
+  top: 15px;
+}
+
+.monitoring-dialog-container .cr-dialog-text {
+  color: grey;
+  font-size: 13px;
+  overflow: visible;
+  position: absolute;
+  top: 20px;
+}
+
+.monitoring-dialog-container .cr-dialog-item {
+  -webkit-margin-start: 42px;
+  display: list-item;
+  margin-bottom: -6px;
 }
 
 .language-and-input-container {
@@ -773,9 +927,7 @@ html[dir=rtl] .expanded-pane-contents {
 
 .language-and-input {
   color: rgb(49, 106, 197);
-  position: relative;
   text-decoration: none;
-  top: 4px;
 }
 
 .pod.public-account.expanded.advanced .language-and-input-container {
@@ -783,7 +935,20 @@ html[dir=rtl] .expanded-pane-contents {
 }
 
 .enter-button {
-  font-size: 14px;
+  background-color: rgb(66, 133, 244);
+  color: white;
+  font-size: 12px;
+  text-transform: none;
+}
+
+.enter-button.keyboard-focus {
+  font-weight: normal;
+}
+
+.horizontal-line {
+  border-bottom: 1px double #cccccc;
+  bottom: 8px;
+  position: relative;
 }
 
 /* Animations for the animated ellipsis: */

@@ -4,6 +4,8 @@
 
 // Multiply-included message file, hence no include guard.
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/memory/shared_memory.h"
@@ -13,7 +15,7 @@
 #include "content/public/common/speech_recognition_result.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_param_traits.h"
-#include "media/audio/audio_parameters.h"
+#include "media/base/audio_parameters.h"
 #include "ui/gfx/geometry/rect.h"
 
 #define IPC_MESSAGE_START SpeechRecognitionMsgStart
@@ -60,7 +62,7 @@ IPC_STRUCT_BEGIN(SpeechRecognitionHostMsg_StartRequest_Params)
   // URL of the page (or iframe if applicable).
   IPC_STRUCT_MEMBER(std::string, origin_url)
   // Maximum number of hypotheses allowed for each results.
-  IPC_STRUCT_MEMBER(uint32, max_hypotheses)
+  IPC_STRUCT_MEMBER(uint32_t, max_hypotheses)
   // Whether the user requested continuous recognition or not.
   IPC_STRUCT_MEMBER(bool, continuous)
   // Whether the user requested interim results or not.

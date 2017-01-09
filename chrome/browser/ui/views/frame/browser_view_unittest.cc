@@ -4,21 +4,28 @@
 
 #include "chrome/browser/ui/views/frame/browser_view.h"
 
+#include "base/macros.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
+#include "chrome/browser/ui/layout_constants.h"
 #include "chrome/browser/ui/views/bookmarks/bookmark_bar_view.h"
 #include "chrome/browser/ui/views/frame/browser_view_layout.h"
 #include "chrome/browser/ui/views/frame/test_with_browser_view.h"
 #include "chrome/browser/ui/views/frame/top_container_view.h"
 #include "chrome/browser/ui/views/infobars/infobar_container_view.h"
-#include "chrome/browser/ui/views/layout_constants.h"
 #include "chrome/browser/ui/views/tabs/tab_strip.h"
 #include "chrome/browser/ui/views/toolbar/toolbar_view.h"
 #include "chrome/common/url_constants.h"
-#include "ui/views/controls/single_split_view.h"
+#include "ui/base/accelerators/accelerator.h"
 #include "ui/views/controls/webview/webview.h"
 
 namespace {
+
+#if defined(OS_MACOSX)
+const ui::EventFlags kPlatformModifier = ui::EF_COMMAND_DOWN;
+#else
+const ui::EventFlags kPlatformModifier = ui::EF_CONTROL_DOWN;
+#endif  // OS_MACOSX
 
 // Tab strip bounds depend on the window frame sizes.
 gfx::Point ExpectedTabStripOrigin(BrowserView* browser_view) {
@@ -44,9 +51,8 @@ TEST_F(BrowserViewTest, BrowserView) {
 
   // Test initial state.
   EXPECT_TRUE(browser_view()->IsTabStripVisible());
-  EXPECT_FALSE(browser_view()->IsOffTheRecord());
+  EXPECT_FALSE(browser_view()->IsIncognito());
   EXPECT_FALSE(browser_view()->IsGuestSession());
-  EXPECT_FALSE(browser_view()->ShouldShowAvatar());
   EXPECT_TRUE(browser_view()->IsBrowserTypeNormal());
   EXPECT_FALSE(browser_view()->IsFullscreen());
   EXPECT_FALSE(browser_view()->IsBookmarkBarVisible());
@@ -78,11 +84,13 @@ TEST_F(BrowserViewTest, BrowserViewLayout) {
   EXPECT_EQ(top_container, browser_view()->GetBookmarkBarView()->parent());
   EXPECT_EQ(browser_view(), browser_view()->infobar_container()->parent());
 
-  // Find bar host is at the front of the view hierarchy, followed by the top
-  // container.
+  // Find bar host is at the front of the view hierarchy, followed by the
+  // infobar container and then top container.
   EXPECT_EQ(browser_view()->child_count() - 1,
             browser_view()->GetIndexOf(browser_view()->find_bar_host_view()));
   EXPECT_EQ(browser_view()->child_count() - 2,
+            browser_view()->GetIndexOf(browser_view()->infobar_container()));
+  EXPECT_EQ(browser_view()->child_count() - 3,
             browser_view()->GetIndexOf(top_container));
 
   // Verify basic layout.
@@ -94,8 +102,7 @@ TEST_F(BrowserViewTest, BrowserViewLayout) {
   EXPECT_EQ(expected_tabstrip_origin.x(), tabstrip->x());
   EXPECT_EQ(expected_tabstrip_origin.y(), tabstrip->y());
   EXPECT_EQ(0, toolbar->x());
-  const int overlap = GetLayoutConstant(TABSTRIP_TOOLBAR_OVERLAP);
-  EXPECT_EQ(tabstrip->bounds().bottom() - overlap, toolbar->y());
+  EXPECT_EQ(tabstrip->bounds().bottom(), toolbar->y());
   EXPECT_EQ(0, contents_container->x());
   EXPECT_EQ(toolbar->bounds().bottom(), contents_container->y());
   EXPECT_EQ(top_container->bounds().bottom(), contents_container->y());
@@ -122,19 +129,21 @@ TEST_F(BrowserViewTest, BrowserViewLayout) {
   EXPECT_TRUE(bookmark_bar->visible());
   EXPECT_TRUE(bookmark_bar->IsDetached());
   EXPECT_EQ(browser_view(), bookmark_bar->parent());
-  // Find bar host is still at the front of the view hierarchy, followed by
-  // the top container.
+
+  // Find bar host is still at the front of the view hierarchy, followed by the
+  // infobar container and then top container.
   EXPECT_EQ(browser_view()->child_count() - 1,
             browser_view()->GetIndexOf(browser_view()->find_bar_host_view()));
   EXPECT_EQ(browser_view()->child_count() - 2,
+            browser_view()->GetIndexOf(browser_view()->infobar_container()));
+  EXPECT_EQ(browser_view()->child_count() - 3,
             browser_view()->GetIndexOf(top_container));
 
   // Bookmark bar layout on NTP.
   EXPECT_EQ(0, bookmark_bar->x());
-  EXPECT_EQ(
-      tabstrip->bounds().bottom() + toolbar->height() - overlap -
-          views::NonClientFrameView::kClientEdgeThickness,
-      bookmark_bar->y());
+  EXPECT_EQ(tabstrip->bounds().bottom() + toolbar->height() -
+                views::NonClientFrameView::kClientEdgeThickness,
+            bookmark_bar->y());
   EXPECT_EQ(toolbar->bounds().bottom(), contents_container->y());
   // Contents view has a "top margin" pushing it below the bookmark bar.
   EXPECT_EQ(bookmark_bar->height() -
@@ -151,20 +160,35 @@ TEST_F(BrowserViewTest, BrowserViewLayout) {
   EXPECT_FALSE(bookmark_bar->visible());
   EXPECT_FALSE(bookmark_bar->IsDetached());
   EXPECT_EQ(top_container, bookmark_bar->parent());
-  // Top container is still second from front.
-  EXPECT_EQ(browser_view()->child_count() - 2,
+  // Top container is still third from front.
+  EXPECT_EQ(browser_view()->child_count() - 3,
             browser_view()->GetIndexOf(top_container));
 
   BookmarkBarView::DisableAnimationsForTesting(false);
 }
 
+// Test that repeated accelerators are processed or ignored depending on the
+// commands that they refer to. The behavior for different commands is dictated
+// by IsCommandRepeatable() in chrome/browser/ui/views/accelerator_table.h.
+TEST_F(BrowserViewTest, RepeatedAccelerators) {
+  // A non-repeated Ctrl-L accelerator should be processed.
+  const ui::Accelerator kLocationAccel(ui::VKEY_L, kPlatformModifier);
+  EXPECT_TRUE(browser_view()->AcceleratorPressed(kLocationAccel));
+
+  // If the accelerator is repeated, it should be ignored.
+  const ui::Accelerator kLocationRepeatAccel(
+      ui::VKEY_L, kPlatformModifier | ui::EF_IS_REPEAT);
+  EXPECT_FALSE(browser_view()->AcceleratorPressed(kLocationRepeatAccel));
+
+  // A repeated Ctrl-Tab accelerator should be processed.
+  const ui::Accelerator kNextTabRepeatAccel(
+      ui::VKEY_TAB, ui::EF_CONTROL_DOWN | ui::EF_IS_REPEAT);
+  EXPECT_TRUE(browser_view()->AcceleratorPressed(kNextTabRepeatAccel));
+}
+
 class BrowserViewHostedAppTest : public TestWithBrowserView {
  public:
-  BrowserViewHostedAppTest()
-      : TestWithBrowserView(Browser::TYPE_POPUP,
-                            chrome::HOST_DESKTOP_TYPE_NATIVE,
-                            true) {
-  }
+  BrowserViewHostedAppTest() : TestWithBrowserView(Browser::TYPE_POPUP, true) {}
   ~BrowserViewHostedAppTest() override {}
 
  private:

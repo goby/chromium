@@ -10,10 +10,12 @@
 namespace views {
 namespace internal {
 
-MenuRunnerImplAdapter::MenuRunnerImplAdapter(ui::MenuModel* menu_model)
-    : menu_model_adapter_(new MenuModelAdapter(menu_model)),
-      impl_(new MenuRunnerImpl(menu_model_adapter_->CreateMenu())) {
-}
+MenuRunnerImplAdapter::MenuRunnerImplAdapter(
+    ui::MenuModel* menu_model,
+    const base::Closure& on_menu_done_callback)
+    : menu_model_adapter_(
+          new MenuModelAdapter(menu_model, on_menu_done_callback)),
+      impl_(new MenuRunnerImpl(menu_model_adapter_->CreateMenu())) {}
 
 bool MenuRunnerImplAdapter::IsRunning() const {
   return impl_->IsRunning();
@@ -29,7 +31,7 @@ MenuRunner::RunResult MenuRunnerImplAdapter::RunMenuAt(
     MenuButton* button,
     const gfx::Rect& bounds,
     MenuAnchorPosition anchor,
-    int32 types) {
+    int32_t types) {
   return impl_->RunMenuAt(parent, button, bounds, anchor, types);
 }
 
@@ -37,7 +39,7 @@ void MenuRunnerImplAdapter::Cancel() {
   impl_->Cancel();
 }
 
-base::TimeDelta MenuRunnerImplAdapter::GetClosingEventTime() const {
+base::TimeTicks MenuRunnerImplAdapter::GetClosingEventTime() const {
   return impl_->GetClosingEventTime();
 }
 

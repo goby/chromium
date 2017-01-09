@@ -4,7 +4,10 @@
 
 #import "chrome/browser/ui/cocoa/bookmarks/bookmark_bar_folder_controller.h"
 
+#include <stddef.h>
+
 #include "base/mac/bundle_locations.h"
+#include "base/mac/sdk_forward_declarations.h"
 #include "base/strings/sys_string_conversions.h"
 #import "chrome/browser/bookmarks/bookmark_model_factory.h"
 #import "chrome/browser/bookmarks/managed_bookmark_service_factory.h"
@@ -21,7 +24,12 @@
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/bookmark_node_data.h"
 #import "components/bookmarks/managed/managed_bookmark_service.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
+#include "ui/base/material_design/material_design_controller.h"
+#include "ui/base/resource/resource_bundle.h"
 #include "ui/base/theme_provider.h"
+#include "ui/resources/grit/ui_resources.h"
 
 using bookmarks::BookmarkModel;
 using bookmarks::BookmarkNode;
@@ -116,7 +124,7 @@ struct LayoutMetrics {
 
 NSRect GetFirstButtonFrameForHeight(CGFloat height) {
   CGFloat y = height - bookmarks::kBookmarkFolderButtonHeight -
-      bookmarks::kBookmarkVerticalPadding;
+      bookmarks::kBookmarkTopVerticalPadding;
   return NSMakeRect(0, y, bookmarks::kDefaultBookmarkWidth,
                     bookmarks::kBookmarkFolderButtonHeight);
 }
@@ -310,8 +318,23 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
 - (void)awakeFromNib {
   NSRect windowFrame = [[self window] frame];
   NSRect scrollViewFrame = [scrollView_ frame];
-  padding_ = NSWidth(windowFrame) - NSWidth(scrollViewFrame);
+  // Each menu row spans the entire width of the menu.
+  scrollViewFrame.size.width += NSWidth(windowFrame) - NSWidth(scrollViewFrame);
+  scrollViewFrame.origin.x = 0;
+  // If we leave the scrollview's vertical position and height as is, it will
+  // cover the menu's rounded corners and we'll get a rectangular menu.
+  scrollViewFrame.origin.y += bookmarks::kBookmarkVerticalPadding;
+  scrollViewFrame.size.height -= 2 * bookmarks::kBookmarkVerticalPadding;
+  [scrollView_ setFrame:scrollViewFrame];
+  padding_ = 0;
   verticalScrollArrowHeight_ = NSHeight([scrollUpArrowView_ frame]);
+
+  ui::ResourceBundle& rb = ui::ResourceBundle::GetSharedInstance();
+  NSImage* image = rb.GetNativeImageNamed(IDR_MENU_OVERFLOW_DOWN).ToNSImage();
+  [[scrollUpArrowView_.subviews objectAtIndex:0] setImage:image];
+
+  image = rb.GetNativeImageNamed(IDR_MENU_OVERFLOW_UP).ToNSImage();
+  [[scrollDownArrowView_.subviews objectAtIndex:0] setImage:image];
 }
 
 // Overriden from NSWindowController to call childFolderWillShow: before showing
@@ -351,7 +374,9 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
 #pragma mark Private Methods
 
 - (BookmarkButtonCell*)cellForBookmarkNode:(const BookmarkNode*)child {
-  NSImage* image = child ? [barController_ faviconForNode:child] : nil;
+  NSImage* image = child ? [barController_ faviconForNode:child
+                                            forADarkTheme:NO]
+                         : nil;
   BookmarkContextMenuCocoaController* menuController =
       [barController_ menuController];
   BookmarkBarFolderButtonCell* cell =
@@ -359,7 +384,7 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
                                                 text:nil
                                                image:image
                                       menuController:menuController];
-  [cell setTag:kStandardButtonTypeWithLimitedClickFeedback];
+  [cell setTag:kMaterialMenuButtonTypeWithLimitedClickFeedback];
   return cell;
 }
 
@@ -408,6 +433,9 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
                                autorelease];
   DCHECK(button);
 
+  // Folder menu buttons have a flat background color.
+  [button setBackgroundColor:
+      [BookmarkBarFolderWindowContentView backgroundColor]];
   [button setCell:cell];
   [button setDelegate:self];
   if (node) {
@@ -421,7 +449,16 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
       [button setAcceptsTrackIn:YES];
     }
     // Add a tooltip.
-    [button setToolTip:[BookmarkMenuCocoaController tooltipForNode:node]];
+    if (node->is_folder()) {
+      NSString* title = base::SysUTF16ToNSString(node->GetTitle());
+      if ([title length] &&
+          [[button cell] cellSize].width >
+              bookmarks::kBookmarkMenuButtonMaximumWidth) {
+        [button setToolTip:[BookmarkMenuCocoaController tooltipForNode:node]];
+      }
+    } else {
+      [button setToolTip:[BookmarkMenuCocoaController tooltipForNode:node]];
+    }
   } else {
     [button setEnabled:NO];
     [button setBordered:NO];
@@ -494,16 +531,14 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
     // popping up from the bookmark bar itself.  In this case, start
     // BELOW the parent button.  Our left is the button left; our top
     // is bottom of button's parent view.
-    NSPoint buttonBottomLeftInScreen =
-        [[parentButton_ window]
-            convertBaseToScreen:[parentButton_
-                                    convertPoint:NSZeroPoint toView:nil]];
-    NSPoint bookmarkBarBottomLeftInScreen =
-        [[parentButton_ window]
-            convertBaseToScreen:[[parentButton_ superview]
-                                    convertPoint:NSZeroPoint toView:nil]];
+    NSPoint buttonBottomLeftInScreen = ui::ConvertPointFromWindowToScreen(
+        [parentButton_ window],
+        [parentButton_ convertPoint:NSZeroPoint toView:nil]);
+    NSPoint bookmarkBarBottomLeftInScreen = ui::ConvertPointFromWindowToScreen(
+        [parentButton_ window],
+        [[parentButton_ superview] convertPoint:NSZeroPoint toView:nil]);
     newWindowTopLeft = NSMakePoint(
-        buttonBottomLeftInScreen.x + bookmarks::kBookmarkBarButtonOffset,
+        buttonBottomLeftInScreen.x,
         bookmarkBarBottomLeftInScreen.y + bookmarks::kBookmarkBarMenuOffset);
     // Make sure the window is on-screen; if not, push left or right. It is
     // intentional that top level folders "push left" or "push right" slightly
@@ -533,14 +568,13 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
   } else {
     // Parent is a folder: expose as much as we can vertically; grow right/left.
     newWindowTopLeft.x = [self childFolderWindowLeftForWidth:windowWidth];
-    NSPoint topOfWindow = NSMakePoint(0,
-                                      NSMaxY([parentButton_ frame]) -
-                                          bookmarks::kBookmarkVerticalPadding);
-    topOfWindow = [[parentButton_ window]
-                   convertBaseToScreen:[[parentButton_ superview]
-                                        convertPoint:topOfWindow toView:nil]];
-    newWindowTopLeft.y = topOfWindow.y +
-                         2 * bookmarks::kBookmarkVerticalPadding;
+    NSPoint topOfWindow =
+        NSMakePoint(0, NSMaxY([parentButton_ frame]) +
+            bookmarks::kBookmarkTopVerticalPadding);
+    topOfWindow = ui::ConvertPointFromWindowToScreen(
+        [parentButton_ window],
+        [[parentButton_ superview] convertPoint:topOfWindow toView:nil]);
+    newWindowTopLeft.y = topOfWindow.y;
   }
   return newWindowTopLeft;
 }
@@ -555,7 +589,8 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
   // This does not take into account any padding which may be required at the
   // top and/or bottom of the window.
   return (buttonCount * bookmarks::kBookmarkFolderButtonHeight) +
-      2 * bookmarks::kBookmarkVerticalPadding;
+      bookmarks::kBookmarkTopVerticalPadding +
+      bookmarks::kBookmarkBottomVerticalPadding;
 }
 
 - (void)adjustWindowLeft:(CGFloat)windowLeft
@@ -832,6 +867,13 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
   [window setFrame:windowFrame display:NO];
 
   NSRect folderFrame = NSMakeRect(0, 0, windowWidth, height);
+  // Each menu button is 24pt tall but its highlight is only 20pt - effectively
+  // each menu button includes 4pts of vertical padding. This wasn't a problem
+  // pre-Material, but now that the |scrollView_| is shorter we have an extra
+  // 4pt of padding pushing the topmost item beyond the top of the
+  // |scrollView_|. Scoot the |folderView_| down by this padding to avoid
+  // clipping the topmost item.
+  folderFrame.origin.y -= bookmarks::kBookmarkVerticalPadding;
   [folderView_ setFrame:folderFrame];
 
   // For some reason, when opening a "large" bookmark folder (containing 12 or
@@ -1038,8 +1080,8 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
   NSButton* button = parentButton_.get();
   NSRect parentButtonGlobalFrame =
       [button convertRect:[button bounds] toView:nil];
-  parentButtonGlobalFrame.origin =
-      [[button window] convertBaseToScreen:parentButtonGlobalFrame.origin];
+  parentButtonGlobalFrame =
+      [[button window] convertRectToScreen:parentButtonGlobalFrame];
   for (NSScreen* screen in [NSScreen screens]) {
     if (NSIntersectsRect([screen frame], parentButtonGlobalFrame))
       return screen;
@@ -1062,19 +1104,19 @@ NSRect GetFirstButtonFrameForHeight(CGFloat height) {
 // Note [theEvent window] may not be our window, as we also get these messages
 // forwarded from BookmarkButton's mouse tracking loop.
 - (void)mouseMovedOrDragged:(NSEvent*)theEvent {
-  NSPoint eventScreenLocation =
-      [[theEvent window] convertBaseToScreen:[theEvent locationInWindow]];
+  NSPoint eventScreenLocation = ui::ConvertPointFromWindowToScreen(
+      [theEvent window], [theEvent locationInWindow]);
 
   // Base hot spot calculations on the positions of the scroll arrow views.
   NSRect testRect = [scrollDownArrowView_ frame];
   NSPoint testPoint = [visibleView_ convertPoint:testRect.origin
                                                   toView:nil];
-  testPoint = [[self window] convertBaseToScreen:testPoint];
+  testPoint = ui::ConvertPointFromWindowToScreen([self window], testPoint);
   CGFloat closeToTopOfScreen = testPoint.y;
 
   testRect = [scrollUpArrowView_ frame];
   testPoint = [visibleView_ convertPoint:testRect.origin toView:nil];
-  testPoint = [[self window] convertBaseToScreen:testPoint];
+  testPoint = ui::ConvertPointFromWindowToScreen([self window], testPoint);
   CGFloat closeToBottomOfScreen = testPoint.y + testRect.size.height;
   if (eventScreenLocation.y <= closeToBottomOfScreen &&
       ![scrollUpArrowView_ isHidden]) {
@@ -1330,17 +1372,18 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 
 #pragma mark BookmarkButtonDelegate Protocol
 
-- (void)fillPasteboard:(NSPasteboard*)pboard
-       forDragOfButton:(BookmarkButton*)button {
-  [[self folderTarget] fillPasteboard:pboard forDragOfButton:button];
+- (NSPasteboardItem*)pasteboardItemForDragOfButton:(BookmarkButton*)button {
+  return [[self folderTarget] pasteboardItemForDragOfButton:button];
+}
 
+- (void)willBeginPasteboardDrag {
   // Close our folder menu and submenus since we know we're going to be dragged.
   [self closeBookmarkFolder:self];
 }
 
 // Called from BookmarkButton.
 // Unlike bookmark_bar_controller's version, we DO default to being enabled.
-- (void)mouseEnteredButton:(id)sender event:(NSEvent*)event {
+- (void)mouseEnteredButton:(BookmarkButton*)button event:(NSEvent*)event {
   // Prevent unnecessary button selection change while scrolling due to the
   // size changing that happens in -performOneScroll:.
   if (isScrolling_)
@@ -1348,33 +1391,42 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 
   [[NSCursor arrowCursor] set];
 
-  buttonThatMouseIsIn_ = sender;
-  [self setSelectedButtonByIndex:[self indexOfButton:sender]];
+  // Make sure the mouse is still within the button's bounds (it might not be if
+  // the mouse is moving quickly). Skip this check if |event| is nil (as
+  // documented in the header).
+  if (event && ![[button cell] isMouseReallyInside]) {
+    [NSObject cancelPreviousPerformRequestsWithTarget:self];
+    return;
+  }
+
+  buttonThatMouseIsIn_ = button;
+  [self setSelectedButtonByIndex:[self indexOfButton:button]];
 
   // Cancel a previous hover if needed.
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
 
   // If already opened, then we exited but re-entered the button
   // (without entering another button open), do nothing.
-  if ([folderController_ parentButton] == sender)
+  if ([folderController_ parentButton] == button)
     return;
 
   // If right click was done immediately on entering a button, then open the
   // folder without delay so that context menu appears over the folder menu.
   if ([event type] == NSRightMouseDown)
-    [self openBookmarkFolderFromButtonAndCloseOldOne:sender];
+    [self openBookmarkFolderFromButtonAndCloseOldOne:button];
   else
     [self performSelector:@selector(openBookmarkFolderFromButtonAndCloseOldOne:)
-               withObject:sender
+               withObject:button
                afterDelay:bookmarks::kHoverOpenDelay
                   inModes:[NSArray arrayWithObject:NSRunLoopCommonModes]];
 }
 
 // Called from the BookmarkButton
-- (void)mouseExitedButton:(id)sender event:(NSEvent*)event {
-  if (buttonThatMouseIsIn_ == sender)
+- (void)mouseExitedButton:(BookmarkButton*)button event:(NSEvent*)event {
+  if (buttonThatMouseIsIn_ == button) {
     buttonThatMouseIsIn_ = nil;
     [self setSelectedButtonByIndex:-1];
+  }
 
   // During scrolling -mouseExitedButton: stops scrolling, so update the
   // corresponding status field to reflect is has stopped.
@@ -1452,7 +1504,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   // Don't allow drops that would result in cycles.
   if (button) {
     NSData* data = [[info draggingPasteboard]
-                    dataForType:kBookmarkButtonDragType];
+        dataForType:ui::ClipboardUtil::UTIForPasteboardType(
+                        kBookmarkButtonDragType)];
     if (data && [info draggingSource]) {
       BookmarkButton* sourceButton = nil;
       [data getBytes:&sourceButton length:sizeof(sourceButton)];
@@ -1725,7 +1778,7 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
         [buttons_ objectAtIndex:static_cast<NSUInteger>(destIndex)];
     DCHECK(button);
     NSRect buttonFrame = [button frame];
-    y = NSMaxY(buttonFrame) + 0.5 * bookmarks::kBookmarkVerticalPadding;
+    y = NSMaxY(buttonFrame) + 0.5 * bookmarks::kBookmarkTopVerticalPadding;
 
     // If it's a drop at the end (past the last button, if there are any) ...
   } else if (destIndex == numButtons) {
@@ -1736,7 +1789,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
           [buttons_ objectAtIndex:static_cast<NSUInteger>(destIndex - 1)];
       DCHECK(button);
       NSRect buttonFrame = [button frame];
-      y = buttonFrame.origin.y - 0.5 * bookmarks::kBookmarkVerticalPadding;
+      y = buttonFrame.origin.y -
+          0.5 * bookmarks::kBookmarkBottomVerticalPadding;
 
     }
   } else {
@@ -1746,8 +1800,8 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
   return y;
 }
 
-- (ThemeService*)themeService {
-  return [parentController_ themeService];
+- (Profile*)profile {
+  return profile_;
 }
 
 - (void)childFolderWillShow:(id<BookmarkButtonControllerProtocol>)child {
@@ -1765,7 +1819,9 @@ static BOOL ValueInRangeInclusive(CGFloat low, CGFloat value, CGFloat high) {
 - (void)faviconLoadedForNode:(const BookmarkNode*)node {
   for (BookmarkButton* button in buttons_.get()) {
     if ([button bookmarkNode] == node) {
-      [button setImage:[barController_ faviconForNode:node]];
+      BOOL darkTheme = [[button window] hasDarkTheme];
+      [button setImage:[barController_ faviconForNode:node
+                                        forADarkTheme:darkTheme]];
       [button setNeedsDisplay:YES];
       return;
     }

@@ -23,40 +23,38 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/loader/SinkDocument.h"
 
 #include "core/dom/RawDataDocumentParser.h"
+#include "core/frame/UseCounter.h"
 
 namespace blink {
 
 class SinkDocumentParser : public RawDataDocumentParser {
-public:
-    static PassRefPtrWillBeRawPtr<SinkDocumentParser> create(SinkDocument* document)
-    {
-        return adoptRefWillBeNoop(new SinkDocumentParser(document));
-    }
+ public:
+  static SinkDocumentParser* create(SinkDocument* document) {
+    return new SinkDocumentParser(document);
+  }
 
-private:
-    SinkDocumentParser(SinkDocument* document)
-        : RawDataDocumentParser(document)
-    {
-    }
+ private:
+  explicit SinkDocumentParser(SinkDocument* document)
+      : RawDataDocumentParser(document) {}
 
-    // Ignore all data.
-    void appendBytes(const char*, size_t) override { }
+  // Ignore all data.
+  void appendBytes(const char*, size_t) override {}
 };
 
 SinkDocument::SinkDocument(const DocumentInit& initializer)
-    : HTMLDocument(initializer)
-{
-    setCompatibilityMode(QuirksMode);
-    lockCompatibilityMode();
+    : HTMLDocument(initializer) {
+  setCompatibilityMode(QuirksMode);
+  lockCompatibilityMode();
+  UseCounter::count(*this, UseCounter::SinkDocument);
+  if (!isInMainFrame())
+    UseCounter::count(*this, UseCounter::SinkDocumentInFrame);
 }
 
-PassRefPtrWillBeRawPtr<DocumentParser> SinkDocument::createParser()
-{
-    return SinkDocumentParser::create(this);
+DocumentParser* SinkDocument::createParser() {
+  return SinkDocumentParser::create(this);
 }
 
-} // namespace blink
+}  // namespace blink

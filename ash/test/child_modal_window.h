@@ -5,6 +5,7 @@
 #ifndef ASH_TEST_CHILD_MODAL_WINDOW_H_
 #define ASH_TEST_CHILD_MODAL_WINDOW_H_
 
+#include "base/macros.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/widget/widget_delegate.h"
 #include "ui/views/widget/widget_observer.h"
@@ -37,7 +38,6 @@ class ChildModalParent : public views::WidgetDelegateView,
   views::Widget* CreateChild();
 
   // Overridden from views::WidgetDelegate:
-  View* GetContentsView() override;
   base::string16 GetWindowTitle() const override;
   bool CanResize() const override;
   void DeleteDelegate() override;

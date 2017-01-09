@@ -8,24 +8,36 @@ var binding = require('binding').Binding.create('runtime');
 
 var messaging = require('messaging');
 var runtimeNatives = requireNative('runtime');
+var messagingNatives = requireNative('messaging_natives');
 var process = requireNative('process');
-var forEach = require('utils').forEach;
+var utils = require('utils');
 
-var backgroundPage = window;
+var WINDOW = {};
+try {
+  WINDOW = window;
+} catch (e) {
+  // Running in SW context.
+  // TODO(lazyboy): Synchronous access to background page is not possible from
+  // service worker context. Decide what we should do in this case for the class
+  // of APIs that require access to background page or window object
+}
+
+var backgroundPage = WINDOW;
 var backgroundRequire = require;
 var contextType = process.GetContextType();
+
 if (contextType == 'BLESSED_EXTENSION' ||
     contextType == 'UNBLESSED_EXTENSION') {
   var manifest = runtimeNatives.GetManifest();
   if (manifest.app && manifest.app.background) {
     // Get the background page if one exists. Otherwise, default to the current
     // window.
-    backgroundPage = runtimeNatives.GetExtensionViews(-1, 'BACKGROUND')[0];
+    backgroundPage = runtimeNatives.GetExtensionViews(-1, -1, 'BACKGROUND')[0];
     if (backgroundPage) {
       var GetModuleSystem = requireNative('v8_context').GetModuleSystem;
       backgroundRequire = GetModuleSystem(backgroundPage).require;
     } else {
-      backgroundPage = window;
+      backgroundPage = WINDOW;
     }
   }
 }
@@ -34,7 +46,7 @@ if (contextType == 'BLESSED_EXTENSION' ||
 // background page so their FileEntry objects have the background page's context
 // as their own.  This allows them to be used from other windows (including the
 // background page) after the original window is closed.
-if (window == backgroundPage) {
+if (WINDOW == backgroundPage) {
   var lastError = require('lastError');
   var fileSystemNatives = requireNative('file_system_natives');
   var GetIsolatedFileSystem = fileSystemNatives.GetIsolatedFileSystem;
@@ -71,8 +83,8 @@ if (window == backgroundPage) {
   // backgroundPageModuleSystem.require('runtime') is insufficient as
   // requireNative is only allowed while lazily loading an API.
   backgroundPage.chrome.runtime;
-  var bindDirectoryEntryCallback = backgroundRequire(
-      'runtime').bindDirectoryEntryCallback;
+  var bindDirectoryEntryCallback =
+      backgroundRequire('runtime').bindDirectoryEntryCallback;
 }
 
 binding.registerCustomHook(function(binding, id, contextType) {
@@ -84,34 +96,37 @@ binding.registerCustomHook(function(binding, id, contextType) {
   //
 
   if (id != '')
-    runtime.id = id;
+    utils.defineProperty(runtime, 'id', id);
 
   apiFunctions.setHandleRequest('getManifest', function() {
     return runtimeNatives.GetManifest();
   });
 
   apiFunctions.setHandleRequest('getURL', function(path) {
-    path = String(path);
+    path = $String.self(path);
     if (!path.length || path[0] != '/')
       path = '/' + path;
     return 'chrome-extension://' + id + path;
   });
 
   var sendMessageUpdateArguments = messaging.sendMessageUpdateArguments;
-  apiFunctions.setUpdateArgumentsPreValidate('sendMessage',
+  apiFunctions.setUpdateArgumentsPreValidate(
+      'sendMessage',
       $Function.bind(sendMessageUpdateArguments, null, 'sendMessage',
                      true /* hasOptionsArgument */));
-  apiFunctions.setUpdateArgumentsPreValidate('sendNativeMessage',
+  apiFunctions.setUpdateArgumentsPreValidate(
+      'sendNativeMessage',
       $Function.bind(sendMessageUpdateArguments, null, 'sendNativeMessage',
                      false /* hasOptionsArgument */));
 
-  apiFunctions.setHandleRequest('sendMessage',
+  apiFunctions.setHandleRequest(
+      'sendMessage',
       function(targetId, message, options, responseCallback) {
-    var connectOptions = {name: messaging.kMessageChannel};
-    forEach(options, function(k, v) {
-      connectOptions[k] = v;
-    });
-    var port = runtime.connect(targetId || runtime.id, connectOptions);
+    var connectOptions = $Object.assign({
+      __proto__: null,
+      name: messaging.kMessageChannel,
+    }, options);
+    var port = runtime.connect(targetId, connectOptions);
     messaging.sendMessageImpl(port, message, responseCallback);
   });
 
@@ -121,46 +136,16 @@ binding.registerCustomHook(function(binding, id, contextType) {
     messaging.sendMessageImpl(port, message, responseCallback);
   });
 
-  apiFunctions.setUpdateArgumentsPreValidate('connect', function() {
-    // Align missing (optional) function arguments with the arguments that
-    // schema validation is expecting, e.g.
-    //   runtime.connect()   -> runtime.connect(null, null)
-    //   runtime.connect({}) -> runtime.connect(null, {})
-    var nextArg = 0;
-
-    // targetId (first argument) is optional.
-    var targetId = null;
-    if (typeof(arguments[nextArg]) == 'string')
-      targetId = arguments[nextArg++];
-
-    // connectInfo (second argument) is optional.
-    var connectInfo = null;
-    if (typeof(arguments[nextArg]) == 'object')
-      connectInfo = arguments[nextArg++];
-
-    if (nextArg != arguments.length)
-      throw new Error('Invalid arguments to connect.');
-    return [targetId, connectInfo];
-  });
-
-  apiFunctions.setUpdateArgumentsPreValidate('connectNative',
-                                             function(appName) {
-    if (typeof(appName) !== 'string') {
-      throw new Error('Invalid arguments to connectNative.');
-    }
-    return [appName];
-  });
-
   apiFunctions.setHandleRequest('connect', function(targetId, connectInfo) {
     if (!targetId) {
-      // runtime.id is only defined inside extensions. If we're in a webpage,
-      // the best we can do at this point is to fail.
-      if (!runtime.id) {
+      // id is only defined inside extensions. If we're in a webpage, the best
+      // we can do at this point is to fail.
+      if (!id) {
         throw new Error('chrome.runtime.connect() called from a webpage must ' +
                         'specify an Extension ID (string) for its first ' +
                         'argument');
       }
-      targetId = runtime.id;
+      targetId = id;
     }
 
     var name = '';
@@ -170,8 +155,8 @@ binding.registerCustomHook(function(binding, id, contextType) {
     var includeTlsChannelId =
       !!(connectInfo && connectInfo.includeTlsChannelId);
 
-    var portId = runtimeNatives.OpenChannelToExtension(targetId, name,
-                                                       includeTlsChannelId);
+    var portId = messagingNatives.OpenChannelToExtension(targetId, name,
+                                                         includeTlsChannelId);
     if (portId >= 0)
       return messaging.createPort(portId, name);
   });
@@ -184,8 +169,7 @@ binding.registerCustomHook(function(binding, id, contextType) {
 
   apiFunctions.setHandleRequest('connectNative',
                                 function(nativeAppName) {
-    var portId = runtimeNatives.OpenChannelToNativeApp(runtime.id,
-                                                       nativeAppName);
+    var portId = messagingNatives.OpenChannelToNativeApp(nativeAppName);
     if (portId >= 0)
       return messaging.createPort(portId, '');
     throw new Error('Error connecting to native app: ' + nativeAppName);
@@ -194,7 +178,8 @@ binding.registerCustomHook(function(binding, id, contextType) {
   apiFunctions.setCustomCallback('getBackgroundPage',
                                  function(name, request, callback, response) {
     if (callback) {
-      var bg = runtimeNatives.GetExtensionViews(-1, 'BACKGROUND')[0] || null;
+      var bg =
+          runtimeNatives.GetExtensionViews(-1, -1, 'BACKGROUND')[0] || null;
       callback(bg);
     }
   });

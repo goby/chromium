@@ -6,6 +6,7 @@
 
 #include "base/files/file_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/task_runner_util.h"
 #include "base/trace_event/trace_event.h"
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/url_database.h"
@@ -45,10 +46,8 @@ InMemoryURLIndex::SaveCacheObserver::~SaveCacheObserver() {
 InMemoryURLIndex::RebuildPrivateDataFromHistoryDBTask::
     RebuildPrivateDataFromHistoryDBTask(
         InMemoryURLIndex* index,
-        const std::string& languages,
         const SchemeSet& scheme_whitelist)
     : index_(index),
-      languages_(languages),
       scheme_whitelist_(scheme_whitelist),
       succeeded_(false) {
 }
@@ -56,8 +55,7 @@ InMemoryURLIndex::RebuildPrivateDataFromHistoryDBTask::
 bool InMemoryURLIndex::RebuildPrivateDataFromHistoryDBTask::RunOnDBThread(
     history::HistoryBackend* backend,
     history::HistoryDatabase* db) {
-  data_ = URLIndexPrivateData::RebuildFromHistory(db, languages_,
-                                                  scheme_whitelist_);
+  data_ = URLIndexPrivateData::RebuildFromHistory(db, scheme_whitelist_);
   succeeded_ = data_.get() && !data_->Empty();
   if (!succeeded_ && data_.get())
     data_->Clear();
@@ -81,13 +79,11 @@ InMemoryURLIndex::InMemoryURLIndex(
     TemplateURLService* template_url_service,
     base::SequencedWorkerPool* worker_pool,
     const base::FilePath& history_dir,
-    const std::string& languages,
     const SchemeSet& client_schemes_to_whitelist)
     : bookmark_model_(bookmark_model),
       history_service_(history_service),
       template_url_service_(template_url_service),
       history_dir_(history_dir),
-      languages_(languages),
       private_data_(new URLIndexPrivateData),
       restore_cache_observer_(NULL),
       save_cache_observer_(NULL),
@@ -133,7 +129,7 @@ ScoredHistoryMatches InMemoryURLIndex::HistoryItemsForTerms(
     size_t cursor_position,
     size_t max_matches) {
   return private_data_->HistoryItemsForTerms(
-      term_string, cursor_position, max_matches, languages_, bookmark_model_,
+      term_string, cursor_position, max_matches, bookmark_model_,
       template_url_service_);
 }
 
@@ -151,7 +147,6 @@ void InMemoryURLIndex::OnURLVisited(history::HistoryService* history_service,
   DCHECK_EQ(history_service_, history_service);
   needs_to_be_cached_ |= private_data_->UpdateURL(history_service_,
                                                   row,
-                                                  languages_,
                                                   scheme_whitelist_,
                                                   &private_data_tracker_);
 }
@@ -162,7 +157,6 @@ void InMemoryURLIndex::OnURLsModified(history::HistoryService* history_service,
   for (const auto& row : changed_urls) {
     needs_to_be_cached_ |= private_data_->UpdateURL(history_service_,
                                                     row,
-                                                    languages_,
                                                     scheme_whitelist_,
                                                     &private_data_tracker_);
   }
@@ -184,7 +178,7 @@ void InMemoryURLIndex::OnURLsDeleted(history::HistoryService* history_service,
   // through an unclean shutdown (and therefore fail to write a new cache file),
   // when Chrome restarts and we restore from the previous cache, we'll end up
   // searching over URLs that may be deleted.  This would be wrong, and
-  // surprising to the user who bothered to delete some URLs from his/her
+  // surprising to the user who bothered to delete some URLs from their
   // history.  In this situation, deleting the cache is a better solution than
   // writing a new cache (after deleting the URLs from the in-memory structure)
   // because deleting the cache forces it to be rebuilt from history upon
@@ -225,7 +219,7 @@ void InMemoryURLIndex::PostRestoreFromCacheFileTask() {
   base::PostTaskAndReplyWithResult(
       task_runner_.get(),
       FROM_HERE,
-      base::Bind(&URLIndexPrivateData::RestoreFromFile, path, languages_),
+      base::Bind(&URLIndexPrivateData::RestoreFromFile, path),
       base::Bind(&InMemoryURLIndex::OnCacheLoadDone, AsWeakPtr()));
 }
 
@@ -282,9 +276,9 @@ void InMemoryURLIndex::Shutdown() {
 void InMemoryURLIndex::ScheduleRebuildFromHistory() {
   DCHECK(history_service_);
   history_service_->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
+      std::unique_ptr<history::HistoryDBTask>(
           new InMemoryURLIndex::RebuildPrivateDataFromHistoryDBTask(
-              this, languages_, scheme_whitelist_)),
+              this, scheme_whitelist_)),
       &cache_reader_tracker_);
 }
 
@@ -310,7 +304,6 @@ void InMemoryURLIndex::RebuildFromHistory(
     history::HistoryDatabase* history_db) {
   private_data_tracker_.TryCancelAll();
   private_data_ = URLIndexPrivateData::RebuildFromHistory(history_db,
-                                                          languages_,
                                                           scheme_whitelist_);
 }
 

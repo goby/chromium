@@ -28,13 +28,18 @@
 
 #include "net/disk_cache/blockfile/eviction.h"
 
+#include <stdint.h>
+
+#include <limits>
+
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/disk_cache/blockfile/backend_impl.h"
 #include "net/disk_cache/blockfile/disk_format.h"
@@ -408,7 +413,7 @@ void Eviction::OnOpenEntryV2(EntryImpl* entry) {
   EntryStore* info = entry->entry()->Data();
   DCHECK_EQ(ENTRY_NORMAL, info->state);
 
-  if (info->reuse_count < kint32max) {
+  if (info->reuse_count < std::numeric_limits<int32_t>::max()) {
     info->reuse_count++;
     entry->entry()->set_modified();
 
@@ -434,7 +439,7 @@ void Eviction::OnCreateEntryV2(EntryImpl* entry) {
       break;
     };
     case ENTRY_EVICTED: {
-      if (info->refetch_count < kint32max)
+      if (info->refetch_count < std::numeric_limits<int32_t>::max())
         info->refetch_count++;
 
       if (info->refetch_count > kHighUse && info->reuse_count < kHighUse) {

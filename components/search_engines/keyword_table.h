@@ -5,11 +5,14 @@
 #ifndef COMPONENTS_SEARCH_ENGINES_KEYWORD_TABLE_H_
 #define COMPONENTS_SEARCH_ENGINES_KEYWORD_TABLE_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "components/search_engines/template_url_id.h"
 #include "components/webdata/common/web_database_table.h"
@@ -33,7 +36,6 @@ class Statement;
 //   keyword
 //   favicon_url
 //   url
-//   show_in_default_list
 //   safe_for_autoreplace
 //   originating_url
 //   date_created           This column was added after we allowed keywords.
@@ -114,8 +116,8 @@ class KeywordTable : public WebDatabaseTable {
   bool GetKeywords(Keywords* keywords);
 
   // ID (TemplateURLData->id) of the default search provider.
-  bool SetDefaultSearchProviderID(int64 id);
-  int64 GetDefaultSearchProviderID();
+  bool SetDefaultSearchProviderID(int64_t id);
+  int64_t GetDefaultSearchProviderID();
 
   // Version of the built-in keywords.
   bool SetBuiltinKeywordVersion(int version);
@@ -128,6 +130,8 @@ class KeywordTable : public WebDatabaseTable {
   // Table migration functions.
   bool MigrateToVersion53AddNewTabURLColumn();
   bool MigrateToVersion59RemoveExtensionKeywords();
+  bool MigrateToVersion68RemoveShowInDefaultListColumn();
+  bool MigrateToVersion69AddLastVisitedColumn();
 
  private:
   friend class KeywordTableTest;
@@ -161,10 +165,6 @@ class KeywordTable : public WebDatabaseTable {
   bool GetKeywordAsString(TemplateURLID id,
                           const std::string& table_name,
                           std::string* result);
-
-  // Migrates table |name| (which should be either "keywords" or
-  // "keywords_backup") from version 44 to version 45.
-  bool MigrateKeywordsTableForVersion45(const std::string& name);
 
   DISALLOW_COPY_AND_ASSIGN(KeywordTable);
 };

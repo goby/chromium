@@ -212,16 +212,21 @@ NamingController.prototype.restoreItemBeingRenamed = function() {
  * @private
  */
 NamingController.prototype.onRenameInputKeyDown_ = function(event) {
+  // Ignore key events if event.keyCode is VK_PROCESSKEY(229).
+  // TODO(fukino): Remove this workaround once crbug.com/644140 is fixed.
+  if (event.keyCode === 229)
+    return;
+
   if (!this.isRenamingInProgress())
     return;
 
   // Do not move selection or lead item in list during rename.
-  if (event.keyIdentifier == 'Up' || event.keyIdentifier == 'Down') {
+  if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
     event.stopPropagation();
   }
 
-  switch (util.getKeyModifiers(event) + event.keyIdentifier) {
-    case 'U+001B':  // Escape
+  switch (util.getKeyModifiers(event) + event.key) {
+    case 'Escape':
       this.cancelRename_();
       event.preventDefault();
       break;

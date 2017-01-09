@@ -5,14 +5,16 @@
 #ifndef NET_PROXY_PROXY_CONFIG_SERVICE_LINUX_H_
 #define NET_PROXY_PROXY_CONFIG_SERVICE_LINUX_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/environment.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/observer_list.h"
 #include "net/base/net_export.h"
 #include "net/proxy/proxy_config.h"
@@ -29,8 +31,6 @@ namespace net {
 // settings from environment variables, gconf, gsettings, or kioslaverc (KDE).
 class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
  public:
-
-  // Forward declaration of Delegate.
   class Delegate;
 
   class SettingGetter {
@@ -166,12 +166,12 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
 
   class Delegate : public base::RefCountedThreadSafe<Delegate> {
    public:
-    // Constructor receives env var getter implementation to use, and
-    // takes ownership of it. This is the normal constructor.
-    explicit Delegate(base::Environment* env_var_getter);
-    // Constructor receives setting and env var getter implementations
-    // to use, and takes ownership of them. Used for testing.
-    Delegate(base::Environment* env_var_getter, SettingGetter* setting_getter);
+    // Normal constructor.
+    explicit Delegate(std::unique_ptr<base::Environment> env_var_getter);
+
+    // Constructor for testing.
+    Delegate(std::unique_ptr<base::Environment> env_var_getter,
+             SettingGetter* setting_getter);
 
     // Synchronously obtains the proxy configuration. If gconf,
     // gsettings, or kioslaverc are used, also enables notifications for
@@ -214,11 +214,12 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // Obtains an environment variable's value. Parses a proxy server
     // specification from it and puts it in result. Returns true if the
     // requested variable is defined and the value valid.
-    bool GetProxyFromEnvVarForScheme(const char* variable,
+    bool GetProxyFromEnvVarForScheme(base::StringPiece variable,
                                      ProxyServer::Scheme scheme,
                                      ProxyServer* result_server);
     // As above but with scheme set to HTTP, for convenience.
-    bool GetProxyFromEnvVar(const char* variable, ProxyServer* result_server);
+    bool GetProxyFromEnvVar(base::StringPiece variable,
+                            ProxyServer* result_server);
     // Fills proxy config from environment variables. Returns true if
     // variables were found and the configuration is valid.
     bool GetConfigFromEnv(ProxyConfig* config);
@@ -239,8 +240,8 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
     // This method is run on the getter's notification thread.
     void SetUpNotifications();
 
-    scoped_ptr<base::Environment> env_var_getter_;
-    scoped_ptr<SettingGetter> setting_getter_;
+    std::unique_ptr<base::Environment> env_var_getter_;
+    std::unique_ptr<SettingGetter> setting_getter_;
 
     // Cached proxy configuration, to be returned by
     // GetLatestProxyConfig. Initially populated from the UI thread, but
@@ -275,9 +276,11 @@ class NET_EXPORT_PRIVATE ProxyConfigServiceLinux : public ProxyConfigService {
 
   // Usual constructor
   ProxyConfigServiceLinux();
+
   // For testing: take alternate setting and env var getter implementations.
-  explicit ProxyConfigServiceLinux(base::Environment* env_var_getter);
-  ProxyConfigServiceLinux(base::Environment* env_var_getter,
+  explicit ProxyConfigServiceLinux(
+      std::unique_ptr<base::Environment> env_var_getter);
+  ProxyConfigServiceLinux(std::unique_ptr<base::Environment> env_var_getter,
                           SettingGetter* setting_getter);
 
   ~ProxyConfigServiceLinux() override;

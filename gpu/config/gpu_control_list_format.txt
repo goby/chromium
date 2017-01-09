@@ -30,7 +30,7 @@
 //      d) "amd_switchable_discrete": AMD dual GPU, discrete GPU is active
 //    c) and d) are only valid on Win, as on Mac we can switch GPU on the fly.
 // 6. "multi_gpu_category" is a string, valid values include "any", "primary",
-//    "secondary", and "active". If unspecified, the default value is "primary".
+//    "secondary", and "active". If unspecified, the default value is "active".
 //    See gpu_control_list.h for more details on the meanings of the strings.
 // 7. "driver_vendor" is a string pattern.
 // 8. "driver_version" is a VERSION structure (defined below).
@@ -52,6 +52,8 @@
 // 20. "features" is a list of gpu control list options, which can be
 //     configured by a specific list. See its *_json.cc file for a list of
 //     supported features. This field is mandatory.
+//     An "exceptions" list to the features can be added for convenience instead
+//     of listing all features except one.
 // 21. "description" has the description of the entry.
 // 22. "webkit_bugs" is an array of associated webkit bug numbers.
 // 23. "cr_bugs" is an array of associated webkit bug numbers.
@@ -79,4 +81,4 @@
 // INT is very much like FLOAT, except that the values need to be integers.
 //
 // String pattern syntax can be found at
-// https://code.google.com/p/re2/wiki/Syntax.
+// https://github.com/google/re2/blob/master/doc/syntax.txt

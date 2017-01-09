@@ -12,7 +12,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "chrome/grit/generated_resources.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/controls/blue_label_button.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
@@ -22,9 +22,9 @@
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/image/image_skia.h"
 #include "ui/gfx/image/image_skia_util_mac.h"
+#include "ui/gfx/mac/nswindow_frame_controls.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/native_theme/native_theme.h"
-#include "ui/native_theme/native_theme_mac.h"
 
 const CGFloat kMinimumWidth = 460;
 const CGFloat kMaximumWidth = 1000;
@@ -66,9 +66,9 @@ gfx::NativeViewId ScreenCaptureNotificationUICocoa::OnStarted(
   return [[windowController_ window] windowNumber];
 }
 
-scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
-    const base::string16& text) {
-  return scoped_ptr<ScreenCaptureNotificationUI>(
+std::unique_ptr<ScreenCaptureNotificationUI>
+ScreenCaptureNotificationUI::Create(const base::string16& text) {
+  return std::unique_ptr<ScreenCaptureNotificationUI>(
       new ScreenCaptureNotificationUICocoa(text));
 }
 
@@ -88,6 +88,7 @@ scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
   [window setLevel:NSStatusWindowLevel];
   [window setMovableByWindowBackground:YES];
   [window setDelegate:self];
+  gfx::SetNSWindowVisibleOnAllWorkspaces(window, true);
 
   self = [super initWithWindow:window];
   if (self) {
@@ -150,7 +151,6 @@ scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
       [[HyperlinkButtonCell alloc]
        initTextCell:l10n_util::GetNSString(
                         IDS_PASSWORDS_PAGE_VIEW_HIDE_BUTTON)]);
-  [cell setShouldUnderline:NO];
 
   minimizeButton_.reset([[NSButton alloc] initWithFrame:NSZeroRect]);
   [minimizeButton_ setCell:cell.get()];
@@ -237,8 +237,9 @@ scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
 @implementation ScreenCaptureNotificationView
 
 - (void)drawRect:(NSRect)dirtyRect {
-  [gfx::SkColorToSRGBNSColor(ui::NativeThemeMac::instance()->GetSystemColor(
-      ui::NativeTheme::kColorId_DialogBackground)) set];
+  [skia::SkColorToSRGBNSColor(
+      ui::NativeTheme::GetInstanceForNativeUi()->GetSystemColor(
+          ui::NativeTheme::kColorId_DialogBackground)) set];
   [[NSBezierPath bezierPathWithRoundedRect:[self bounds]
                                    xRadius:kWindowCornerRadius
                                    yRadius:kWindowCornerRadius] fill];
@@ -250,8 +251,7 @@ scoped_ptr<ScreenCaptureNotificationUI> ScreenCaptureNotificationUI::Create(
 - (WindowGripView*)init {
   gfx::Image gripImage =
       ui::ResourceBundle::GetSharedInstance().GetNativeImageNamed(
-          IDR_SCREEN_CAPTURE_NOTIFICATION_GRIP,
-          ui::ResourceBundle::RTL_DISABLED);
+          IDR_SCREEN_CAPTURE_NOTIFICATION_GRIP);
   self = [super
       initWithFrame:NSMakeRect(0, 0, gripImage.Width(), gripImage.Height())];
   [self setImage:gripImage.ToNSImage()];

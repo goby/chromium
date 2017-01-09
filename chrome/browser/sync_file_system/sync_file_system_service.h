@@ -9,9 +9,8 @@
 #include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -23,7 +22,7 @@
 #include "chrome/browser/sync_file_system/sync_service_state.h"
 #include "chrome/browser/sync_file_system/task_logger.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/sync_driver/sync_service_observer.h"
+#include "components/sync/driver/sync_service_observer.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "url/gurl.h"
 
@@ -33,7 +32,7 @@ namespace storage {
 class FileSystemContext;
 }
 
-namespace sync_driver {
+namespace syncer {
 class SyncService;
 }
 
@@ -47,7 +46,7 @@ class SyncEventObserver;
 class SyncFileSystemService
     : public KeyedService,
       public SyncProcessRunner::Client,
-      public sync_driver::SyncServiceObserver,
+      public syncer::SyncServiceObserver,
       public FileStatusObserver,
       public extensions::ExtensionRegistryObserver,
       public base::SupportsWeakPtr<SyncFileSystemService> {
@@ -99,8 +98,8 @@ class SyncFileSystemService
   explicit SyncFileSystemService(Profile* profile);
   ~SyncFileSystemService() override;
 
-  void Initialize(scoped_ptr<LocalFileSyncService> local_file_service,
-                  scoped_ptr<RemoteFileSyncService> remote_file_service);
+  void Initialize(std::unique_ptr<LocalFileSyncService> local_file_service,
+                  std::unique_ptr<RemoteFileSyncService> remote_file_service);
 
   // Callbacks for InitializeForApp.
   void DidInitializeFileSystem(const GURL& app_origin,
@@ -115,14 +114,14 @@ class SyncFileSystemService
                                       SyncStatusCode status);
   void DidDumpFiles(const GURL& app_origin,
                     const DumpFilesCallback& callback,
-                    scoped_ptr<base::ListValue> files);
+                    std::unique_ptr<base::ListValue> files);
 
   void DidDumpDatabase(const DumpFilesCallback& callback,
-                       scoped_ptr<base::ListValue> list);
+                       std::unique_ptr<base::ListValue> list);
 
   void DidGetExtensionStatusMap(
       const ExtensionStatusMapCallback& callback,
-      scoped_ptr<RemoteFileSyncService::OriginStatusMap> status_map);
+      std::unique_ptr<RemoteFileSyncService::OriginStatusMap> status_map);
 
   // Overrides sync_enabled_ setting. This should be called only by tests.
   void SetSyncEnabledForTesting(bool enabled);
@@ -148,7 +147,7 @@ class SyncFileSystemService
   void OnExtensionLoaded(content::BrowserContext* browser_context,
                          const extensions::Extension* extension) override;
 
-  // sync_driver::SyncServiceObserver implementation.
+  // syncer::SyncServiceObserver implementation.
   void OnStateChanged() override;
 
   // SyncFileStatusObserver implementation.
@@ -161,7 +160,7 @@ class SyncFileSystemService
   // Check the profile's sync preference settings and call
   // remote_file_service_->SetSyncEnabled() to update the status.
   // |profile_sync_service| must be non-null.
-  void UpdateSyncEnabledStatus(sync_driver::SyncService* profile_sync_service);
+  void UpdateSyncEnabledStatus(syncer::SyncService* profile_sync_service);
 
   // Runs the SyncProcessRunner method of all sync runners (e.g. for Local sync
   // and Remote sync).
@@ -169,8 +168,8 @@ class SyncFileSystemService
 
   Profile* profile_;
 
-  scoped_ptr<LocalFileSyncService> local_service_;
-  scoped_ptr<RemoteFileSyncService> remote_service_;
+  std::unique_ptr<LocalFileSyncService> local_service_;
+  std::unique_ptr<RemoteFileSyncService> remote_service_;
 
   // Holds all SyncProcessRunners.
   ScopedVector<SyncProcessRunner> local_sync_runners_;

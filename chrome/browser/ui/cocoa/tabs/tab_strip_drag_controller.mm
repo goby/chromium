@@ -14,6 +14,7 @@
 #import "chrome/browser/ui/cocoa/tabs/tab_strip_view.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_view.h"
 #import "chrome/browser/ui/cocoa/tabs/tab_window_controller.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #include "ui/gfx/mac/scoped_cocoa_disable_screen_updates.h"
 
 const CGFloat kTearDistance = 36.0;
@@ -23,7 +24,8 @@ const NSTimeInterval kTearDuration = 0.333;
 static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
   if ([view window] == nil)
     return NO;
-  NSPoint windowPoint = [[view window] convertScreenToBase:screenPoint];
+  NSPoint windowPoint =
+      ui::ConvertPointFromScreenToWindow([view window], screenPoint);
   NSPoint viewPoint = [view convertPoint:windowPoint fromView:nil];
   return [view mouse:viewPoint inRect:[view bounds]];
 }
@@ -209,13 +211,9 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
         // Offset the new window's drag location so that the tab will still be
         // positioned correctly beneath the mouse (being careful to convert the
         // view frame offset to screen coordinates).
-        if (base::mac::IsOSLionOrLater()) {
-          NSWindow* tabViewWindow = [[draggedTab_ tabView] window];
-          horizDragOffset_ = [tabViewWindow convertRectToScreen:
-              NSMakeRect(0.0, 0.0, tabWidthBeyondRightEdge, 1.0)].size.width;
-        } else {
-          horizDragOffset_ = tabWidthBeyondRightEdge;
-        }
+        NSWindow* tabViewWindow = [[draggedTab_ tabView] window];
+        horizDragOffset_ = [tabViewWindow convertRectToScreen:
+            NSMakeRect(0.0, 0.0, tabWidthBeyondRightEdge, 1.0)].size.width;
       }
 
       [[draggedTab_ tabView] setFrameOrigin:newTabFrame.origin];
@@ -363,8 +361,8 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     // to take into consideration the difference in height.
     NSRect targetFrame = [[targetController_ window] frame];
     NSRect sourceFrame = [dragWindow_ frame];
-    origin.y = NSMinY(targetFrame) +
-                (NSHeight(targetFrame) - NSHeight(sourceFrame));
+    origin.y = NSMinY(targetFrame) + [targetController_ menubarOffset] +
+               (NSHeight(targetFrame) - NSHeight(sourceFrame));
   }
   [dragWindow_ setFrameOrigin:
       NSMakePoint(origin.x + horizDragOffset_, origin.y)];
@@ -383,9 +381,8 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     for (NSView* tabView in [draggedController_ tabViews]) {
       tabFrame = NSUnionRect(tabFrame, [tabView frame]);
     }
-    tabFrame.origin = [dragWindow_ convertBaseToScreen:tabFrame.origin];
-    tabFrame.origin = [[targetController_ window]
-                        convertScreenToBase:tabFrame.origin];
+    tabFrame = [dragWindow_ convertRectToScreen:tabFrame];
+    tabFrame = [[targetController_ window] convertRectFromScreen:tabFrame];
     tabFrame = [[targetController_ tabStripView]
                 convertRect:tabFrame fromView:nil];
     [targetController_ insertPlaceholderForTab:[draggedTab_ tabView]
@@ -445,7 +442,11 @@ static BOOL PointIsInsideView(NSPoint screenPoint, NSView* view) {
     [draggedController_ removeOverlay];
   } else {
     // Only move the window around on screen. Make sure it's set back to
-    // normal state (fully opaque, has shadow, has key, etc).
+    // normal state (fully opaque, has shadow, has key, in fullscreen if
+    // appropriate, etc).
+    [draggedController_
+        detachedWindowEnterFullscreenIfNeeded:sourceController_];
+
     [draggedController_ removeOverlay];
     // Don't want to re-show the window if it was closed during the drag.
     if ([dragWindow_ isVisible]) {

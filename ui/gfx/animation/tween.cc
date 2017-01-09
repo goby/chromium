@@ -5,18 +5,20 @@
 #include "ui/gfx/animation/tween.h"
 
 #include <math.h>
+#include <stdint.h>
+
+#include <algorithm>
+
+#include "base/logging.h"
+#include "base/numerics/safe_conversions.h"
+#include "base/time/time.h"
+#include "build/build_config.h"
+#include "ui/gfx/geometry/cubic_bezier.h"
+#include "ui/gfx/geometry/safe_integer_conversions.h"
 
 #if defined(OS_WIN)
 #include <float.h>
 #endif
-
-#include <algorithm>
-
-#include "base/basictypes.h"
-#include "base/logging.h"
-#include "base/numerics/safe_conversions.h"
-#include "ui/gfx/geometry/cubic_bezier.h"
-#include "ui/gfx/geometry/safe_integer_conversions.h"
 
 namespace gfx {
 
@@ -71,21 +73,27 @@ double Tween::CalculateValue(Tween::Type type, double state) {
 }
 
 namespace {
-uint8 FloatToColorByte(float f) {
-  return base::saturated_cast<uint8>(ToRoundedInt(f * 255.f));
+
+uint8_t FloatToColorByte(float f) {
+  return base::saturated_cast<uint8_t>(ToRoundedInt(f * 255.f));
 }
 
-uint8 BlendColorComponents(uint8 start,
-                           uint8 target,
-                           float start_alpha,
-                           float target_alpha,
-                           float blended_alpha,
-                           double progress) {
+uint8_t BlendColorComponents(uint8_t start,
+                             uint8_t target,
+                             float start_alpha,
+                             float target_alpha,
+                             float blended_alpha,
+                             double progress) {
   // Since progress can be outside [0, 1], blending can produce a value outside
   // [0, 255].
   float blended_premultiplied = Tween::FloatValueBetween(
       progress, start / 255.f * start_alpha, target / 255.f * target_alpha);
   return FloatToColorByte(blended_premultiplied / blended_alpha);
+}
+
+double TimeDeltaDivide(base::TimeDelta dividend, base::TimeDelta divisor) {
+  return static_cast<double>(dividend.ToInternalValue()) /
+         static_cast<double>(divisor.ToInternalValue());
 }
 
 }  // namespace
@@ -99,24 +107,15 @@ SkColor Tween::ColorValueBetween(double value, SkColor start, SkColor target) {
     return SkColorSetARGB(0, 0, 0, 0);
   blended_a = std::min(blended_a, 1.f);
 
-  uint8 blended_r = BlendColorComponents(SkColorGetR(start),
-                                         SkColorGetR(target),
-                                         start_a,
-                                         target_a,
-                                         blended_a,
-                                         value);
-  uint8 blended_g = BlendColorComponents(SkColorGetG(start),
-                                         SkColorGetG(target),
-                                         start_a,
-                                         target_a,
-                                         blended_a,
-                                         value);
-  uint8 blended_b = BlendColorComponents(SkColorGetB(start),
-                                         SkColorGetB(target),
-                                         start_a,
-                                         target_a,
-                                         blended_a,
-                                         value);
+  uint8_t blended_r =
+      BlendColorComponents(SkColorGetR(start), SkColorGetR(target), start_a,
+                           target_a, blended_a, value);
+  uint8_t blended_g =
+      BlendColorComponents(SkColorGetG(start), SkColorGetG(target), start_a,
+                           target_a, blended_a, value);
+  uint8_t blended_b =
+      BlendColorComponents(SkColorGetB(start), SkColorGetB(target), start_a,
+                           target_a, blended_a, value);
 
   return SkColorSetARGB(
       FloatToColorByte(blended_a), blended_r, blended_g, blended_b);
@@ -130,6 +129,22 @@ double Tween::DoubleValueBetween(double value, double start, double target) {
 // static
 float Tween::FloatValueBetween(double value, float start, float target) {
   return static_cast<float>(start + (target - start) * value);
+}
+
+// static
+float Tween::ClampedFloatValueBetween(const base::TimeTicks& time,
+                                      const base::TimeTicks& start_time,
+                                      float start,
+                                      const base::TimeTicks& target_time,
+                                      float target) {
+  if (time <= start_time)
+    return start;
+  if (time >= target_time)
+    return target;
+
+  double progress =
+      TimeDeltaDivide(time - start_time, target_time - start_time);
+  return FloatValueBetween(progress, start, target);
 }
 
 // static

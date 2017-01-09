@@ -5,7 +5,8 @@
 #ifndef CC_LAYERS_LAYER_CLIENT_H_
 #define CC_LAYERS_LAYER_CLIENT_H_
 
-#include "base/memory/ref_counted.h"
+#include <memory>
+
 #include "cc/base/cc_export.h"
 
 namespace base {
@@ -27,8 +28,10 @@ class CC_EXPORT LayerClient {
   //
   // A pointer to the layer is provided for the convenience of layer clients
   // which service multiple layers.
-  virtual scoped_refptr<base::trace_event::ConvertableToTraceFormat>
+  virtual std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
   TakeDebugInfo(Layer* layer) = 0;
+  virtual void didUpdateMainThreadScrollingReasons() = 0;
+  virtual void didChangeScrollbarsHidden(bool) = 0;
 
  protected:
   virtual ~LayerClient() {}

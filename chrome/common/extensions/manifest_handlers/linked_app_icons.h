@@ -7,12 +7,9 @@
 
 #include <vector>
 
+#include "base/macros.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/manifest_handler.h"
-
-namespace base {
-class DictionaryValue;
-}
 
 namespace extensions {
 
@@ -27,6 +24,7 @@ struct LinkedAppIcons : public Extension::ManifestData {
   };
 
   LinkedAppIcons();
+  LinkedAppIcons(const LinkedAppIcons& other);
   ~LinkedAppIcons() override;
 
   static const LinkedAppIcons& GetLinkedAppIcons(const Extension* extension);

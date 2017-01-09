@@ -5,9 +5,9 @@
 #ifndef CC_TILES_TILE_DRAW_INFO_H_
 #define CC_TILES_TILE_DRAW_INFO_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/trace_event/trace_event_argument.h"
-#include "cc/raster/tile_task_runner.h"
 #include "cc/resources/platform_color.h"
 #include "cc/resources/resource_provider.h"
 #include "cc/resources/scoped_resource.h"
@@ -54,7 +54,7 @@ class CC_EXPORT TileDrawInfo {
     return resource_->id();
   }
 
-  gfx::Size resource_size() const {
+  const gfx::Size& resource_size() const {
     DCHECK(mode_ == RESOURCE_MODE);
     DCHECK(resource_);
     return resource_->size();
@@ -73,12 +73,17 @@ class CC_EXPORT TileDrawInfo {
 
   inline bool has_resource() const { return !!resource_; }
 
+  inline bool has_compressed_resource() const {
+    return resource_ ? IsResourceFormatCompressed(resource_->format()) : false;
+  }
+
   void SetSolidColorForTesting(SkColor color) { set_solid_color(color); }
 
   void AsValueInto(base::trace_event::TracedValue* state) const;
 
   void set_was_ever_ready_to_draw() { was_ever_ready_to_draw_ = true; }
   void set_was_ever_used_to_draw() { was_ever_used_to_draw_ = true; }
+  void set_was_a_prepaint_tile() { was_a_prepaint_tile_ = true; }
 
  private:
   friend class Tile;
@@ -99,8 +104,9 @@ class CC_EXPORT TileDrawInfo {
   bool contents_swizzled_;
 
   // Used for gathering UMA stats.
-  bool was_ever_ready_to_draw_;
-  bool was_ever_used_to_draw_;
+  bool was_ever_ready_to_draw_ : 1;
+  bool was_ever_used_to_draw_ : 1;
+  bool was_a_prepaint_tile_ : 1;
 };
 
 }  // namespace cc

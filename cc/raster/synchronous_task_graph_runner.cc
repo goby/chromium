@@ -4,6 +4,11 @@
 
 #include "cc/raster/synchronous_task_graph_runner.h"
 
+#include <stdint.h>
+
+#include <algorithm>
+#include <utility>
+
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_event.h"
@@ -16,8 +21,8 @@ SynchronousTaskGraphRunner::~SynchronousTaskGraphRunner() {
   DCHECK(!work_queue_.HasReadyToRunTasks());
 }
 
-NamespaceToken SynchronousTaskGraphRunner::GetNamespaceToken() {
-  return work_queue_.GetNamespaceToken();
+NamespaceToken SynchronousTaskGraphRunner::GenerateNamespaceToken() {
+  return work_queue_.GenerateNamespaceToken();
 }
 
 void SynchronousTaskGraphRunner::ScheduleTasks(NamespaceToken token,
@@ -41,9 +46,9 @@ void SynchronousTaskGraphRunner::WaitForTasksToFinishRunning(
   if (!task_namespace)
     return;
 
-  while (
-      !TaskGraphWorkQueue::HasFinishedRunningTasksInNamespace(task_namespace)) {
-    RunTask();
+  while (!work_queue_.HasFinishedRunningTasksInNamespace(task_namespace)) {
+    bool succeeded = RunTask();
+    DCHECK(succeeded);
   }
 }
 
@@ -57,21 +62,34 @@ void SynchronousTaskGraphRunner::CollectCompletedTasks(
 }
 
 void SynchronousTaskGraphRunner::RunUntilIdle() {
-  while (work_queue_.HasReadyToRunTasks())
-    RunTask();
+  while (RunTask()) {
+  }
 }
 
-void SynchronousTaskGraphRunner::RunTask() {
+bool SynchronousTaskGraphRunner::RunTask() {
   TRACE_EVENT0("toplevel", "SynchronousTaskGraphRunner::RunTask");
 
-  auto prioritized_task = work_queue_.GetNextTaskToRun();
+  // Find the first category with any tasks to run. This task graph runner
+  // treats categories as an additional priority.
+  const auto& ready_to_run_namespaces = work_queue_.ready_to_run_namespaces();
+  auto found = std::find_if(
+      ready_to_run_namespaces.cbegin(), ready_to_run_namespaces.cend(),
+      [](const std::pair<const uint16_t,
+                         TaskGraphWorkQueue::TaskNamespace::Vector>& pair) {
+        return !pair.second.empty();
+      });
 
-  Task* task = prioritized_task.task;
-  task->WillRun();
-  task->RunOnWorkerThread();
-  task->DidRun();
+  if (found == ready_to_run_namespaces.cend()) {
+    return false;
+  }
 
-  work_queue_.CompleteTask(prioritized_task);
+  const uint16_t category = found->first;
+  auto prioritized_task = work_queue_.GetNextTaskToRun(category);
+  prioritized_task.task->RunOnWorkerThread();
+
+  work_queue_.CompleteTask(std::move(prioritized_task));
+
+  return true;
 }
 
 }  // namespace cc

@@ -1,15 +1,6 @@
 if (self.importScripts) {
   importScripts('../resources/fetch-test-helpers.js');
-}
-
-function readStream(reader, values) {
-  reader.read().then(function(r) {
-      if (!r.done) {
-        values.push(r.value);
-        readStream(reader, values);
-      }
-    });
-  return reader.closed;
+  importScripts('/streams/resources/rs-utils.js');
 }
 
 function isLocked(stream) {
@@ -35,14 +26,13 @@ promise_test(function(test) {
     }, 'FetchTextAfterAccessingStreamTest');
 
 promise_test(function(test) {
-    var chunks = [];
     var actual = '';
     return fetch('/fetch/resources/doctype.html')
       .then(function(response) {
           r = response;
-          return readStream(response.body.getReader(), chunks);
+          return readableStreamToArray(response.body);
         })
-      .then(function() {
+      .then(function(chunks) {
           var decoder = new TextDecoder();
           for (var chunk of chunks) {
             actual += decoder.decode(chunk, {stream: true});
@@ -174,6 +164,36 @@ promise_test(function(test) {
         })
     }, 'NonAsciiTextTest');
 
+promise_test(function(test) {
+    return fetch('/fetch/resources/bom-utf-8.php')
+      .then(function(response) { return response.text(); })
+      .then(function(text) {
+          assert_equals(text, '\u4e09\u6751\u304b\u306a\u5b50',
+                        'utf-8 string with BOM is decoded as utf-8 and ' +
+                        'BOM is not included in the decoded result.');
+        })
+    }, 'BOMUTF8Test');
+
+promise_test(function(test) {
+    return fetch('/fetch/resources/bom-utf-16le.php')
+      .then(function(response) { return response.text(); })
+      .then(function(text) {
+          assert_equals(text, '\ufffd\ufffd\tNQgK0j0P[',
+                        'utf-16le string is decoded as if utf-8 ' +
+                        'even if the data has utf-16le BOM.');
+        })
+    }, 'BOMUTF16LETest');
+
+promise_test(function(test) {
+    return fetch('/fetch/resources/bom-utf-16be.php')
+      .then(function(response) { return response.text(); })
+      .then(function(text) {
+          assert_equals(text, '\ufffd\ufffdN\tgQ0K0j[P',
+                        'utf-16be string is decoded as if utf-8 ' +
+                        'even if the data has utf-16be BOM.');
+        })
+    }, 'BOMUTF16BETest');
+
 test(t => {
     var req = new Request('/');
     assert_false(req.bodyUsed);
@@ -240,34 +260,47 @@ promise_test(t => {
 
 promise_test(t => {
     var res = new Response('');
-    res.body.getReader();
+    const reader = res.body.getReader();
     return res.arrayBuffer().then(unreached_fulfillment(t), e => {
+        // TODO(yhirano): Use finally when it's available. Ditto below.
+        reader.releaseLock();
         assert_equals(e.name, 'TypeError');
       });
   }, 'Locked => arrayBuffer');
 
 promise_test(t => {
     var res = new Response('');
-    res.body.getReader();
+    const reader = res.body.getReader();
     return res.blob().then(unreached_fulfillment(t), e => {
+        reader.releaseLock();
         assert_equals(e.name, 'TypeError');
       });
   }, 'Locked => blob');
 
 promise_test(t => {
     var res = new Response('');
-    res.body.getReader();
+    const reader = res.body.getReader();
     return res.json().then(unreached_fulfillment(t), e => {
+        reader.releaseLock();
         assert_equals(e.name, 'TypeError');
       });
   }, 'Locked => json');
 
 promise_test(t => {
     var res = new Response('');
-    res.body.getReader();
+    const reader = res.body.getReader();
     return res.text().then(unreached_fulfillment(t), e => {
+        reader.releaseLock();
         assert_equals(e.name, 'TypeError');
       });
   }, 'Locked => text');
+
+promise_test(t => {
+    return fetch('/fetch/resources/slow-failure.cgi').then(response => {
+        return response.text().then(unreached_fulfillment(t), e => {
+            assert_equals(e.name, 'TypeError');
+          });
+      });
+  }, 'streaming error');
 
 done();

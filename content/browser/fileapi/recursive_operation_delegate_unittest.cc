@@ -4,16 +4,18 @@
 
 #include "storage/browser/fileapi/recursive_operation_delegate.h"
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/test/sandbox_file_system_test_helper.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
 #include "storage/browser/fileapi/file_system_operation.h"
@@ -148,17 +150,17 @@ class RecursiveOperationDelegateTest : public testing::Test {
  protected:
   void SetUp() override {
     EXPECT_TRUE(base_.CreateUniqueTempDir());
-    sandbox_file_system_.SetUp(base_.path().AppendASCII("filesystem"));
+    sandbox_file_system_.SetUp(base_.GetPath().AppendASCII("filesystem"));
   }
 
   void TearDown() override { sandbox_file_system_.TearDown(); }
 
-  scoped_ptr<FileSystemOperationContext> NewContext() {
+  std::unique_ptr<FileSystemOperationContext> NewContext() {
     FileSystemOperationContext* context =
         sandbox_file_system_.NewOperationContext();
     // Grant enough quota for all test cases.
     context->set_allowed_bytes_growth(1000000);
-    return make_scoped_ptr(context);
+    return base::WrapUnique(context);
   }
 
   storage::FileSystemFileUtil* file_util() {
@@ -199,11 +201,10 @@ TEST_F(RecursiveOperationDelegateTest, RootIsFile) {
   FileSystemURL src_file(CreateFile("src"));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
-  scoped_ptr<FileSystemOperationContext> context = NewContext();
-  scoped_ptr<LoggingRecursiveOperation> operation(
-      new LoggingRecursiveOperation(
-          context->file_system_context(), src_file,
-          base::Bind(&ReportStatus, &error)));
+  std::unique_ptr<FileSystemOperationContext> context = NewContext();
+  std::unique_ptr<LoggingRecursiveOperation> operation(
+      new LoggingRecursiveOperation(context->file_system_context(), src_file,
+                                    base::Bind(&ReportStatus, &error)));
   operation->RunRecursively();
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(base::File::FILE_OK, error);
@@ -224,11 +225,10 @@ TEST_F(RecursiveOperationDelegateTest, RootIsDirectory) {
   FileSystemURL src_file3(CreateFile("src/dir1/file3"));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
-  scoped_ptr<FileSystemOperationContext> context = NewContext();
-  scoped_ptr<LoggingRecursiveOperation> operation(
-      new LoggingRecursiveOperation(
-          context->file_system_context(), src_root,
-          base::Bind(&ReportStatus, &error)));
+  std::unique_ptr<FileSystemOperationContext> context = NewContext();
+  std::unique_ptr<LoggingRecursiveOperation> operation(
+      new LoggingRecursiveOperation(context->file_system_context(), src_root,
+                                    base::Bind(&ReportStatus, &error)));
   operation->RunRecursively();
   base::RunLoop().RunUntilIdle();
   ASSERT_EQ(base::File::FILE_OK, error);
@@ -280,11 +280,10 @@ TEST_F(RecursiveOperationDelegateTest, Cancel) {
   FileSystemURL src_file2(CreateFile("src/dir1/file2"));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
-  scoped_ptr<FileSystemOperationContext> context = NewContext();
-  scoped_ptr<LoggingRecursiveOperation> operation(
-      new LoggingRecursiveOperation(
-          context->file_system_context(), src_root,
-          base::Bind(&ReportStatus, &error)));
+  std::unique_ptr<FileSystemOperationContext> context = NewContext();
+  std::unique_ptr<LoggingRecursiveOperation> operation(
+      new LoggingRecursiveOperation(context->file_system_context(), src_root,
+                                    base::Bind(&ReportStatus, &error)));
   operation->RunRecursively();
 
   // Invoke Cancel(), after 5 times message posting.
@@ -301,8 +300,8 @@ TEST_F(RecursiveOperationDelegateTest, AbortWithError) {
   FileSystemURL src_file3(CreateFile("src/dir1/file3"));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
-  scoped_ptr<FileSystemOperationContext> context = NewContext();
-  scoped_ptr<LoggingRecursiveOperation> operation(
+  std::unique_ptr<FileSystemOperationContext> context = NewContext();
+  std::unique_ptr<LoggingRecursiveOperation> operation(
       new LoggingRecursiveOperation(context->file_system_context(), src_root,
                                     base::Bind(&ReportStatus, &error)));
   operation->SetEntryToFail(src_file1);
@@ -337,8 +336,8 @@ TEST_F(RecursiveOperationDelegateTest, ContinueWithError) {
   FileSystemURL src_file3(CreateFile("src/dir1/file3"));
 
   base::File::Error error = base::File::FILE_ERROR_FAILED;
-  scoped_ptr<FileSystemOperationContext> context = NewContext();
-  scoped_ptr<LoggingRecursiveOperation> operation(
+  std::unique_ptr<FileSystemOperationContext> context = NewContext();
+  std::unique_ptr<LoggingRecursiveOperation> operation(
       new LoggingRecursiveOperation(context->file_system_context(), src_root,
                                     base::Bind(&ReportStatus, &error)));
   operation->SetEntryToFail(src_file1);

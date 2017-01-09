@@ -5,11 +5,11 @@
 #include "net/quic/test_tools/quic_sent_packet_manager_peer.h"
 
 #include "base/stl_util.h"
-#include "net/quic/congestion_control/loss_detection_interface.h"
-#include "net/quic/congestion_control/send_algorithm_interface.h"
-#include "net/quic/quic_flags.h"
-#include "net/quic/quic_protocol.h"
-#include "net/quic/quic_sent_packet_manager.h"
+#include "net/quic/core/congestion_control/loss_detection_interface.h"
+#include "net/quic/core/congestion_control/send_algorithm_interface.h"
+#include "net/quic/core/quic_flags.h"
+#include "net/quic/core/quic_packets.h"
+#include "net/quic/core/quic_sent_packet_manager.h"
 
 namespace net {
 namespace test {
@@ -40,9 +40,9 @@ bool QuicSentPacketManagerPeer::GetUseNewRto(
 }
 
 // static
-QuicByteCount QuicSentPacketManagerPeer::GetReceiveWindow(
+bool QuicSentPacketManagerPeer::GetUndoRetransmits(
     QuicSentPacketManager* sent_packet_manager) {
-  return sent_packet_manager->receive_buffer_bytes_;
+  return sent_packet_manager->undo_pending_retransmits_;
 }
 
 // static
@@ -53,8 +53,7 @@ void QuicSentPacketManagerPeer::SetPerspective(
 }
 
 // static
-const SendAlgorithmInterface*
-    QuicSentPacketManagerPeer::GetSendAlgorithm(
+SendAlgorithmInterface* QuicSentPacketManagerPeer::GetSendAlgorithm(
     const QuicSentPacketManager& sent_packet_manager) {
   return sent_packet_manager.send_algorithm_.get();
 }
@@ -63,26 +62,20 @@ const SendAlgorithmInterface*
 void QuicSentPacketManagerPeer::SetSendAlgorithm(
     QuicSentPacketManager* sent_packet_manager,
     SendAlgorithmInterface* send_algorithm) {
-  sent_packet_manager->send_algorithm_.reset(send_algorithm);
+  sent_packet_manager->SetSendAlgorithm(send_algorithm);
 }
 
 // static
 const LossDetectionInterface* QuicSentPacketManagerPeer::GetLossAlgorithm(
     QuicSentPacketManager* sent_packet_manager) {
-  return sent_packet_manager->loss_algorithm_.get();
+  return sent_packet_manager->loss_algorithm_;
 }
 
 // static
 void QuicSentPacketManagerPeer::SetLossAlgorithm(
     QuicSentPacketManager* sent_packet_manager,
     LossDetectionInterface* loss_detector) {
-  sent_packet_manager->loss_algorithm_.reset(loss_detector);
-}
-
-// static
-RttStats* QuicSentPacketManagerPeer::GetRttStats(
-    QuicSentPacketManager* sent_packet_manager) {
-  return &sent_packet_manager->rtt_stats_;
+  sent_packet_manager->loss_algorithm_ = loss_detector;
 }
 
 // static
@@ -105,28 +98,24 @@ QuicTime QuicSentPacketManagerPeer::GetSentTime(
 // static
 bool QuicSentPacketManagerPeer::IsRetransmission(
     QuicSentPacketManager* sent_packet_manager,
+    QuicPathId path_id,
     QuicPacketNumber packet_number) {
-  DCHECK(sent_packet_manager->HasRetransmittableFrames(packet_number));
-  if (FLAGS_quic_track_single_retransmission) {
-    if (!sent_packet_manager->HasRetransmittableFrames(packet_number)) {
-      return false;
-    }
-    for (auto transmission_info : sent_packet_manager->unacked_packets_) {
-      if (transmission_info.retransmission == packet_number) {
-        return true;
-      }
-    }
+  DCHECK(HasRetransmittableFrames(sent_packet_manager, packet_number));
+  if (!HasRetransmittableFrames(sent_packet_manager, packet_number)) {
     return false;
   }
-  return sent_packet_manager->HasRetransmittableFrames(packet_number) &&
-         sent_packet_manager->unacked_packets_.GetTransmissionInfo(
-                                                  packet_number)
-                 .all_transmissions != nullptr;
+  for (auto transmission_info : sent_packet_manager->unacked_packets_) {
+    if (transmission_info.retransmission == packet_number) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // static
 void QuicSentPacketManagerPeer::MarkForRetransmission(
     QuicSentPacketManager* sent_packet_manager,
+    QuicPathId path_id,
     QuicPacketNumber packet_number,
     TransmissionType transmission_type) {
   sent_packet_manager->MarkForRetransmission(packet_number, transmission_type);
@@ -151,7 +140,7 @@ size_t QuicSentPacketManagerPeer::GetNumRetransmittablePackets(
   for (QuicUnackedPacketMap::const_iterator it =
            sent_packet_manager->unacked_packets_.begin();
        it != sent_packet_manager->unacked_packets_.end(); ++it) {
-    if (it->retransmittable_frames != nullptr) {
+    if (!it->retransmittable_frames.empty()) {
       ++num_unacked_packets;
     }
   }
@@ -165,16 +154,57 @@ QuicByteCount QuicSentPacketManagerPeer::GetBytesInFlight(
 }
 
 // static
-QuicSentPacketManager::NetworkChangeVisitor*
-    QuicSentPacketManagerPeer::GetNetworkChangeVisitor(
-        const QuicSentPacketManager* sent_packet_manager) {
+QuicSentPacketManagerInterface::NetworkChangeVisitor*
+QuicSentPacketManagerPeer::GetNetworkChangeVisitor(
+    const QuicSentPacketManager* sent_packet_manager) {
   return sent_packet_manager->network_change_visitor_;
+}
+
+// static
+void QuicSentPacketManagerPeer::SetConsecutiveRtoCount(
+    QuicSentPacketManager* sent_packet_manager,
+    size_t count) {
+  sent_packet_manager->consecutive_rto_count_ = count;
+}
+
+// static
+void QuicSentPacketManagerPeer::SetConsecutiveTlpCount(
+    QuicSentPacketManager* sent_packet_manager,
+    size_t count) {
+  sent_packet_manager->consecutive_tlp_count_ = count;
 }
 
 // static
 QuicSustainedBandwidthRecorder& QuicSentPacketManagerPeer::GetBandwidthRecorder(
     QuicSentPacketManager* sent_packet_manager) {
   return sent_packet_manager->sustained_bandwidth_recorder_;
+}
+
+// static
+bool QuicSentPacketManagerPeer::UsingPacing(
+    const QuicSentPacketManager* sent_packet_manager) {
+  return sent_packet_manager->using_pacing_;
+}
+
+// static
+bool QuicSentPacketManagerPeer::IsUnacked(
+    QuicSentPacketManager* sent_packet_manager,
+    QuicPacketNumber packet_number) {
+  return sent_packet_manager->unacked_packets_.IsUnacked(packet_number);
+}
+
+// static
+bool QuicSentPacketManagerPeer::HasRetransmittableFrames(
+    QuicSentPacketManager* sent_packet_manager,
+    QuicPacketNumber packet_number) {
+  return sent_packet_manager->unacked_packets_.HasRetransmittableFrames(
+      packet_number);
+}
+
+// static
+QuicUnackedPacketMap* QuicSentPacketManagerPeer::GetUnackedPacketMap(
+    QuicSentPacketManager* sent_packet_manager) {
+  return &sent_packet_manager->unacked_packets_;
 }
 
 }  // namespace test

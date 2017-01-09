@@ -5,21 +5,26 @@
 #ifndef CHROME_BROWSER_UI_ASH_ASH_UTIL_H_
 #define CHROME_BROWSER_UI_ASH_ASH_UTIL_H_
 
-#include "ui/gfx/native_widget_types.h"
-
 namespace ui {
 class Accelerator;
 }  // namespace ui
 
+namespace ash_util {
+
+// Returns the name of the ash service depending on whether the browser is
+// running in classic ash or mash.
+const char* GetAshServiceName();
+
+}  // namespace ash_util
+
+// TODO(jamescook): Change this namespace to ash_util.
 namespace chrome {
 
 // Returns true if Ash should be run at startup.
 bool ShouldOpenAshOnStartup();
 
-// Returns true if |native_view/native_window| exists within the Ash
-// environment.
-bool IsNativeViewInAsh(gfx::NativeView native_view);
-bool IsNativeWindowInAsh(gfx::NativeWindow native_window);
+// Returns true if Chrome is running in the mash shell.
+bool IsRunningInMash();
 
 // Returns true if the given |accelerator| has been deprecated and hence can
 // be consumed by web contents if needed.

@@ -4,7 +4,7 @@
 
 syntax = "proto2";
 
-import "skregion.proto";
+import "skclipop.proto";
 import "skrrect.proto";
 import "skxfermode.proto";
 import "rect.proto";
@@ -21,8 +21,8 @@ message DisplayItemListSettings {
 
 message DisplayItemList {
   repeated DisplayItem items = 1;
-  optional cc.proto.Rect layer_rect = 2;
   optional DisplayItemListSettings settings = 3;
+  repeated cc.proto.Rect visual_rects = 4;
 }
 
 message DisplayItem {
@@ -56,26 +56,30 @@ message DisplayItem {
 
 message ClipDisplayItem {
   optional cc.proto.Rect clip_rect = 1;
-
   repeated cc.proto.SkRRect rounded_rects = 2;
+  optional bool antialias = 3;
 }
 
 message ClipPathDisplayItem {
-  optional cc.proto.SkRegion.Op clip_op = 1;
+  optional cc.proto.SkClipOp.Op clip_op = 1;
   optional bool antialias = 2;
   optional bytes clip_path = 3; /* SkPath */
 }
 
 message CompositingDisplayItem {
   optional uint32 alpha = 1;
-
   optional cc.proto.SkXfermode.Mode mode = 2;
   optional cc.proto.RectF bounds = 3;
   optional bytes color_filter = 4; /* SkColorFilter */
+  optional bool lcd_text_requires_opaque_layer = 5;
+}
+
+message SkPictureID {
+  optional uint32 unique_id = 1;
 }
 
 message DrawingDisplayItem {
-  optional bytes picture = 1; /* SkPicture */
+  optional SkPictureID id = 1;
 }
 
 message FilterDisplayItem {

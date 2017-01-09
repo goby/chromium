@@ -8,10 +8,9 @@
 #include <string>
 
 #include "base/time/time.h"
-#include "net/base/host_port_pair.h"
 #include "net/base/net_export.h"
 #include "net/http/http_vary_data.h"
-#include "net/socket/next_proto.h"
+#include "net/proxy/proxy_server.h"
 #include "net/ssl/ssl_info.h"
 
 namespace base {
@@ -34,14 +33,49 @@ class NET_EXPORT HttpResponseInfo {
   // the cache, please make sure not to delete or reorder values.
   enum ConnectionInfo {
     CONNECTION_INFO_UNKNOWN = 0,
-    CONNECTION_INFO_HTTP1 = 1,
+    CONNECTION_INFO_HTTP1_1 = 1,
     CONNECTION_INFO_DEPRECATED_SPDY2 = 2,
-    CONNECTION_INFO_SPDY3 = 3,
+    CONNECTION_INFO_DEPRECATED_SPDY3 = 3,
     CONNECTION_INFO_HTTP2 = 4,  // HTTP/2.
-    CONNECTION_INFO_QUIC1_SPDY3 = 5,
-    CONNECTION_INFO_HTTP2_14 = 6,  // HTTP/2 draft-14.
-    CONNECTION_INFO_HTTP2_15 = 7,  // HTTP/2 draft-15.
+    CONNECTION_INFO_QUIC_UNKNOWN_VERSION = 5,
+    CONNECTION_INFO_DEPRECATED_HTTP2_14 = 6,  // HTTP/2 draft-14.
+    CONNECTION_INFO_DEPRECATED_HTTP2_15 = 7,  // HTTP/2 draft-15.
+    CONNECTION_INFO_HTTP0_9 = 8,
+    CONNECTION_INFO_HTTP1_0 = 9,
+    CONNECTION_INFO_QUIC_32 = 10,
+    CONNECTION_INFO_QUIC_33 = 11,
+    CONNECTION_INFO_QUIC_34 = 12,
+    CONNECTION_INFO_QUIC_35 = 13,
+    CONNECTION_INFO_QUIC_36 = 14,
     NUM_OF_CONNECTION_INFOS,
+  };
+
+  // Used for categorizing transactions for reporting in histograms.
+  // CacheEntryStatus covers relatively common use cases being measured and
+  // considered for optimization. Many use cases that are more complex or
+  // uncommon are binned as OTHER, and details are not reported.
+  // NOTE: This enumeration is used in histograms, so please do not add entries
+  // in the middle.
+  enum CacheEntryStatus {
+    ENTRY_UNDEFINED,
+    // Complex or uncommon case. E.g., auth (401), partial responses (206), ...
+    ENTRY_OTHER,
+    // The response was not in the cache. Implies !was_cached &&
+    // network_accessed.
+    ENTRY_NOT_IN_CACHE,
+    // The response was served from the cache and no validation was needed.
+    // Implies was_cached && !network_accessed.
+    ENTRY_USED,
+    // The response was validated and served from the cache. Implies was_cached
+    // && network_accessed.
+    ENTRY_VALIDATED,
+    // There was a stale entry in the cache that was updated. Implies
+    // !was_cached && network_accessed.
+    ENTRY_UPDATED,
+    // The HTTP request didn't allow a conditional request. Implies !was_cached
+    // && network_accessed.
+    ENTRY_CANT_CONDITIONALIZE,
+    ENTRY_MAX,
   };
 
   HttpResponseInfo();
@@ -60,9 +94,7 @@ class NET_EXPORT HttpResponseInfo {
                bool response_truncated) const;
 
   // Whether QUIC is used or not.
-  bool DidUseQuic() const {
-    return connection_info == CONNECTION_INFO_QUIC1_SPDY3;
-  }
+  bool DidUseQuic() const;
 
   // The following is only defined if the request_time member is set.
   // If this resource was found in the cache, then this bool is set, and
@@ -74,6 +106,9 @@ class NET_EXPORT HttpResponseInfo {
   // Note also that under normal circumstances, was_cached is set to the correct
   // value even if the request fails.
   bool was_cached;
+
+  // How this response was handled by the HTTP cache.
+  CacheEntryStatus cache_entry_status;
 
   // True if the request was fetched from cache rather than the network
   // because of a LOAD_FROM_CACHE_IF_OFFLINE flag when the system
@@ -87,15 +122,16 @@ class NET_EXPORT HttpResponseInfo {
   // True if the request was fetched over a SPDY channel.
   bool was_fetched_via_spdy;
 
-  // True if the npn was negotiated for this request.
-  bool was_npn_negotiated;
+  // True if ALPN was negotiated for this request.
+  bool was_alpn_negotiated;
 
   // True if the request was fetched via an explicit proxy.  The proxy could
   // be any type of proxy, HTTP or SOCKS.  Note, we do not know if a
   // transparent proxy may have been involved. If true, |proxy_server| contains
-  // the name of the proxy server that was used.
+  // the proxy server that was used.
+  // TODO(tbansal): crbug.com/653354. Remove |was_fetched_via_proxy|.
   bool was_fetched_via_proxy;
-  HostPortPair proxy_server;
+  ProxyServer proxy_server;
 
   // Whether the request use http proxy or server authentication.
   bool did_use_http_auth;
@@ -119,7 +155,7 @@ class NET_EXPORT HttpResponseInfo {
   HostPortPair socket_address;
 
   // Protocol negotiated with the server.
-  std::string npn_negotiated_protocol;
+  std::string alpn_negotiated_protocol;
 
   // The type of connection used for this response.
   ConnectionInfo connection_info;
@@ -155,8 +191,6 @@ class NET_EXPORT HttpResponseInfo {
 
   // Any metadata asociated with this resource's cached data.
   scoped_refptr<IOBufferWithSize> metadata;
-
-  static ConnectionInfo ConnectionInfoFromNextProto(NextProto next_proto);
 
   static std::string ConnectionInfoToString(ConnectionInfo connection_info);
 };

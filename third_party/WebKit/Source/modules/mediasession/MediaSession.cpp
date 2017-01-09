@@ -2,56 +2,162 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/mediasession/MediaSession.h"
 
-#include "bindings/core/v8/CallbackPromiseAdapter.h"
-#include "bindings/core/v8/ScriptPromiseResolver.h"
-#include "bindings/core/v8/ScriptState.h"
-#include "core/dom/DOMException.h"
-#include "core/dom/ExceptionCode.h"
-#include "core/frame/LocalDOMWindow.h"
+#include "core/dom/Document.h"
+#include "core/dom/DocumentUserGestureToken.h"
+#include "core/dom/ExecutionContext.h"
+#include "core/events/Event.h"
 #include "core/frame/LocalFrame.h"
-#include "core/loader/FrameLoaderClient.h"
-#include "modules/mediasession/MediaSessionError.h"
+#include "modules/EventTargetModules.h"
+#include "modules/mediasession/MediaMetadata.h"
+#include "modules/mediasession/MediaMetadataSanitizer.h"
+#include "platform/UserGestureIndicator.h"
+#include "public/platform/InterfaceProvider.h"
+#include "wtf/Optional.h"
+#include <memory>
 
 namespace blink {
 
-MediaSession::MediaSession(PassOwnPtr<WebMediaSession> webMediaSession)
-    : m_webMediaSession(webMediaSession)
-{
-    ASSERT(m_webMediaSession);
+namespace {
+
+using ::blink::mojom::blink::MediaSessionAction;
+
+const AtomicString& mojomActionToEventName(MediaSessionAction action) {
+  switch (action) {
+    case MediaSessionAction::PLAY:
+      return EventTypeNames::play;
+    case MediaSessionAction::PAUSE:
+      return EventTypeNames::pause;
+    case MediaSessionAction::PLAY_PAUSE:
+      return EventTypeNames::playpause;
+    case MediaSessionAction::PREVIOUS_TRACK:
+      return EventTypeNames::previoustrack;
+    case MediaSessionAction::NEXT_TRACK:
+      return EventTypeNames::nexttrack;
+    case MediaSessionAction::SEEK_BACKWARD:
+      return EventTypeNames::seekbackward;
+    case MediaSessionAction::SEEK_FORWARD:
+      return EventTypeNames::seekforward;
+    default:
+      NOTREACHED();
+  }
+  return WTF::emptyAtom;
 }
 
-MediaSession* MediaSession::create(ExecutionContext* context, ExceptionState& exceptionState)
-{
-    Document* document = toDocument(context);
-    LocalFrame* frame = document->frame();
-    FrameLoaderClient* client = frame->loader().client();
-    OwnPtr<WebMediaSession> webMediaSession = client->createWebMediaSession();
-    if (!webMediaSession) {
-        exceptionState.throwDOMException(NotSupportedError, "Missing platform implementation.");
-        return nullptr;
-    }
-    return new MediaSession(webMediaSession.release());
+WTF::Optional<MediaSessionAction> eventNameToMojomAction(
+    const AtomicString& eventName) {
+  if (EventTypeNames::play == eventName)
+    return MediaSessionAction::PLAY;
+  if (EventTypeNames::pause == eventName)
+    return MediaSessionAction::PAUSE;
+  if (EventTypeNames::playpause == eventName)
+    return MediaSessionAction::PLAY_PAUSE;
+  if (EventTypeNames::previoustrack == eventName)
+    return MediaSessionAction::PREVIOUS_TRACK;
+  if (EventTypeNames::nexttrack == eventName)
+    return MediaSessionAction::NEXT_TRACK;
+  if (EventTypeNames::seekbackward == eventName)
+    return MediaSessionAction::SEEK_BACKWARD;
+  if (EventTypeNames::seekforward == eventName)
+    return MediaSessionAction::SEEK_FORWARD;
+
+  NOTREACHED();
+  return WTF::nullopt;
 }
 
-ScriptPromise MediaSession::activate(ScriptState* scriptState)
-{
-    ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
-    ScriptPromise promise = resolver->promise();
+}  // anonymous namespace
 
-    m_webMediaSession->activate(new CallbackPromiseAdapter<void, MediaSessionError>(resolver));
-    return promise;
+MediaSession::MediaSession(ExecutionContext* executionContext)
+    : ContextLifecycleObserver(executionContext), m_clientBinding(this) {}
+
+MediaSession* MediaSession::create(ExecutionContext* executionContext) {
+  return new MediaSession(executionContext);
 }
 
-ScriptPromise MediaSession::deactivate(ScriptState* scriptState)
-{
-    ScriptPromiseResolver* resolver = ScriptPromiseResolver::create(scriptState);
-    ScriptPromise promise = resolver->promise();
-
-    m_webMediaSession->deactivate(new CallbackPromiseAdapter<void, void>(resolver));
-    return promise;
+void MediaSession::dispose() {
+  m_clientBinding.Close();
 }
 
-} // namespace blink
+void MediaSession::setMetadata(MediaMetadata* metadata) {
+  if (mojom::blink::MediaSessionService* service = getService()) {
+    service->SetMetadata(MediaMetadataSanitizer::sanitizeAndConvertToMojo(
+        metadata, getExecutionContext()));
+  }
+}
+
+MediaMetadata* MediaSession::metadata() const {
+  return m_metadata;
+}
+
+const WTF::AtomicString& MediaSession::interfaceName() const {
+  return EventTargetNames::MediaSession;
+}
+
+ExecutionContext* MediaSession::getExecutionContext() const {
+  return ContextLifecycleObserver::getExecutionContext();
+}
+
+mojom::blink::MediaSessionService* MediaSession::getService() {
+  if (m_service)
+    return m_service.get();
+  if (!getExecutionContext())
+    return nullptr;
+
+  DCHECK(getExecutionContext()->isDocument())
+      << "MediaSession::getService() is only available from a frame";
+  Document* document = toDocument(getExecutionContext());
+  if (!document->frame())
+    return nullptr;
+
+  InterfaceProvider* interfaceProvider = document->frame()->interfaceProvider();
+  if (!interfaceProvider)
+    return nullptr;
+
+  interfaceProvider->getInterface(mojo::GetProxy(&m_service));
+  if (m_service.get())
+    m_service->SetClient(m_clientBinding.CreateInterfacePtrAndBind());
+
+  return m_service.get();
+}
+
+bool MediaSession::addEventListenerInternal(
+    const AtomicString& eventType,
+    EventListener* listener,
+    const AddEventListenerOptionsResolved& options) {
+  if (mojom::blink::MediaSessionService* service = getService()) {
+    auto mojomAction = eventNameToMojomAction(eventType);
+    DCHECK(mojomAction.has_value());
+    service->EnableAction(mojomAction.value());
+  }
+  return EventTarget::addEventListenerInternal(eventType, listener, options);
+}
+
+bool MediaSession::removeEventListenerInternal(
+    const AtomicString& eventType,
+    const EventListener* listener,
+    const EventListenerOptions& options) {
+  if (mojom::blink::MediaSessionService* service = getService()) {
+    auto mojomAction = eventNameToMojomAction(eventType);
+    DCHECK(mojomAction.has_value());
+    service->DisableAction(mojomAction.value());
+  }
+  return EventTarget::removeEventListenerInternal(eventType, listener, options);
+}
+
+void MediaSession::DidReceiveAction(
+    blink::mojom::blink::MediaSessionAction action) {
+  DCHECK(getExecutionContext()->isDocument());
+  Document* document = toDocument(getExecutionContext());
+  UserGestureIndicator gestureIndicator(
+      DocumentUserGestureToken::create(document));
+  dispatchEvent(Event::create(mojomActionToEventName(action)));
+}
+
+DEFINE_TRACE(MediaSession) {
+  visitor->trace(m_metadata);
+  EventTargetWithInlineData::trace(visitor);
+  ContextLifecycleObserver::trace(visitor);
+}
+
+}  // namespace blink

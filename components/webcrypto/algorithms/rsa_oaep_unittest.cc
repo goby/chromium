@@ -2,8 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/base64url.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/test_helpers.h"
 #include "components/webcrypto/crypto_data.h"
@@ -22,9 +26,7 @@ blink::WebCryptoAlgorithm CreateRsaOaepAlgorithm(
     const std::vector<uint8_t>& label) {
   return blink::WebCryptoAlgorithm::adoptParamsAndCreate(
       blink::WebCryptoAlgorithmIdRsaOaep,
-      new blink::WebCryptoRsaOaepParams(
-          !label.empty(), label.data(),
-          static_cast<unsigned int>(label.size())));
+      new blink::WebCryptoRsaOaepParams(!label.empty(), label));
 }
 
 std::string Base64EncodeUrlSafe(const std::vector<uint8_t>& input) {
@@ -38,14 +40,14 @@ std::string Base64EncodeUrlSafe(const std::vector<uint8_t>& input) {
   return base64url_encoded;
 }
 
-scoped_ptr<base::DictionaryValue> CreatePublicKeyJwkDict() {
-  scoped_ptr<base::DictionaryValue> jwk(new base::DictionaryValue());
+std::unique_ptr<base::DictionaryValue> CreatePublicKeyJwkDict() {
+  std::unique_ptr<base::DictionaryValue> jwk(new base::DictionaryValue());
   jwk->SetString("kty", "RSA");
   jwk->SetString("n",
                  Base64EncodeUrlSafe(HexStringToBytes(kPublicKeyModulusHex)));
   jwk->SetString("e",
                  Base64EncodeUrlSafe(HexStringToBytes(kPublicKeyExponentHex)));
-  return jwk.Pass();
+  return jwk;
 }
 
 class WebCryptoRsaOaepTest : public WebCryptoTestBase {};
@@ -64,7 +66,7 @@ TEST_F(WebCryptoRsaOaepTest, ImportPkcs8WithRsaEncryption) {
 }
 
 TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithNoAlg) {
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
 
   blink::WebCryptoKey public_key;
   ASSERT_EQ(
@@ -76,7 +78,7 @@ TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithNoAlg) {
 }
 
 TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithMatchingAlg) {
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
   jwk->SetString("alg", "RSA-OAEP");
 
   blink::WebCryptoKey public_key;
@@ -89,7 +91,7 @@ TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithMatchingAlg) {
 }
 
 TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithMismatchedAlgFails) {
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
   jwk->SetString("alg", "RSA-OAEP-512");
 
   blink::WebCryptoKey public_key;
@@ -102,7 +104,7 @@ TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithMismatchedAlgFails) {
 }
 
 TEST_F(WebCryptoRsaOaepTest, ImportPublicJwkWithMismatchedTypeFails) {
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
   jwk->SetString("kty", "oct");
   jwk->SetString("alg", "RSA-OAEP");
 
@@ -127,7 +129,7 @@ TEST_F(WebCryptoRsaOaepTest, ExportPublicJwk) {
     const TestData& test_data = kTestData[i];
     SCOPED_TRACE(test_data.expected_jwk_alg);
 
-    scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+    std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
     jwk->SetString("alg", test_data.expected_jwk_alg);
 
     // Import the key in a known-good format
@@ -150,7 +152,7 @@ TEST_F(WebCryptoRsaOaepTest, ExportPublicJwk) {
 }
 
 TEST_F(WebCryptoRsaOaepTest, EncryptDecryptKnownAnswerTest) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("rsa_oaep.json", &tests));
 
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {
@@ -202,7 +204,7 @@ TEST_F(WebCryptoRsaOaepTest, EncryptWithLargeMessageFails) {
   const blink::WebCryptoAlgorithmId kHash = blink::WebCryptoAlgorithmIdSha1;
   const size_t kHashSize = 20;
 
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
 
   blink::WebCryptoKey public_key;
   ASSERT_EQ(Status::Success(),
@@ -257,7 +259,7 @@ TEST_F(WebCryptoRsaOaepTest, EncryptWithLargeMessageFails) {
 TEST_F(WebCryptoRsaOaepTest, EncryptWithLargeDigestFails) {
   const blink::WebCryptoAlgorithmId kHash = blink::WebCryptoAlgorithmIdSha512;
 
-  scoped_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
+  std::unique_ptr<base::DictionaryValue> jwk(CreatePublicKeyJwkDict());
 
   blink::WebCryptoKey public_key;
   ASSERT_EQ(Status::Success(),

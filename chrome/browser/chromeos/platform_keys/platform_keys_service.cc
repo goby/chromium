@@ -4,11 +4,16 @@
 
 #include "chrome/browser/chromeos/platform_keys/platform_keys_service.h"
 
+#include <stddef.h>
+
 #include <utility>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/platform_keys/platform_keys.h"
 #include "content/public/browser/browser_thread.h"
@@ -130,9 +135,9 @@ class PlatformKeysService::GenerateRSAKeyTask : public Task {
                                   base::Unretained(this)));
   }
 
-  void GotPermissions(scoped_ptr<KeyPermissions::PermissionsForExtension>
+  void GotPermissions(std::unique_ptr<KeyPermissions::PermissionsForExtension>
                           extension_permissions) {
-    extension_permissions_ = extension_permissions.Pass();
+    extension_permissions_ = std::move(extension_permissions);
     DoStep();
   }
 
@@ -143,7 +148,8 @@ class PlatformKeysService::GenerateRSAKeyTask : public Task {
   std::string public_key_spki_der_;
   const std::string extension_id_;
   GenerateKeyCallback callback_;
-  scoped_ptr<KeyPermissions::PermissionsForExtension> extension_permissions_;
+  std::unique_ptr<KeyPermissions::PermissionsForExtension>
+      extension_permissions_;
   KeyPermissions* const key_permissions_;
   PlatformKeysService* const service_;
   content::BrowserContext* const browser_context_;
@@ -229,9 +235,9 @@ class PlatformKeysService::SignTask : public Task {
         base::Bind(&SignTask::GotPermissions, base::Unretained(this)));
   }
 
-  void GotPermissions(scoped_ptr<KeyPermissions::PermissionsForExtension>
+  void GotPermissions(std::unique_ptr<KeyPermissions::PermissionsForExtension>
                           extension_permissions) {
-    extension_permissions_ = extension_permissions.Pass();
+    extension_permissions_ = std::move(extension_permissions);
     DoStep();
   }
 
@@ -271,7 +277,8 @@ class PlatformKeysService::SignTask : public Task {
   const platform_keys::HashAlgorithm hash_algorithm_;
   const std::string extension_id_;
   const SignCallback callback_;
-  scoped_ptr<KeyPermissions::PermissionsForExtension> extension_permissions_;
+  std::unique_ptr<KeyPermissions::PermissionsForExtension>
+      extension_permissions_;
   KeyPermissions* const key_permissions_;
   PlatformKeysService* const service_;
   base::WeakPtrFactory<SignTask> weak_factory_;
@@ -299,7 +306,7 @@ class PlatformKeysService::SelectTask : public Task {
   // |interactive| is false, matching certs that the extension has permission
   // for are passed to |callback|.
   SelectTask(const platform_keys::ClientCertificateRequest& request,
-             scoped_ptr<net::CertificateList> input_client_certificates,
+             std::unique_ptr<net::CertificateList> input_client_certificates,
              bool interactive,
              const std::string& extension_id,
              const SelectCertificatesCallback& callback,
@@ -307,7 +314,7 @@ class PlatformKeysService::SelectTask : public Task {
              KeyPermissions* key_permissions,
              PlatformKeysService* service)
       : request_(request),
-        input_client_certificates_(input_client_certificates.Pass()),
+        input_client_certificates_(std::move(input_client_certificates)),
         interactive_(interactive),
         extension_id_(extension_id),
         callback_(callback),
@@ -367,9 +374,9 @@ class PlatformKeysService::SelectTask : public Task {
         base::Bind(&SelectTask::GotPermissions, base::Unretained(this)));
   }
 
-  void GotPermissions(scoped_ptr<KeyPermissions::PermissionsForExtension>
+  void GotPermissions(std::unique_ptr<KeyPermissions::PermissionsForExtension>
                           extension_permissions) {
-    extension_permissions_ = extension_permissions.Pass();
+    extension_permissions_ = std::move(extension_permissions);
     DoStep();
   }
 
@@ -388,7 +395,7 @@ class PlatformKeysService::SelectTask : public Task {
   // |error_message| contain an error message.
   // Note that the order of |matches|, based on the expiration/issuance date, is
   // relevant and must be preserved in any processing of the list.
-  void GotMatchingCerts(scoped_ptr<net::CertificateList> matches,
+  void GotMatchingCerts(std::unique_ptr<net::CertificateList> matches,
                         const std::string& error_message) {
     if (!error_message.empty()) {
       next_step_ = Step::DONE;
@@ -420,10 +427,8 @@ class PlatformKeysService::SelectTask : public Task {
             certificate->os_cert_handle(), &unused_key_size, &actual_key_type);
         const std::vector<net::X509Certificate::PublicKeyType>& accepted_types =
             request_.certificate_key_types;
-        if (std::find(accepted_types.begin(), accepted_types.end(),
-                      actual_key_type) == accepted_types.end()) {
+        if (!base::ContainsValue(accepted_types, actual_key_type))
           continue;
-        }
       }
 
       matches_.push_back(std::move(certificate));
@@ -443,7 +448,7 @@ class PlatformKeysService::SelectTask : public Task {
         base::Bind(&SelectTask::GotIntersection, weak_factory_.GetWeakPtr()));
   }
 
-  void GotIntersection(scoped_ptr<net::CertificateList> intersection) {
+  void GotIntersection(std::unique_ptr<net::CertificateList> intersection) {
     matches_.swap(*intersection);
     DoStep();
   }
@@ -489,7 +494,7 @@ class PlatformKeysService::SelectTask : public Task {
   // interactive), the certificates that the extension has unlimited sign
   // permission for. Passes the filtered certs to |callback_|.
   void FilterSelectionByPermission() {
-    scoped_ptr<net::CertificateList> selection(new net::CertificateList);
+    std::unique_ptr<net::CertificateList> selection(new net::CertificateList);
     if (interactive_) {
       if (selected_cert_)
         selection->push_back(selected_cert_);
@@ -497,7 +502,8 @@ class PlatformKeysService::SelectTask : public Task {
       selection->assign(matches_.begin(), matches_.end());
     }
 
-    scoped_ptr<net::CertificateList> filtered_certs(new net::CertificateList);
+    std::unique_ptr<net::CertificateList> filtered_certs(
+        new net::CertificateList);
     for (scoped_refptr<net::X509Certificate> selected_cert : *selection) {
       const std::string public_key_spki_der(
           platform_keys::GetSubjectPublicKeyInfo(selected_cert));
@@ -512,7 +518,7 @@ class PlatformKeysService::SelectTask : public Task {
     // necessary but this ensures that the permissions were updated correctly.
     CHECK(!selected_cert_ || (filtered_certs->size() == 1 &&
                               filtered_certs->front() == selected_cert_));
-    callback_.Run(filtered_certs.Pass(), std::string() /* no error */);
+    callback_.Run(std::move(filtered_certs), std::string() /* no error */);
     DoStep();
   }
 
@@ -521,12 +527,13 @@ class PlatformKeysService::SelectTask : public Task {
   net::CertificateList matches_;
   scoped_refptr<net::X509Certificate> selected_cert_;
   platform_keys::ClientCertificateRequest request_;
-  scoped_ptr<net::CertificateList> input_client_certificates_;
+  std::unique_ptr<net::CertificateList> input_client_certificates_;
   const bool interactive_;
   const std::string extension_id_;
   const SelectCertificatesCallback callback_;
   content::WebContents* const web_contents_;
-  scoped_ptr<KeyPermissions::PermissionsForExtension> extension_permissions_;
+  std::unique_ptr<KeyPermissions::PermissionsForExtension>
+      extension_permissions_;
   KeyPermissions* const key_permissions_;
   PlatformKeysService* const service_;
   base::WeakPtrFactory<SelectTask> weak_factory_;
@@ -560,8 +567,8 @@ PlatformKeysService::~PlatformKeysService() {
 }
 
 void PlatformKeysService::SetSelectDelegate(
-    scoped_ptr<SelectDelegate> delegate) {
-  select_delegate_ = delegate.Pass();
+    std::unique_ptr<SelectDelegate> delegate) {
+  select_delegate_ = std::move(delegate);
 }
 
 void PlatformKeysService::GenerateRSAKey(const std::string& token_id,
@@ -569,9 +576,9 @@ void PlatformKeysService::GenerateRSAKey(const std::string& token_id,
                                          const std::string& extension_id,
                                          const GenerateKeyCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StartOrQueueTask(make_scoped_ptr(
-      new GenerateRSAKeyTask(token_id, modulus_length, extension_id, callback,
-                             &key_permissions_, this, browser_context_)));
+  StartOrQueueTask(base::MakeUnique<GenerateRSAKeyTask>(
+      token_id, modulus_length, extension_id, callback, &key_permissions_, this,
+      browser_context_));
 }
 
 void PlatformKeysService::SignRSAPKCS1Digest(
@@ -582,7 +589,7 @@ void PlatformKeysService::SignRSAPKCS1Digest(
     const std::string& extension_id,
     const SignCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StartOrQueueTask(make_scoped_ptr(new SignTask(
+  StartOrQueueTask(base::WrapUnique(new SignTask(
       token_id, data, public_key, false /* digest before signing */,
       hash_algorithm, extension_id, callback, &key_permissions_, this)));
 }
@@ -593,7 +600,7 @@ void PlatformKeysService::SignRSAPKCS1Raw(const std::string& token_id,
                                           const std::string& extension_id,
                                           const SignCallback& callback) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StartOrQueueTask(make_scoped_ptr(new SignTask(
+  StartOrQueueTask(base::WrapUnique(new SignTask(
       token_id, data, public_key, true /* sign directly without hashing */,
       platform_keys::HASH_ALGORITHM_NONE, extension_id, callback,
       &key_permissions_, this)));
@@ -601,18 +608,18 @@ void PlatformKeysService::SignRSAPKCS1Raw(const std::string& token_id,
 
 void PlatformKeysService::SelectClientCertificates(
     const platform_keys::ClientCertificateRequest& request,
-    scoped_ptr<net::CertificateList> client_certificates,
+    std::unique_ptr<net::CertificateList> client_certificates,
     bool interactive,
     const std::string& extension_id,
     const SelectCertificatesCallback& callback,
     content::WebContents* web_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  StartOrQueueTask(make_scoped_ptr(new SelectTask(
-      request, client_certificates.Pass(), interactive, extension_id, callback,
-      web_contents, &key_permissions_, this)));
+  StartOrQueueTask(base::MakeUnique<SelectTask>(
+      request, std::move(client_certificates), interactive, extension_id,
+      callback, web_contents, &key_permissions_, this));
 }
 
-void PlatformKeysService::StartOrQueueTask(scoped_ptr<Task> task) {
+void PlatformKeysService::StartOrQueueTask(std::unique_ptr<Task> task) {
   tasks_.push(make_linked_ptr(task.release()));
   if (tasks_.size() == 1)
     tasks_.front()->Start();

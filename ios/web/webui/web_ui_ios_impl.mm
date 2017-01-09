@@ -4,14 +4,20 @@
 
 #include "ios/web/webui/web_ui_ios_impl.h"
 
+#include <stddef.h>
+
 #include "base/json/json_writer.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
-#include "ios/public/provider/web/web_ui_ios_controller.h"
-#include "ios/public/provider/web/web_ui_ios_controller_factory.h"
-#include "ios/public/provider/web/web_ui_ios_message_handler.h"
+#include "ios/web/public/webui/web_ui_ios_controller.h"
+#include "ios/web/public/webui/web_ui_ios_controller_factory.h"
+#include "ios/web/public/webui/web_ui_ios_message_handler.h"
 #include "ios/web/web_state/web_state_impl.h"
+
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
 
 using web::WebUIIOSController;
 
@@ -145,7 +151,7 @@ void WebUIIOSImpl::AddMessageHandler(WebUIIOSMessageHandler* handler) {
 }
 
 void WebUIIOSImpl::ExecuteJavascript(const base::string16& javascript) {
-  web_state_->ExecuteJavaScriptAsync(javascript);
+  web_state_->ExecuteJavaScript(javascript);
 }
 
 }  // namespace web

@@ -5,10 +5,13 @@
 #ifndef CONTENT_RENDERER_DEVICE_SENSORS_DEVICE_LIGHT_EVENT_PUMP_H_
 #define CONTENT_RENDERER_DEVICE_SENSORS_DEVICE_LIGHT_EVENT_PUMP_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "content/common/device_sensors/device_light_data.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/renderer/device_sensors/device_sensor_event_pump.h"
 #include "content/renderer/shared_memory_seqlock_reader.h"
+#include "device/sensors/public/cpp/device_light_data.h"
+#include "device/sensors/public/interfaces/light.mojom.h"
 
 namespace blink {
 class WebDeviceLightListener;
@@ -20,7 +23,9 @@ typedef SharedMemorySeqLockReader<DeviceLightData>
     DeviceLightSharedMemoryReader;
 
 class CONTENT_EXPORT DeviceLightEventPump
-    : public DeviceSensorEventPump<blink::WebDeviceLightListener> {
+    : public DeviceSensorMojoClientMixin<
+          DeviceSensorEventPump<blink::WebDeviceLightListener>,
+          device::mojom::LightSensor> {
  public:
   explicit DeviceLightEventPump(RenderThread* thread);
   ~DeviceLightEventPump() override;
@@ -30,7 +35,6 @@ class CONTENT_EXPORT DeviceLightEventPump
   bool SetListener(blink::WebDeviceLightListener* listener);
 
   // PlatformEventObserver implementation.
-  bool OnControlMessageReceived(const IPC::Message& message) override;
   void SendFakeDataForTesting(void* data) override;
 
  protected:
@@ -38,14 +42,10 @@ class CONTENT_EXPORT DeviceLightEventPump
   void FireEvent() override;
   bool InitializeReader(base::SharedMemoryHandle handle) override;
 
-  // PlatformEventObserver implementation.
-  void SendStartMessage() override;
-  void SendStopMessage() override;
-
  private:
   bool ShouldFireEvent(double data) const;
 
-  scoped_ptr<DeviceLightSharedMemoryReader> reader_;
+  std::unique_ptr<DeviceLightSharedMemoryReader> reader_;
   double last_seen_data_;
 
   DISALLOW_COPY_AND_ASSIGN(DeviceLightEventPump);

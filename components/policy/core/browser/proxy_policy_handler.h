@@ -7,13 +7,10 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
 
 namespace policy {
-
-class ProxyMap;
-class ProxyErrorMap;
 
 // ConfigurationPolicyHandler for the proxy policies.
 class POLICY_EXPORT ProxyPolicyHandler : public ConfigurationPolicyHandler {

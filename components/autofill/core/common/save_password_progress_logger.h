@@ -5,8 +5,11 @@
 #ifndef COMPONENTS_AUTOFILL_CORE_COMMON_SAVE_PASSWORD_PROGRESS_LOGGER_H_
 #define COMPONENTS_AUTOFILL_CORE_COMMON_SAVE_PASSWORD_PROGRESS_LOGGER_H_
 
+#include <stddef.h>
+
 #include <string>
 
+#include "base/macros.h"
 #include "url/gurl.h"
 
 namespace base {
@@ -50,7 +53,6 @@ class SavePasswordProgressLogger {
     STRING_USERNAME_ELEMENT,
     STRING_PASSWORD_ELEMENT,
     STRING_NEW_PASSWORD_ELEMENT,
-    STRING_SSL_VALID,
     STRING_PASSWORD_GENERATED,
     STRING_TIMES_USED,
     STRING_PSL_MATCH,
@@ -104,16 +106,17 @@ class SavePasswordProgressLogger {
     STRING_SHOW_PASSWORD_PROMPT,
     STRING_PASSWORDMANAGER_AUTOFILL,
     STRING_PASSWORDMANAGER_AUTOFILLHTTPAUTH,
+    STRING_PASSWORDMANAGER_SHOW_INITIAL_PASSWORD_ACCOUNT_SUGGESTIONS,
     STRING_WAIT_FOR_USERNAME,
     STRING_LOGINMODELOBSERVER_PRESENT,
     STRING_WAS_LAST_NAVIGATION_HTTP_ERROR_METHOD,
     STRING_HTTP_STATUS_CODE,
     STRING_PROVISIONALLY_SAVED_FORM_IS_NOT_HTML,
-    STRING_ON_REQUEST_DONE_METHOD,
+    STRING_PROCESS_MATCHES_METHOD,
     STRING_BEST_SCORE,
     STRING_ON_GET_STORE_RESULTS_METHOD,
     STRING_NUMBER_RESULTS,
-    STRING_FETCH_LOGINS_METHOD,
+    STRING_FETCH_METHOD,
     STRING_NO_STORE,
     STRING_CREATE_LOGIN_MANAGERS_METHOD,
     STRING_OLD_NUMBER_LOGIN_MANAGERS,
@@ -126,8 +129,25 @@ class SavePasswordProgressLogger {
     STRING_PROCESS_FRAME_METHOD,
     STRING_FORM_SIGNATURE,
     STRING_ADDING_SIGNATURE,
-    STRING_FORM_MANAGER_STATE,
+    STRING_FORM_FETCHER_STATE,
     STRING_UNOWNED_INPUTS_VISIBLE,
+    STRING_ON_FILL_PASSWORD_FORM_METHOD,
+    STRING_ON_SHOW_INITIAL_PASSWORD_ACCOUNT_SUGGESTIONS,
+    STRING_AMBIGUOUS_OR_EMPTY_NAMES,
+    STRING_NUMBER_OF_POTENTIAL_FORMS_TO_FILL,
+    STRING_CONTAINS_FILLABLE_USERNAME_FIELD,
+    STRING_USERNAME_FIELD_NAME_EMPTY,
+    STRING_PASSWORD_FIELD_NAME_EMPTY,
+    STRING_FORM_DATA_WAIT,
+    STRING_FILL_USERNAME_AND_PASSWORD_METHOD,
+    STRING_USERNAMES_MATCH,
+    STRING_MATCH_IN_ADDITIONAL,
+    STRING_USERNAME_FILLED,
+    STRING_PASSWORD_FILLED,
+    STRING_FORM_NAME,
+    STRING_FIELDS,
+    STRING_SERVER_PREDICTIONS,
+    STRING_FORM_VOTES,
     STRING_INVALID,  // Represents a string returned in a case of an error.
     STRING_MAX = STRING_INVALID
   };
@@ -147,6 +167,10 @@ class SavePasswordProgressLogger {
   void LogNumber(StringID label, size_t unsigned_number);
   void LogMessage(StringID message);
 
+  // Removes privacy sensitive parts of |url| (currently all but host and
+  // scheme).
+  static std::string ScrubURL(const GURL& url);
+
  protected:
   // Sends |log| immediately for display.
   virtual void SendLog(const std::string& log) = 0;
@@ -154,12 +178,15 @@ class SavePasswordProgressLogger {
   // Converts |log| and its |label| to a string and calls SendLog on the result.
   void LogValue(StringID label, const base::Value& log);
 
-  // Replaces all characters satisfying IsUnwantedInElementID with a ' ', and
-  // lowercases all characters. This damages some valid HTML element IDs
-  // or names, but it is likely that it will be still possible to match the
-  // scrubbed string to the original ID or name in the HTML doc. That's good
-  // enough for the logging purposes, and provides some security benefits.
+  // Replaces all characters satisfying IsUnwantedInElementID with a ' '.
+  // This damages some valid HTML element IDs or names, but it is likely that it
+  // will be still possible to match the scrubbed string to the original ID or
+  // name in the HTML doc. That's good enough for the logging purposes, and
+  // provides some security benefits.
   static std::string ScrubElementID(const base::string16& element_id);
+
+  // The UTF-8 version of the function above.
+  static std::string ScrubElementID(std::string element_id);
 
   // Translates the StringID values into the corresponding strings.
   static std::string GetStringFromID(SavePasswordProgressLogger::StringID id);

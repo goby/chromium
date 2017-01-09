@@ -4,14 +4,16 @@
 
 #include "net/base/ip_pattern.h"
 
+#include <memory>
 #include <string>
 
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_tokenizer.h"
+#include "net/base/ip_address.h"
 
 namespace net {
 
@@ -54,15 +56,12 @@ bool IPPattern::ComponentPattern::Match(uint32_t value) const {
 
 IPPattern::IPPattern() : is_ipv4_(true) {}
 
-IPPattern::~IPPattern() {
-  STLDeleteElements(&component_patterns_);
-}
+IPPattern::~IPPattern() {}
 
-bool IPPattern::Match(const IPAddressNumber& address) const {
+bool IPPattern::Match(const IPAddress& address) const {
   if (ip_mask_.empty())
     return false;
-  bool address_is_ipv4 = address.size() == kIPv4AddressSize;
-  if (address_is_ipv4 != is_ipv4_)
+  if (address.IsIPv4() != is_ipv4_)
     return false;
 
   ComponentPatternList::const_iterator pattern_it(component_patterns_.begin());
@@ -71,9 +70,9 @@ bool IPPattern::Match(const IPAddressNumber& address) const {
   // 8, so it is easier to count separately.
   int address_index = 0;
   for (size_t i = 0; i < ip_mask_.size(); ++i) {
-    uint32_t value_to_test = address[address_index++];
+    uint32_t value_to_test = address.bytes()[address_index++];
     if (!is_ipv4_) {
-      value_to_test = (value_to_test << 8) + address[address_index++];
+      value_to_test = (value_to_test << 8) + address.bytes()[address_index++];
     }
     if (ip_mask_[i]) {
       if (component_values_[fixed_value_index++] != value_to_test)
@@ -117,7 +116,7 @@ bool IPPattern::ParsePattern(const std::string& ip_pattern) {
       component_values_.push_back(value);
       continue;
     }
-    if (component[component.size() - 1] != ']') {
+    if (component.back() != ']') {
       DVLOG(1) << "Missing close bracket: " << ip_pattern;
       return false;
     }
@@ -127,14 +126,14 @@ bool IPPattern::ParsePattern(const std::string& ip_pattern) {
       return false;
     }
     // We'll need a pattern to match this bracketed component.
-    scoped_ptr<ComponentPattern> component_pattern(new ComponentPattern);
+    std::unique_ptr<ComponentPattern> component_pattern(new ComponentPattern);
     // Trim leading and trailing bracket before calling for parsing.
     if (!ParseComponentPattern(component.substr(1, component.size() - 2),
                                component_pattern.get())) {
       return false;
     }
     ip_mask_.push_back(false);
-    component_patterns_.push_back(component_pattern.release());
+    component_patterns_.push_back(std::move(component_pattern));
   }
   return true;
 }

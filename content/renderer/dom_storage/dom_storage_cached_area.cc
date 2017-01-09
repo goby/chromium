@@ -4,15 +4,16 @@
 
 #include "content/renderer/dom_storage/dom_storage_cached_area.h"
 
-#include "base/basictypes.h"
-#include "base/metrics/histogram.h"
+#include <limits>
+
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "content/common/dom_storage/dom_storage_map.h"
 #include "content/renderer/dom_storage/dom_storage_proxy.h"
 
 namespace content {
 
-DOMStorageCachedArea::DOMStorageCachedArea(int64 namespace_id,
+DOMStorageCachedArea::DOMStorageCachedArea(int64_t namespace_id,
                                            const GURL& origin,
                                            DOMStorageProxy* proxy)
     : ignore_all_mutations_(false),
@@ -134,13 +135,9 @@ void DOMStorageCachedArea::ApplyMutation(
   // We turn off quota checking here to accomodate the over budget
   // allowance that's provided in the browser process.
   base::NullableString16 unused;
-  map_->set_quota(kint32max);
+  map_->set_quota(std::numeric_limits<int32_t>::max());
   map_->SetItem(key.string(), new_value.string(), &unused);
   map_->set_quota(kPerStorageAreaQuota);
-}
-
-size_t DOMStorageCachedArea::MemoryBytesUsedByCache() const {
-  return map_.get() ? map_->bytes_used() : 0;
 }
 
 void DOMStorageCachedArea::Prime(int connection_id) {
@@ -174,7 +171,7 @@ void DOMStorageCachedArea::Prime(int connection_id) {
   // above what we see in practice, since histograms can't change.
   UMA_HISTOGRAM_CUSTOM_COUNTS("LocalStorage.RendererLocalStorageSizeInKB",
                               local_storage_size_kb,
-                              0, 6 * 1024, 50);
+                              1, 6 * 1024, 50);
   if (local_storage_size_kb < 100) {
     UMA_HISTOGRAM_TIMES(
         "LocalStorage.RendererTimeToPrimeLocalStorageUnder100KB",

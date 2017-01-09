@@ -4,11 +4,14 @@
 
 #include "chrome/browser/sync_file_system/drive_backend/sync_engine.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/test/sequenced_worker_pool_owner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/sync_file_system/drive_backend/callback_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend/fake_sync_worker.h"
 #include "chrome/browser/sync_file_system/drive_backend/sync_worker_interface.h"
@@ -29,14 +32,14 @@ class SyncEngineTest : public testing::Test,
  public:
   typedef RemoteFileSyncService::OriginStatusMap RemoteOriginStatusMap;
 
-  SyncEngineTest() : worker_pool_owner_(1, "Worker") {}
+  SyncEngineTest() : worker_pool_owner_(2, "Worker") {}
   ~SyncEngineTest() override {}
 
   void SetUp() override {
     ASSERT_TRUE(profile_dir_.CreateUniqueTempDir());
 
-    scoped_ptr<drive::DriveServiceInterface>
-        fake_drive_service(new drive::FakeDriveService);
+    std::unique_ptr<drive::DriveServiceInterface> fake_drive_service(
+        new drive::FakeDriveService);
 
     scoped_refptr<base::SingleThreadTaskRunner> ui_task_runner =
         base::ThreadTaskRunnerHandle::Get();
@@ -48,7 +51,7 @@ class SyncEngineTest : public testing::Test,
     sync_engine_.reset(new drive_backend::SyncEngine(
         ui_task_runner.get(), worker_task_runner_.get(),
         nullptr,  // drive_task_runner
-        worker_pool_owner_.pool().get(), profile_dir_.path(),
+        worker_pool_owner_.pool().get(), profile_dir_.GetPath(),
         nullptr,    // task_logger
         nullptr,    // notification_manager
         nullptr,    // extension_service
@@ -59,9 +62,9 @@ class SyncEngineTest : public testing::Test,
         nullptr));  // in_memory_env
 
     sync_engine_->InitializeForTesting(
-        fake_drive_service.Pass(),
+        std::move(fake_drive_service),
         nullptr,  // drive_uploader
-        scoped_ptr<SyncWorkerInterface>(new FakeSyncWorker));
+        std::unique_ptr<SyncWorkerInterface>(new FakeSyncWorker));
     sync_engine_->SetSyncEnabled(true);
     sync_engine_->OnReadyToSendRequests();
 
@@ -76,7 +79,7 @@ class SyncEngineTest : public testing::Test,
   }
 
   bool FindOriginStatus(const GURL& origin, std::string* status) {
-    scoped_ptr<RemoteOriginStatusMap> status_map;
+    std::unique_ptr<RemoteOriginStatusMap> status_map;
     sync_engine()->GetOriginStatusMap(CreateResultReceiver(&status_map));
     WaitForWorkerTaskRunner();
 
@@ -123,7 +126,7 @@ class SyncEngineTest : public testing::Test,
  private:
   content::TestBrowserThreadBundle browser_threads_;
   base::ScopedTempDir profile_dir_;
-  scoped_ptr<drive_backend::SyncEngine> sync_engine_;
+  std::unique_ptr<drive_backend::SyncEngine> sync_engine_;
 
   base::SequencedWorkerPoolOwner worker_pool_owner_;
   scoped_refptr<base::SequencedTaskRunner> worker_task_runner_;
@@ -184,7 +187,7 @@ TEST_F(SyncEngineTest, GetOriginStatusMap) {
   WaitForWorkerTaskRunner();
   EXPECT_EQ(SYNC_STATUS_OK, sync_status);
 
-  scoped_ptr<RemoteOriginStatusMap> status_map;
+  std::unique_ptr<RemoteOriginStatusMap> status_map;
   sync_engine()->GetOriginStatusMap(CreateResultReceiver(&status_map));
   WaitForWorkerTaskRunner();
   ASSERT_EQ(2u, status_map->size());

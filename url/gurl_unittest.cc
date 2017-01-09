@@ -2,16 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
 #include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
 #include "url/url_test_utils.h"
 
 namespace url {
-
-using test_utils::WStringToUTF16;
-using test_utils::ConvertUTF8ToUTF16;
 
 namespace {
 
@@ -65,7 +65,12 @@ TEST(GURLTest, Types) {
 // the parser is already tested and works, so we are mostly interested if the
 // object does the right thing with the results.
 TEST(GURLTest, Components) {
-  GURL url(WStringToUTF16(L"http://user:pass@google.com:99/foo;bar?q=a#ref"));
+  GURL empty_url(base::UTF8ToUTF16(""));
+  EXPECT_TRUE(empty_url.is_empty());
+  EXPECT_FALSE(empty_url.is_valid());
+
+  GURL url(base::UTF8ToUTF16("http://user:pass@google.com:99/foo;bar?q=a#ref"));
+  EXPECT_FALSE(url.is_empty());
   EXPECT_TRUE(url.is_valid());
   EXPECT_TRUE(url.SchemeIs("http"));
   EXPECT_FALSE(url.SchemeIsFile());
@@ -109,7 +114,8 @@ TEST(GURLTest, Empty) {
 }
 
 TEST(GURLTest, Copy) {
-  GURL url(WStringToUTF16(L"http://user:pass@google.com:99/foo;bar?q=a#ref"));
+  GURL url(base::UTF8ToUTF16(
+      "http://user:pass@google.com:99/foo;bar?q=a#ref"));
 
   GURL url2(url);
   EXPECT_TRUE(url2.is_valid());
@@ -142,7 +148,8 @@ TEST(GURLTest, Copy) {
 }
 
 TEST(GURLTest, Assign) {
-  GURL url(WStringToUTF16(L"http://user:pass@google.com:99/foo;bar?q=a#ref"));
+  GURL url(base::UTF8ToUTF16(
+      "http://user:pass@google.com:99/foo;bar?q=a#ref"));
 
   GURL url2;
   url2 = url;
@@ -184,7 +191,8 @@ TEST(GURLTest, SelfAssign) {
 }
 
 TEST(GURLTest, CopyFileSystem) {
-  GURL url(WStringToUTF16(L"filesystem:https://user:pass@google.com:99/t/foo;bar?q=a#ref"));
+  GURL url(base::UTF8ToUTF16(
+      "filesystem:https://user:pass@google.com:99/t/foo;bar?q=a#ref"));
 
   GURL url2(url);
   EXPECT_TRUE(url2.is_valid());
@@ -225,7 +233,6 @@ TEST(GURLTest, IsValid) {
     "http://user:pass@google.com:12345/path?k=v#fragment",
     "http:/path",
     "http:path",
-    "://google.com",
   };
   for (size_t i = 0; i < arraysize(valid_cases); i++) {
     EXPECT_TRUE(GURL(valid_cases[i]).is_valid())
@@ -237,6 +244,7 @@ TEST(GURLTest, IsValid) {
     "http:://google.com",
     "http//google.com",
     "http://google.com:12three45",
+    "://google.com",
     "path",
   };
   for (size_t i = 0; i < arraysize(invalid_cases); i++) {
@@ -286,6 +294,7 @@ TEST(GURLTest, Resolve) {
     {"http://www.google.com/foo/", "/bar", true, "http://www.google.com/bar"},
     {"http://www.google.com/foo", "bar", true, "http://www.google.com/bar"},
     {"http://www.google.com/", "http://images.google.com/foo.html", true, "http://images.google.com/foo.html"},
+    {"http://www.google.com/", "http://images.\tgoogle.\ncom/\rfoo.html", true, "http://images.google.com/foo.html"},
     {"http://www.google.com/blah/bloo?c#d", "../../../hello/./world.html?a#b", true, "http://www.google.com/hello/world.html?a#b"},
     {"http://www.google.com/foo#bar", "#com", true, "http://www.google.com/foo#com"},
     {"http://www.google.com/", "Https:images.google.com", true, "https://images.google.com/"},
@@ -306,9 +315,9 @@ TEST(GURLTest, Resolve) {
     EXPECT_EQ(output.SchemeIsFileSystem(), output.inner_url() != NULL);
 
     // Wide code path.
-    GURL inputw(ConvertUTF8ToUTF16(resolve_cases[i].base));
+    GURL inputw(base::UTF8ToUTF16(resolve_cases[i].base));
     GURL outputw =
-        input.Resolve(ConvertUTF8ToUTF16(resolve_cases[i].relative));
+        input.Resolve(base::UTF8ToUTF16(resolve_cases[i].relative));
     EXPECT_EQ(resolve_cases[i].expected_valid, outputw.is_valid()) << i;
     EXPECT_EQ(resolve_cases[i].expected, outputw.spec()) << i;
     EXPECT_EQ(outputw.SchemeIsFileSystem(), outputw.inner_url() != NULL);
@@ -394,13 +403,23 @@ TEST(GURLTest, Replacements) {
     const char* ref;
     const char* expected;
   } replace_cases[] = {
-    {"http://www.google.com/foo/bar.html?foo#bar", NULL, NULL, NULL, NULL, NULL, "/", "", "", "http://www.google.com/"},
-    {"http://www.google.com/foo/bar.html?foo#bar", "javascript", "", "", "", "", "window.open('foo');", "", "", "javascript:window.open('foo');"},
-    {"file:///C:/foo/bar.txt", "http", NULL, NULL, "www.google.com", "99", "/foo", "search", "ref", "http://www.google.com:99/foo?search#ref"},
+      {"http://www.google.com/foo/bar.html?foo#bar", NULL, NULL, NULL, NULL,
+       NULL, "/", "", "", "http://www.google.com/"},
+      {"http://www.google.com/foo/bar.html?foo#bar", "javascript", "", "", "",
+       "", "window.open('foo');", "", "", "javascript:window.open('foo');"},
+      {"file:///C:/foo/bar.txt", "http", NULL, NULL, "www.google.com", "99",
+       "/foo", "search", "ref", "http://www.google.com:99/foo?search#ref"},
 #ifdef WIN32
-    {"http://www.google.com/foo/bar.html?foo#bar", "file", "", "", "", "", "c:\\", "", "", "file:///C:/"},
+      {"http://www.google.com/foo/bar.html?foo#bar", "file", "", "", "", "",
+       "c:\\", "", "", "file:///C:/"},
 #endif
-    {"filesystem:http://www.google.com/foo/bar.html?foo#bar", NULL, NULL, NULL, NULL, NULL, "/", "", "", "filesystem:http://www.google.com/foo/"},
+      {"filesystem:http://www.google.com/foo/bar.html?foo#bar", NULL, NULL,
+       NULL, NULL, NULL, "/", "", "", "filesystem:http://www.google.com/foo/"},
+      // Lengthen the URL instead of shortening it, to test creation of
+      // inner_url.
+      {"filesystem:http://www.google.com/foo/", NULL, NULL, NULL, NULL, NULL,
+       "bar.html", "foo", "bar",
+       "filesystem:http://www.google.com/foo/bar.html?foo#bar"},
   };
 
   for (size_t i = 0; i < arraysize(replace_cases); i++) {
@@ -418,7 +437,14 @@ TEST(GURLTest, Replacements) {
     GURL output = url.ReplaceComponents(repl);
 
     EXPECT_EQ(replace_cases[i].expected, output.spec());
+
     EXPECT_EQ(output.SchemeIsFileSystem(), output.inner_url() != NULL);
+    if (output.SchemeIsFileSystem()) {
+      // TODO(mmenke): inner_url()->spec() is currently the same as the spec()
+      // for the GURL itself.  This should be fixed.
+      // See https://crbug.com/619596
+      EXPECT_EQ(replace_cases[i].expected, output.inner_url()->spec());
+    }
   }
 }
 
@@ -636,6 +662,9 @@ TEST(GURLTest, IsStandard) {
 
   GURL c("foo://bar/baz");
   EXPECT_FALSE(c.IsStandard());
+
+  GURL d("cid:bar@baz");
+  EXPECT_FALSE(d.IsStandard());
 }
 
 TEST(GURLTest, SchemeIsHTTPOrHTTPS) {
@@ -650,10 +679,40 @@ TEST(GURLTest, SchemeIsWSOrWSS) {
   EXPECT_FALSE(GURL("http://bar/").SchemeIsWSOrWSS());
 }
 
+TEST(GURLTest, SchemeIsCryptographic) {
+  EXPECT_TRUE(GURL("https://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("HTTPS://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("HtTpS://foo.bar.com/").SchemeIsCryptographic());
+
+  EXPECT_TRUE(GURL("wss://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("WSS://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("WsS://foo.bar.com/").SchemeIsCryptographic());
+
+  EXPECT_TRUE(GURL("https-so://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("HTTPS-SO://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_TRUE(GURL("HtTpS-So://foo.bar.com/").SchemeIsCryptographic());
+
+  EXPECT_FALSE(GURL("http://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_FALSE(GURL("ws://foo.bar.com/").SchemeIsCryptographic());
+  EXPECT_FALSE(GURL("http-so://foo.bar.com/").SchemeIsCryptographic());
+}
+
 TEST(GURLTest, SchemeIsBlob) {
   EXPECT_TRUE(GURL("BLOB://BAR/").SchemeIsBlob());
   EXPECT_TRUE(GURL("blob://bar/").SchemeIsBlob());
   EXPECT_FALSE(GURL("http://bar/").SchemeIsBlob());
+}
+
+TEST(GURLTest, SchemeIsSuborigin) {
+  EXPECT_TRUE(GURL("http-so://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_TRUE(GURL("HTTP-SO://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_TRUE(GURL("HtTp-So://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_FALSE(GURL("http://foo.bar.com/").SchemeIsSuborigin());
+
+  EXPECT_TRUE(GURL("https-so://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_TRUE(GURL("HTTPS-SO://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_TRUE(GURL("HtTpS-So://foo.bar.com/").SchemeIsSuborigin());
+  EXPECT_FALSE(GURL("https://foo.bar.com/").SchemeIsSuborigin());
 }
 
 TEST(GURLTest, ContentAndPathForNonStandardURLs) {

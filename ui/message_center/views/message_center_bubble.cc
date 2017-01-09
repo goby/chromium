@@ -4,6 +4,7 @@
 
 #include "ui/message_center/views/message_center_bubble.h"
 
+#include "base/macros.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/message_center/message_center_style.h"
 #include "ui/message_center/views/message_center_view.h"
@@ -59,16 +60,16 @@ void ContentsView::ChildPreferredSizeChanged(View* child) {
 // MessageCenterBubble /////////////////////////////////////////////////////////
 
 MessageCenterBubble::MessageCenterBubble(MessageCenter* message_center,
-                                         MessageCenterTray* tray,
-                                         bool first_item_has_no_margin)
+                                         MessageCenterTray* tray)
     : MessageBubbleBase(message_center, tray),
       message_center_view_(NULL),
-      initially_settings_visible_(false),
-      first_item_has_no_margin_(first_item_has_no_margin),
-      title_(l10n_util::GetStringUTF16(IDS_MESSAGE_CENTER_FOOTER_TITLE)) {
-}
+      initially_settings_visible_(false) {}
 
 MessageCenterBubble::~MessageCenterBubble() {
+  // Removs this from the widget observers just in case. MessageCenterBubble
+  // might be destoryed without calling its Widget's Close/CloseNow.
+  if (bubble_view() && bubble_view()->GetWidget())
+    bubble_view()->GetWidget()->RemoveObserver(this);
 }
 
 void MessageCenterBubble::SetSettingsVisible() {
@@ -86,7 +87,6 @@ views::TrayBubbleView::InitParams MessageCenterBubble::GetInitParams(
   init_params.max_width += kMarginBetweenItems * 2;
   init_params.max_height = max_height();
   init_params.can_activate = true;
-  init_params.first_item_has_no_margin = first_item_has_no_margin_;
   return init_params;
 }
 
@@ -95,13 +95,7 @@ void MessageCenterBubble::InitializeContents(
   set_bubble_view(new_bubble_view);
   bubble_view()->GetWidget()->AddObserver(this);
   message_center_view_ = new MessageCenterView(
-      message_center(),
-      tray(),
-      max_height(),
-      initially_settings_visible_,
-      false, /* MessageCenterBubble should be used only on ChromeOS.
-              Message center is never shown top down in ChromeOS. */
-      title_);
+      message_center(), tray(), max_height(), initially_settings_visible_);
   bubble_view()->AddChildView(new ContentsView(this, message_center_view_));
   // Resize the content of the bubble view to the given bubble size. This is
   // necessary in case of the bubble border forcing a bigger size then the
@@ -125,7 +119,8 @@ void MessageCenterBubble::UpdateBubbleView() {
 }
 
 void MessageCenterBubble::OnWidgetClosing(views::Widget* widget) {
-  bubble_view()->GetWidget()->RemoveObserver(this);
+  if (bubble_view() && bubble_view()->GetWidget())
+    bubble_view()->GetWidget()->RemoveObserver(this);
   if (message_center_view_)
     message_center_view_->SetIsClosing(true);
 }

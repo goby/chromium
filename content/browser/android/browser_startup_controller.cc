@@ -7,8 +7,11 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "content/browser/android/content_startup_flags.h"
+#include "ppapi/features/features.h"
 
 #include "jni/BrowserStartupController_jni.h"
+
+using base::android::JavaParamRef;
 
 namespace content {
 
@@ -20,6 +23,12 @@ bool BrowserMayStartAsynchronously() {
 void BrowserStartupComplete(int result) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_BrowserStartupController_browserStartupComplete(env, result);
+}
+
+bool ShouldStartGpuProcessOnBrowserStartup() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  return Java_BrowserStartupController_shouldStartGpuProcessOnBrowserStartup(
+      env);
 }
 
 bool RegisterBrowserStartupController(JNIEnv* env) {
@@ -49,7 +58,7 @@ static jboolean IsOfficialBuild(JNIEnv* env,
 
 static jboolean IsPluginEnabled(JNIEnv* env,
                                 const JavaParamRef<jclass>& clazz) {
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   return true;
 #else
   return false;

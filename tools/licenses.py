@@ -22,12 +22,11 @@ import sys
 
 # Paths from the root of the tree to directories to skip.
 PRUNE_PATHS = set([
-    # Same module occurs in crypto/third_party/nss and net/third_party/nss, so
-    # skip this one.
-    os.path.join('third_party','nss'),
-
     # Placeholder directory only, not third-party code.
     os.path.join('third_party','adobe'),
+
+    # Already covered by //third_party/android_tools.
+    os.path.join('third_party','android_tools_internal'),
 
     # Apache 2.0 license. See crbug.com/140478
     os.path.join('third_party','bidichecker'),
@@ -42,11 +41,13 @@ PRUNE_PATHS = set([
     os.path.join('build','secondary'),
     os.path.join('third_party','bison'),
     os.path.join('third_party','blanketjs'),
+    os.path.join('third_party','chromite'),
     os.path.join('third_party','cygwin'),
     os.path.join('third_party','gles2_conform'),
     os.path.join('third_party','gnu_binutils'),
     os.path.join('third_party','gold'),
     os.path.join('third_party','gperf'),
+    os.path.join('third_party','kasko'),
     os.path.join('third_party','lighttpd'),
     os.path.join('third_party','llvm'),
     os.path.join('third_party','llvm-build'),
@@ -55,15 +56,12 @@ PRUNE_PATHS = set([
     os.path.join('third_party','pefile'),
     os.path.join('third_party','perl'),
     os.path.join('third_party','psyco_win32'),
+    os.path.join('third_party','pyelftools'),
     os.path.join('third_party','pylib'),
     os.path.join('third_party','pywebsocket'),
-    os.path.join('third_party','qunit'),
-    os.path.join('third_party','sinonjs'),
     os.path.join('third_party','syzygy'),
-    os.path.join('tools', 'profile_chrome', 'third_party'),
 
-    # Chromium code in third_party.
-    os.path.join('third_party','fuzzymatch'),
+    # Chromium code.
     os.path.join('tools', 'swarming_client'),
 
     # Stuff pulled in from chrome-internal for official builds/tools.
@@ -85,6 +83,9 @@ PRUNE_PATHS = set([
 
     # For testing only, presents on some bots.
     os.path.join('isolate_deps_dir'),
+
+    # Overrides some WebRTC files, same license. Skip this one.
+    os.path.join('third_party', 'webrtc_overrides'),
 ])
 
 # Directories we don't scan through.
@@ -99,7 +100,6 @@ ADDITIONAL_PATHS = (
     os.path.join('chrome', 'test', 'chromeos', 'autotest'),
     os.path.join('chrome', 'test', 'data'),
     os.path.join('native_client'),
-    os.path.join('net', 'tools', 'spdyshark'),
     os.path.join('sdch', 'open-vcdiff'),
     os.path.join('testing', 'gmock'),
     os.path.join('testing', 'gtest'),
@@ -163,12 +163,6 @@ SPECIAL_CASES = {
         "URL": "http://code.google.com/p/pdfium/",
         "License": "BSD",
     },
-    os.path.join('third_party', 'pdfsqueeze'): {
-        "Name": "pdfsqueeze",
-        "URL": "http://code.google.com/p/pdfsqueeze/",
-        "License": "Apache 2.0",
-        "License File": "COPYING",
-    },
     os.path.join('third_party', 'ppapi'): {
         "Name": "ppapi",
         "URL": "http://code.google.com/p/ppapi/",
@@ -226,7 +220,7 @@ SPECIAL_CASES = {
         "URL": "http://www.netlib.org/fdlibm/",
         "License": "Freely Distributable",
         # Absolute path here is resolved as relative to the source root.
-        "License File" : "/v8/src/third_party/fdlibm/LICENSE",
+        "License File" : "/v8/LICENSE.fdlibm",
         "License Android Compatible" : "yes",
     },
     os.path.join('third_party', 'khronos_glcts'): {
@@ -243,11 +237,82 @@ SPECIAL_CASES = {
         "License": "Apache 2.0",
         "License File": "NOT_SHIPPED",
     },
+    os.path.join('third_party', 'swiftshader'): {
+        "Name": "SwiftShader",
+        "URL": "https://swiftshader.googlesource.com/SwiftShader",
+        "License": "Apache 2.0 and compatible licenses",
+        "License Android Compatible": "yes",
+        "License File": "/third_party/swiftshader/LICENSE.txt",
+    },
 }
 
 # Special value for 'License File' field used to indicate that the license file
 # should not be used in about:credits.
 NOT_SHIPPED = "NOT_SHIPPED"
+
+# Paths for libraries that we have checked are not shipped on iOS. These are
+# left out of the licenses file primarily because we don't want to cause a
+# firedrill due to someone thinking that Chrome for iOS is using LGPL code
+# when it isn't.
+# This is a temporary hack; the real solution is crbug.com/178215
+KNOWN_NON_IOS_LIBRARIES = set([
+    os.path.join('base', 'third_party', 'symbolize'),
+    os.path.join('base', 'third_party', 'xdg_mime'),
+    os.path.join('base', 'third_party', 'xdg_user_dirs'),
+    os.path.join('chrome', 'installer', 'mac', 'third_party', 'bsdiff'),
+    os.path.join('chrome', 'installer', 'mac', 'third_party', 'xz'),
+    os.path.join('chrome', 'test', 'data', 'third_party', 'kraken'),
+    os.path.join('chrome', 'test', 'data', 'third_party', 'spaceport'),
+    os.path.join('chrome', 'third_party', 'mock4js'),
+    os.path.join('chrome', 'third_party', 'mozilla_security_manager'),
+    os.path.join('third_party', 'WebKit'),
+    os.path.join('third_party', 'angle'),
+    os.path.join('third_party', 'apple_apsl'),
+    os.path.join('third_party', 'apple_sample_code'),
+    os.path.join('third_party', 'ashmem'),
+    os.path.join('third_party', 'bspatch'),
+    os.path.join('third_party', 'cacheinvalidation'),
+    os.path.join('third_party', 'cld'),
+    os.path.join('third_party', 'codesighs'),
+    os.path.join('third_party', 'flot'),
+    os.path.join('third_party', 'gtk+'),
+    os.path.join('third_party', 'iaccessible2'),
+    os.path.join('third_party', 'iccjpeg'),
+    os.path.join('third_party', 'isimpledom'),
+    os.path.join('third_party', 'jsoncpp'),
+    os.path.join('third_party', 'khronos'),
+    os.path.join('third_party', 'libXNVCtrl'),
+    os.path.join('third_party', 'libevent'),
+    os.path.join('third_party', 'libjpeg'),
+    os.path.join('third_party', 'libusb'),
+    os.path.join('third_party', 'libva'),
+    os.path.join('third_party', 'libxslt'),
+    os.path.join('third_party', 'lss'),
+    os.path.join('third_party', 'lzma_sdk'),
+    os.path.join('third_party', 'mesa'),
+    os.path.join('third_party', 'molokocacao'),
+    os.path.join('third_party', 'motemplate'),
+    os.path.join('third_party', 'mozc'),
+    os.path.join('third_party', 'mozilla'),
+    os.path.join('third_party', 'npapi'),
+    os.path.join('third_party', 'ots'),
+    os.path.join('third_party', 'ppapi'),
+    os.path.join('third_party', 'qcms'),
+    os.path.join('third_party', 're2'),
+    os.path.join('third_party', 'safe_browsing'),
+    os.path.join('third_party', 'sfntly'),
+    os.path.join('third_party', 'smhasher'),
+    os.path.join('third_party', 'sudden_motion_sensor'),
+    os.path.join('third_party', 'swiftshader'),
+    os.path.join('third_party', 'swig'),
+    os.path.join('third_party', 'talloc'),
+    os.path.join('third_party', 'tcmalloc'),
+    os.path.join('third_party', 'usb_ids'),
+    os.path.join('third_party', 'v8-i18n'),
+    os.path.join('third_party', 'wtl'),
+    os.path.join('third_party', 'yasm'),
+    os.path.join('v8', 'strongtalk'),
+])
 
 
 class LicenseError(Exception):
@@ -414,7 +479,8 @@ def ScanThirdPartyDirs(root=None):
     return len(errors) == 0
 
 
-def GenerateCredits(file_template_file, entry_template_file, output_file):
+def GenerateCredits(
+        file_template_file, entry_template_file, output_file, target_os):
     """Generate about:credits."""
 
     def EvaluateTemplate(template, env, escape=True):
@@ -447,6 +513,10 @@ def GenerateCredits(file_template_file, entry_template_file, output_file):
             continue
         if metadata['License File'] == NOT_SHIPPED:
             continue
+        if target_os == 'ios':
+            # Skip over files that are known not to be used on iOS.
+            if path in KNOWN_NON_IOS_LIBRARIES:
+                continue
         env = {
             'name': metadata['Name'],
             'url': metadata['URL'],
@@ -481,6 +551,8 @@ def main():
                         help='Template HTML to use for the license page.')
     parser.add_argument('--entry-template',
                         help='Template HTML to use for each license.')
+    parser.add_argument('--target-os',
+                        help='OS that this build is targeting.')
     parser.add_argument('command', choices=['help', 'scan', 'credits'])
     parser.add_argument('output_file', nargs='?')
     args = parser.parse_args()
@@ -490,7 +562,7 @@ def main():
             return 1
     elif args.command == 'credits':
         if not GenerateCredits(args.file_template, args.entry_template,
-                               args.output_file):
+                               args.output_file, args.target_os):
             return 1
     else:
         print __doc__

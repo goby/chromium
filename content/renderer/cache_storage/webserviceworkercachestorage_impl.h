@@ -5,11 +5,15 @@
 #ifndef CONTENT_RENDERER_SERVICE_WORKER_WEB_SERVICE_WORKER_CACHE_STORAGE_IMPL_H_
 #define CONTENT_RENDERER_SERVICE_WORKER_WEB_SERVICE_WORKER_CACHE_STORAGE_IMPL_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "content/child/thread_safe_sender.h"
 #include "third_party/WebKit/public/platform/WebString.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerCache.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerCacheError.h"
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerCacheStorage.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -27,19 +31,20 @@ class WebServiceWorkerCacheStorageImpl
     : public blink::WebServiceWorkerCacheStorage {
  public:
   WebServiceWorkerCacheStorageImpl(ThreadSafeSender* thread_safe_sender,
-                                   const GURL& origin);
+                                   const url::Origin& origin);
   ~WebServiceWorkerCacheStorageImpl() override;
 
   // From WebServiceWorkerCacheStorage:
-  void dispatchHas(CacheStorageCallbacks* callbacks,
+  void dispatchHas(std::unique_ptr<CacheStorageCallbacks> callbacks,
                    const blink::WebString& cacheName) override;
-  void dispatchOpen(CacheStorageWithCacheCallbacks* callbacks,
+  void dispatchOpen(std::unique_ptr<CacheStorageWithCacheCallbacks> callbacks,
                     const blink::WebString& cacheName) override;
-  void dispatchDelete(CacheStorageCallbacks* callbacks,
+  void dispatchDelete(std::unique_ptr<CacheStorageCallbacks> callbacks,
                       const blink::WebString& cacheName) override;
-  void dispatchKeys(CacheStorageKeysCallbacks* callbacks) override;
+  void dispatchKeys(
+      std::unique_ptr<CacheStorageKeysCallbacks> callbacks) override;
   void dispatchMatch(
-      CacheStorageMatchCallbacks* callbacks,
+      std::unique_ptr<CacheStorageMatchCallbacks> callbacks,
       const blink::WebServiceWorkerRequest& request,
       const blink::WebServiceWorkerCache::QueryParams& query_params) override;
 
@@ -48,7 +53,7 @@ class WebServiceWorkerCacheStorageImpl
   CacheStorageDispatcher* GetDispatcher() const;
 
   scoped_refptr<ThreadSafeSender> thread_safe_sender_;
-  const GURL origin_;
+  const url::Origin origin_;
 
   DISALLOW_COPY_AND_ASSIGN(WebServiceWorkerCacheStorageImpl);
 };

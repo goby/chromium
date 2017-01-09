@@ -7,19 +7,19 @@
 
 #include "core/html/canvas/CanvasContextCreationAttributes.h"
 #include "modules/webgl/WebGLContextAttributes.h"
-#include "public/platform/WebGraphicsContext3D.h"
+#include "public/platform/Platform.h"
 
 namespace blink {
 
-class Settings;
+WebGLContextAttributes toWebGLContextAttributes(
+    const CanvasContextCreationAttributes&);
 
-WebGLContextAttributes toWebGLContextAttributes(const CanvasContextCreationAttributes&);
+// Set up the attributes that can be used to create a GL context via the
+// Platform API.
+Platform::ContextAttributes toPlatformContextAttributes(
+    const CanvasContextCreationAttributes&,
+    unsigned webGLVersion);
 
-// Set up the attributes that can be used to initialize a WebGraphicsContext3D.
-// It's mostly based on WebGLContextAttributes, but may be adjusted based
-// on settings.
-WebGraphicsContext3D::Attributes toWebGraphicsContext3DAttributes(const WebGLContextAttributes&, const WebString&, Settings*, unsigned webGLVersion);
+}  // namespace blink
 
-} // namespace blink
-
-#endif // WebGLContextAttributeHelpers_h
+#endif  // WebGLContextAttributeHelpers_h

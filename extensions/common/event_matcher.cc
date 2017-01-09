@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/callback.h"
-
 #include "extensions/common/event_matcher.h"
 
+#include <utility>
+
+#include "base/callback.h"
 #include "extensions/common/event_filtering_info.h"
 
 namespace {
@@ -17,11 +18,9 @@ namespace extensions {
 
 const char kEventFilterServiceTypeKey[] = "serviceType";
 
-EventMatcher::EventMatcher(scoped_ptr<base::DictionaryValue> filter,
+EventMatcher::EventMatcher(std::unique_ptr<base::DictionaryValue> filter,
                            int routing_id)
-    : filter_(filter.Pass()),
-      routing_id_(routing_id) {
-}
+    : filter_(std::move(filter)), routing_id_(routing_id) {}
 
 EventMatcher::~EventMatcher() {
 }

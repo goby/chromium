@@ -6,6 +6,7 @@
 #define CONTENT_BROWSER_MESSAGE_PORT_MESSAGE_FILTER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/message_port_delegate.h"
@@ -18,7 +19,6 @@
 struct FrameMsg_PostMessage_Params;
 
 namespace content {
-struct TransferredMessagePort;
 
 // Filter for MessagePort related IPC messages (creating and destroying a
 // MessagePort, sending a message via a MessagePort etc).
@@ -42,14 +42,14 @@ class CONTENT_EXPORT MessagePortMessageFilter
   // MessagePortDelegate implementation.
   void SendMessage(
       int route_id,
-      const MessagePortMessage& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports) override;
+      const base::string16& message,
+      const std::vector<int>& sent_message_ports) override;
   void SendMessagesAreQueued(int route_id) override;
 
   // Updates message ports registered for |message_ports| and returns
   // new routing IDs for the updated ports via |new_routing_ids|.
   void UpdateMessagePortsWithNewRoutes(
-      const std::vector<TransferredMessagePort>& message_ports,
+      const std::vector<int>& message_ports,
       std::vector<int>* new_routing_ids);
 
   void RouteMessageEventWithMessagePorts(

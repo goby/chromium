@@ -5,34 +5,50 @@
 #ifndef COMPONENTS_AUTOFILL_CONTENT_RENDERER_PASSWORD_GENERATION_AGENT_H_
 #define COMPONENTS_AUTOFILL_CONTENT_RENDERER_PASSWORD_GENERATION_AGENT_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <utility>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
+#include "components/autofill/content/common/autofill_agent.mojom.h"
+#include "components/autofill/content/common/autofill_driver.mojom.h"
 #include "content/public/renderer/render_frame_observer.h"
+#include "mojo/public/cpp/bindings/binding.h"
 #include "third_party/WebKit/public/web/WebInputElement.h"
 #include "url/gurl.h"
 
-namespace blink {
-class WebDocument;
-}
-
 namespace autofill {
 
-struct FormData;
 struct PasswordForm;
+struct PasswordFormGenerationData;
 class PasswordAutofillAgent;
 
 // This class is responsible for controlling communication for password
 // generation between the browser (which shows the popup and generates
 // passwords) and WebKit (shows the generation icon in the password field).
-class PasswordGenerationAgent : public content::RenderFrameObserver {
+class PasswordGenerationAgent : public content::RenderFrameObserver,
+                                public mojom::PasswordGenerationAgent {
  public:
   PasswordGenerationAgent(content::RenderFrame* render_frame,
                           PasswordAutofillAgent* password_agent);
   ~PasswordGenerationAgent() override;
+
+  void BindRequest(mojom::PasswordGenerationAgentRequest request);
+
+  // mojom::PasswordGenerationAgent:
+  void FormNotBlacklisted(const PasswordForm& form) override;
+  void GeneratedPasswordAccepted(const base::string16& password) override;
+  void FoundFormsEligibleForGeneration(
+      const std::vector<PasswordFormGenerationData>& forms) override;
+  // Sets |generation_element_| to the focused password field and shows a
+  // generation popup at this field.
+  void UserTriggeredGeneratePassword() override;
+  // Enables the form classifier.
+  void AllowToRunFormClassifier() override;
 
   // Returns true if the field being changed is one where a generated password
   // is being offered. Updates the state of the popup if necessary.
@@ -52,9 +68,6 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
   // consider analyzing. Virtual so that it can be overriden during testing.
   virtual bool ShouldAnalyzeDocument() const;
 
-  // RenderViewObserver:
-  bool OnMessageReceived(const IPC::Message& message) override;
-
   // Use to force enable during testing.
   void set_enabled(bool enabled) { enabled_ = enabled; }
 
@@ -66,6 +79,7 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
     AccountCreationFormData(
         linked_ptr<PasswordForm> form,
         std::vector<blink::WebInputElement> password_elements);
+    AccountCreationFormData(const AccountCreationFormData& other);
     ~AccountCreationFormData();
   };
 
@@ -73,12 +87,12 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
 
   // RenderFrameObserver:
   void DidFinishDocumentLoad() override;
+  void DidFinishLoad() override;
+  void OnDestruct() override;
 
-  // Message handlers.
-  void OnFormNotBlacklisted(const PasswordForm& form);
-  void OnPasswordAccepted(const base::string16& password);
-  void OnAccountCreationFormsDetected(
-      const std::vector<autofill::FormData>& forms);
+  const mojom::PasswordManagerDriverPtr& GetPasswordManagerDriver();
+
+  const mojom::PasswordManagerClientAssociatedPtr& GetPasswordManagerClient();
 
   // Helper function that will try and populate |password_elements_| and
   // |possible_account_creation_form_|.
@@ -98,6 +112,18 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
   // Hides a password generation popup if one exists.
   void HidePopup();
 
+  // Runs HTML parsing based classifier and saves its outcome to proto.
+  // TODO(crbug.com/621442): Remove client-side form classifier when server-side
+  // classifier is ready.
+  void RunFormClassifierAndSaveVote(const blink::WebFormElement& web_form,
+                                    const PasswordForm& form);
+
+  // Creates a password form to presave a generated password. It copies behavior
+  // of CreatePasswordFormFromWebForm/FromUnownedInputElements, but takes
+  // |password_value| from |generation_element_| and empties |username_value|.
+  // If a form creating is failed, returns an empty unique_ptr.
+  std::unique_ptr<PasswordForm> CreatePasswordFormToPresave();
+
   // Stores forms that are candidates for account creation.
   AccountCreationFormDataList possible_account_creation_forms_;
 
@@ -107,19 +133,27 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
   std::vector<GURL> not_blacklisted_password_form_origins_;
 
   // Stores each password form for which the Autofill server classifies one of
-  // the form's fields as an ACCOUNT_CREATION_PASSWORD. These forms will
-  // not be sent if the feature is disabled.
-  std::vector<autofill::FormData> generation_enabled_forms_;
+  // the form's fields as an ACCOUNT_CREATION_PASSWORD or NEW_PASSWORD. These
+  // forms will not be sent if the feature is disabled.
+  std::vector<autofill::PasswordFormGenerationData> generation_enabled_forms_;
 
   // Data for form which generation is allowed on.
-  scoped_ptr<AccountCreationFormData> generation_form_data_;
+  std::unique_ptr<AccountCreationFormData> generation_form_data_;
 
   // Element where we want to trigger password generation UI.
   blink::WebInputElement generation_element_;
 
+  // Password element that had focus last. Since Javascript could change focused
+  // element after the user triggered a generation request, it is better to save
+  // the last focused password element.
+  blink::WebInputElement last_focused_password_element_;
+
   // If the password field at |generation_element_| contains a generated
   // password.
   bool password_is_generated_;
+
+  // True if password generation was manually triggered.
+  bool is_manually_triggered_;
 
   // True if a password was generated and the user edited it. Used for UMA
   // stats.
@@ -138,9 +172,16 @@ class PasswordGenerationAgent : public content::RenderFrameObserver {
   // If this feature is enabled. Controlled by Finch.
   bool enabled_;
 
+  // If the form classifier should run.
+  bool form_classifier_enabled_;
+
   // Unowned pointer. Used to notify PassowrdAutofillAgent when values
   // in password fields are updated.
   PasswordAutofillAgent* password_agent_;
+
+  mojom::PasswordManagerClientAssociatedPtr password_manager_client_;
+
+  mojo::Binding<mojom::PasswordGenerationAgent> binding_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordGenerationAgent);
 };

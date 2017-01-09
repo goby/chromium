@@ -4,11 +4,14 @@
 
 #include "components/autofill/core/browser/address_i18n.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/guid.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/field_types.h"
@@ -58,14 +61,14 @@ TEST(AddressI18nTest, FieldTypeMirrorConversions) {
     {false, NAME_FULL, RECIPIENT},
   };
 
-  for (size_t i = 0; i < arraysize(kTestData); ++i) {
+  for (const auto& test_data : kTestData) {
     AddressField address_field;
-    EXPECT_TRUE(FieldForType(kTestData[i].server_field, &address_field));
-    EXPECT_EQ(kTestData[i].address_field, address_field);
+    EXPECT_TRUE(FieldForType(test_data.server_field, &address_field));
+    EXPECT_EQ(test_data.address_field, address_field);
 
     ServerFieldType server_field =
-        TypeForField(kTestData[i].address_field, kTestData[i].billing);
-    EXPECT_EQ(kTestData[i].server_field, server_field);
+        TypeForField(test_data.address_field, test_data.billing);
+    EXPECT_EQ(test_data.server_field, server_field);
   }
 }
 
@@ -80,10 +83,10 @@ TEST(AddressI18nTest, FieldTypeUnidirectionalConversions) {
     {ADDRESS_HOME_LINE2, STREET_ADDRESS},
   };
 
-  for (size_t i = 0; i < arraysize(kTestData); ++i) {
+  for (const auto& test_data : kTestData) {
     AddressField actual_address_field;
-    FieldForType(kTestData[i].server_field, &actual_address_field);
-    EXPECT_EQ(kTestData[i].expected_address_field, actual_address_field);
+    FieldForType(test_data.server_field, &actual_address_field);
+    EXPECT_EQ(test_data.expected_address_field, actual_address_field);
   }
 }
 
@@ -107,7 +110,7 @@ TEST(AddressI18nTest, CreateAddressDataFromAutofillProfile) {
                        "US",
                        "16502111111");
   profile.set_language_code("en");
-  scoped_ptr<AddressData> actual =
+  std::unique_ptr<AddressData> actual =
       CreateAddressDataFromAutofillProfile(profile, "en_US");
 
   AddressData expected;

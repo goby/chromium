@@ -4,8 +4,13 @@
 
 #include "components/variations/study_filtering.h"
 
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
 #include <vector>
 
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "components/variations/processed_study.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -15,7 +20,7 @@ namespace variations {
 namespace {
 
 // Converts |time| to Study proto format.
-int64 TimeToProtoTime(const base::Time& time) {
+int64_t TimeToProtoTime(const base::Time& time) {
   return (time - base::Time::UnixEpoch()).InSeconds();
 }
 
@@ -115,7 +120,7 @@ TEST(VariationsStudyFilteringTest, CheckStudyFormFactor) {
     }
 
     if (i < arraysize(form_factors)) {
-      const int index = arraysize(form_factors) - i - 1;;
+      const int index = arraysize(form_factors) - i - 1;
       filter.add_form_factor(form_factors[index]);
       form_factor_added[index] = true;
     }
@@ -125,17 +130,27 @@ TEST(VariationsStudyFilteringTest, CheckStudyFormFactor) {
 TEST(VariationsStudyFilteringTest, CheckStudyLocale) {
   struct {
     const char* filter_locales;
+    const char* exclude_locales;
     bool en_us_result;
     bool en_ca_result;
     bool fr_result;
   } test_cases[] = {
-    {"en-US", true, false, false},
-    {"en-US,en-CA,fr", true, true, true},
-    {"en-US,en-CA,en-GB", true, true, false},
-    {"en-GB,en-CA,en-US", true, true, false},
-    {"ja,kr,vi", false, false, false},
-    {"fr-CA", false, false, false},
-    {"", true, true, true},
+      {"en-US", "", true, false, false},
+      // Tests that locale overrides exclude_locale, when both are given. This
+      // should not occur in practice though.
+      {"en-US", "en-US", true, false, false},
+      {"en-US,en-CA,fr", "", true, true, true},
+      {"en-US,en-CA,en-GB", "", true, true, false},
+      {"en-GB,en-CA,en-US", "", true, true, false},
+      {"ja,kr,vi", "", false, false, false},
+      {"fr-CA", "", false, false, false},
+      {"", "", true, true, true},
+      {"", "en-US", false, true, true},
+      {"", "en-US,en-CA,fr", false, false, false},
+      {"", "en-US,en-CA,en-GB", false, false, true},
+      {"", "en-GB,en-CA,en-US", false, false, true},
+      {"", "ja,kr,vi", true, true, true},
+      {"", "fr-CA", true, true, true},
   };
 
   for (size_t i = 0; i < arraysize(test_cases); ++i) {
@@ -144,6 +159,10 @@ TEST(VariationsStudyFilteringTest, CheckStudyLocale) {
              test_cases[i].filter_locales, ",",
              base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL))
       filter.add_locale(locale);
+    for (const std::string& exclude_locale :
+         base::SplitString(test_cases[i].exclude_locales, ",",
+                           base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL))
+      filter.add_exclude_locale(exclude_locale);
     EXPECT_EQ(test_cases[i].en_us_result,
               internal::CheckStudyLocale(filter, "en-US"));
     EXPECT_EQ(test_cases[i].en_ca_result,
@@ -275,8 +294,8 @@ TEST(VariationsStudyFilteringTest, CheckStudyVersion) {
 
   for (size_t i = 0; i < arraysize(min_test_cases); ++i) {
     filter.set_min_version(min_test_cases[i].min_version);
-    const bool result =
-        internal::CheckStudyVersion(filter, Version(min_test_cases[i].version));
+    const bool result = internal::CheckStudyVersion(
+        filter, base::Version(min_test_cases[i].version));
     EXPECT_EQ(min_test_cases[i].expected_result, result) <<
         "Min. version case " << i << " failed!";
   }
@@ -284,8 +303,8 @@ TEST(VariationsStudyFilteringTest, CheckStudyVersion) {
 
   for (size_t i = 0; i < arraysize(max_test_cases); ++i) {
     filter.set_max_version(max_test_cases[i].max_version);
-    const bool result =
-        internal::CheckStudyVersion(filter, Version(max_test_cases[i].version));
+    const bool result = internal::CheckStudyVersion(
+        filter, base::Version(max_test_cases[i].version));
     EXPECT_EQ(max_test_cases[i].expected_result, result) <<
         "Max version case " << i << " failed!";
   }
@@ -297,16 +316,14 @@ TEST(VariationsStudyFilteringTest, CheckStudyVersion) {
       filter.set_max_version(max_test_cases[j].max_version);
 
       if (!min_test_cases[i].expected_result) {
-        const bool result =
-            internal::CheckStudyVersion(
-                filter, Version(min_test_cases[i].version));
+        const bool result = internal::CheckStudyVersion(
+            filter, base::Version(min_test_cases[i].version));
         EXPECT_FALSE(result) << "Case " << i << "," << j << " failed!";
       }
 
       if (!max_test_cases[j].expected_result) {
-        const bool result =
-            internal::CheckStudyVersion(
-                filter, Version(max_test_cases[j].version));
+        const bool result = internal::CheckStudyVersion(
+            filter, base::Version(max_test_cases[j].version));
         EXPECT_FALSE(result) << "Case " << i << "," << j << " failed!";
       }
     }

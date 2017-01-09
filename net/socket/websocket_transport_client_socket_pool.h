@@ -7,20 +7,24 @@
 
 #include <list>
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "net/base/net_export.h"
-#include "net/log/net_log.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_pool.h"
 #include "net/socket/client_socket_pool_base.h"
 #include "net/socket/transport_client_socket_pool.h"
+
+namespace base {
+class DictionaryValue;
+}
 
 namespace net {
 
@@ -43,6 +47,7 @@ class NET_EXPORT_PRIVATE WebSocketTransportConnectJob : public ConnectJob {
   WebSocketTransportConnectJob(
       const std::string& group_name,
       RequestPriority priority,
+      ClientSocketPool::RespectLimits respect_limits,
       const scoped_refptr<TransportSocketParams>& params,
       base::TimeDelta timeout_duration,
       const CompletionCallback& callback,
@@ -51,7 +56,7 @@ class NET_EXPORT_PRIVATE WebSocketTransportConnectJob : public ConnectJob {
       ClientSocketHandle* handle,
       Delegate* delegate,
       NetLog* pool_net_log,
-      const BoundNetLog& request_net_log);
+      const NetLogWithSource& request_net_log);
   ~WebSocketTransportConnectJob() override;
 
   // Unlike normal socket pools, the WebSocketTransportClientPool uses
@@ -61,19 +66,29 @@ class NET_EXPORT_PRIVATE WebSocketTransportConnectJob : public ConnectJob {
   // Stash the callback from RequestSocket() here for convenience.
   const CompletionCallback& callback() const { return callback_; }
 
-  const BoundNetLog& request_net_log() const { return request_net_log_; }
+  const NetLogWithSource& request_net_log() const { return request_net_log_; }
 
   // ConnectJob methods.
   LoadState GetLoadState() const override;
 
  private:
   friend class WebSocketTransportConnectSubJob;
-  friend class TransportConnectJobHelper;
   friend class WebSocketEndpointLockManager;
+
+  enum State {
+    STATE_RESOLVE_HOST,
+    STATE_RESOLVE_HOST_COMPLETE,
+    STATE_TRANSPORT_CONNECT,
+    STATE_TRANSPORT_CONNECT_COMPLETE,
+    STATE_NONE,
+  };
 
   // Although it is not strictly necessary, it makes the code simpler if each
   // subjob knows what type it is.
   enum SubJobType { SUB_JOB_IPV4, SUB_JOB_IPV6 };
+
+  void OnIOComplete(int result);
+  int DoLoop(int result);
 
   int DoResolveHost();
   int DoResolveHostComplete(int result);
@@ -91,20 +106,26 @@ class NET_EXPORT_PRIVATE WebSocketTransportConnectJob : public ConnectJob {
   // Otherwise, it returns a net error code.
   int ConnectInternal() override;
 
-  TransportConnectJobHelper helper_;
+  scoped_refptr<TransportSocketParams> params_;
+  HostResolver* resolver_;
+  std::unique_ptr<HostResolver::Request> request_;
+  ClientSocketFactory* const client_socket_factory_;
 
+  State next_state_;
+
+  AddressList addresses_;
   // The addresses are divided into IPv4 and IPv6, which are performed partially
   // in parallel. If the list of IPv6 addresses is non-empty, then the IPv6 jobs
   // go first, followed after |kIPv6FallbackTimerInMs| by the IPv4
   // addresses. First sub-job to establish a connection wins.
-  scoped_ptr<WebSocketTransportConnectSubJob> ipv4_job_;
-  scoped_ptr<WebSocketTransportConnectSubJob> ipv6_job_;
+  std::unique_ptr<WebSocketTransportConnectSubJob> ipv4_job_;
+  std::unique_ptr<WebSocketTransportConnectSubJob> ipv6_job_;
 
   base::OneShotTimer fallback_timer_;
-  TransportConnectJobHelper::ConnectionLatencyHistogram race_result_;
+  TransportConnectJob::RaceResult race_result_;
   ClientSocketHandle* const handle_;
   CompletionCallback callback_;
-  BoundNetLog request_net_log_;
+  NetLogWithSource request_net_log_;
 
   bool had_ipv4_;
   bool had_ipv6_;
@@ -134,17 +155,18 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
   int RequestSocket(const std::string& group_name,
                     const void* resolve_info,
                     RequestPriority priority,
+                    RespectLimits respect_limits,
                     ClientSocketHandle* handle,
                     const CompletionCallback& callback,
-                    const BoundNetLog& net_log) override;
+                    const NetLogWithSource& net_log) override;
   void RequestSockets(const std::string& group_name,
                       const void* params,
                       int num_sockets,
-                      const BoundNetLog& net_log) override;
+                      const NetLogWithSource& net_log) override;
   void CancelRequest(const std::string& group_name,
                      ClientSocketHandle* handle) override;
   void ReleaseSocket(const std::string& group_name,
-                     scoped_ptr<StreamSocket> socket,
+                     std::unique_ptr<StreamSocket> socket,
                      int id) override;
   void FlushWithError(int error) override;
   void CloseIdleSockets() override;
@@ -152,7 +174,7 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
   int IdleSocketCountInGroup(const std::string& group_name) const override;
   LoadState GetLoadState(const std::string& group_name,
                          const ClientSocketHandle* handle) const override;
-  scoped_ptr<base::DictionaryValue> GetInfoAsValue(
+  std::unique_ptr<base::DictionaryValue> GetInfoAsValue(
       const std::string& name,
       const std::string& type,
       bool include_nested_pools) const override;
@@ -182,15 +204,18 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
                    RequestPriority priority,
                    ClientSocketHandle* handle,
                    const CompletionCallback& callback,
-                   const BoundNetLog& net_log);
+                   const NetLogWithSource& net_log);
+    StalledRequest(const StalledRequest& other);
     ~StalledRequest();
     const scoped_refptr<TransportSocketParams> params;
     const RequestPriority priority;
     ClientSocketHandle* const handle;
     const CompletionCallback callback;
-    const BoundNetLog net_log;
+    const NetLogWithSource net_log;
   };
+
   friend class ConnectJobDelegate;
+
   typedef std::map<const ClientSocketHandle*, WebSocketTransportConnectJob*>
       PendingConnectsMap;
   // This is a list so that we can remove requests from the middle, and also
@@ -200,6 +225,10 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
   typedef std::map<const ClientSocketHandle*, StalledRequestQueue::iterator>
       StalledRequestMap;
 
+  // Tries to hand out the socket connected by |job|. |result| must be (async)
+  // result of WebSocketTransportConnectJob::Connect(). Returns true iff it has
+  // handed out a socket.
+  bool TryHandOutSocket(int result, WebSocketTransportConnectJob* job);
   void OnConnectJobComplete(int result, WebSocketTransportConnectJob* job);
   void InvokeUserCallbackLater(ClientSocketHandle* handle,
                                const CompletionCallback& callback,
@@ -208,12 +237,12 @@ class NET_EXPORT_PRIVATE WebSocketTransportClientSocketPool
                           const CompletionCallback& callback,
                           int rv);
   bool ReachedMaxSocketsLimit() const;
-  void HandOutSocket(scoped_ptr<StreamSocket> socket,
+  void HandOutSocket(std::unique_ptr<StreamSocket> socket,
                      const LoadTimingInfo::ConnectTiming& connect_timing,
                      ClientSocketHandle* handle,
-                     const BoundNetLog& net_log);
+                     const NetLogWithSource& net_log);
   void AddJob(ClientSocketHandle* handle,
-              scoped_ptr<WebSocketTransportConnectJob> connect_job);
+              std::unique_ptr<WebSocketTransportConnectJob> connect_job);
   bool DeleteJob(ClientSocketHandle* handle);
   const WebSocketTransportConnectJob* LookupConnectJob(
       const ClientSocketHandle* handle) const;

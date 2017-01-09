@@ -5,7 +5,6 @@
 #ifndef COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_PASSWORD_MANAGER_UI_H_
 #define COMPONENTS_PASSWORD_MANAGER_CORE_COMMON_PASSWORD_MANAGER_UI_H_
 
-#include "base/basictypes.h"
 
 namespace password_manager {
 
@@ -37,6 +36,9 @@ enum State {
   // The user submitted a form that we consider to be a change password form.
   // Chrome needs to ask the user to confirm password updating.
   PENDING_PASSWORD_UPDATE_STATE,
+
+  // The user was prompted to sign in to Chrome after saving a password.
+  CHROME_SIGN_IN_PROMO_STATE,
 };
 
 }  // namespace ui

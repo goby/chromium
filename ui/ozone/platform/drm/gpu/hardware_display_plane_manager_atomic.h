@@ -5,13 +5,14 @@
 #ifndef UI_OZONE_PLATFORM_DRM_GPU_HARDWARE_DISPLAY_PLANE_MANAGER_ATOMIC_H_
 #define UI_OZONE_PLATFORM_DRM_GPU_HARDWARE_DISPLAY_PLANE_MANAGER_ATOMIC_H_
 
-#include "ui/ozone/ozone_export.h"
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "ui/ozone/platform/drm/gpu/hardware_display_plane_manager.h"
 
 namespace ui {
 
-class OZONE_EXPORT HardwareDisplayPlaneManagerAtomic
-    : public HardwareDisplayPlaneManager {
+class HardwareDisplayPlaneManagerAtomic : public HardwareDisplayPlaneManager {
  public:
   HardwareDisplayPlaneManagerAtomic();
   ~HardwareDisplayPlaneManagerAtomic() override;
@@ -28,7 +29,7 @@ class OZONE_EXPORT HardwareDisplayPlaneManagerAtomic
                     const gfx::Rect& src_rect,
                     CrtcController* crtc) override;
 
-  scoped_ptr<HardwareDisplayPlane> CreatePlane(
+  std::unique_ptr<HardwareDisplayPlane> CreatePlane(
       uint32_t plane_id,
       uint32_t possible_crtcs) override;
 

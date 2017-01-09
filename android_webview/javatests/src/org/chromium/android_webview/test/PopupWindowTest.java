@@ -9,6 +9,7 @@ import android.test.suitebuilder.annotation.SmallTest;
 import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.test.util.CommonResources;
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.content.browser.ContentViewCore;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
@@ -67,6 +68,7 @@ public class PopupWindowTest extends AwTestBase {
 
     @SmallTest
     @Feature({"AndroidWebView"})
+    @RetryOnFailure
     public void testOnPageFinishedCalledOnDomModificationAfterNavigation() throws Throwable {
         final String popupPath = "/popup.html";
         final String parentPageHtml = CommonResources.makeHtmlPageFrom("", "<script>"
@@ -77,19 +79,28 @@ public class PopupWindowTest extends AwTestBase {
                         + "  window.popupWindow.document.body.innerHTML = 'Hello from the parent!';"
                         + "}</script>");
 
+        final String popupPageHtml = CommonResources.makeHtmlPageFrom(
+                "<title>" + POPUP_TITLE + "</title>",
+                "This is a popup window");
+
         triggerPopup(mParentContents, mParentContentsClient, mWebServer, parentPageHtml,
-                null, popupPath, "tryOpenWindow()");
+                popupPageHtml, popupPath, "tryOpenWindow()");
+        PopupInfo popupInfo = connectPendingPopup(mParentContents);
+        assertEquals(POPUP_TITLE, getTitleOnUiThread(popupInfo.popupContents));
+
         TestCallbackHelperContainer.OnPageFinishedHelper onPageFinishedHelper =
-                connectPendingPopup(mParentContents).popupContentsClient.getOnPageFinishedHelper();
+                popupInfo.popupContentsClient.getOnPageFinishedHelper();
         final int onPageFinishedCallCount = onPageFinishedHelper.getCallCount();
+
         executeJavaScriptAndWaitForResult(mParentContents, mParentContentsClient,
                 "modifyDomOfPopup()");
+        // Test that |waitForCallback| does not time out.
         onPageFinishedHelper.waitForCallback(onPageFinishedCallCount);
-        assertEquals("about:blank", onPageFinishedHelper.getUrl());
     }
 
     @SmallTest
     @Feature({"AndroidWebView"})
+    @RetryOnFailure
     public void testPopupWindowTextHandle() throws Throwable {
         final String popupPath = "/popup.html";
         final String parentPageHtml = CommonResources.makeHtmlPageFrom("", "<script>"
@@ -116,7 +127,8 @@ public class PopupWindowTest extends AwTestBase {
         assertTrue(runTestOnUiThreadAndGetResult(new Callable<Boolean>() {
             @Override
             public Boolean call() throws Exception {
-                return popupContents.getContentViewCore().hasSelection();
+                return popupContents.getContentViewCore()
+                        .getSelectionPopupControllerForTesting().hasSelection();
             }
         }));
 
@@ -132,21 +144,21 @@ public class PopupWindowTest extends AwTestBase {
     }
 
     // Copied from imeTest.java.
-    private void assertWaitForSelectActionBarStatus(final boolean show, final ContentViewCore cvc)
+    private void assertWaitForSelectActionBarStatus(boolean show, final ContentViewCore cvc)
             throws InterruptedException {
-        CriteriaHelper.pollForUIThreadCriteria(new Criteria() {
+        CriteriaHelper.pollUiThread(Criteria.equals(show, new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                return show == cvc.isSelectActionBarShowing();
+            public Boolean call() {
+                return cvc.isSelectActionBarShowing();
             }
-        });
+        }));
     }
 
     private void hideSelectActionMode(final ContentViewCore cvc) {
         getInstrumentation().runOnMainSync(new Runnable() {
             @Override
             public void run() {
-                cvc.hideSelectActionMode();
+                cvc.destroySelectActionMode();
             }
         });
     }

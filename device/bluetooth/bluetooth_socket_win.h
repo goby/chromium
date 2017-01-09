@@ -6,9 +6,12 @@
 #define DEVICE_BLUETOOTH_BLUETOOTH_SOCKET_WIN_H_
 
 #include <WinSock2.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_service_record_win.h"
@@ -77,20 +80,20 @@ class BluetoothSocketWin : public BluetoothSocketNet {
   void OnAcceptOnSocketThread(const AcceptCompletionCallback& success_callback,
                               const ErrorCompletionCallback& error_callback,
                               int accept_result);
-  void OnAcceptOnUI(scoped_ptr<net::TCPSocket> accept_socket,
+  void OnAcceptOnUI(std::unique_ptr<net::TCPSocket> accept_socket,
                     const net::IPEndPoint& peer_address,
                     const AcceptCompletionCallback& success_callback,
                     const ErrorCompletionCallback& error_callback);
 
   std::string device_address_;
   bool supports_rfcomm_;
-  uint8 rfcomm_channel_;
+  uint8_t rfcomm_channel_;
   BTH_ADDR bth_addr_;
 
   // Data members below are only used when listening.
   scoped_refptr<device::BluetoothAdapter> adapter_;
-  scoped_ptr<ServiceRegData> service_reg_data_;
-  scoped_ptr<net::TCPSocket> accept_socket_;
+  std::unique_ptr<ServiceRegData> service_reg_data_;
+  std::unique_ptr<net::TCPSocket> accept_socket_;
   net::IPEndPoint accept_address_;
 
   DISALLOW_COPY_AND_ASSIGN(BluetoothSocketWin);

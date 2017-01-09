@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "ppapi/proxy/video_encoder_resource.h"
+
+#include <utility>
+
+#include "base/memory/ptr_util.h"
 #include "base/memory/shared_memory.h"
 #include "base/numerics/safe_conversions.h"
 #include "ppapi/c/pp_array_output.h"
 #include "ppapi/proxy/ppapi_messages.h"
-#include "ppapi/proxy/video_encoder_resource.h"
 #include "ppapi/proxy/video_frame_resource.h"
 #include "ppapi/shared_impl/array_writer.h"
 #include "ppapi/shared_impl/media_stream_buffer.h"
@@ -55,10 +59,10 @@ std::vector<PP_VideoProfileDescription_0_1> PP_VideoProfileDescriptionTo_0_1(
 
 }  // namespace
 
-VideoEncoderResource::ShmBuffer::ShmBuffer(uint32_t id,
-                                           scoped_ptr<base::SharedMemory> shm)
-    : id(id), shm(shm.Pass()) {
-}
+VideoEncoderResource::ShmBuffer::ShmBuffer(
+    uint32_t id,
+    std::unique_ptr<base::SharedMemory> shm)
+    : id(id), shm(std::move(shm)) {}
 
 VideoEncoderResource::ShmBuffer::~ShmBuffer() {
 }
@@ -347,8 +351,7 @@ void VideoEncoderResource::OnPluginMsgGetVideoFramesReply(
 
   if (!buffer_manager_.SetBuffers(
           frame_count, frame_length,
-          make_scoped_ptr(new base::SharedMemory(buffer_handle, false)),
-          true)) {
+          base::MakeUnique<base::SharedMemory>(buffer_handle, false), true)) {
     NotifyError(PP_ERROR_FAILED);
     return;
   }
@@ -394,11 +397,11 @@ void VideoEncoderResource::OnPluginMsgBitstreamBuffers(
   }
 
   for (uint32_t i = 0; i < shm_handles.size(); ++i) {
-    scoped_ptr<base::SharedMemory> shm(
+    std::unique_ptr<base::SharedMemory> shm(
         new base::SharedMemory(shm_handles[i], true));
     CHECK(shm->Map(buffer_length));
 
-    ShmBuffer* buffer = new ShmBuffer(i, shm.Pass());
+    ShmBuffer* buffer = new ShmBuffer(i, std::move(shm));
     shm_buffers_.push_back(buffer);
     bitstream_buffer_map_.insert(
         std::make_pair(buffer->shm->memory(), buffer->id));

@@ -4,9 +4,9 @@
 
 #include "chrome/browser/notifications/login_state_notification_blocker_chromeos.h"
 
+#include "ash/common/system/system_notifier.h"
+#include "ash/common/wm_shell.h"
 #include "ash/root_window_controller.h"
-#include "ash/shell.h"
-#include "ash/system/system_notifier.h"
 #include "ash/wm/window_properties.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "content/public/browser/notification_service.h"
@@ -20,8 +20,11 @@ LoginStateNotificationBlockerChromeOS::LoginStateNotificationBlockerChromeOS(
       locked_(false),
       observing_(true) {
   // This class is created in the ctor of NotificationUIManager which is created
-  // when a notification is created, so ash::Shell should be initialized.
-  ash::Shell::GetInstance()->AddShellObserver(this);
+  // when a notification is created, so ash::Shell should be initialized, except
+  // when running as a mus client (ash::Shell is not initialized when that is
+  // the case).
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->AddShellObserver(this);
 
   // LoginState may not exist in some tests.
   if (chromeos::LoginState::IsInitialized())
@@ -36,15 +39,15 @@ LoginStateNotificationBlockerChromeOS::
   if (chromeos::LoginState::IsInitialized())
     chromeos::LoginState::Get()->RemoveObserver(this);
   if (observing_) {
-    if (ash::Shell::HasInstance())
-      ash::Shell::GetInstance()->RemoveShellObserver(this);
+    if (ash::WmShell::HasInstance())
+      ash::WmShell::Get()->RemoveShellObserver(this);
     chromeos::UserAddingScreen::Get()->RemoveObserver(this);
   }
 }
 
 bool LoginStateNotificationBlockerChromeOS::ShouldShowNotificationAsPopup(
-    const message_center::NotifierId& notifier_id) const {
-  if (ash::system_notifier::ShouldAlwaysShowPopups(notifier_id))
+    const message_center::Notification& notification) const {
+  if (ash::system_notifier::ShouldAlwaysShowPopups(notification.notifier_id()))
     return true;
 
   if (locked_)
@@ -65,7 +68,8 @@ void LoginStateNotificationBlockerChromeOS::OnLockStateChanged(bool locked) {
 }
 
 void LoginStateNotificationBlockerChromeOS::OnAppTerminating() {
-  ash::Shell::GetInstance()->RemoveShellObserver(this);
+  if (ash::WmShell::HasInstance())
+    ash::WmShell::Get()->RemoveShellObserver(this);
   chromeos::UserAddingScreen::Get()->RemoveObserver(this);
   observing_ = false;
 }

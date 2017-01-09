@@ -4,16 +4,21 @@
 
 #include "remoting/client/software_video_renderer.h"
 
+#include <stdint.h>
+
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/scoped_vector.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/threading/thread.h"
-#include "remoting/client/frame_consumer.h"
+#include "remoting/client/client_context.h"
 #include "remoting/codec/video_encoder_verbatim.h"
 #include "remoting/proto/video.pb.h"
+#include "remoting/protocol/frame_consumer.h"
 #include "remoting/protocol/session_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
@@ -27,12 +32,12 @@ namespace {
 const int kFrameWidth = 200;
 const int kFrameHeight = 200;
 
-class TestFrameConsumer : public FrameConsumer {
+class TestFrameConsumer : public protocol::FrameConsumer {
  public:
   TestFrameConsumer() {}
   ~TestFrameConsumer() override {}
 
-  scoped_ptr<DesktopFrame> WaitForNextFrame(
+  std::unique_ptr<DesktopFrame> WaitForNextFrame(
       base::Closure* out_done_callback) {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
     frame_run_loop_.reset(new base::RunLoop());
@@ -40,20 +45,20 @@ class TestFrameConsumer : public FrameConsumer {
     frame_run_loop_.reset();
     *out_done_callback = last_frame_done_callback_;
     last_frame_done_callback_.Reset();
-    return last_frame_.Pass();
+    return std::move(last_frame_);
   }
 
   // FrameConsumer interface.
-  scoped_ptr<DesktopFrame> AllocateFrame(
+  std::unique_ptr<DesktopFrame> AllocateFrame(
       const webrtc::DesktopSize& size) override {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
-    return make_scoped_ptr(new webrtc::BasicDesktopFrame(size));
+    return base::MakeUnique<webrtc::BasicDesktopFrame>(size);
   }
 
-  void DrawFrame(scoped_ptr<DesktopFrame> frame,
+  void DrawFrame(std::unique_ptr<DesktopFrame> frame,
                  const base::Closure& done) override {
     EXPECT_TRUE(thread_checker_.CalledOnValidThread());
-    last_frame_ = frame.Pass();
+    last_frame_ = std::move(frame);
     last_frame_done_callback_ = done;
     frame_run_loop_->Quit();
   }
@@ -66,14 +71,14 @@ class TestFrameConsumer : public FrameConsumer {
  private:
   base::ThreadChecker thread_checker_;
 
-  scoped_ptr<base::RunLoop> frame_run_loop_;
+  std::unique_ptr<base::RunLoop> frame_run_loop_;
 
-  scoped_ptr<DesktopFrame> last_frame_;
+  std::unique_ptr<DesktopFrame> last_frame_;
   base::Closure last_frame_done_callback_;
 };
 
-scoped_ptr<DesktopFrame> CreateTestFrame(int index) {
-  scoped_ptr<DesktopFrame> frame(new webrtc::BasicDesktopFrame(
+std::unique_ptr<DesktopFrame> CreateTestFrame(int index) {
+  std::unique_ptr<DesktopFrame> frame(new webrtc::BasicDesktopFrame(
       webrtc::DesktopSize(kFrameWidth, kFrameHeight)));
 
   for (int y = 0; y < kFrameHeight; y++) {
@@ -95,7 +100,7 @@ scoped_ptr<DesktopFrame> CreateTestFrame(int index) {
         webrtc::DesktopRect::MakeWH(index, index));
   }
 
-  return frame.Pass();
+  return frame;
 }
 
 // Returns true when frames a and b are equivalent.
@@ -130,20 +135,20 @@ void SetTrue(int* out) {
 
 class SoftwareVideoRendererTest : public ::testing::Test {
  public:
-  SoftwareVideoRendererTest() : decode_thread_("TestDecodeThread") {
-    decode_thread_.Start();
-    renderer_.reset(new SoftwareVideoRenderer(decode_thread_.task_runner(),
-                                              &frame_consumer_, nullptr));
+  SoftwareVideoRendererTest() : context_(nullptr) {
+    context_.Start();
+    renderer_.reset(new SoftwareVideoRenderer(&frame_consumer_));
+    renderer_->Initialize(context_, nullptr);
     renderer_->OnSessionConfig(
         *protocol::SessionConfig::ForTestWithVerbatimVideo());
   }
 
  protected:
   base::MessageLoop message_loop_;
-  base::Thread decode_thread_;
+  ClientContext context_;
 
   TestFrameConsumer frame_consumer_;
-  scoped_ptr<SoftwareVideoRenderer> renderer_;
+  std::unique_ptr<SoftwareVideoRenderer> renderer_;
 
   VideoEncoderVerbatim encoder_;
 };
@@ -168,7 +173,7 @@ TEST_F(SoftwareVideoRendererTest, DecodeFrame) {
 
   for (int frame_index = 0; frame_index < kFrameCount; frame_index++) {
     base::Closure done_callback;
-    scoped_ptr<DesktopFrame> decoded_frame =
+    std::unique_ptr<DesktopFrame> decoded_frame =
         frame_consumer_.WaitForNextFrame(&done_callback);
 
     EXPECT_FALSE(callback_called[frame_index]);

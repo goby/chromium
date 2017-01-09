@@ -167,7 +167,7 @@
     display: none;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .data-grid th .sort-order-icon {
     background-image: url(Images/toolbarButtonGlyphs_2x.png);
 }
@@ -212,7 +212,7 @@
     background-color: transparent;
 }
 
-@media (-webkit-min-device-pixel-ratio: 1.5) {
+@media (-webkit-min-device-pixel-ratio: 1.1) {
 .data-grid tr.parent td.disclosure::before {
     -webkit-mask-image: url(Images/toolbarButtonGlyphs_2x.png);
 }
@@ -232,7 +232,7 @@
     color: white;
 }
 
-.data-grid:focus tr.selected a {
+.data-grid:focus tr.selected .devtools-link {
     color: white;
 }
 

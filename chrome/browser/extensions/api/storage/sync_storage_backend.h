@@ -6,18 +6,18 @@
 #define CHROME_BROWSER_EXTENSIONS_API_STORAGE_SYNC_STORAGE_BACKEND_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "components/sync/model/syncable_service.h"
 #include "extensions/browser/api/storage/settings_observer.h"
-#include "extensions/browser/api/storage/settings_storage_factory.h"
 #include "extensions/browser/api/storage/settings_storage_quota_enforcer.h"
-#include "sync/api/syncable_service.h"
+#include "extensions/browser/value_store/value_store_factory.h"
 
 namespace syncer {
 class SyncErrorFactory;
@@ -27,6 +27,7 @@ namespace extensions {
 
 class SettingsSyncProcessor;
 class SyncableSettingsStorage;
+class ValueStoreFactory;
 
 // Manages ValueStore objects for extensions, including routing
 // changes from sync to them.
@@ -34,16 +35,12 @@ class SyncableSettingsStorage;
 class SyncStorageBackend : public syncer::SyncableService {
  public:
   // |storage_factory| is use to create leveldb storage areas.
-  // |base_path| is the base of the extension settings directory, so the
-  // databases will be at base_path/extension_id.
   // |observers| is the list of observers to settings changes.
-  SyncStorageBackend(
-      const scoped_refptr<SettingsStorageFactory>& storage_factory,
-      const base::FilePath& base_path,
-      const SettingsStorageQuotaEnforcer::Limits& quota,
-      const scoped_refptr<SettingsObserverList>& observers,
-      syncer::ModelType sync_type,
-      const syncer::SyncableService::StartSyncFlare& flare);
+  SyncStorageBackend(const scoped_refptr<ValueStoreFactory>& storage_factory,
+                     const SettingsStorageQuotaEnforcer::Limits& quota,
+                     const scoped_refptr<SettingsObserverList>& observers,
+                     syncer::ModelType sync_type,
+                     const syncer::SyncableService::StartSyncFlare& flare);
 
   ~SyncStorageBackend() override;
 
@@ -55,8 +52,8 @@ class SyncStorageBackend : public syncer::SyncableService {
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
   syncer::SyncError ProcessSyncChanges(
       const tracked_objects::Location& from_here,
       const syncer::SyncChangeList& change_list) override;
@@ -67,21 +64,19 @@ class SyncStorageBackend : public syncer::SyncableService {
   // initializing sync with some initial data if sync enabled.
   SyncableSettingsStorage* GetOrCreateStorageWithSyncData(
       const std::string& extension_id,
-      scoped_ptr<base::DictionaryValue> sync_data) const;
+      std::unique_ptr<base::DictionaryValue> sync_data) const;
 
   // Gets all extension IDs known to extension settings.  This may not be all
   // installed extensions.
-  std::set<std::string> GetKnownExtensionIDs() const;
+  std::set<std::string> GetKnownExtensionIDs(
+      ValueStoreFactory::ModelType model_type) const;
 
   // Creates a new SettingsSyncProcessor for an extension.
-  scoped_ptr<SettingsSyncProcessor> CreateSettingsSyncProcessor(
+  std::unique_ptr<SettingsSyncProcessor> CreateSettingsSyncProcessor(
       const std::string& extension_id) const;
 
   // The Factory to use for creating new ValueStores.
-  const scoped_refptr<SettingsStorageFactory> storage_factory_;
-
-  // The base file path to use when creating new ValueStores.
-  const base::FilePath base_path_;
+  const scoped_refptr<ValueStoreFactory> storage_factory_;
 
   // Quota limits (see SettingsStorageQuotaEnforcer).
   const SettingsStorageQuotaEnforcer::Limits quota_;
@@ -91,18 +86,18 @@ class SyncStorageBackend : public syncer::SyncableService {
 
   // A cache of ValueStore objects that have already been created.
   // Ensure that there is only ever one created per extension.
-  typedef std::map<std::string, linked_ptr<SyncableSettingsStorage> >
-      StorageObjMap;
+  using StorageObjMap =
+      std::map<std::string, std::unique_ptr<SyncableSettingsStorage>>;
   mutable StorageObjMap storage_objs_;
 
   // Current sync model type. Either EXTENSION_SETTINGS or APP_SETTINGS.
   syncer::ModelType sync_type_;
 
   // Current sync processor, if any.
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
 
   // Current sync error handler if any.
-  scoped_ptr<syncer::SyncErrorFactory> sync_error_factory_;
+  std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory_;
 
   syncer::SyncableService::StartSyncFlare flare_;
 

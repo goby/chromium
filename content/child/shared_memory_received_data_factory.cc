@@ -6,6 +6,8 @@
 
 #include <algorithm>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "content/common/resource_messages.h"
 #include "ipc/ipc_sender.h"
 
@@ -17,12 +19,10 @@ class SharedMemoryReceivedDataFactory::SharedMemoryReceivedData final
   SharedMemoryReceivedData(
       const char* payload,
       int length,
-      int encoded_length,
       scoped_refptr<SharedMemoryReceivedDataFactory> factory,
       SharedMemoryReceivedDataFactory::TicketId id)
       : payload_(payload),
         length_(length),
-        encoded_length_(encoded_length),
         factory_(factory),
         id_(id) {}
 
@@ -30,12 +30,10 @@ class SharedMemoryReceivedDataFactory::SharedMemoryReceivedData final
 
   const char* payload() const override { return payload_; }
   int length() const override { return length_; }
-  int encoded_length() const override { return encoded_length_; }
 
  private:
   const char* const payload_;
   const int length_;
-  const int encoded_length_;
 
   scoped_refptr<SharedMemoryReceivedDataFactory> factory_;
   SharedMemoryReceivedDataFactory::TicketId id_;
@@ -60,16 +58,13 @@ SharedMemoryReceivedDataFactory::~SharedMemoryReceivedDataFactory() {
     SendAck(released_tickets_.size());
 }
 
-scoped_ptr<RequestPeer::ReceivedData> SharedMemoryReceivedDataFactory::Create(
-    int offset,
-    int length,
-    int encoded_length) {
+std::unique_ptr<RequestPeer::ReceivedData>
+SharedMemoryReceivedDataFactory::Create(int offset, int length) {
   const char* start = static_cast<char*>(memory_->memory());
   const char* payload = start + offset;
   TicketId id = id_++;
 
-  return make_scoped_ptr(
-      new SharedMemoryReceivedData(payload, length, encoded_length, this, id));
+  return base::MakeUnique<SharedMemoryReceivedData>(payload, length, this, id);
 }
 
 void SharedMemoryReceivedDataFactory::Stop() {

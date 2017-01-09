@@ -18,68 +18,36 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "platform/graphics/filters/SourceGraphic.h"
 
 #include "platform/graphics/filters/Filter.h"
 #include "platform/text/TextStream.h"
-#include "third_party/skia/include/core/SkPicture.h"
-#include "third_party/skia/include/effects/SkPictureImageFilter.h"
 
 namespace blink {
 
-SourceGraphic::SourceGraphic(Filter* filter)
-    : FilterEffect(filter)
-{
-    setOperatingColorSpace(ColorSpaceDeviceRGB);
+SourceGraphic::SourceGraphic(Filter* filter) : FilterEffect(filter) {
+  setOperatingColorSpace(ColorSpaceDeviceRGB);
 }
 
-SourceGraphic::~SourceGraphic()
-{
+SourceGraphic::~SourceGraphic() {}
+
+SourceGraphic* SourceGraphic::create(Filter* filter) {
+  return new SourceGraphic(filter);
 }
 
-PassRefPtrWillBeRawPtr<SourceGraphic> SourceGraphic::create(Filter* filter)
-{
-    return adoptRefWillBeNoop(new SourceGraphic(filter));
+FloatRect SourceGraphic::mapInputs(const FloatRect& rect) const {
+  return !m_sourceRect.isEmpty() ? m_sourceRect : rect;
 }
 
-const AtomicString& SourceGraphic::effectName()
-{
-    DEFINE_STATIC_LOCAL(const AtomicString, s_effectName, ("SourceGraphic", AtomicString::ConstructFromLiteral));
-    return s_effectName;
+void SourceGraphic::setSourceRect(const IntRect& sourceRect) {
+  m_sourceRect = sourceRect;
 }
 
-FloatRect SourceGraphic::determineAbsolutePaintRect(const FloatRect& requestedRect)
-{
-    FloatRect srcRect = intersection(m_sourceRect, requestedRect);
-    addAbsolutePaintRect(srcRect);
-    return srcRect;
+TextStream& SourceGraphic::externalRepresentation(TextStream& ts,
+                                                  int indent) const {
+  writeIndent(ts, indent);
+  ts << "[SourceGraphic]\n";
+  return ts;
 }
 
-void SourceGraphic::setPicture(PassRefPtr<const SkPicture> picture)
-{
-    m_picture = picture;
-}
-
-void SourceGraphic::setSourceRect(const IntRect& sourceRect)
-{
-    m_sourceRect = sourceRect;
-}
-
-PassRefPtr<SkImageFilter> SourceGraphic::createImageFilter(SkiaImageFilterBuilder&)
-{
-    if (!m_picture)
-        return nullptr;
-
-    return adoptRef(SkPictureImageFilter::Create(m_picture.get(), m_picture->cullRect()));
-}
-
-TextStream& SourceGraphic::externalRepresentation(TextStream& ts, int indent) const
-{
-    writeIndent(ts, indent);
-    ts << "[SourceGraphic]\n";
-    return ts;
-}
-
-} // namespace blink
+}  // namespace blink

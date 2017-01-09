@@ -5,11 +5,11 @@
 #ifndef DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_GATT_SERVICE_CLIENT_H_
 #define DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_GATT_SERVICE_CLIENT_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "dbus/object_path.h"
@@ -55,12 +55,23 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattServiceClient
   void ExposeHeartRateService(const dbus::ObjectPath& device_path);
   void HideHeartRateService();
 
+  // Makes a service visible for device with object path |device_path|. Note
+  // that only one instance of a specific service is simulated at a time. Hence,
+  // this method will fail, if the service is already visible.
+  void ExposeBatteryService(const dbus::ObjectPath& device_path);
+
   // Returns whether or not the Heart Rate Service is visible.
   bool IsHeartRateVisible() const;
+  // Returns whether or not the Battery Service is visible.
+  bool IsBatteryServiceVisible() const;
 
   // Returns the current object path of the visible Heart Rate service. If the
   // service is not visible, returns an invalid empty path.
   dbus::ObjectPath GetHeartRateServicePath() const;
+
+  // Returns the current object path of the visible Battery service. If the
+  // service is not visible, returns an invalid empty path.
+  dbus::ObjectPath GetBatteryServicePath() const;
 
   // Final object path components and the corresponding UUIDs of the GATT
   // services that we emulate. Service paths are hierarchical to Bluetooth
@@ -69,6 +80,16 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattServiceClient
   // "/org/foo/device0/service0000".
   static const char kHeartRateServicePathComponent[];
   static const char kHeartRateServiceUUID[];
+
+  // Final object path components and the corresponding UUIDs of the GATT
+  // services that we emulate. Service paths are hierarchical to Bluetooth
+  // device paths, so if the path component is "service0001", and the device
+  // path is "/org/foo/device0", the service path is
+  // "/org/foo/device0/service0001".
+  static const char kBatteryServicePathComponent[];
+  static const char kBatteryServiceUUID[];
+
+  static const char kGenericAccessServiceUUID[];
 
  private:
   // Property callback passed when we create Properties structures.
@@ -87,8 +108,10 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothGattServiceClient
 
   // Static properties we return. As long as a service is exposed, this will be
   // non-null. Otherwise it will be null.
-  scoped_ptr<Properties> heart_rate_service_properties_;
+  std::unique_ptr<Properties> heart_rate_service_properties_;
+  std::unique_ptr<Properties> battery_service_properties_;
   std::string heart_rate_service_path_;
+  std::string battery_service_path_;
 
   // List of observers interested in event notifications from us.
   base::ObserverList<Observer> observers_;

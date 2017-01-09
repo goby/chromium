@@ -4,12 +4,15 @@
 
 #include "extensions/components/javascript_dialog_extensions_client/javascript_dialog_extension_client_impl.h"
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "components/app_modal/javascript_dialog_extensions_client.h"
 #include "components/app_modal/javascript_dialog_manager.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/process_manager.h"
 #include "extensions/common/extension.h"
 #include "ui/gfx/native_widget_types.h"
+#include "url/origin.h"
 
 namespace javascript_dialog_extensions_client {
 namespace {
@@ -61,8 +64,8 @@ class JavaScriptDialogExtensionsClientImpl
                         const GURL& origin_url,
                         std::string* name_out) override {
     const Extension* extension = GetExtensionForWebContents(web_contents);
-    if (extension &&
-        web_contents->GetLastCommittedURL().GetOrigin() == origin_url) {
+    if (extension && url::IsSameOriginWith(
+                         origin_url, web_contents->GetLastCommittedURL())) {
       *name_out = extension->name();
       return true;
     }
@@ -78,7 +81,7 @@ class JavaScriptDialogExtensionsClientImpl
 void InstallClient() {
   app_modal::JavaScriptDialogManager::GetInstance()->
       SetExtensionsClient(
-          make_scoped_ptr(new JavaScriptDialogExtensionsClientImpl));
+          base::WrapUnique(new JavaScriptDialogExtensionsClientImpl));
 }
 
 }  // namespace javascript_dialog_extensions_client

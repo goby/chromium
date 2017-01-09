@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_APP_LAUNCHER_PAGE_UI_H_
 #define CHROME_BROWSER_UI_WEBUI_APP_LAUNCHER_PAGE_UI_H_
 
+#include "base/macros.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_ui_controller.h"
 #include "ui/base/layout.h"
@@ -39,12 +40,13 @@ class AppLauncherPageUI : public content::WebUIController {
     std::string GetSource() const override;
     void StartDataRequest(
         const std::string& path,
-        int render_process_id,
-        int render_frame_id,
+        const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
         const content::URLDataSource::GotDataCallback& callback) override;
     std::string GetMimeType(const std::string&) const override;
     bool ShouldReplaceExistingSource() const override;
-    bool ShouldAddContentSecurityPolicy() const override;
+    std::string GetContentSecurityPolicyScriptSrc() const override;
+    std::string GetContentSecurityPolicyStyleSrc() const override;
+    std::string GetContentSecurityPolicyImgSrc() const override;
 
    private:
 

@@ -4,28 +4,35 @@
 
 #include "chrome/browser/password_manager/password_store_mac.h"
 
+#include <stddef.h>
+
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/test/histogram_tester.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/password_manager/password_store_mac_internal.h"
 #include "chrome/common/chrome_paths.h"
-#include "components/os_crypt/os_crypt.h"
+#include "components/os_crypt/os_crypt_mocker.h"
 #include "components/password_manager/core/browser/login_database.h"
 #include "components/password_manager/core/browser/password_manager_test_utils.h"
+#include "components/password_manager/core/browser/password_manager_util.h"
 #include "components/password_manager/core/browser/password_store_consumer.h"
+#include "components/password_manager/core/browser/password_store_origin_unittest.h"
 #include "content/public/test/test_browser_thread.h"
 #include "content/public/test/test_utils.h"
 #include "crypto/mock_apple_keychain.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 using autofill::PasswordForm;
 using base::ASCIIToUTF16;
@@ -62,24 +69,18 @@ ACTION_P(SaveACopyOfFirstForm, target_form_ptr) {
   *target_form_ptr = *arg0[0];
 }
 
-void Noop() {
-}
+void Noop() {}
 
 class MockPasswordStoreConsumer : public PasswordStoreConsumer {
  public:
   MOCK_METHOD1(OnGetPasswordStoreResultsConstRef,
-               void(const std::vector<PasswordForm*>&));
+               void(const std::vector<std::unique_ptr<PasswordForm>>&));
 
   // GMock cannot mock methods with move-only args.
-  void OnGetPasswordStoreResults(ScopedVector<PasswordForm> results) override {
-    OnGetPasswordStoreResultsConstRef(results.get());
+  void OnGetPasswordStoreResults(
+      std::vector<std::unique_ptr<PasswordForm>> results) override {
+    OnGetPasswordStoreResultsConstRef(results);
   }
-};
-
-class MockPasswordStoreObserver : public PasswordStore::Observer {
- public:
-  MOCK_METHOD1(OnLoginsChanged,
-               void(const password_manager::PasswordStoreChangeList& changes));
 };
 
 // A LoginDatabase that simulates an Init() method that takes a long time.
@@ -108,7 +109,7 @@ class SlowToInitLoginDatabase : public password_manager::LoginDatabase {
 
 // Macro to simplify calling CheckFormsAgainstExpectations with a useful label.
 #define CHECK_FORMS(forms, expectations, i) \
-    CheckFormsAgainstExpectations(forms, expectations, #forms, i)
+  CheckFormsAgainstExpectations(forms, expectations, #forms, i)
 
 // Ensures that the data in |forms| match |expectations|, causing test failures
 // for any discrepencies.
@@ -118,7 +119,8 @@ void CheckFormsAgainstExpectations(
     const std::vector<PasswordForm*>& forms,
     const std::vector<PasswordFormData*>& expectations,
 
-    const char* forms_label, unsigned int test_number) {
+    const char* forms_label,
+    unsigned int test_number) {
   EXPECT_EQ(expectations.size(), forms.size()) << forms_label << " in test "
                                                << test_number;
   if (expectations.size() != forms.size())
@@ -146,18 +148,18 @@ void CheckFormsAgainstExpectations(
           wcscmp(expectation->password_value,
                  password_manager::kTestingFederatedLoginMarker) == 0) {
         EXPECT_TRUE(form->password_value.empty());
-        EXPECT_EQ(GURL(password_manager::kTestingFederationUrlSpec),
-                  form->federation_url);
+        EXPECT_EQ(
+            url::Origin(GURL(password_manager::kTestingFederationUrlSpec)),
+            form->federation_origin);
       } else {
         EXPECT_EQ(WideToUTF16(expectation->password_value),
                   form->password_value);
-        EXPECT_TRUE(form->federation_url.is_empty());
+        EXPECT_TRUE(form->federation_origin.unique());
       }
     } else {
       EXPECT_TRUE(form->blacklisted_by_user);
     }
     EXPECT_EQ(expectation->preferred, form->preferred);
-    EXPECT_EQ(expectation->ssl_valid, form->ssl_valid);
     EXPECT_DOUBLE_EQ(expectation->creation_time,
                      form->date_created.ToDoubleT());
     base::Time created = base::Time::FromDoubleT(expectation->creation_time);
@@ -174,7 +176,78 @@ PasswordStoreChangeList AddChangeForForm(const PasswordForm& form) {
       1, PasswordStoreChange(PasswordStoreChange::ADD, form));
 }
 
+class PasswordStoreMacTestDelegate {
+ public:
+  PasswordStoreMacTestDelegate();
+  ~PasswordStoreMacTestDelegate();
+
+  PasswordStoreMac* store() { return store_.get(); }
+
+  static void FinishAsyncProcessing();
+
+ private:
+  void Initialize();
+
+  void ClosePasswordStore();
+
+  base::FilePath test_login_db_file_path() const;
+
+  base::MessageLoopForUI message_loop_;
+  base::ScopedTempDir db_dir_;
+  std::unique_ptr<LoginDatabase> login_db_;
+  scoped_refptr<PasswordStoreMac> store_;
+
+  DISALLOW_COPY_AND_ASSIGN(PasswordStoreMacTestDelegate);
+};
+
+PasswordStoreMacTestDelegate::PasswordStoreMacTestDelegate() {
+  Initialize();
+}
+
+PasswordStoreMacTestDelegate::~PasswordStoreMacTestDelegate() {
+  ClosePasswordStore();
+}
+
+void PasswordStoreMacTestDelegate::FinishAsyncProcessing() {
+  base::RunLoop().RunUntilIdle();
+}
+
+void PasswordStoreMacTestDelegate::Initialize() {
+  ASSERT_TRUE(db_dir_.CreateUniqueTempDir());
+
+  // Ensure that LoginDatabase will use the mock keychain if it needs to
+  // encrypt/decrypt a password.
+  OSCryptMocker::SetUpWithSingleton();
+  login_db_.reset(new LoginDatabase(test_login_db_file_path()));
+  ASSERT_TRUE(login_db_->Init());
+
+  // Create and initialize the password store.
+  store_ = new PasswordStoreMac(base::ThreadTaskRunnerHandle::Get(),
+                                base::ThreadTaskRunnerHandle::Get(),
+                                base::WrapUnique(new MockAppleKeychain));
+  store_->set_login_metadata_db(login_db_.get());
+  store_->login_metadata_db()->set_clear_password_values(false);
+}
+
+void PasswordStoreMacTestDelegate::ClosePasswordStore() {
+  store_->ShutdownOnUIThread();
+  FinishAsyncProcessing();
+  OSCryptMocker::TearDown();
+}
+
+base::FilePath PasswordStoreMacTestDelegate::test_login_db_file_path() const {
+  return db_dir_.GetPath().Append(FILE_PATH_LITERAL("login.db"));
+}
+
 }  // namespace
+
+namespace password_manager {
+
+INSTANTIATE_TYPED_TEST_CASE_P(Mac,
+                              PasswordStoreOriginTest,
+                              PasswordStoreMacTestDelegate);
+
+}  // namespace password_manager
 
 #pragma mark -
 
@@ -183,115 +256,43 @@ class PasswordStoreMacInternalsTest : public testing::Test {
   void SetUp() override {
     MockAppleKeychain::KeychainTestData test_data[] = {
         // Basic HTML form.
-        {kSecAuthenticationTypeHTMLForm,
-         "some.domain.com",
-         kSecProtocolTypeHTTP,
-         NULL,
-         0,
-         NULL,
-         "20020601171500Z",
-         "joe_user",
-         "sekrit",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "some.domain.com",
+         kSecProtocolTypeHTTP, NULL, 0, NULL, "20020601171500Z", "joe_user",
+         "sekrit", false},
         // HTML form with path.
-        {kSecAuthenticationTypeHTMLForm,
-         "some.domain.com",
-         kSecProtocolTypeHTTP,
-         "/insecure.html",
-         0,
-         NULL,
-         "19991231235959Z",
-         "joe_user",
-         "sekrit",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "some.domain.com",
+         kSecProtocolTypeHTTP, "/insecure.html", 0, NULL, "19991231235959Z",
+         "joe_user", "sekrit", false},
         // Secure HTML form with path.
-        {kSecAuthenticationTypeHTMLForm,
-         "some.domain.com",
-         kSecProtocolTypeHTTPS,
-         "/secure.html",
-         0,
-         NULL,
-         "20100908070605Z",
-         "secure_user",
-         "password",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "some.domain.com",
+         kSecProtocolTypeHTTPS, "/secure.html", 0, NULL, "20100908070605Z",
+         "secure_user", "password", false},
         // True negative item.
-        {kSecAuthenticationTypeHTMLForm,
-         "dont.remember.com",
-         kSecProtocolTypeHTTP,
-         NULL,
-         0,
-         NULL,
-         "20000101000000Z",
-         "",
-         "",
-         true},
+        {kSecAuthenticationTypeHTMLForm, "dont.remember.com",
+         kSecProtocolTypeHTTP, NULL, 0, NULL, "20000101000000Z", "", "", true},
         // De-facto negative item, type one.
-        {kSecAuthenticationTypeHTMLForm,
-         "dont.remember.com",
-         kSecProtocolTypeHTTP,
-         NULL,
-         0,
-         NULL,
-         "20000101000000Z",
-         "Password Not Stored",
-         "",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "dont.remember.com",
+         kSecProtocolTypeHTTP, NULL, 0, NULL, "20000101000000Z",
+         "Password Not Stored", "", false},
         // De-facto negative item, type two.
-        {kSecAuthenticationTypeHTMLForm,
-         "dont.remember.com",
-         kSecProtocolTypeHTTPS,
-         NULL,
-         0,
-         NULL,
-         "20000101000000Z",
-         "Password Not Stored",
-         " ",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "dont.remember.com",
+         kSecProtocolTypeHTTPS, NULL, 0, NULL, "20000101000000Z",
+         "Password Not Stored", " ", false},
         // HTTP auth basic, with port and path.
-        {kSecAuthenticationTypeHTTPBasic,
-         "some.domain.com",
-         kSecProtocolTypeHTTP,
-         "/insecure.html",
-         4567,
-         "low_security",
-         "19980330100000Z",
-         "basic_auth_user",
-         "basic",
-         false},
+        {kSecAuthenticationTypeHTTPBasic, "some.domain.com",
+         kSecProtocolTypeHTTP, "/insecure.html", 4567, "low_security",
+         "19980330100000Z", "basic_auth_user", "basic", false},
         // HTTP auth digest, secure.
-        {kSecAuthenticationTypeHTTPDigest,
-         "some.domain.com",
-         kSecProtocolTypeHTTPS,
-         NULL,
-         0,
-         "high_security",
-         "19980330100000Z",
-         "digest_auth_user",
-         "digest",
-         false},
+        {kSecAuthenticationTypeHTTPDigest, "some.domain.com",
+         kSecProtocolTypeHTTPS, NULL, 0, "high_security", "19980330100000Z",
+         "digest_auth_user", "digest", false},
         // An FTP password with an invalid date, for edge-case testing.
-        {kSecAuthenticationTypeDefault,
-         "a.server.com",
-         kSecProtocolTypeFTP,
-         NULL,
-         0,
-         NULL,
-         "20010203040",
-         "abc",
-         "123",
-         false},
+        {kSecAuthenticationTypeDefault, "a.server.com", kSecProtocolTypeFTP,
+         NULL, 0, NULL, "20010203040", "abc", "123", false},
         // Password for an Android application.
-        {kSecAuthenticationTypeHTMLForm,
-         "android://hash@com.domain.some/",
-         kSecProtocolTypeHTTPS,
-         "",
-         0,
-         NULL,
-         "20150515141312Z",
-         "joe_user",
-         "secret",
-         false},
+        {kSecAuthenticationTypeHTMLForm, "android://hash@com.domain.some/",
+         kSecProtocolTypeHTTPS, "", 0, NULL, "20150515141312Z", "joe_user",
+         "secret", false},
     };
 
     keychain_ = new MockAppleKeychain();
@@ -335,7 +336,6 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainToFormTranslation) {
     const char* origin;
     const wchar_t* username;  // Set to NULL to check for a blacklist entry.
     const wchar_t* password;
-    const bool ssl_valid;
     const int creation_year;
     const int creation_month;
     const int creation_day;
@@ -345,41 +345,37 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainToFormTranslation) {
   } TestExpectations;
 
   TestExpectations expected[] = {
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/", L"joe_user", L"sekrit", false,
-      2002,  6,  1, 17, 15,  0 },
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/insecure.html", L"joe_user", L"sekrit", false,
-      1999, 12, 31, 23, 59, 59 },
-    { PasswordForm::SCHEME_HTML, "https://some.domain.com/",
-      "https://some.domain.com/secure.html", L"secure_user", L"password", true,
-      2010,  9,  8,  7,  6,  5 },
-    { PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
-      "http://dont.remember.com/", NULL, NULL, false,
-      2000,  1,  1,  0,  0,  0 },
-    { PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
-      "http://dont.remember.com/", NULL, NULL, false,
-      2000,  1,  1,  0,  0,  0 },
-    { PasswordForm::SCHEME_HTML, "https://dont.remember.com/",
-      "https://dont.remember.com/", NULL, NULL, true,
-      2000,  1,  1,  0,  0,  0 },
-    { PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
-      "http://some.domain.com:4567/insecure.html", L"basic_auth_user", L"basic",
-      false, 1998, 03, 30, 10, 00, 00 },
-    { PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
-      "https://some.domain.com/", L"digest_auth_user", L"digest", true,
-      1998,  3, 30, 10,  0,  0 },
-    // This one gives us an invalid date, which we will treat as a "NULL" date
-    // which is 1601.
-    { PasswordForm::SCHEME_OTHER, "http://a.server.com/",
-      "http://a.server.com/", L"abc", L"123", false,
-      1601,  1,  1,  0,  0,  0 },
-    { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-      "", L"joe_user", L"secret", true,
-      2015,  5,  15, 14, 13, 12 },
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/", L"joe_user", L"sekrit", 2002, 6, 1, 17, 15,
+       0},
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/insecure.html", L"joe_user", L"sekrit", 1999, 12,
+       31, 23, 59, 59},
+      {PasswordForm::SCHEME_HTML, "https://some.domain.com/",
+       "https://some.domain.com/secure.html", L"secure_user", L"password", 2010,
+       9, 8, 7, 6, 5},
+      {PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
+       "http://dont.remember.com/", NULL, NULL, 2000, 1, 1, 0, 0, 0},
+      {PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
+       "http://dont.remember.com/", NULL, NULL, 2000, 1, 1, 0, 0, 0},
+      {PasswordForm::SCHEME_HTML, "https://dont.remember.com/",
+       "https://dont.remember.com/", NULL, NULL, 2000, 1, 1, 0, 0, 0},
+      {PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
+       "http://some.domain.com:4567/insecure.html", L"basic_auth_user",
+       L"basic", 1998, 03, 30, 10, 00, 00},
+      {PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
+       "https://some.domain.com/", L"digest_auth_user", L"digest", 1998, 3, 30,
+       10, 0, 0},
+      // This one gives us an invalid date, which we will treat as a "NULL" date
+      // which is 1601.
+      {PasswordForm::SCHEME_OTHER, "http://a.server.com/",
+       "http://a.server.com/", L"abc", L"123", 1601, 1, 1, 0, 0, 0},
+      {PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/", "",
+       L"joe_user", L"secret", 2015, 5, 15, 14, 13, 12},
   };
 
   for (unsigned int i = 0; i < arraysize(expected); ++i) {
+    SCOPED_TRACE(testing::Message("In iteration ") << i);
     // Create our fake KeychainItemRef; see MockAppleKeychain docs.
     SecKeychainItemRef keychain_item =
         reinterpret_cast<SecKeychainItemRef>(i + 1);
@@ -387,36 +383,26 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainToFormTranslation) {
     bool parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
         *keychain_, keychain_item, &form, true);
 
-    EXPECT_TRUE(parsed) << "In iteration " << i;
+    EXPECT_TRUE(parsed);
 
-    EXPECT_EQ(expected[i].scheme, form.scheme) << "In iteration " << i;
-    EXPECT_EQ(GURL(expected[i].origin), form.origin) << "In iteration " << i;
-    EXPECT_EQ(expected[i].ssl_valid, form.ssl_valid) << "In iteration " << i;
-    EXPECT_EQ(std::string(expected[i].signon_realm), form.signon_realm)
-        << "In iteration " << i;
+    EXPECT_EQ(expected[i].scheme, form.scheme);
+    EXPECT_EQ(GURL(expected[i].origin), form.origin);
+    EXPECT_EQ(std::string(expected[i].signon_realm), form.signon_realm);
     if (expected[i].username) {
-      EXPECT_EQ(WideToUTF16(expected[i].username), form.username_value)
-          << "In iteration " << i;
-      EXPECT_EQ(WideToUTF16(expected[i].password), form.password_value)
-          << "In iteration " << i;
-      EXPECT_FALSE(form.blacklisted_by_user) << "In iteration " << i;
+      EXPECT_EQ(WideToUTF16(expected[i].username), form.username_value);
+      EXPECT_EQ(WideToUTF16(expected[i].password), form.password_value);
+      EXPECT_FALSE(form.blacklisted_by_user);
     } else {
-      EXPECT_TRUE(form.blacklisted_by_user) << "In iteration " << i;
+      EXPECT_TRUE(form.blacklisted_by_user);
     }
     base::Time::Exploded exploded_time;
     form.date_created.UTCExplode(&exploded_time);
-    EXPECT_EQ(expected[i].creation_year, exploded_time.year)
-         << "In iteration " << i;
-    EXPECT_EQ(expected[i].creation_month, exploded_time.month)
-        << "In iteration " << i;
-    EXPECT_EQ(expected[i].creation_day, exploded_time.day_of_month)
-        << "In iteration " << i;
-    EXPECT_EQ(expected[i].creation_hour, exploded_time.hour)
-        << "In iteration " << i;
-    EXPECT_EQ(expected[i].creation_minute, exploded_time.minute)
-        << "In iteration " << i;
-    EXPECT_EQ(expected[i].creation_second, exploded_time.second)
-        << "In iteration " << i;
+    EXPECT_EQ(expected[i].creation_year, exploded_time.year);
+    EXPECT_EQ(expected[i].creation_month, exploded_time.month);
+    EXPECT_EQ(expected[i].creation_day, exploded_time.day_of_month);
+    EXPECT_EQ(expected[i].creation_hour, exploded_time.hour);
+    EXPECT_EQ(expected[i].creation_minute, exploded_time.minute);
+    EXPECT_EQ(expected[i].creation_second, exploded_time.second);
   }
 
   {
@@ -436,70 +422,78 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainSearch) {
     const size_t expected_merge_matches;
   };
   // Most fields are left blank because we don't care about them for searching.
-  /* clang-format off */
   TestDataAndExpectation test_data[] = {
-    // An HTML form we've seen.
-    { { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        NULL, NULL, NULL, NULL, NULL, L"joe_user", NULL, false, false, 0 },
-      2, 2 },
-    { { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        NULL, NULL, NULL, NULL, NULL, L"wrong_user", NULL, false, false, 0 },
-      2, 0 },
-    // An HTML form we haven't seen
-    { { PasswordForm::SCHEME_HTML, "http://www.unseendomain.com/",
-        NULL, NULL, NULL, NULL, NULL, L"joe_user", NULL, false, false, 0 },
-      0, 0 },
-    // Basic auth that should match.
-    { { PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
-        NULL, NULL, NULL, NULL, NULL, L"basic_auth_user", NULL, false, false,
-        0 },
-      1, 1 },
-    // Basic auth with the wrong port.
-    { { PasswordForm::SCHEME_BASIC, "http://some.domain.com:1111/low_security",
-        NULL, NULL, NULL, NULL, NULL, L"basic_auth_user", NULL, false, false,
-        0 },
-      0, 0 },
-    // Digest auth we've saved under https, visited with http.
-    { { PasswordForm::SCHEME_DIGEST, "http://some.domain.com/high_security",
-        NULL, NULL, NULL, NULL, NULL, L"digest_auth_user", NULL, false, false,
-        0 },
-      0, 0 },
-    // Digest auth that should match.
-    { { PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
-        NULL, NULL, NULL, NULL, NULL, L"wrong_user", NULL, false, true, 0 },
-      1, 0 },
-    // Digest auth with the wrong domain.
-    { { PasswordForm::SCHEME_DIGEST, "https://some.domain.com/other_domain",
-        NULL, NULL, NULL, NULL, NULL, L"digest_auth_user", NULL, false, true,
-        0 },
-      0, 0 },
-    // Android credentials (both legacy ones with origin, and without).
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
+      // An HTML form we've seen.
+      {{PasswordForm::SCHEME_HTML, "http://some.domain.com/", NULL, NULL, NULL,
+        NULL, NULL, L"joe_user", NULL, false, 0},
+       2,
+       2},
+      {{PasswordForm::SCHEME_HTML, "http://some.domain.com/", NULL, NULL, NULL,
+        NULL, NULL, L"wrong_user", NULL, false, 0},
+       2,
+       0},
+      // An HTML form we haven't seen
+      {{PasswordForm::SCHEME_HTML, "http://www.unseendomain.com/", NULL, NULL,
+        NULL, NULL, NULL, L"joe_user", NULL, false, 0},
+       0,
+       0},
+      // Basic auth that should match.
+      {{PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
+        NULL, NULL, NULL, NULL, NULL, L"basic_auth_user", NULL, false, 0},
+       1,
+       1},
+      // Basic auth with the wrong port.
+      {{PasswordForm::SCHEME_BASIC, "http://some.domain.com:1111/low_security",
+        NULL, NULL, NULL, NULL, NULL, L"basic_auth_user", NULL, false, 0},
+       0,
+       0},
+      // Digest auth we've saved under https, visited with http.
+      {{PasswordForm::SCHEME_DIGEST, "http://some.domain.com/high_security",
+        NULL, NULL, NULL, NULL, NULL, L"digest_auth_user", NULL, false, 0},
+       0,
+       0},
+      // Digest auth that should match.
+      {{PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
+        NULL, NULL, NULL, NULL, NULL, L"wrong_user", NULL, false, 0},
+       1,
+       0},
+      // Digest auth with the wrong domain.
+      {{PasswordForm::SCHEME_DIGEST, "https://some.domain.com/other_domain",
+        NULL, NULL, NULL, NULL, NULL, L"digest_auth_user", NULL, false, 0},
+       0,
+       0},
+      // Android credentials (both legacy ones with origin, and without).
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
         "android://hash@com.domain.some/", NULL, NULL, NULL, NULL, L"joe_user",
-        NULL, false, true, 0 },
-      1, 1 },
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        NULL, NULL, NULL, NULL, NULL, L"joe_user", NULL, false, true, 0 },
-      1, 1 },
-    // Federated logins do not have a corresponding Keychain entry, and should
-    // not match the username/password stored for the same application. Note
-    // that it will match for filling, however, because that part does not know
-    // that it is a federated login.
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        NULL, NULL, NULL, NULL, NULL, L"joe_user",
-        password_manager::kTestingFederatedLoginMarker, false, true, 0 },
-      1, 0 },
-    /// Garbage forms should have no matches.
-    { { PasswordForm::SCHEME_HTML, "foo/bar/baz",
-        NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false, 0 }, 0, 0 },
+        NULL, false, 0},
+       1,
+       1},
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/", NULL,
+        NULL, NULL, NULL, NULL, L"joe_user", NULL, false, 0},
+       1,
+       1},
+      // Federated logins do not have a corresponding Keychain entry, and should
+      // not match the username/password stored for the same application. Note
+      // that it will match for filling, however, because that part does not
+      // know
+      // that it is a federated login.
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/", NULL,
+        NULL, NULL, NULL, NULL, L"joe_user",
+        password_manager::kTestingFederatedLoginMarker, false, 0},
+       1,
+       0},
+      /// Garbage forms should have no matches.
+      {{PasswordForm::SCHEME_HTML, "foo/bar/baz", NULL, NULL, NULL, NULL, NULL,
+        NULL, NULL, false, 0},
+       0,
+       0},
   };
-  /* clang-format on */
 
   MacKeychainPasswordFormAdapter keychain_adapter(keychain_);
   MacKeychainPasswordFormAdapter owned_keychain_adapter(keychain_);
   owned_keychain_adapter.SetFindsOnlyOwnedItems(true);
   for (unsigned int i = 0; i < arraysize(test_data); ++i) {
-    scoped_ptr<PasswordForm> query_form =
+    std::unique_ptr<PasswordForm> query_form =
         CreatePasswordFormFromDataForTesting(test_data[i].data);
 
     // Check matches treating the form as a fill target.
@@ -520,8 +514,6 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainSearch) {
         internal_keychain_helpers::ExtractPasswordsMergeableWithForm(
             *keychain_, item_form_pairs, *query_form);
     EXPECT_EQ(test_data[i].expected_merge_matches, matching_items.size());
-    STLDeleteContainerPairSecondPointers(item_form_pairs.begin(),
-                                         item_form_pairs.end());
     for (std::vector<SecKeychainItemRef>::iterator i = keychain_items.begin();
          i != keychain_items.end(); ++i) {
       keychain_->Free(*i);
@@ -565,20 +557,20 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainExactSearch) {
   MacKeychainPasswordFormAdapter keychain_adapter(keychain_);
 
   PasswordFormData base_form_data[] = {
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/insecure.html",
-      NULL, NULL, NULL, NULL, L"joe_user", NULL, true, false, 0 },
-    { PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
-      "http://some.domain.com:4567/insecure.html",
-      NULL, NULL, NULL, NULL, L"basic_auth_user", NULL, true, false, 0 },
-    { PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
-      "https://some.domain.com",
-      NULL, NULL, NULL, NULL, L"digest_auth_user", NULL, true, true, 0 },
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/insecure.html", NULL, NULL, NULL, NULL,
+       L"joe_user", NULL, true, 0},
+      {PasswordForm::SCHEME_BASIC, "http://some.domain.com:4567/low_security",
+       "http://some.domain.com:4567/insecure.html", NULL, NULL, NULL, NULL,
+       L"basic_auth_user", NULL, true, 0},
+      {PasswordForm::SCHEME_DIGEST, "https://some.domain.com/high_security",
+       "https://some.domain.com", NULL, NULL, NULL, NULL, L"digest_auth_user",
+       NULL, true, 0},
   };
 
   for (unsigned int i = 0; i < arraysize(base_form_data); ++i) {
     // Create a base form and make sure we find a match.
-    scoped_ptr<PasswordForm> base_form =
+    std::unique_ptr<PasswordForm> base_form =
         CreatePasswordFormFromDataForTesting(base_form_data[i]);
     EXPECT_TRUE(keychain_adapter.HasPasswordsMergeableWithForm(*base_form));
     EXPECT_TRUE(keychain_adapter.HasPasswordExactlyMatchingForm(*base_form));
@@ -609,10 +601,10 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainExactSearch) {
     }
 
     for (unsigned int j = 0; j < modified_forms.size(); ++j) {
-      bool match = keychain_adapter.HasPasswordExactlyMatchingForm(
-          *modified_forms[j]);
-      EXPECT_FALSE(match) << "In modified version " << j
-          << " of base form " << i;
+      bool match =
+          keychain_adapter.HasPasswordExactlyMatchingForm(*modified_forms[j]);
+      EXPECT_FALSE(match) << "In modified version " << j << " of base form "
+                          << i;
     }
   }
 }
@@ -622,55 +614,60 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainAdd) {
     PasswordFormData data;
     bool should_succeed;
   };
-  /* clang-format off */
   TestDataAndExpectation test_data[] = {
-    // Test a variety of scheme/port/protocol/path variations.
-    { { PasswordForm::SCHEME_HTML, "http://web.site.com/",
+      // Test a variety of scheme/port/protocol/path variations.
+      {{PasswordForm::SCHEME_HTML, "http://web.site.com/",
         "http://web.site.com/path/to/page.html", NULL, NULL, NULL, NULL,
-        L"anonymous", L"knock-knock", false, false, 0 }, true },
-    { { PasswordForm::SCHEME_HTML, "https://web.site.com/",
-        "https://web.site.com/", NULL, NULL, NULL, NULL,
-        L"admin", L"p4ssw0rd", false, false, 0 }, true },
-    { { PasswordForm::SCHEME_BASIC, "http://a.site.com:2222/therealm",
-        "http://a.site.com:2222/", NULL, NULL, NULL, NULL,
-        L"username", L"password", false, false, 0 }, true },
-    { { PasswordForm::SCHEME_DIGEST, "https://digest.site.com/differentrealm",
+        L"anonymous", L"knock-knock", false, 0},
+       true},
+      {{PasswordForm::SCHEME_HTML, "https://web.site.com/",
+        "https://web.site.com/", NULL, NULL, NULL, NULL, L"admin", L"p4ssw0rd",
+        false, 0},
+       true},
+      {{PasswordForm::SCHEME_BASIC, "http://a.site.com:2222/therealm",
+        "http://a.site.com:2222/", NULL, NULL, NULL, NULL, L"username",
+        L"password", false, 0},
+       true},
+      {{PasswordForm::SCHEME_DIGEST, "https://digest.site.com/differentrealm",
         "https://digest.site.com/secure.html", NULL, NULL, NULL, NULL,
-        L"testname", L"testpass", false, false, 0 }, true },
-    // Test that Android credentials can be stored. Also check the legacy form
-    // when |origin| was still filled with the Android URI (and not left empty).
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.example.alpha/",
-        "", NULL, NULL, NULL, NULL,
-        L"joe_user", L"password", false, true, 0 }, true },
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.example.beta/",
+        L"testname", L"testpass", false, 0},
+       true},
+      // Test that Android credentials can be stored. Also check the legacy form
+      // when |origin| was still filled with the Android URI (and not left
+      // empty).
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.example.alpha/", "",
+        NULL, NULL, NULL, NULL, L"joe_user", L"password", false, 0},
+       true},
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.example.beta/",
         "android://hash@com.example.beta/", NULL, NULL, NULL, NULL,
-        L"jane_user", L"password2", false, true, 0 }, true },
-    // Make sure that garbage forms are rejected.
-    { { PasswordForm::SCHEME_HTML, "gobbledygook",
-        "gobbledygook", NULL, NULL, NULL, NULL,
-        L"anonymous", L"knock-knock", false, false, 0 }, false },
-    // Test that failing to update a duplicate (forced using the magic failure
-    // password; see MockAppleKeychain::ItemModifyAttributesAndData) is
-    // reported.
-    { { PasswordForm::SCHEME_HTML, "http://some.domain.com",
+        L"jane_user", L"password2", false, 0},
+       true},
+      // Make sure that garbage forms are rejected.
+      {{PasswordForm::SCHEME_HTML, "gobbledygook", "gobbledygook", NULL, NULL,
+        NULL, NULL, L"anonymous", L"knock-knock", false, 0},
+       false},
+      // Test that failing to update a duplicate (forced using the magic failure
+      // password; see MockAppleKeychain::ItemModifyAttributesAndData) is
+      // reported.
+      {{PasswordForm::SCHEME_HTML, "http://some.domain.com",
         "http://some.domain.com/insecure.html", NULL, NULL, NULL, NULL,
-        L"joe_user", L"fail_me", false, false, 0 }, false },
+        L"joe_user", L"fail_me", false, 0},
+       false},
   };
-  /* clang-format on */
 
   MacKeychainPasswordFormAdapter owned_keychain_adapter(keychain_);
   owned_keychain_adapter.SetFindsOnlyOwnedItems(true);
 
   for (unsigned int i = 0; i < arraysize(test_data); ++i) {
-    scoped_ptr<PasswordForm> in_form =
+    std::unique_ptr<PasswordForm> in_form =
         CreatePasswordFormFromDataForTesting(test_data[i].data);
     bool add_succeeded = owned_keychain_adapter.AddPassword(*in_form);
     EXPECT_EQ(test_data[i].should_succeed, add_succeeded);
     if (add_succeeded) {
-      EXPECT_TRUE(owned_keychain_adapter.HasPasswordsMergeableWithForm(
-          *in_form));
-      EXPECT_TRUE(owned_keychain_adapter.HasPasswordExactlyMatchingForm(
-          *in_form));
+      EXPECT_TRUE(
+          owned_keychain_adapter.HasPasswordsMergeableWithForm(*in_form));
+      EXPECT_TRUE(
+          owned_keychain_adapter.HasPasswordExactlyMatchingForm(*in_form));
     }
   }
 
@@ -678,21 +675,25 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainAdd) {
   // TODO(engedy): Add a test to verify that updating Android credentials work.
   // See: https://crbug.com/476851.
   {
-    PasswordFormData data = {
-      PasswordForm::SCHEME_HTML, "http://some.domain.com",
-      "http://some.domain.com/insecure.html", NULL,
-      NULL, NULL, NULL, L"joe_user", L"updated_password", false, false, 0
-    };
-    scoped_ptr<PasswordForm> update_form =
+    PasswordFormData data = {PasswordForm::SCHEME_HTML,
+                             "http://some.domain.com",
+                             "http://some.domain.com/insecure.html",
+                             NULL,
+                             NULL,
+                             NULL,
+                             NULL,
+                             L"joe_user",
+                             L"updated_password",
+                             false,
+                             0};
+    std::unique_ptr<PasswordForm> update_form =
         CreatePasswordFormFromDataForTesting(data);
     MacKeychainPasswordFormAdapter keychain_adapter(keychain_);
     EXPECT_TRUE(keychain_adapter.AddPassword(*update_form));
     SecKeychainItemRef keychain_item = reinterpret_cast<SecKeychainItemRef>(2);
     PasswordForm stored_form;
-    internal_keychain_helpers::FillPasswordFormFromKeychainItem(*keychain_,
-                                                                keychain_item,
-                                                                &stored_form,
-                                                                true);
+    internal_keychain_helpers::FillPasswordFormFromKeychainItem(
+        *keychain_, keychain_item, &stored_form, true);
     EXPECT_EQ(update_form->password_value, stored_form.password_value);
   }
 }
@@ -702,39 +703,41 @@ TEST_F(PasswordStoreMacInternalsTest, TestKeychainRemove) {
     PasswordFormData data;
     bool should_succeed;
   };
-  /* clang-format off */
   TestDataAndExpectation test_data[] = {
-    // Test deletion of an item that we add.
-    { { PasswordForm::SCHEME_HTML, "http://web.site.com/",
+      // Test deletion of an item that we add.
+      {{PasswordForm::SCHEME_HTML, "http://web.site.com/",
         "http://web.site.com/path/to/page.html", NULL, NULL, NULL, NULL,
-        L"anonymous", L"knock-knock", false, false, 0 }, true },
-    // Test that Android credentials can be removed. Also check the legacy case
-    // when |origin| was still filled with the Android URI (and not left empty).
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.example.alpha/",
-        "", NULL, NULL, NULL, NULL,
-        L"joe_user", L"secret", false, true, 0 }, true },
-    { { PasswordForm::SCHEME_HTML, "android://hash@com.example.beta/",
+        L"anonymous", L"knock-knock", false, 0},
+       true},
+      // Test that Android credentials can be removed. Also check the legacy
+      // case when |origin| was still filled with the Android URI (and not left
+      // empty).
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.example.alpha/", "",
+        NULL, NULL, NULL, NULL, L"joe_user", L"secret", false, 0},
+       true},
+      {{PasswordForm::SCHEME_HTML, "android://hash@com.example.beta/",
         "android://hash@com.example.beta/", NULL, NULL, NULL, NULL,
-        L"jane_user", L"secret", false, true, 0 }, true },
-    // Make sure we don't delete items we don't own.
-    { { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+        L"jane_user", L"secret", false, 0},
+       true},
+      // Make sure we don't delete items we don't own.
+      {{PasswordForm::SCHEME_HTML, "http://some.domain.com/",
         "http://some.domain.com/insecure.html", NULL, NULL, NULL, NULL,
-        L"joe_user", NULL, true, false, 0 }, false },
+        L"joe_user", NULL, true, 0},
+       false},
   };
-  /* clang-format on */
 
   MacKeychainPasswordFormAdapter owned_keychain_adapter(keychain_);
   owned_keychain_adapter.SetFindsOnlyOwnedItems(true);
 
   // Add our test items (except the last one) so that we can delete them.
   for (unsigned int i = 0; i + 1 < arraysize(test_data); ++i) {
-    scoped_ptr<PasswordForm> add_form =
+    std::unique_ptr<PasswordForm> add_form =
         CreatePasswordFormFromDataForTesting(test_data[i].data);
     EXPECT_TRUE(owned_keychain_adapter.AddPassword(*add_form));
   }
 
   for (unsigned int i = 0; i < arraysize(test_data); ++i) {
-    scoped_ptr<PasswordForm> form =
+    std::unique_ptr<PasswordForm> form =
         CreatePasswordFormFromDataForTesting(test_data[i].data);
     EXPECT_EQ(test_data[i].should_succeed,
               owned_keychain_adapter.RemovePassword(*form));
@@ -759,7 +762,6 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMatch) {
     different_form.username_element = ASCIIToUTF16("password");
     different_form.password_value = ASCIIToUTF16("sekrit");
     different_form.action = GURL("http://some.domain.com/action.cgi");
-    different_form.ssl_valid = true;
     different_form.preferred = true;
     different_form.date_created = base::Time::Now();
     EXPECT_TRUE(
@@ -809,7 +811,8 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMatch) {
   // Federated login forms should never match for merging either.
   {
     PasswordForm form_b(base_form);
-    form_b.federation_url = GURL(password_manager::kTestingFederationUrlSpec);
+    form_b.federation_origin =
+        url::Origin(GURL(password_manager::kTestingFederationUrlSpec));
     EXPECT_FALSE(FormsMatchForMerge(base_form, form_b, STRICT_FORM_MATCH));
     EXPECT_FALSE(FormsMatchForMerge(form_b, base_form, STRICT_FORM_MATCH));
     EXPECT_FALSE(FormsMatchForMerge(form_b, form_b, STRICT_FORM_MATCH));
@@ -818,83 +821,180 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMatch) {
 
 TEST_F(PasswordStoreMacInternalsTest, TestFormMerge) {
   // Set up a bunch of test data to use in varying combinations.
-  /* clang-format off */
-  PasswordFormData keychain_user_1 =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/", "", L"", L"", L"", L"joe_user", L"sekrit",
-        false, false, 1010101010 };
-  PasswordFormData keychain_user_1_with_path =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/page.html",
-        "", L"", L"", L"", L"joe_user", L"otherpassword",
-        false, false, 1010101010 };
-  PasswordFormData keychain_user_2 =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/", "", L"", L"", L"", L"john.doe", L"sesame",
-        false, false, 958739876 };
-  PasswordFormData keychain_blacklist =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/", "", L"", L"", L"", NULL, NULL,
-        false, false, 1010101010 };
-  PasswordFormData keychain_android =
-      { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        "", "", L"", L"", L"", L"joe_user", L"secret",
-        false, true, 1234567890 };
+  PasswordFormData keychain_user_1 = {PasswordForm::SCHEME_HTML,
+                                      "http://some.domain.com/",
+                                      "http://some.domain.com/",
+                                      "",
+                                      L"",
+                                      L"",
+                                      L"",
+                                      L"joe_user",
+                                      L"sekrit",
+                                      false,
+                                      1010101010};
+  PasswordFormData keychain_user_1_with_path = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/page.html",
+      "",
+      L"",
+      L"",
+      L"",
+      L"joe_user",
+      L"otherpassword",
+      false,
+      1010101010};
+  PasswordFormData keychain_user_2 = {PasswordForm::SCHEME_HTML,
+                                      "http://some.domain.com/",
+                                      "http://some.domain.com/",
+                                      "",
+                                      L"",
+                                      L"",
+                                      L"",
+                                      L"john.doe",
+                                      L"sesame",
+                                      false,
+                                      958739876};
+  PasswordFormData keychain_blacklist = {PasswordForm::SCHEME_HTML,
+                                         "http://some.domain.com/",
+                                         "http://some.domain.com/",
+                                         "",
+                                         L"",
+                                         L"",
+                                         L"",
+                                         NULL,
+                                         NULL,
+                                         false,
+                                         1010101010};
+  PasswordFormData keychain_android = {PasswordForm::SCHEME_HTML,
+                                       "android://hash@com.domain.some/",
+                                       "",
+                                       "",
+                                       L"",
+                                       L"",
+                                       L"",
+                                       L"joe_user",
+                                       L"secret",
+                                       false,
+                                       1234567890};
 
-  PasswordFormData db_user_1 =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/", "http://some.domain.com/action.cgi",
-        L"submit", L"username", L"password", L"joe_user", L"",
-        true, false, 1212121212 };
-  PasswordFormData db_user_1_with_path =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/page.html",
-        "http://some.domain.com/handlepage.cgi",
-        L"submit", L"username", L"password", L"joe_user", L"",
-        true, false, 1234567890 };
-  PasswordFormData db_user_3_with_path =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/page.html",
-        "http://some.domain.com/handlepage.cgi",
-        L"submit", L"username", L"password", L"second-account", L"",
-        true, false, 1240000000 };
-  PasswordFormData database_blacklist_with_path =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/path.html", "http://some.domain.com/action.cgi",
-        L"submit", L"username", L"password", NULL, NULL,
-        true, false, 1212121212 };
-  PasswordFormData db_android =
-      { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        "android://hash@com.domain.some/", "", L"", L"", L"", L"joe_user", L"",
-        false, true, 1234567890 };
-  PasswordFormData db_federated =
-      { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        "android://hash@com.domain.some/", "", L"", L"", L"", L"joe_user",
-        password_manager::kTestingFederatedLoginMarker,
-        false, true, 3434343434 };
+  PasswordFormData db_user_1 = {PasswordForm::SCHEME_HTML,
+                                "http://some.domain.com/",
+                                "http://some.domain.com/",
+                                "http://some.domain.com/action.cgi",
+                                L"submit",
+                                L"username",
+                                L"password",
+                                L"joe_user",
+                                L"",
+                                true,
+                                1212121212};
+  PasswordFormData db_user_1_with_path = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/page.html",
+      "http://some.domain.com/handlepage.cgi",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"",
+      true,
+      1234567890};
+  PasswordFormData db_user_3_with_path = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/page.html",
+      "http://some.domain.com/handlepage.cgi",
+      L"submit",
+      L"username",
+      L"password",
+      L"second-account",
+      L"",
+      true,
+      1240000000};
+  PasswordFormData database_blacklist_with_path = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/path.html",
+      "http://some.domain.com/action.cgi",
+      L"submit",
+      L"username",
+      L"password",
+      NULL,
+      NULL,
+      true,
+      1212121212};
+  PasswordFormData db_android = {PasswordForm::SCHEME_HTML,
+                                 "android://hash@com.domain.some/",
+                                 "android://hash@com.domain.some/",
+                                 "",
+                                 L"",
+                                 L"",
+                                 L"",
+                                 L"joe_user",
+                                 L"",
+                                 false,
+                                 1234567890};
+  PasswordFormData db_federated = {
+      PasswordForm::SCHEME_HTML,
+      "android://hash@com.domain.some/",
+      "android://hash@com.domain.some/",
+      "",
+      L"",
+      L"",
+      L"",
+      L"joe_user",
+      password_manager::kTestingFederatedLoginMarker,
+      false,
+      3434343434};
 
-  PasswordFormData merged_user_1 =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/", "http://some.domain.com/action.cgi",
-        L"submit", L"username", L"password", L"joe_user", L"sekrit",
-        true, false, 1212121212 };
-  PasswordFormData merged_user_1_with_db_path =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/page.html",
-        "http://some.domain.com/handlepage.cgi",
-        L"submit", L"username", L"password", L"joe_user", L"sekrit",
-        true, false, 1234567890 };
-  PasswordFormData merged_user_1_with_both_paths =
-      { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/page.html",
-        "http://some.domain.com/handlepage.cgi",
-        L"submit", L"username", L"password", L"joe_user", L"otherpassword",
-        true, false, 1234567890 };
-  PasswordFormData merged_android =
-      { PasswordForm::SCHEME_HTML, "android://hash@com.domain.some/",
-        "android://hash@com.domain.some/", "", L"", L"", L"", L"joe_user",
-        L"secret", false, true, 1234567890 };
-  /* clang-format on */
+  PasswordFormData merged_user_1 = {PasswordForm::SCHEME_HTML,
+                                    "http://some.domain.com/",
+                                    "http://some.domain.com/",
+                                    "http://some.domain.com/action.cgi",
+                                    L"submit",
+                                    L"username",
+                                    L"password",
+                                    L"joe_user",
+                                    L"sekrit",
+                                    true,
+                                    1212121212};
+  PasswordFormData merged_user_1_with_db_path = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/page.html",
+      "http://some.domain.com/handlepage.cgi",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"sekrit",
+      true,
+      1234567890};
+  PasswordFormData merged_user_1_with_both_paths = {
+      PasswordForm::SCHEME_HTML,
+      "http://some.domain.com/",
+      "http://some.domain.com/page.html",
+      "http://some.domain.com/handlepage.cgi",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"otherpassword",
+      true,
+      1234567890};
+  PasswordFormData merged_android = {PasswordForm::SCHEME_HTML,
+                                     "android://hash@com.domain.some/",
+                                     "android://hash@com.domain.some/",
+                                     "",
+                                     L"",
+                                     L"",
+                                     L"",
+                                     L"joe_user",
+                                     L"secret",
+                                     false,
+                                     1234567890};
 
   // Build up the big multi-dimensional array of data sets that will actually
   // drive the test. Use vectors rather than arrays so that initialization is
@@ -908,9 +1008,9 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMerge) {
     MERGE_IO_ARRAY_COUNT  // termination marker
   };
   const unsigned int kTestCount = 5;
-  std::vector< std::vector< std::vector<PasswordFormData*> > > test_data(
-      MERGE_IO_ARRAY_COUNT, std::vector< std::vector<PasswordFormData*> >(
-          kTestCount, std::vector<PasswordFormData*>()));
+  std::vector<std::vector<std::vector<PasswordFormData*>>> test_data(
+      MERGE_IO_ARRAY_COUNT, std::vector<std::vector<PasswordFormData*>>(
+                                kTestCount, std::vector<PasswordFormData*>()));
   unsigned int current_test = 0;
 
   // Test a merge with a few accounts in both systems, with partial overlap.
@@ -986,9 +1086,8 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMerge) {
     }
 
     ScopedVector<autofill::PasswordForm> merged_forms;
-    internal_keychain_helpers::MergePasswordForms(&keychain_forms,
-                                                  &database_forms,
-                                                  &merged_forms);
+    internal_keychain_helpers::MergePasswordForms(
+        &keychain_forms, &database_forms, &merged_forms);
 
     CHECK_FORMS(keychain_forms.get(), test_data[KEYCHAIN_OUTPUT][test_case],
                 test_case);
@@ -1001,29 +1100,23 @@ TEST_F(PasswordStoreMacInternalsTest, TestFormMerge) {
 
 TEST_F(PasswordStoreMacInternalsTest, TestPasswordBulkLookup) {
   PasswordFormData db_data[] = {
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/", "http://some.domain.com/action.cgi",
-      L"submit", L"username", L"password", L"joe_user", L"",
-      true, false, 1212121212 },
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/page.html",
-      "http://some.domain.com/handlepage.cgi",
-      L"submit", L"username", L"password", L"joe_user", L"",
-      true, false, 1234567890 },
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/page.html",
-      "http://some.domain.com/handlepage.cgi",
-      L"submit", L"username", L"password", L"second-account", L"",
-      true, false, 1240000000 },
-    { PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
-      "http://dont.remember.com/",
-      "http://dont.remember.com/handlepage.cgi",
-      L"submit", L"username", L"password", L"joe_user", L"",
-      true, false, 1240000000 },
-    { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-      "http://some.domain.com/path.html", "http://some.domain.com/action.cgi",
-      L"submit", L"username", L"password", NULL, NULL,
-      true, false, 1212121212 },
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/", "http://some.domain.com/action.cgi",
+       L"submit", L"username", L"password", L"joe_user", L"", true, 1212121212},
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/page.html",
+       "http://some.domain.com/handlepage.cgi", L"submit", L"username",
+       L"password", L"joe_user", L"", true, 1234567890},
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/page.html",
+       "http://some.domain.com/handlepage.cgi", L"submit", L"username",
+       L"password", L"second-account", L"", true, 1240000000},
+      {PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
+       "http://dont.remember.com/", "http://dont.remember.com/handlepage.cgi",
+       L"submit", L"username", L"password", L"joe_user", L"", true, 1240000000},
+      {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+       "http://some.domain.com/path.html", "http://some.domain.com/action.cgi",
+       L"submit", L"username", L"password", NULL, NULL, true, 1212121212},
   };
   ScopedVector<autofill::PasswordForm> database_forms;
   for (unsigned int i = 0; i < arraysize(db_data); ++i) {
@@ -1042,16 +1135,15 @@ TEST_F(PasswordStoreMacInternalsTest, TestPasswordBulkLookup) {
 
 TEST_F(PasswordStoreMacInternalsTest, TestBlacklistedFiltering) {
   PasswordFormData db_data[] = {
-    { PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
-      "http://dont.remember.com/",
-      "http://dont.remember.com/handlepage.cgi",
-      L"submit", L"username", L"password", L"joe_user", L"non_empty_password",
-      true, false, 1240000000 },
-    { PasswordForm::SCHEME_HTML, "https://dont.remember.com/",
-      "https://dont.remember.com/",
-      "https://dont.remember.com/handlepage_secure.cgi",
-      L"submit", L"username", L"password", L"joe_user", L"non_empty_password",
-      true, false, 1240000000 },
+      {PasswordForm::SCHEME_HTML, "http://dont.remember.com/",
+       "http://dont.remember.com/", "http://dont.remember.com/handlepage.cgi",
+       L"submit", L"username", L"password", L"joe_user", L"non_empty_password",
+       true, 1240000000},
+      {PasswordForm::SCHEME_HTML, "https://dont.remember.com/",
+       "https://dont.remember.com/",
+       "https://dont.remember.com/handlepage_secure.cgi", L"submit",
+       L"username", L"password", L"joe_user", L"non_empty_password", true,
+       1240000000},
   };
   ScopedVector<autofill::PasswordForm> database_forms;
   for (unsigned int i = 0; i < arraysize(db_data); ++i) {
@@ -1071,9 +1163,7 @@ TEST_F(PasswordStoreMacInternalsTest, TestFillPasswordFormFromKeychainItem) {
   SecKeychainItemRef keychain_item = reinterpret_cast<SecKeychainItemRef>(1);
   PasswordForm form_without_extracted_password;
   bool parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
-      *keychain_,
-      keychain_item,
-      &form_without_extracted_password,
+      *keychain_, keychain_item, &form_without_extracted_password,
       false);  // Do not extract password.
   EXPECT_TRUE(parsed);
   ASSERT_TRUE(form_without_extracted_password.password_value.empty());
@@ -1085,9 +1175,7 @@ TEST_F(PasswordStoreMacInternalsTest, TestFillPasswordFormFromKeychainItem) {
   keychain_item = reinterpret_cast<SecKeychainItemRef>(1);
   PasswordForm form_with_extracted_password;
   parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
-      *keychain_,
-      keychain_item,
-      &form_with_extracted_password,
+      *keychain_, keychain_item, &form_with_extracted_password,
       true);  // Extract password.
   EXPECT_TRUE(parsed);
   ASSERT_EQ(ASCIIToUTF16("sekrit"),
@@ -1100,9 +1188,7 @@ TEST_F(PasswordStoreMacInternalsTest, TestFillPasswordFormFromKeychainItem) {
   keychain_item = reinterpret_cast<SecKeychainItemRef>(4);
   PasswordForm negative_form;
   parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
-      *keychain_,
-      keychain_item,
-      &negative_form,
+      *keychain_, keychain_item, &negative_form,
       true);  // Extract password.
   EXPECT_TRUE(parsed);
   ASSERT_TRUE(negative_form.username_value.empty());
@@ -1115,9 +1201,7 @@ TEST_F(PasswordStoreMacInternalsTest, TestFillPasswordFormFromKeychainItem) {
   keychain_item = reinterpret_cast<SecKeychainItemRef>(5);
   PasswordForm form_with_empty_password_a;
   parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
-      *keychain_,
-      keychain_item,
-      &form_with_empty_password_a,
+      *keychain_, keychain_item, &form_with_empty_password_a,
       true);  // Extract password.
   EXPECT_TRUE(parsed);
   ASSERT_TRUE(form_with_empty_password_a.password_value.empty());
@@ -1129,13 +1213,10 @@ TEST_F(PasswordStoreMacInternalsTest, TestFillPasswordFormFromKeychainItem) {
   keychain_item = reinterpret_cast<SecKeychainItemRef>(6);
   PasswordForm form_with_empty_password_b;
   parsed = internal_keychain_helpers::FillPasswordFormFromKeychainItem(
-      *keychain_,
-      keychain_item,
-      &form_with_empty_password_b,
+      *keychain_, keychain_item, &form_with_empty_password_b,
       true);  // Extract password.
   EXPECT_TRUE(parsed);
-  ASSERT_EQ(ASCIIToUTF16(" "),
-            form_with_empty_password_b.password_value);
+  ASSERT_EQ(ASCIIToUTF16(" "), form_with_empty_password_b.password_value);
   ASSERT_TRUE(form_with_empty_password_b.blacklisted_by_user);
 }
 
@@ -1146,18 +1227,18 @@ TEST_F(PasswordStoreMacInternalsTest, TestPasswordGetAll) {
 
   // Add a few passwords of various types so that we own some.
   PasswordFormData owned_password_data[] = {
-    { PasswordForm::SCHEME_HTML, "http://web.site.com/",
-      "http://web.site.com/path/to/page.html", NULL, NULL, NULL, NULL,
-      L"anonymous", L"knock-knock", false, false, 0 },
-    { PasswordForm::SCHEME_BASIC, "http://a.site.com:2222/therealm",
-      "http://a.site.com:2222/", NULL, NULL, NULL, NULL,
-      L"username", L"password", false, false, 0 },
-    { PasswordForm::SCHEME_DIGEST, "https://digest.site.com/differentrealm",
-      "https://digest.site.com/secure.html", NULL, NULL, NULL, NULL,
-      L"testname", L"testpass", false, false, 0 },
+      {PasswordForm::SCHEME_HTML, "http://web.site.com/",
+       "http://web.site.com/path/to/page.html", NULL, NULL, NULL, NULL,
+       L"anonymous", L"knock-knock", false, 0},
+      {PasswordForm::SCHEME_BASIC, "http://a.site.com:2222/therealm",
+       "http://a.site.com:2222/", NULL, NULL, NULL, NULL, L"username",
+       L"password", false, 0},
+      {PasswordForm::SCHEME_DIGEST, "https://digest.site.com/differentrealm",
+       "https://digest.site.com/secure.html", NULL, NULL, NULL, NULL,
+       L"testname", L"testpass", false, 0},
   };
   for (unsigned int i = 0; i < arraysize(owned_password_data); ++i) {
-    scoped_ptr<PasswordForm> form =
+    std::unique_ptr<PasswordForm> form =
         CreatePasswordFormFromDataForTesting(owned_password_data[i]);
     owned_keychain_adapter.AddPassword(*form);
   }
@@ -1183,7 +1264,7 @@ class PasswordStoreMacTest : public testing::Test {
 
     // Ensure that LoginDatabase will use the mock keychain if it needs to
     // encrypt/decrypt a password.
-    OSCrypt::UseMockKeychain(true);
+    OSCryptMocker::SetUpWithSingleton();
     login_db_.reset(
         new password_manager::LoginDatabase(test_login_db_file_path()));
     thread_.reset(new base::Thread("Chrome_PasswordStore_Thread"));
@@ -1208,6 +1289,7 @@ class PasswordStoreMacTest : public testing::Test {
     if (histogram_tester_) {
       histogram_tester_->ExpectTotalCount("OSX.Keychain.Access", 0);
     }
+    OSCryptMocker::TearDown();
   }
 
   static void InitLoginDatabase(password_manager::LoginDatabase* login_db) {
@@ -1217,7 +1299,7 @@ class PasswordStoreMacTest : public testing::Test {
   void CreateAndInitPasswordStore(password_manager::LoginDatabase* login_db) {
     store_ = new PasswordStoreMac(
         base::ThreadTaskRunnerHandle::Get(), nullptr,
-        make_scoped_ptr<AppleKeychain>(new MockAppleKeychain));
+        base::WrapUnique<AppleKeychain>(new MockAppleKeychain));
     ASSERT_TRUE(thread_->task_runner()->PostTask(
         FROM_HERE, base::Bind(&PasswordStoreMac::InitWithTaskRunner, store_,
                               thread_->task_runner())));
@@ -1248,7 +1330,7 @@ class PasswordStoreMacTest : public testing::Test {
       EXPECT_CALL(mock_consumer, OnGetPasswordStoreResultsConstRef(IsEmpty()))
           .WillOnce(QuitUIMessageLoop());
       store()->GetAutofillableLogins(&mock_consumer);
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       ::testing::Mock::VerifyAndClearExpectations(&mock_consumer);
 
       store()->AddLogin(form);
@@ -1265,19 +1347,16 @@ class PasswordStoreMacTest : public testing::Test {
       // is incorrect, this will wipe the newly added form before the second
       // query.
       store()->GetAutofillableLogins(&mock_consumer);
-      base::MessageLoop::current()->Run();
+      base::RunLoop().Run();
       ::testing::Mock::VerifyAndClearExpectations(&mock_consumer);
       EXPECT_EQ(form, returned_form);
 
-      PasswordForm query_form = form;
-      query_form.password_value.clear();
-      query_form.username_value.clear();
+      PasswordStore::FormDigest query_form(form);
       EXPECT_CALL(mock_consumer, OnGetPasswordStoreResultsConstRef(SizeIs(1u)))
           .WillOnce(
               DoAll(SaveACopyOfFirstForm(&returned_form), QuitUIMessageLoop()));
-      store()->GetLogins(query_form, PasswordStore::ALLOW_PROMPT,
-                         &mock_consumer);
-      base::MessageLoop::current()->Run();
+      store()->GetLogins(query_form, &mock_consumer);
+      base::RunLoop().Run();
       ::testing::Mock::VerifyAndClearExpectations(&mock_consumer);
       EXPECT_EQ(form, returned_form);
 
@@ -1286,7 +1365,7 @@ class PasswordStoreMacTest : public testing::Test {
   }
 
   base::FilePath test_login_db_file_path() const {
-    return db_dir_.path().Append(FILE_PATH_LITERAL("login.db"));
+    return db_dir_.GetPath().Append(FILE_PATH_LITERAL("login.db"));
   }
 
   password_manager::LoginDatabase* login_db() const {
@@ -1311,12 +1390,12 @@ class PasswordStoreMacTest : public testing::Test {
   base::MessageLoopForUI message_loop_;
   content::TestBrowserThread ui_thread_;
   // Thread that the synchronous methods are run on.
-  scoped_ptr<base::Thread> thread_;
+  std::unique_ptr<base::Thread> thread_;
 
   base::ScopedTempDir db_dir_;
-  scoped_ptr<password_manager::LoginDatabase> login_db_;
+  std::unique_ptr<password_manager::LoginDatabase> login_db_;
   scoped_refptr<PasswordStoreMac> store_;
-  scoped_ptr<base::HistogramTester> histogram_tester_;
+  std::unique_ptr<base::HistogramTester> histogram_tester_;
 };
 
 TEST_F(PasswordStoreMacTest, TestStoreUpdate) {
@@ -1325,26 +1404,45 @@ TEST_F(PasswordStoreMacTest, TestStoreUpdate) {
   // Mock Keychain isn't smart enough to be able to support update generically,
   // so some.domain.com triggers special handling to test it that make inserting
   // fail.
-  PasswordFormData joint_data = {
-    PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-    "http://some.domain.com/insecure.html", "login.cgi",
-    L"username", L"password", L"submit", L"joe_user", L"sekrit", true, false, 1
-  };
-  scoped_ptr<PasswordForm> joint_form =
+  PasswordFormData joint_data = {PasswordForm::SCHEME_HTML,
+                                 "http://some.domain.com/",
+                                 "http://some.domain.com/insecure.html",
+                                 "login.cgi",
+                                 L"username",
+                                 L"password",
+                                 L"submit",
+                                 L"joe_user",
+                                 L"sekrit",
+                                 true,
+                                 1};
+  std::unique_ptr<PasswordForm> joint_form =
       CreatePasswordFormFromDataForTesting(joint_data);
   EXPECT_EQ(AddChangeForForm(*joint_form), login_db()->AddLogin(*joint_form));
   MockAppleKeychain::KeychainTestData joint_keychain_data = {
-    kSecAuthenticationTypeHTMLForm, "some.domain.com",
-    kSecProtocolTypeHTTP, "/insecure.html", 0, NULL, "20020601171500Z",
-    "joe_user", "sekrit", false };
+      kSecAuthenticationTypeHTMLForm,
+      "some.domain.com",
+      kSecProtocolTypeHTTP,
+      "/insecure.html",
+      0,
+      NULL,
+      "20020601171500Z",
+      "joe_user",
+      "sekrit",
+      false};
   keychain()->AddTestItem(joint_keychain_data);
 
   // Insert a password into the keychain only.
   MockAppleKeychain::KeychainTestData keychain_only_data = {
-    kSecAuthenticationTypeHTMLForm, "keychain.only.com",
-    kSecProtocolTypeHTTP, NULL, 0, NULL, "20020601171500Z",
-    "keychain", "only", false
-  };
+      kSecAuthenticationTypeHTMLForm,
+      "keychain.only.com",
+      kSecProtocolTypeHTTP,
+      NULL,
+      0,
+      NULL,
+      "20020601171500Z",
+      "keychain",
+      "only",
+      false};
   keychain()->AddTestItem(keychain_only_data);
 
   struct UpdateData {
@@ -1354,33 +1452,33 @@ TEST_F(PasswordStoreMacTest, TestStoreUpdate) {
 
   // Make a series of update calls.
   UpdateData updates[] = {
-    // Update the keychain+db passwords (the normal password update case).
-    { { PasswordForm::SCHEME_HTML, "http://some.domain.com/",
-        "http://some.domain.com/insecure.html", "login.cgi",
-        L"username", L"password", L"submit", L"joe_user", L"53krit",
-        true, false, 2 },
-      "53krit",
-    },
-    // Update the keychain-only password; this simulates the initial use of a
-    // password stored by another browsers.
-    { { PasswordForm::SCHEME_HTML, "http://keychain.only.com/",
-        "http://keychain.only.com/login.html", "login.cgi",
-        L"username", L"password", L"submit", L"keychain", L"only",
-        true, false, 2 },
-      "only",
-    },
-    // Update a password that doesn't exist in either location. This tests the
-    // case where a form is filled, then the stored login is removed, then the
-    // form is submitted.
-    { { PasswordForm::SCHEME_HTML, "http://different.com/",
-        "http://different.com/index.html", "login.cgi",
-        L"username", L"password", L"submit", L"abc", L"123",
-        true, false, 2 },
-      NULL,
-    },
+      // Update the keychain+db passwords (the normal password update case).
+      {
+          {PasswordForm::SCHEME_HTML, "http://some.domain.com/",
+           "http://some.domain.com/insecure.html", "login.cgi", L"username",
+           L"password", L"submit", L"joe_user", L"53krit", true, 2},
+          "53krit",
+      },
+      // Update the keychain-only password; this simulates the initial use of a
+      // password stored by another browsers.
+      {
+          {PasswordForm::SCHEME_HTML, "http://keychain.only.com/",
+           "http://keychain.only.com/login.html", "login.cgi", L"username",
+           L"password", L"submit", L"keychain", L"only", true, 2},
+          "only",
+      },
+      // Update a password that doesn't exist in either location. This tests the
+      // case where a form is filled, then the stored login is removed, then the
+      // form is submitted.
+      {
+          {PasswordForm::SCHEME_HTML, "http://different.com/",
+           "http://different.com/index.html", "login.cgi", L"username",
+           L"password", L"submit", L"abc", L"123", true, 2},
+          NULL,
+      },
   };
   for (unsigned int i = 0; i < arraysize(updates); ++i) {
-    scoped_ptr<PasswordForm> form =
+    std::unique_ptr<PasswordForm> form =
         CreatePasswordFormFromDataForTesting(updates[i].form_data);
     store_->UpdateLogin(*form);
   }
@@ -1389,24 +1487,26 @@ TEST_F(PasswordStoreMacTest, TestStoreUpdate) {
 
   MacKeychainPasswordFormAdapter keychain_adapter(keychain());
   for (unsigned int i = 0; i < arraysize(updates); ++i) {
-    scoped_ptr<PasswordForm> query_form =
+    SCOPED_TRACE(testing::Message("iteration ") << i);
+    std::unique_ptr<PasswordForm> query_form =
         CreatePasswordFormFromDataForTesting(updates[i].form_data);
 
     ScopedVector<autofill::PasswordForm> matching_items =
         keychain_adapter.PasswordsFillingForm(query_form->signon_realm,
                                               query_form->scheme);
     if (updates[i].password) {
-      EXPECT_GT(matching_items.size(), 0U) << "iteration " << i;
+      EXPECT_GT(matching_items.size(), 0U);
       if (matching_items.size() >= 1)
         EXPECT_EQ(ASCIIToUTF16(updates[i].password),
-                  matching_items[0]->password_value) << "iteration " << i;
+                  matching_items[0]->password_value);
     } else {
-      EXPECT_EQ(0U, matching_items.size()) << "iteration " << i;
+      EXPECT_EQ(0U, matching_items.size());
     }
 
-    EXPECT_TRUE(login_db()->GetLogins(*query_form, &matching_items));
-    EXPECT_EQ(updates[i].password ? 1U : 0U, matching_items.size())
-        << "iteration " << i;
+    std::vector<std::unique_ptr<PasswordForm>> matching_db_items;
+    EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(*query_form),
+                                      &matching_db_items));
+    EXPECT_EQ(updates[i].password ? 1U : 0U, matching_db_items.size());
   }
 }
 
@@ -1427,12 +1527,18 @@ TEST_F(PasswordStoreMacTest, TestDBKeychainAssociation) {
   // fuzzy-matches the www.facebook.com one.)
 
   // 1. Add a password for www.facebook.com
-  PasswordFormData www_form_data = {
-    PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-    "http://www.facebook.com/index.html", "login",
-    L"username", L"password", L"submit", L"joe_user", L"sekrit", true, false, 1
-  };
-  scoped_ptr<PasswordForm> www_form =
+  PasswordFormData www_form_data = {PasswordForm::SCHEME_HTML,
+                                    "http://www.facebook.com/",
+                                    "http://www.facebook.com/index.html",
+                                    "login",
+                                    L"username",
+                                    L"password",
+                                    L"submit",
+                                    L"joe_user",
+                                    L"sekrit",
+                                    true,
+                                    1};
+  std::unique_ptr<PasswordForm> www_form =
       CreatePasswordFormFromDataForTesting(www_form_data);
   EXPECT_EQ(AddChangeForForm(*www_form), login_db()->AddLogin(*www_form));
   MacKeychainPasswordFormAdapter owned_keychain_adapter(keychain());
@@ -1445,12 +1551,12 @@ TEST_F(PasswordStoreMacTest, TestDBKeychainAssociation) {
   m_form.origin = GURL("http://m.facebook.com/index.html");
 
   MockPasswordStoreConsumer consumer;
-  store_->GetLogins(m_form, PasswordStore::ALLOW_PROMPT, &consumer);
+  store_->GetLogins(PasswordStore::FormDigest(m_form), &consumer);
   PasswordForm returned_form;
   EXPECT_CALL(consumer, OnGetPasswordStoreResultsConstRef(SizeIs(1u)))
       .WillOnce(
           DoAll(SaveACopyOfFirstForm(&returned_form), QuitUIMessageLoop()));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // 3. Add the returned password for m.facebook.com.
   returned_form.signon_realm = "http://m.facebook.com";
@@ -1469,14 +1575,20 @@ TEST_F(PasswordStoreMacTest, TestDBKeychainAssociation) {
       owned_keychain_adapter.PasswordsFillingForm(www_form->signon_realm,
                                                   www_form->scheme);
   EXPECT_EQ(0u, matching_items.size());
-  EXPECT_TRUE(login_db()->GetLogins(*www_form, &matching_items));
-  EXPECT_EQ(0u, matching_items.size());
+
+  std::vector<std::unique_ptr<PasswordForm>> matching_db_items;
+  EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(*www_form),
+                                    &matching_db_items));
+  EXPECT_EQ(0u, matching_db_items.size());
+
   // No trace of m.facebook.com.
   matching_items = owned_keychain_adapter.PasswordsFillingForm(
       m_form.signon_realm, m_form.scheme);
   EXPECT_EQ(0u, matching_items.size());
-  EXPECT_TRUE(login_db()->GetLogins(m_form, &matching_items));
-  EXPECT_EQ(0u, matching_items.size());
+
+  EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(m_form),
+                                    &matching_db_items));
+  EXPECT_EQ(0u, matching_db_items.size());
 }
 
 namespace {
@@ -1513,23 +1625,46 @@ password_manager::PasswordStoreChangeList GetAddChangeList(
 // |check_created|.
 void CheckRemoveLoginsBetween(PasswordStoreMacTest* test, bool check_created) {
   PasswordFormData www_form_data_facebook = {
-      PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-      "http://www.facebook.com/index.html", "login", L"submit", L"username",
-      L"password", L"joe_user", L"sekrit", true, false, 0 };
+      PasswordForm::SCHEME_HTML,
+      "http://www.facebook.com/",
+      "http://www.facebook.com/index.html",
+      "login",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"sekrit",
+      true,
+      0};
   // The old form doesn't have elements names.
   PasswordFormData www_form_data_facebook_old = {
-      PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-      "http://www.facebook.com/index.html", "login", L"", L"",
-      L"", L"joe_user", L"oldsekrit", true, false, 0 };
-  PasswordFormData www_form_data_other = {
-      PasswordForm::SCHEME_HTML, "http://different.com/",
-      "http://different.com/index.html", "login", L"submit", L"username",
-      L"password", L"different_joe_user", L"sekrit", true, false, 0 };
-  scoped_ptr<PasswordForm> form_facebook =
+      PasswordForm::SCHEME_HTML,
+      "http://www.facebook.com/",
+      "http://www.facebook.com/index.html",
+      "login",
+      L"",
+      L"",
+      L"",
+      L"joe_user",
+      L"oldsekrit",
+      true,
+      0};
+  PasswordFormData www_form_data_other = {PasswordForm::SCHEME_HTML,
+                                          "http://different.com/",
+                                          "http://different.com/index.html",
+                                          "login",
+                                          L"submit",
+                                          L"username",
+                                          L"password",
+                                          L"different_joe_user",
+                                          L"sekrit",
+                                          true,
+                                          0};
+  std::unique_ptr<PasswordForm> form_facebook =
       CreatePasswordFormFromDataForTesting(www_form_data_facebook);
-  scoped_ptr<PasswordForm> form_facebook_old =
+  std::unique_ptr<PasswordForm> form_facebook_old =
       CreatePasswordFormFromDataForTesting(www_form_data_facebook_old);
-  scoped_ptr<PasswordForm> form_other =
+  std::unique_ptr<PasswordForm> form_other =
       CreatePasswordFormFromDataForTesting(www_form_data_other);
   base::Time now = base::Time::Now();
   base::Time next_day = now + base::TimeDelta::FromDays(1);
@@ -1615,40 +1750,120 @@ TEST_F(PasswordStoreMacTest, TestRemoveLoginsSyncedBetween) {
   CheckRemoveLoginsBetween(this, false);
 }
 
+TEST_F(PasswordStoreMacTest, TestDisableAutoSignInForOrigins) {
+  PasswordFormData www_form_data_facebook = {
+      PasswordForm::SCHEME_HTML,
+      "http://www.facebook.com/",
+      "http://www.facebook.com/index.html",
+      "login",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"sekrit",
+      true,
+      0};
+  std::unique_ptr<PasswordForm> form_facebook =
+      CreatePasswordFormFromDataForTesting(www_form_data_facebook);
+  form_facebook->skip_zero_click = false;
+
+  PasswordFormData www_form_data_google = {
+      PasswordForm::SCHEME_HTML,
+      "http://www.google.com/",
+      "http://www.google.com/foo/bar/index.html",
+      "login",
+      L"submit",
+      L"username",
+      L"password",
+      L"joe_user",
+      L"sekrit",
+      true,
+      0};
+  std::unique_ptr<PasswordForm> form_google =
+      CreatePasswordFormFromDataForTesting(www_form_data_google);
+  form_google->skip_zero_click = false;
+
+  // Add the zero-clickable forms to the database.
+  PasswordsChangeObserver observer(store());
+  store()->AddLogin(*form_facebook);
+  store()->AddLogin(*form_google);
+  EXPECT_CALL(observer, OnLoginsChanged(GetAddChangeList(*form_facebook)));
+  EXPECT_CALL(observer, OnLoginsChanged(GetAddChangeList(*form_google)));
+  observer.WaitAndVerify(this);
+
+  ScopedVector<autofill::PasswordForm> forms;
+  EXPECT_TRUE(login_db()->GetAutoSignInLogins(&forms));
+  EXPECT_EQ(2u, forms.size());
+  EXPECT_FALSE(forms[0]->skip_zero_click);
+  EXPECT_FALSE(forms[1]->skip_zero_click);
+
+  store()->DisableAutoSignInForOrigins(
+      base::Bind(static_cast<bool (*)(const GURL&, const GURL&)>(operator==),
+                 form_google->origin),
+      base::Closure());
+  FinishAsyncProcessing();
+
+  EXPECT_TRUE(login_db()->GetAutoSignInLogins(&forms));
+  EXPECT_EQ(1u, forms.size());
+  EXPECT_EQ(form_facebook->origin, forms[0]->origin);
+}
+
 TEST_F(PasswordStoreMacTest, TestRemoveLoginsMultiProfile) {
   // Make sure that RemoveLoginsCreatedBetween does affect only the correct
   // profile.
 
   // Add a third-party password.
   MockAppleKeychain::KeychainTestData keychain_data = {
-      kSecAuthenticationTypeHTMLForm, "some.domain.com",
-      kSecProtocolTypeHTTP, "/insecure.html", 0, NULL, "20020601171500Z",
-      "joe_user", "sekrit", false };
+      kSecAuthenticationTypeHTMLForm,
+      "some.domain.com",
+      kSecProtocolTypeHTTP,
+      "/insecure.html",
+      0,
+      NULL,
+      "20020601171500Z",
+      "joe_user",
+      "sekrit",
+      false};
   keychain()->AddTestItem(keychain_data);
 
   // Add a password through the adapter. It has the "Chrome" creator tag.
   // However, it's not referenced by the password database.
   MacKeychainPasswordFormAdapter owned_keychain_adapter(keychain());
   owned_keychain_adapter.SetFindsOnlyOwnedItems(true);
-  PasswordFormData www_form_data1 = {
-      PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-      "http://www.facebook.com/index.html", "login", L"username", L"password",
-      L"submit", L"joe_user", L"sekrit", true, false, 1 };
-  scoped_ptr<PasswordForm> www_form =
+  PasswordFormData www_form_data1 = {PasswordForm::SCHEME_HTML,
+                                     "http://www.facebook.com/",
+                                     "http://www.facebook.com/index.html",
+                                     "login",
+                                     L"username",
+                                     L"password",
+                                     L"submit",
+                                     L"joe_user",
+                                     L"sekrit",
+                                     true,
+                                     1};
+  std::unique_ptr<PasswordForm> www_form =
       CreatePasswordFormFromDataForTesting(www_form_data1);
   EXPECT_TRUE(owned_keychain_adapter.AddPassword(*www_form));
 
   // Add a password from the current profile.
-  PasswordFormData www_form_data2 = {
-      PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-      "http://www.facebook.com/index.html", "login", L"username", L"password",
-      L"submit", L"not_joe_user", L"12345", true, false, 1 };
+  PasswordFormData www_form_data2 = {PasswordForm::SCHEME_HTML,
+                                     "http://www.facebook.com/",
+                                     "http://www.facebook.com/index.html",
+                                     "login",
+                                     L"username",
+                                     L"password",
+                                     L"submit",
+                                     L"not_joe_user",
+                                     L"12345",
+                                     true,
+                                     1};
   www_form = CreatePasswordFormFromDataForTesting(www_form_data2);
   store_->AddLogin(*www_form);
   FinishAsyncProcessing();
 
-  ScopedVector<PasswordForm> matching_items;
-  EXPECT_TRUE(login_db()->GetLogins(*www_form, &matching_items));
+  std::vector<std::unique_ptr<PasswordForm>> matching_items;
+  EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(*www_form),
+                                    &matching_items));
   EXPECT_EQ(1u, matching_items.size());
 
   store_->RemoveLoginsCreatedBetween(base::Time(), base::Time(),
@@ -1656,36 +1871,46 @@ TEST_F(PasswordStoreMacTest, TestRemoveLoginsMultiProfile) {
   FinishAsyncProcessing();
 
   // Check the second facebook form is gone.
-  EXPECT_TRUE(login_db()->GetLogins(*www_form, &matching_items));
+  EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(*www_form),
+                                    &matching_items));
   EXPECT_EQ(0u, matching_items.size());
 
   // Check the first facebook form is still there.
-  matching_items = owned_keychain_adapter.PasswordsFillingForm(
+  ScopedVector<PasswordForm> matching_keychain_items;
+  matching_keychain_items = owned_keychain_adapter.PasswordsFillingForm(
       www_form->signon_realm, www_form->scheme);
-  ASSERT_EQ(1u, matching_items.size());
-  EXPECT_EQ(ASCIIToUTF16("joe_user"), matching_items[0]->username_value);
+  ASSERT_EQ(1u, matching_keychain_items.size());
+  EXPECT_EQ(ASCIIToUTF16("joe_user"),
+            matching_keychain_items[0]->username_value);
 
   // Check the third-party password is still there.
   owned_keychain_adapter.SetFindsOnlyOwnedItems(false);
-  matching_items = owned_keychain_adapter.PasswordsFillingForm(
+  matching_keychain_items = owned_keychain_adapter.PasswordsFillingForm(
       "http://some.domain.com/insecure.html", PasswordForm::SCHEME_HTML);
-  ASSERT_EQ(1u, matching_items.size());
+  ASSERT_EQ(1u, matching_keychain_items.size());
 }
 
 // Add a facebook form to the store but not to the keychain. The form is to be
 // implicitly deleted. However, the observers shouldn't get notified about
 // deletion of non-existent forms like m.facebook.com.
 TEST_F(PasswordStoreMacTest, SilentlyRemoveOrphanedForm) {
-  testing::StrictMock<MockPasswordStoreObserver> mock_observer;
+  testing::StrictMock<password_manager::MockPasswordStoreObserver>
+      mock_observer;
   store()->AddObserver(&mock_observer);
 
   // 1. Add a password for www.facebook.com to the LoginDatabase.
-  PasswordFormData www_form_data = {
-    PasswordForm::SCHEME_HTML, "http://www.facebook.com/",
-    "http://www.facebook.com/index.html", "login",
-    L"username", L"password", L"submit", L"joe_user", L"", true, false, 1
-  };
-  scoped_ptr<PasswordForm> www_form(
+  PasswordFormData www_form_data = {PasswordForm::SCHEME_HTML,
+                                    "http://www.facebook.com/",
+                                    "http://www.facebook.com/index.html",
+                                    "login",
+                                    L"username",
+                                    L"password",
+                                    L"submit",
+                                    L"joe_user",
+                                    L"",
+                                    true,
+                                    1};
+  std::unique_ptr<PasswordForm> www_form(
       CreatePasswordFormFromDataForTesting(www_form_data));
   EXPECT_EQ(AddChangeForForm(*www_form), login_db()->AddLogin(*www_form));
 
@@ -1702,9 +1927,9 @@ TEST_F(PasswordStoreMacTest, SilentlyRemoveOrphanedForm) {
   // The PSL-matched form isn't returned because there is no actual password in
   // the keychain.
   EXPECT_CALL(consumer, OnGetPasswordStoreResultsConstRef(IsEmpty()));
-  store_->GetLogins(m_form, PasswordStore::ALLOW_PROMPT, &consumer);
-  base::MessageLoop::current()->Run();
-  ScopedVector<autofill::PasswordForm> all_forms;
+  store_->GetLogins(PasswordStore::FormDigest(m_form), &consumer);
+  base::RunLoop().Run();
+  std::vector<std::unique_ptr<PasswordForm>> all_forms;
   EXPECT_TRUE(login_db()->GetAutofillableLogins(&all_forms));
   EXPECT_EQ(1u, all_forms.size());
   ::testing::Mock::VerifyAndClearExpectations(&mock_observer);
@@ -1716,8 +1941,8 @@ TEST_F(PasswordStoreMacTest, SilentlyRemoveOrphanedForm) {
       password_manager::PasswordStoreChange::REMOVE, *www_form));
   EXPECT_CALL(mock_observer, OnLoginsChanged(list));
   EXPECT_CALL(consumer, OnGetPasswordStoreResultsConstRef(IsEmpty()));
-  store_->GetLogins(*www_form, PasswordStore::ALLOW_PROMPT, &consumer);
-  base::MessageLoop::current()->Run();
+  store_->GetLogins(PasswordStore::FormDigest(*www_form), &consumer);
+  base::RunLoop().Run();
   EXPECT_TRUE(login_db()->GetAutofillableLogins(&all_forms));
   EXPECT_EQ(0u, all_forms.size());
 }
@@ -1737,7 +1962,8 @@ TEST_F(PasswordStoreMacTest, StoringAndRetrievingAndroidCredentials) {
 TEST_F(PasswordStoreMacTest, StoringAndRetrievingFederatedCredentials) {
   PasswordForm form;
   form.signon_realm = "android://7x7IDboo8u9YKraUsbmVkuf1@net.rateflix.app/";
-  form.federation_url = GURL(password_manager::kTestingFederationUrlSpec);
+  form.federation_origin =
+      url::Origin(GURL(password_manager::kTestingFederationUrlSpec));
   form.username_value = base::UTF8ToUTF16("randomusername");
   form.password_value = base::UTF8ToUTF16("");  // No password.
 
@@ -1776,27 +2002,31 @@ TEST_F(PasswordStoreMacTest, ImportFromKeychain) {
 
   ASSERT_TRUE(base::PostTaskAndReplyWithResult(
       thread_->task_runner().get(), FROM_HERE,
-      base::Bind(&PasswordStoreMac::ImportFromKeychain, store()),
+      base::Bind(&PasswordStoreMac::ImportFromKeychain, login_db(), keychain()),
       base::Bind(&CheckMigrationResult, PasswordStoreMac::MIGRATION_OK)));
   FinishAsyncProcessing();
 
   // The password should be stored in the database by now.
-  ScopedVector<PasswordForm> matching_items;
-  EXPECT_TRUE(login_db()->GetLogins(form1, &matching_items));
+  std::vector<std::unique_ptr<PasswordForm>> matching_items;
+  EXPECT_TRUE(
+      login_db()->GetLogins(PasswordStore::FormDigest(form1), &matching_items));
   ASSERT_EQ(1u, matching_items.size());
   EXPECT_EQ(form1, *matching_items[0]);
 
-  EXPECT_TRUE(login_db()->GetLogins(form2, &matching_items));
+  EXPECT_TRUE(
+      login_db()->GetLogins(PasswordStore::FormDigest(form2), &matching_items));
   ASSERT_EQ(1u, matching_items.size());
   EXPECT_EQ(form2, *matching_items[0]);
 
-  EXPECT_TRUE(login_db()->GetLogins(blacklisted_form, &matching_items));
+  EXPECT_TRUE(login_db()->GetLogins(PasswordStore::FormDigest(blacklisted_form),
+                                    &matching_items));
   ASSERT_EQ(1u, matching_items.size());
   EXPECT_EQ(blacklisted_form, *matching_items[0]);
 
   // The passwords are encrypted using a key from the Keychain.
-  EXPECT_TRUE(histogram_tester_->GetHistogramSamplesSinceCreation(
-                                     "OSX.Keychain.Access")->TotalCount());
+  EXPECT_TRUE(
+      histogram_tester_->GetHistogramSamplesSinceCreation("OSX.Keychain.Access")
+          ->TotalCount());
   histogram_tester_.reset();
 }
 
@@ -1807,18 +2037,19 @@ TEST_F(PasswordStoreMacTest, ImportFederatedFromLockedKeychain) {
   form1.origin = GURL("http://example.com/Login");
   form1.signon_realm = "http://example.com/";
   form1.username_value = ASCIIToUTF16("my_username");
-  form1.federation_url = GURL("https://accounts.google.com/");
+  form1.federation_origin = url::Origin(GURL("https://accounts.google.com/"));
 
   store()->AddLogin(form1);
   FinishAsyncProcessing();
   ASSERT_TRUE(base::PostTaskAndReplyWithResult(
       thread_->task_runner().get(), FROM_HERE,
-      base::Bind(&PasswordStoreMac::ImportFromKeychain, store()),
+      base::Bind(&PasswordStoreMac::ImportFromKeychain, login_db(), keychain()),
       base::Bind(&CheckMigrationResult, PasswordStoreMac::MIGRATION_OK)));
   FinishAsyncProcessing();
 
-  ScopedVector<PasswordForm> matching_items;
-  EXPECT_TRUE(login_db()->GetLogins(form1, &matching_items));
+  std::vector<std::unique_ptr<PasswordForm>> matching_items;
+  EXPECT_TRUE(
+      login_db()->GetLogins(PasswordStore::FormDigest(form1), &matching_items));
   ASSERT_EQ(1u, matching_items.size());
   EXPECT_EQ(form1, *matching_items[0]);
 }
@@ -1844,22 +2075,45 @@ TEST_F(PasswordStoreMacTest, ImportFromLockedKeychainError) {
   keychain()->set_locked(true);
   ASSERT_TRUE(base::PostTaskAndReplyWithResult(
       thread_->task_runner().get(), FROM_HERE,
-      base::Bind(&PasswordStoreMac::ImportFromKeychain, store()),
-      base::Bind(&CheckMigrationResult, PasswordStoreMac::KEYCHAIN_BLOCKED)));
+      base::Bind(&PasswordStoreMac::ImportFromKeychain, login_db(), keychain()),
+      base::Bind(&CheckMigrationResult, PasswordStoreMac::MIGRATION_PARTIAL)));
   FinishAsyncProcessing();
 
-  ScopedVector<PasswordForm> matching_items;
-  EXPECT_TRUE(login_db()->GetLogins(form1, &matching_items));
-  ASSERT_EQ(1u, matching_items.size());
-  EXPECT_EQ(base::string16(), matching_items[0]->password_value);
+  std::vector<std::unique_ptr<PasswordForm>> matching_items;
+  EXPECT_TRUE(
+      login_db()->GetLogins(PasswordStore::FormDigest(form1), &matching_items));
+  EXPECT_EQ(0u, matching_items.size());
 
   histogram_tester_->ExpectUniqueSample(
       "PasswordManager.KeychainMigration.NumPasswordsOnFailure", 1, 1);
   histogram_tester_->ExpectUniqueSample(
       "PasswordManager.KeychainMigration.NumFailedPasswords", 1, 1);
-  histogram_tester_->ExpectUniqueSample(
-      "PasswordManager.KeychainMigration.NumChromeOwnedInaccessiblePasswords",
-      2, 1);
   // Don't test the encryption key access.
   histogram_tester_.reset();
+}
+
+// Delete the Chrome-owned password from the Keychain.
+TEST_F(PasswordStoreMacTest, CleanUpKeychain) {
+  MockAppleKeychain::KeychainTestData data1 = { kSecAuthenticationTypeHTMLForm,
+     "some.domain.com", kSecProtocolTypeHTTP, NULL, 0, NULL, "20020601171500Z",
+     "joe_user", "sekrit", false};
+  keychain()->AddTestItem(data1);
+
+  MacKeychainPasswordFormAdapter keychain_adapter(keychain());
+  PasswordFormData data2 = { PasswordForm::SCHEME_HTML, "http://web.site.com/",
+      "http://web.site.com/path/to/page.html", NULL, NULL, NULL, NULL,
+      L"anonymous", L"knock-knock", false, 0 };
+  keychain_adapter.AddPassword(*CreatePasswordFormFromDataForTesting(data2));
+  std::vector<std::unique_ptr<autofill::PasswordForm>> passwords =
+      password_manager_util::ConvertScopedVector(
+          keychain_adapter.GetAllPasswordFormPasswords());
+  EXPECT_EQ(2u, passwords.size());
+
+  // Delete everyhting but only the Chrome-owned item should be affected.
+  PasswordStoreMac::CleanUpKeychain(keychain(), passwords);
+  passwords = password_manager_util::ConvertScopedVector(
+      keychain_adapter.GetAllPasswordFormPasswords());
+  ASSERT_EQ(1u, passwords.size());
+  EXPECT_EQ("http://some.domain.com/", passwords[0]->signon_realm);
+  EXPECT_EQ(ASCIIToUTF16("sekrit"), passwords[0]->password_value);
 }

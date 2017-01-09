@@ -2,7 +2,31 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <algorithm>
+#include <fstream>
+#include <set>
+#include <utility>
+#include <vector>
+
+#include "base/base_paths.h"
+#include "base/environment.h"
+#include "base/files/file_enumerator.h"
+#include "base/files/file_path.h"
+#include "base/files/file_util.h"
+#include "base/files/scoped_file.h"
+#include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
+#include "base/path_service.h"
+#include "base/strings/string_util.h"
+#include "base/strings/utf_string_conversions.h"
+#include "base/test/test_file_util.h"
+#include "base/threading/platform_thread.h"
 #include "build/build_config.h"
+#include "testing/gtest/include/gtest/gtest.h"
+#include "testing/platform_test.h"
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -10,36 +34,14 @@
 #include <shlobj.h>
 #include <tchar.h>
 #include <winioctl.h>
+#include "base/win/scoped_handle.h"
+#include "base/win/windows_version.h"
 #endif
 
 #if defined(OS_POSIX)
 #include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
-#endif
-
-#include <algorithm>
-#include <fstream>
-#include <set>
-#include <vector>
-
-#include "base/base_paths.h"
-#include "base/files/file_enumerator.h"
-#include "base/files/file_path.h"
-#include "base/files/file_util.h"
-#include "base/files/scoped_file.h"
-#include "base/files/scoped_temp_dir.h"
-#include "base/path_service.h"
-#include "base/strings/string_util.h"
-#include "base/strings/utf_string_conversions.h"
-#include "base/test/test_file_util.h"
-#include "base/threading/platform_thread.h"
-#include "testing/gtest/include/gtest/gtest.h"
-#include "testing/platform_test.h"
-
-#if defined(OS_WIN)
-#include "base/win/scoped_handle.h"
-#include "base/win/windows_version.h"
 #endif
 
 #if defined(OS_ANDROID)
@@ -247,18 +249,18 @@ std::wstring ReadTextFile(const FilePath& filename) {
 TEST_F(FileUtilTest, FileAndDirectorySize) {
   // Create three files of 20, 30 and 3 chars (utf8). ComputeDirectorySize
   // should return 53 bytes.
-  FilePath file_01 = temp_dir_.path().Append(FPL("The file 01.txt"));
+  FilePath file_01 = temp_dir_.GetPath().Append(FPL("The file 01.txt"));
   CreateTextFile(file_01, L"12345678901234567890");
-  int64 size_f1 = 0;
+  int64_t size_f1 = 0;
   ASSERT_TRUE(GetFileSize(file_01, &size_f1));
   EXPECT_EQ(20ll, size_f1);
 
-  FilePath subdir_path = temp_dir_.path().Append(FPL("Level2"));
+  FilePath subdir_path = temp_dir_.GetPath().Append(FPL("Level2"));
   CreateDirectory(subdir_path);
 
   FilePath file_02 = subdir_path.Append(FPL("The file 02.txt"));
   CreateTextFile(file_02, L"123456789012345678901234567890");
-  int64 size_f2 = 0;
+  int64_t size_f2 = 0;
   ASSERT_TRUE(GetFileSize(file_02, &size_f2));
   EXPECT_EQ(30ll, size_f2);
 
@@ -268,15 +270,15 @@ TEST_F(FileUtilTest, FileAndDirectorySize) {
   FilePath file_03 = subsubdir_path.Append(FPL("The file 03.txt"));
   CreateTextFile(file_03, L"123");
 
-  int64 computed_size = ComputeDirectorySize(temp_dir_.path());
+  int64_t computed_size = ComputeDirectorySize(temp_dir_.GetPath());
   EXPECT_EQ(size_f1 + size_f2 + 3, computed_size);
 }
 
 TEST_F(FileUtilTest, NormalizeFilePathBasic) {
   // Create a directory under the test dir.  Because we create it,
   // we know it is not a link.
-  FilePath file_a_path = temp_dir_.path().Append(FPL("file_a"));
-  FilePath dir_path = temp_dir_.path().Append(FPL("dir"));
+  FilePath file_a_path = temp_dir_.GetPath().Append(FPL("file_a"));
+  FilePath dir_path = temp_dir_.GetPath().Append(FPL("dir"));
   FilePath file_b_path = dir_path.Append(FPL("file_b"));
   CreateDirectory(dir_path);
 
@@ -317,7 +319,7 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
   //     |-> to_base_b (reparse point to temp_dir\base_b)
   //     |-> to_sub_long (reparse point to temp_dir\sub_a\long_name_\sub_long)
 
-  FilePath base_a = temp_dir_.path().Append(FPL("base_a"));
+  FilePath base_a = temp_dir_.GetPath().Append(FPL("base_a"));
 #if defined(OS_WIN)
   // TEMP can have a lower case drive letter.
   string16 temp_base_a = base_a.value();
@@ -353,13 +355,14 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
 
   FilePath long_name = sub_a.Append(FilePath(long_name_str));
   FilePath deep_file = long_name.Append(sub_long_rel).Append(deep_txt);
-  ASSERT_EQ(MAX_PATH - kCreateDirLimit, deep_file.value().length());
+  ASSERT_EQ(static_cast<size_t>(MAX_PATH - kCreateDirLimit),
+            deep_file.value().length());
 
   FilePath sub_long = deep_file.DirName();
   ASSERT_TRUE(CreateDirectory(sub_long));
   CreateTextFile(deep_file, bogus_content);
 
-  FilePath base_b = temp_dir_.path().Append(FPL("base_b"));
+  FilePath base_b = temp_dir_.GetPath().Append(FPL("base_b"));
   ASSERT_TRUE(CreateDirectory(base_b));
 
   FilePath to_sub_a = base_b.Append(FPL("to_sub_a"));
@@ -427,7 +430,7 @@ TEST_F(FileUtilTest, NormalizeFilePathReparsePoints) {
 TEST_F(FileUtilTest, DevicePathToDriveLetter) {
   // Get a drive letter.
   string16 real_drive_letter =
-      ToUpperASCII(temp_dir_.path().value().substr(0, 2));
+      ToUpperASCII(temp_dir_.GetPath().value().substr(0, 2));
   if (!isalpha(real_drive_letter[0]) || ':' != real_drive_letter[1]) {
     LOG(ERROR) << "Can't get a drive letter to test with.";
     return;
@@ -501,7 +504,7 @@ TEST_F(FileUtilTest, CreateTemporaryFileInDirLongPathTest) {
   //   directories of |temp_dir_|.
   const FilePath::CharType kLongDirName[] = FPL("A long path");
   const FilePath::CharType kTestSubDirName[] = FPL("test");
-  FilePath long_test_dir = temp_dir_.path().Append(kLongDirName);
+  FilePath long_test_dir = temp_dir_.GetPath().Append(kLongDirName);
   ASSERT_TRUE(CreateDirectory(long_test_dir));
 
   // kLongDirName is not a 8.3 component. So GetShortName() should give us a
@@ -548,8 +551,8 @@ TEST_F(FileUtilTest, CreateTemporaryFileInDirLongPathTest) {
 #if defined(OS_POSIX)
 
 TEST_F(FileUtilTest, CreateAndReadSymlinks) {
-  FilePath link_from = temp_dir_.path().Append(FPL("from_file"));
-  FilePath link_to = temp_dir_.path().Append(FPL("to_file"));
+  FilePath link_from = temp_dir_.GetPath().Append(FPL("from_file"));
+  FilePath link_to = temp_dir_.GetPath().Append(FPL("to_file"));
   CreateTextFile(link_to, bogus_content);
 
   ASSERT_TRUE(CreateSymbolicLink(link_to, link_from))
@@ -565,8 +568,8 @@ TEST_F(FileUtilTest, CreateAndReadSymlinks) {
   EXPECT_EQ(link_to.value(), result.value());
 
   // Link to a directory.
-  link_from = temp_dir_.path().Append(FPL("from_dir"));
-  link_to = temp_dir_.path().Append(FPL("to_dir"));
+  link_from = temp_dir_.GetPath().Append(FPL("from_dir"));
+  link_to = temp_dir_.GetPath().Append(FPL("to_dir"));
   ASSERT_TRUE(CreateDirectory(link_to));
   ASSERT_TRUE(CreateSymbolicLink(link_to, link_from))
     << "Failed to create directory symlink.";
@@ -574,7 +577,7 @@ TEST_F(FileUtilTest, CreateAndReadSymlinks) {
   // Test failures.
   EXPECT_FALSE(CreateSymbolicLink(link_to, link_to));
   EXPECT_FALSE(ReadSymbolicLink(link_to, &result));
-  FilePath missing = temp_dir_.path().Append(FPL("missing"));
+  FilePath missing = temp_dir_.GetPath().Append(FPL("missing"));
   EXPECT_FALSE(ReadSymbolicLink(missing, &result));
 }
 
@@ -585,8 +588,8 @@ TEST_F(FileUtilTest, CreateAndReadSymlinks) {
 // privileges required to create a symlink.
 TEST_F(FileUtilTest, NormalizeFilePathSymlinks) {
   // Link one file to another.
-  FilePath link_from = temp_dir_.path().Append(FPL("from_file"));
-  FilePath link_to = temp_dir_.path().Append(FPL("to_file"));
+  FilePath link_from = temp_dir_.GetPath().Append(FPL("from_file"));
+  FilePath link_to = temp_dir_.GetPath().Append(FPL("to_file"));
   CreateTextFile(link_to, bogus_content);
 
   ASSERT_TRUE(CreateSymbolicLink(link_to, link_from))
@@ -600,8 +603,8 @@ TEST_F(FileUtilTest, NormalizeFilePathSymlinks) {
   EXPECT_EQ(link_to.BaseName().value(), normalized_path.BaseName().value());
 
   // Link to a directory.
-  link_from = temp_dir_.path().Append(FPL("from_dir"));
-  link_to = temp_dir_.path().Append(FPL("to_dir"));
+  link_from = temp_dir_.GetPath().Append(FPL("from_dir"));
+  link_to = temp_dir_.GetPath().Append(FPL("to_dir"));
   ASSERT_TRUE(CreateDirectory(link_to));
   ASSERT_TRUE(CreateSymbolicLink(link_to, link_from))
     << "Failed to create directory symlink.";
@@ -610,8 +613,8 @@ TEST_F(FileUtilTest, NormalizeFilePathSymlinks) {
     << "Links to directories should return false.";
 
   // Test that a loop in the links causes NormalizeFilePath() to return false.
-  link_from = temp_dir_.path().Append(FPL("link_a"));
-  link_to = temp_dir_.path().Append(FPL("link_b"));
+  link_from = temp_dir_.GetPath().Append(FPL("link_a"));
+  link_to = temp_dir_.GetPath().Append(FPL("link_b"));
   ASSERT_TRUE(CreateSymbolicLink(link_to, link_from))
     << "Failed to create loop symlink a.";
   ASSERT_TRUE(CreateSymbolicLink(link_from, link_to))
@@ -623,7 +626,8 @@ TEST_F(FileUtilTest, NormalizeFilePathSymlinks) {
 #endif  // defined(OS_POSIX)
 
 TEST_F(FileUtilTest, DeleteNonExistent) {
-  FilePath non_existent = temp_dir_.path().AppendASCII("bogus_file_dne.foobar");
+  FilePath non_existent =
+      temp_dir_.GetPath().AppendASCII("bogus_file_dne.foobar");
   ASSERT_FALSE(PathExists(non_existent));
 
   EXPECT_TRUE(DeleteFile(non_existent, false));
@@ -633,7 +637,7 @@ TEST_F(FileUtilTest, DeleteNonExistent) {
 }
 
 TEST_F(FileUtilTest, DeleteNonExistentWithNonExistentParent) {
-  FilePath non_existent = temp_dir_.path().AppendASCII("bogus_topdir");
+  FilePath non_existent = temp_dir_.GetPath().AppendASCII("bogus_topdir");
   non_existent = non_existent.AppendASCII("bogus_subdir");
   ASSERT_FALSE(PathExists(non_existent));
 
@@ -645,7 +649,7 @@ TEST_F(FileUtilTest, DeleteNonExistentWithNonExistentParent) {
 
 TEST_F(FileUtilTest, DeleteFile) {
   // Create a file
-  FilePath file_name = temp_dir_.path().Append(FPL("Test DeleteFile 1.txt"));
+  FilePath file_name = temp_dir_.GetPath().Append(FPL("Test DeleteFile 1.txt"));
   CreateTextFile(file_name, bogus_content);
   ASSERT_TRUE(PathExists(file_name));
 
@@ -654,7 +658,7 @@ TEST_F(FileUtilTest, DeleteFile) {
   EXPECT_FALSE(PathExists(file_name));
 
   // Test recursive case, create a new file
-  file_name = temp_dir_.path().Append(FPL("Test DeleteFile 2.txt"));
+  file_name = temp_dir_.GetPath().Append(FPL("Test DeleteFile 2.txt"));
   CreateTextFile(file_name, bogus_content);
   ASSERT_TRUE(PathExists(file_name));
 
@@ -666,12 +670,12 @@ TEST_F(FileUtilTest, DeleteFile) {
 #if defined(OS_POSIX)
 TEST_F(FileUtilTest, DeleteSymlinkToExistentFile) {
   // Create a file.
-  FilePath file_name = temp_dir_.path().Append(FPL("Test DeleteFile 2.txt"));
+  FilePath file_name = temp_dir_.GetPath().Append(FPL("Test DeleteFile 2.txt"));
   CreateTextFile(file_name, bogus_content);
   ASSERT_TRUE(PathExists(file_name));
 
   // Create a symlink to the file.
-  FilePath file_link = temp_dir_.path().Append("file_link_2");
+  FilePath file_link = temp_dir_.GetPath().Append("file_link_2");
   ASSERT_TRUE(CreateSymbolicLink(file_name, file_link))
       << "Failed to create symlink.";
 
@@ -685,11 +689,12 @@ TEST_F(FileUtilTest, DeleteSymlinkToExistentFile) {
 
 TEST_F(FileUtilTest, DeleteSymlinkToNonExistentFile) {
   // Create a non-existent file path.
-  FilePath non_existent = temp_dir_.path().Append(FPL("Test DeleteFile 3.txt"));
+  FilePath non_existent =
+      temp_dir_.GetPath().Append(FPL("Test DeleteFile 3.txt"));
   EXPECT_FALSE(PathExists(non_existent));
 
   // Create a symlink to the non-existent file.
-  FilePath file_link = temp_dir_.path().Append("file_link_3");
+  FilePath file_link = temp_dir_.GetPath().Append("file_link_3");
   ASSERT_TRUE(CreateSymbolicLink(non_existent, file_link))
       << "Failed to create symlink.";
 
@@ -706,7 +711,8 @@ TEST_F(FileUtilTest, DeleteSymlinkToNonExistentFile) {
 
 TEST_F(FileUtilTest, ChangeFilePermissionsAndRead) {
   // Create a file path.
-  FilePath file_name = temp_dir_.path().Append(FPL("Test Readable File.txt"));
+  FilePath file_name =
+      temp_dir_.GetPath().Append(FPL("Test Readable File.txt"));
   EXPECT_FALSE(PathExists(file_name));
 
   const std::string kData("hello");
@@ -720,7 +726,7 @@ TEST_F(FileUtilTest, ChangeFilePermissionsAndRead) {
   EXPECT_TRUE(PathExists(file_name));
 
   // Make sure the file is readable.
-  int32 mode = 0;
+  int32_t mode = 0;
   EXPECT_TRUE(GetPosixFilePermissions(file_name, &mode));
   EXPECT_TRUE(mode & FILE_PERMISSION_READ_BY_USER);
 
@@ -748,7 +754,8 @@ TEST_F(FileUtilTest, ChangeFilePermissionsAndRead) {
 
 TEST_F(FileUtilTest, ChangeFilePermissionsAndWrite) {
   // Create a file path.
-  FilePath file_name = temp_dir_.path().Append(FPL("Test Readable File.txt"));
+  FilePath file_name =
+      temp_dir_.GetPath().Append(FPL("Test Readable File.txt"));
   EXPECT_FALSE(PathExists(file_name));
 
   const std::string kData("hello");
@@ -789,8 +796,7 @@ TEST_F(FileUtilTest, ChangeFilePermissionsAndWrite) {
 
 TEST_F(FileUtilTest, ChangeDirectoryPermissionsAndEnumerate) {
   // Create a directory path.
-  FilePath subdir_path =
-      temp_dir_.path().Append(FPL("PermissionTest1"));
+  FilePath subdir_path = temp_dir_.GetPath().Append(FPL("PermissionTest1"));
   CreateDirectory(subdir_path);
   ASSERT_TRUE(PathExists(subdir_path));
 
@@ -835,6 +841,45 @@ TEST_F(FileUtilTest, ChangeDirectoryPermissionsAndEnumerate) {
   EXPECT_FALSE(PathExists(subdir_path));
 }
 
+TEST_F(FileUtilTest, ExecutableExistsInPath) {
+  // Create two directories that we will put in our PATH
+  const char kPath[] = "PATH";
+  const FilePath::CharType kDir1[] = FPL("dir1");
+  const FilePath::CharType kDir2[] = FPL("dir2");
+
+  FilePath dir1 = temp_dir_.GetPath().Append(kDir1);
+  FilePath dir2 = temp_dir_.GetPath().Append(kDir2);
+  ASSERT_TRUE(CreateDirectory(dir1));
+  ASSERT_TRUE(CreateDirectory(dir2));
+
+  std::unique_ptr<Environment> env(base::Environment::Create());
+
+  ASSERT_TRUE(env->SetVar(kPath, dir1.value() + ":" + dir2.value()));
+
+  const FilePath::CharType kRegularFileName[] = FPL("regular_file");
+  const FilePath::CharType kExeFileName[] = FPL("exe");
+  const FilePath::CharType kDneFileName[] = FPL("does_not_exist");
+
+  const FilePath kExePath = dir1.Append(kExeFileName);
+  const FilePath kRegularFilePath = dir2.Append(kRegularFileName);
+
+  // Write file.
+  const std::string kData("hello");
+  ASSERT_EQ(static_cast<int>(kData.length()),
+            WriteFile(kExePath, kData.data(), kData.length()));
+  ASSERT_TRUE(PathExists(kExePath));
+  ASSERT_EQ(static_cast<int>(kData.length()),
+            WriteFile(kRegularFilePath, kData.data(), kData.length()));
+  ASSERT_TRUE(PathExists(kRegularFilePath));
+
+  ASSERT_TRUE(SetPosixFilePermissions(dir1.Append(kExeFileName),
+                                      FILE_PERMISSION_EXECUTE_BY_USER));
+
+  EXPECT_TRUE(ExecutableExistsInPath(env.get(), kExeFileName));
+  EXPECT_FALSE(ExecutableExistsInPath(env.get(), kRegularFileName));
+  EXPECT_FALSE(ExecutableExistsInPath(env.get(), kDneFileName));
+}
+
 #endif  // defined(OS_POSIX)
 
 #if defined(OS_WIN)
@@ -843,16 +888,17 @@ TEST_F(FileUtilTest, ChangeDirectoryPermissionsAndEnumerate) {
 // TODO(erikkay): see if anyone's actually using this feature of the API
 TEST_F(FileUtilTest, DeleteWildCard) {
   // Create a file and a directory
-  FilePath file_name = temp_dir_.path().Append(FPL("Test DeleteWildCard.txt"));
+  FilePath file_name =
+      temp_dir_.GetPath().Append(FPL("Test DeleteWildCard.txt"));
   CreateTextFile(file_name, bogus_content);
   ASSERT_TRUE(PathExists(file_name));
 
-  FilePath subdir_path = temp_dir_.path().Append(FPL("DeleteWildCardDir"));
+  FilePath subdir_path = temp_dir_.GetPath().Append(FPL("DeleteWildCardDir"));
   CreateDirectory(subdir_path);
   ASSERT_TRUE(PathExists(subdir_path));
 
   // Create the wildcard path
-  FilePath directory_contents = temp_dir_.path();
+  FilePath directory_contents = temp_dir_.GetPath();
   directory_contents = directory_contents.Append(FPL("*"));
 
   // Delete non-recursively and check that only the file is deleted
@@ -870,7 +916,7 @@ TEST_F(FileUtilTest, DeleteWildCard) {
 TEST_F(FileUtilTest, DeleteNonExistantWildCard) {
   // Create a file and a directory
   FilePath subdir_path =
-      temp_dir_.path().Append(FPL("DeleteNonExistantWildCard"));
+      temp_dir_.GetPath().Append(FPL("DeleteNonExistantWildCard"));
   CreateDirectory(subdir_path);
   ASSERT_TRUE(PathExists(subdir_path));
 
@@ -891,7 +937,8 @@ TEST_F(FileUtilTest, DeleteNonExistantWildCard) {
 // Tests non-recursive Delete() for a directory.
 TEST_F(FileUtilTest, DeleteDirNonRecursive) {
   // Create a subdirectory and put a file and two directories inside.
-  FilePath test_subdir = temp_dir_.path().Append(FPL("DeleteDirNonRecursive"));
+  FilePath test_subdir =
+      temp_dir_.GetPath().Append(FPL("DeleteDirNonRecursive"));
   CreateDirectory(test_subdir);
   ASSERT_TRUE(PathExists(test_subdir));
 
@@ -921,7 +968,7 @@ TEST_F(FileUtilTest, DeleteDirNonRecursive) {
 // Tests recursive Delete() for a directory.
 TEST_F(FileUtilTest, DeleteDirRecursive) {
   // Create a subdirectory and put a file and two directories inside.
-  FilePath test_subdir = temp_dir_.path().Append(FPL("DeleteDirRecursive"));
+  FilePath test_subdir = temp_dir_.GetPath().Append(FPL("DeleteDirRecursive"));
   CreateDirectory(test_subdir);
   ASSERT_TRUE(PathExists(test_subdir));
 
@@ -951,12 +998,12 @@ TEST_F(FileUtilTest, DeleteDirRecursive) {
 TEST_F(FileUtilTest, MoveFileNew) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination.
-  FilePath file_name_to = temp_dir_.path().Append(
+  FilePath file_name_to = temp_dir_.GetPath().Append(
       FILE_PATH_LITERAL("Move_Test_File_Destination.txt"));
   ASSERT_FALSE(PathExists(file_name_to));
 
@@ -970,12 +1017,12 @@ TEST_F(FileUtilTest, MoveFileNew) {
 TEST_F(FileUtilTest, MoveFileExists) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination name.
-  FilePath file_name_to = temp_dir_.path().Append(
+  FilePath file_name_to = temp_dir_.GetPath().Append(
       FILE_PATH_LITERAL("Move_Test_File_Destination.txt"));
   CreateTextFile(file_name_to, L"Old file content");
   ASSERT_TRUE(PathExists(file_name_to));
@@ -991,13 +1038,13 @@ TEST_F(FileUtilTest, MoveFileExists) {
 TEST_F(FileUtilTest, MoveFileDirExists) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination directory
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Destination"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Destination"));
   CreateDirectory(dir_name_to);
   ASSERT_TRUE(PathExists(dir_name_to));
 
@@ -1008,7 +1055,7 @@ TEST_F(FileUtilTest, MoveFileDirExists) {
 TEST_F(FileUtilTest, MoveNew) {
   // Create a directory
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1020,7 +1067,7 @@ TEST_F(FileUtilTest, MoveNew) {
 
   // Move the directory.
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_To_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("Move_Test_File.txt"));
 
@@ -1049,7 +1096,7 @@ TEST_F(FileUtilTest, MoveNew) {
 TEST_F(FileUtilTest, MoveExist) {
   // Create a directory
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Move_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Move_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1061,7 +1108,7 @@ TEST_F(FileUtilTest, MoveExist) {
 
   // Move the directory
   FilePath dir_name_exists =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Destination"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Destination"));
 
   FilePath dir_name_to =
       dir_name_exists.Append(FILE_PATH_LITERAL("Move_To_Subdir"));
@@ -1084,7 +1131,7 @@ TEST_F(FileUtilTest, MoveExist) {
 TEST_F(FileUtilTest, CopyDirectoryRecursivelyNew) {
   // Create a directory.
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1108,7 +1155,7 @@ TEST_F(FileUtilTest, CopyDirectoryRecursivelyNew) {
 
   // Copy the directory recursively.
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   FilePath subdir_name_to =
@@ -1134,7 +1181,7 @@ TEST_F(FileUtilTest, CopyDirectoryRecursivelyNew) {
 TEST_F(FileUtilTest, CopyDirectoryRecursivelyExists) {
   // Create a directory.
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1158,7 +1205,7 @@ TEST_F(FileUtilTest, CopyDirectoryRecursivelyExists) {
 
   // Copy the directory recursively.
   FilePath dir_name_exists =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Destination"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Destination"));
 
   FilePath dir_name_to =
       dir_name_exists.Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
@@ -1189,7 +1236,7 @@ TEST_F(FileUtilTest, CopyDirectoryRecursivelyExists) {
 TEST_F(FileUtilTest, CopyDirectoryNew) {
   // Create a directory.
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1213,7 +1260,7 @@ TEST_F(FileUtilTest, CopyDirectoryNew) {
 
   // Copy the directory not recursively.
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   FilePath subdir_name_to =
@@ -1236,7 +1283,7 @@ TEST_F(FileUtilTest, CopyDirectoryNew) {
 TEST_F(FileUtilTest, CopyDirectoryExists) {
   // Create a directory.
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1260,7 +1307,7 @@ TEST_F(FileUtilTest, CopyDirectoryExists) {
 
   // Copy the directory not recursively.
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   FilePath subdir_name_to =
@@ -1285,12 +1332,12 @@ TEST_F(FileUtilTest, CopyDirectoryExists) {
 TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToNew) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination name
-  FilePath file_name_to = temp_dir_.path().Append(
+  FilePath file_name_to = temp_dir_.GetPath().Append(
       FILE_PATH_LITERAL("Copy_Test_File_Destination.txt"));
   ASSERT_FALSE(PathExists(file_name_to));
 
@@ -1303,12 +1350,12 @@ TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToNew) {
 TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToExisting) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination name
-  FilePath file_name_to = temp_dir_.path().Append(
+  FilePath file_name_to = temp_dir_.GetPath().Append(
       FILE_PATH_LITERAL("Copy_Test_File_Destination.txt"));
   CreateTextFile(file_name_to, L"Old file content");
   ASSERT_TRUE(PathExists(file_name_to));
@@ -1323,13 +1370,13 @@ TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToExisting) {
 TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToExistingDirectory) {
   // Create a file
   FilePath file_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
   CreateTextFile(file_name_from, L"Gooooooooooooooooooooogle");
   ASSERT_TRUE(PathExists(file_name_from));
 
   // The destination
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Destination"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Destination"));
   CreateDirectory(dir_name_to);
   ASSERT_TRUE(PathExists(dir_name_to));
   FilePath file_name_to =
@@ -1344,7 +1391,7 @@ TEST_F(FileUtilTest, CopyFileWithCopyDirectoryRecursiveToExistingDirectory) {
 TEST_F(FileUtilTest, CopyDirectoryWithTrailingSeparators) {
   // Create a directory.
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1356,17 +1403,17 @@ TEST_F(FileUtilTest, CopyDirectoryWithTrailingSeparators) {
 
   // Copy the directory recursively.
   FilePath dir_name_to =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("Copy_Test_File.txt"));
 
   // Create from path with trailing separators.
 #if defined(OS_WIN)
   FilePath from_path =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir\\\\\\"));
-#elif defined (OS_POSIX)
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir\\\\\\"));
+#elif defined(OS_POSIX)
   FilePath from_path =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir///"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir///"));
 #endif
 
   EXPECT_TRUE(CopyDirectory(from_path, dir_name_to, true));
@@ -1420,7 +1467,7 @@ bool IsReadOnly(const FilePath& path) {
 
 TEST_F(FileUtilTest, CopyDirectoryACL) {
   // Create source directories.
-  FilePath src = temp_dir_.path().Append(FILE_PATH_LITERAL("src"));
+  FilePath src = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("src"));
   FilePath src_subdir = src.Append(FILE_PATH_LITERAL("subdir"));
   CreateDirectory(src_subdir);
   ASSERT_TRUE(PathExists(src_subdir));
@@ -1436,7 +1483,7 @@ TEST_F(FileUtilTest, CopyDirectoryACL) {
   ASSERT_TRUE(IsReadOnly(src_subdir));
 
   // Copy the directory recursively.
-  FilePath dst = temp_dir_.path().Append(FILE_PATH_LITERAL("dst"));
+  FilePath dst = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("dst"));
   FilePath dst_file = dst.Append(FILE_PATH_LITERAL("src.txt"));
   EXPECT_TRUE(CopyDirectory(src, dst, true));
 
@@ -1452,7 +1499,7 @@ TEST_F(FileUtilTest, CopyDirectoryACL) {
 TEST_F(FileUtilTest, CopyFile) {
   // Create a directory
   FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("Copy_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1490,7 +1537,7 @@ TEST_F(FileUtilTest, CopyFileACL) {
   // While FileUtilTest.CopyFile asserts the content is correctly copied over,
   // this test case asserts the access control bits are meeting expectations in
   // CopyFile().
-  FilePath src = temp_dir_.path().Append(FILE_PATH_LITERAL("src.txt"));
+  FilePath src = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("src.txt"));
   const std::wstring file_contents(L"Gooooooooooooooooooooogle");
   CreateTextFile(src, file_contents);
 
@@ -1500,7 +1547,7 @@ TEST_F(FileUtilTest, CopyFileACL) {
   ASSERT_TRUE(IsReadOnly(src));
 
   // Copy the file.
-  FilePath dst = temp_dir_.path().Append(FILE_PATH_LITERAL("dst.txt"));
+  FilePath dst = temp_dir_.GetPath().Append(FILE_PATH_LITERAL("dst.txt"));
   ASSERT_TRUE(CopyFile(src, dst));
   EXPECT_EQ(file_contents, ReadTextFile(dst));
 
@@ -1606,8 +1653,8 @@ TEST_F(ReadOnlyFileUtilTest, TextContentsEqual) {
 #if defined(OS_WIN)
 TEST_F(FileUtilTest, CopyAndDeleteDirectoryTest) {
   // Create a directory
-  FilePath dir_name_from =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("CopyAndDelete_From_Subdir"));
+  FilePath dir_name_from = temp_dir_.GetPath().Append(
+      FILE_PATH_LITERAL("CopyAndDelete_From_Subdir"));
   CreateDirectory(dir_name_from);
   ASSERT_TRUE(PathExists(dir_name_from));
 
@@ -1618,8 +1665,8 @@ TEST_F(FileUtilTest, CopyAndDeleteDirectoryTest) {
   ASSERT_TRUE(PathExists(file_name_from));
 
   // Move the directory by using CopyAndDeleteDirectory
-  FilePath dir_name_to = temp_dir_.path().Append(
-      FILE_PATH_LITERAL("CopyAndDelete_To_Subdir"));
+  FilePath dir_name_to =
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("CopyAndDelete_To_Subdir"));
   FilePath file_name_to =
       dir_name_to.Append(FILE_PATH_LITERAL("CopyAndDelete_Test_File.txt"));
 
@@ -1703,14 +1750,14 @@ TEST_F(FileUtilTest, CreateAndOpenTemporaryFileTest) {
 
 TEST_F(FileUtilTest, FileToFILE) {
   File file;
-  FILE* stream = FileToFILE(file.Pass(), "w");
+  FILE* stream = FileToFILE(std::move(file), "w");
   EXPECT_FALSE(stream);
 
-  FilePath file_name = temp_dir_.path().Append(FPL("The file.txt"));
+  FilePath file_name = temp_dir_.GetPath().Append(FPL("The file.txt"));
   file = File(file_name, File::FLAG_CREATE | File::FLAG_WRITE);
   EXPECT_TRUE(file.IsValid());
 
-  stream = FileToFILE(file.Pass(), "w");
+  stream = FileToFILE(std::move(file), "w");
   EXPECT_TRUE(stream);
   EXPECT_FALSE(file.IsValid());
   EXPECT_TRUE(CloseFile(stream));
@@ -1726,11 +1773,10 @@ TEST_F(FileUtilTest, CreateNewTempDirectoryTest) {
 TEST_F(FileUtilTest, CreateNewTemporaryDirInDirTest) {
   FilePath new_dir;
   ASSERT_TRUE(CreateTemporaryDirInDir(
-                  temp_dir_.path(),
-                  FILE_PATH_LITERAL("CreateNewTemporaryDirInDirTest"),
-                  &new_dir));
+      temp_dir_.GetPath(), FILE_PATH_LITERAL("CreateNewTemporaryDirInDirTest"),
+      &new_dir));
   EXPECT_TRUE(PathExists(new_dir));
-  EXPECT_TRUE(temp_dir_.path().IsParent(new_dir));
+  EXPECT_TRUE(temp_dir_.GetPath().IsParent(new_dir));
   EXPECT_TRUE(DeleteFile(new_dir, false));
 }
 
@@ -1755,7 +1801,7 @@ TEST_F(FileUtilTest, GetHomeDirTest) {
 
 TEST_F(FileUtilTest, CreateDirectoryTest) {
   FilePath test_root =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("create_directory_test"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("create_directory_test"));
 #if defined(OS_WIN)
   FilePath test_path =
       test_root.Append(FILE_PATH_LITERAL("dir\\tree\\likely\\doesnt\\exist\\"));
@@ -1810,7 +1856,7 @@ TEST_F(FileUtilTest, CreateDirectoryTest) {
 TEST_F(FileUtilTest, DetectDirectoryTest) {
   // Check a directory
   FilePath test_root =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("detect_directory_test"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("detect_directory_test"));
   EXPECT_FALSE(PathExists(test_root));
   EXPECT_TRUE(CreateDirectory(test_root));
   EXPECT_TRUE(PathExists(test_root));
@@ -1829,21 +1875,22 @@ TEST_F(FileUtilTest, DetectDirectoryTest) {
 
 TEST_F(FileUtilTest, FileEnumeratorTest) {
   // Test an empty directory.
-  FileEnumerator f0(temp_dir_.path(), true, FILES_AND_DIRECTORIES);
+  FileEnumerator f0(temp_dir_.GetPath(), true, FILES_AND_DIRECTORIES);
   EXPECT_EQ(FPL(""), f0.Next().value());
   EXPECT_EQ(FPL(""), f0.Next().value());
 
   // Test an empty directory, non-recursively, including "..".
-  FileEnumerator f0_dotdot(temp_dir_.path(), false,
+  FileEnumerator f0_dotdot(
+      temp_dir_.GetPath(), false,
       FILES_AND_DIRECTORIES | FileEnumerator::INCLUDE_DOT_DOT);
-  EXPECT_EQ(temp_dir_.path().Append(FPL("..")).value(),
+  EXPECT_EQ(temp_dir_.GetPath().Append(FPL("..")).value(),
             f0_dotdot.Next().value());
   EXPECT_EQ(FPL(""), f0_dotdot.Next().value());
 
   // create the directories
-  FilePath dir1 = temp_dir_.path().Append(FPL("dir1"));
+  FilePath dir1 = temp_dir_.GetPath().Append(FPL("dir1"));
   EXPECT_TRUE(CreateDirectory(dir1));
-  FilePath dir2 = temp_dir_.path().Append(FPL("dir2"));
+  FilePath dir2 = temp_dir_.GetPath().Append(FPL("dir2"));
   EXPECT_TRUE(CreateDirectory(dir2));
   FilePath dir2inner = dir2.Append(FPL("inner"));
   EXPECT_TRUE(CreateDirectory(dir2inner));
@@ -1853,15 +1900,15 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
   CreateTextFile(dir2file, std::wstring());
   FilePath dir2innerfile = dir2inner.Append(FPL("innerfile.txt"));
   CreateTextFile(dir2innerfile, std::wstring());
-  FilePath file1 = temp_dir_.path().Append(FPL("file1.txt"));
+  FilePath file1 = temp_dir_.GetPath().Append(FPL("file1.txt"));
   CreateTextFile(file1, std::wstring());
   FilePath file2_rel = dir2.Append(FilePath::kParentDirectory)
       .Append(FPL("file2.txt"));
   CreateTextFile(file2_rel, std::wstring());
-  FilePath file2_abs = temp_dir_.path().Append(FPL("file2.txt"));
+  FilePath file2_abs = temp_dir_.GetPath().Append(FPL("file2.txt"));
 
   // Only enumerate files.
-  FileEnumerator f1(temp_dir_.path(), true, FileEnumerator::FILES);
+  FileEnumerator f1(temp_dir_.GetPath(), true, FileEnumerator::FILES);
   FindResultCollector c1(&f1);
   EXPECT_TRUE(c1.HasFile(file1));
   EXPECT_TRUE(c1.HasFile(file2_abs));
@@ -1870,7 +1917,7 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
   EXPECT_EQ(4, c1.size());
 
   // Only enumerate directories.
-  FileEnumerator f2(temp_dir_.path(), true, FileEnumerator::DIRECTORIES);
+  FileEnumerator f2(temp_dir_.GetPath(), true, FileEnumerator::DIRECTORIES);
   FindResultCollector c2(&f2);
   EXPECT_TRUE(c2.HasFile(dir1));
   EXPECT_TRUE(c2.HasFile(dir2));
@@ -1878,25 +1925,25 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
   EXPECT_EQ(3, c2.size());
 
   // Only enumerate directories non-recursively.
-  FileEnumerator f2_non_recursive(
-      temp_dir_.path(), false, FileEnumerator::DIRECTORIES);
+  FileEnumerator f2_non_recursive(temp_dir_.GetPath(), false,
+                                  FileEnumerator::DIRECTORIES);
   FindResultCollector c2_non_recursive(&f2_non_recursive);
   EXPECT_TRUE(c2_non_recursive.HasFile(dir1));
   EXPECT_TRUE(c2_non_recursive.HasFile(dir2));
   EXPECT_EQ(2, c2_non_recursive.size());
 
   // Only enumerate directories, non-recursively, including "..".
-  FileEnumerator f2_dotdot(temp_dir_.path(), false,
-                           FileEnumerator::DIRECTORIES |
-                           FileEnumerator::INCLUDE_DOT_DOT);
+  FileEnumerator f2_dotdot(
+      temp_dir_.GetPath(), false,
+      FileEnumerator::DIRECTORIES | FileEnumerator::INCLUDE_DOT_DOT);
   FindResultCollector c2_dotdot(&f2_dotdot);
   EXPECT_TRUE(c2_dotdot.HasFile(dir1));
   EXPECT_TRUE(c2_dotdot.HasFile(dir2));
-  EXPECT_TRUE(c2_dotdot.HasFile(temp_dir_.path().Append(FPL(".."))));
+  EXPECT_TRUE(c2_dotdot.HasFile(temp_dir_.GetPath().Append(FPL(".."))));
   EXPECT_EQ(3, c2_dotdot.size());
 
   // Enumerate files and directories.
-  FileEnumerator f3(temp_dir_.path(), true, FILES_AND_DIRECTORIES);
+  FileEnumerator f3(temp_dir_.GetPath(), true, FILES_AND_DIRECTORIES);
   FindResultCollector c3(&f3);
   EXPECT_TRUE(c3.HasFile(dir1));
   EXPECT_TRUE(c3.HasFile(dir2));
@@ -1908,7 +1955,7 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
   EXPECT_EQ(7, c3.size());
 
   // Non-recursive operation.
-  FileEnumerator f4(temp_dir_.path(), false, FILES_AND_DIRECTORIES);
+  FileEnumerator f4(temp_dir_.GetPath(), false, FILES_AND_DIRECTORIES);
   FindResultCollector c4(&f4);
   EXPECT_TRUE(c4.HasFile(dir2));
   EXPECT_TRUE(c4.HasFile(dir2));
@@ -1917,7 +1964,8 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
   EXPECT_EQ(4, c4.size());
 
   // Enumerate with a pattern.
-  FileEnumerator f5(temp_dir_.path(), true, FILES_AND_DIRECTORIES, FPL("dir*"));
+  FileEnumerator f5(temp_dir_.GetPath(), true, FILES_AND_DIRECTORIES,
+                    FPL("dir*"));
   FindResultCollector c5(&f5);
   EXPECT_TRUE(c5.HasFile(dir1));
   EXPECT_TRUE(c5.HasFile(dir2));
@@ -1946,7 +1994,7 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
     }
 
     // No changes for non recursive operation.
-    FileEnumerator f7(temp_dir_.path(), false, FILES_AND_DIRECTORIES);
+    FileEnumerator f7(temp_dir_.GetPath(), false, FILES_AND_DIRECTORIES);
     FindResultCollector c7(&f7);
     EXPECT_TRUE(c7.HasFile(dir2));
     EXPECT_TRUE(c7.HasFile(dir2));
@@ -1955,7 +2003,7 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
     EXPECT_EQ(4, c7.size());
 
     // Should not enumerate inside dir1 when using recursion.
-    FileEnumerator f8(temp_dir_.path(), true, FILES_AND_DIRECTORIES);
+    FileEnumerator f8(temp_dir_.GetPath(), true, FILES_AND_DIRECTORIES);
     FindResultCollector c8(&f8);
     EXPECT_TRUE(c8.HasFile(dir1));
     EXPECT_TRUE(c8.HasFile(dir2));
@@ -1970,14 +2018,14 @@ TEST_F(FileUtilTest, FileEnumeratorTest) {
 
   // Make sure the destructor closes the find handle while in the middle of a
   // query to allow TearDown to delete the directory.
-  FileEnumerator f9(temp_dir_.path(), true, FILES_AND_DIRECTORIES);
+  FileEnumerator f9(temp_dir_.GetPath(), true, FILES_AND_DIRECTORIES);
   EXPECT_FALSE(f9.Next().value().empty());  // Should have found something
                                             // (we don't care what).
 }
 
 TEST_F(FileUtilTest, AppendToFile) {
   FilePath data_dir =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("FilePathTest"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("FilePathTest"));
 
   // Create a fresh, empty copy of this directory.
   if (PathExists(data_dir)) {
@@ -2006,7 +2054,7 @@ TEST_F(FileUtilTest, ReadFile) {
   // Create a test file to be read.
   const std::string kTestData("The quick brown fox jumps over the lazy dog.");
   FilePath file_path =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("ReadFileTest"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileTest"));
 
   ASSERT_EQ(static_cast<int>(kTestData.size()),
             WriteFile(file_path, kTestData.data(), kTestData.size()));
@@ -2039,7 +2087,7 @@ TEST_F(FileUtilTest, ReadFile) {
 
   // Make sure the return value is -1 if the file doesn't exist.
   FilePath file_path_not_exist =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("ReadFileNotExistTest"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileNotExistTest"));
   EXPECT_EQ(-1,
             ReadFile(file_path_not_exist,
                      &exact_buffer[0],
@@ -2051,11 +2099,12 @@ TEST_F(FileUtilTest, ReadFileToString) {
   std::string data;
 
   FilePath file_path =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
   FilePath file_path_dangerous =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("..")).
-      Append(temp_dir_.path().BaseName()).
-      Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
+      temp_dir_.GetPath()
+          .Append(FILE_PATH_LITERAL(".."))
+          .Append(temp_dir_.GetPath().BaseName())
+          .Append(FILE_PATH_LITERAL("ReadFileToStringTest"));
 
   // Create test file.
   ASSERT_EQ(4, WriteFile(file_path, kTestData, 4));
@@ -2064,26 +2113,26 @@ TEST_F(FileUtilTest, ReadFileToString) {
   EXPECT_EQ(kTestData, data);
 
   data = "temp";
-  EXPECT_FALSE(ReadFileToString(file_path, &data, 0));
+  EXPECT_FALSE(ReadFileToStringWithMaxSize(file_path, &data, 0));
   EXPECT_EQ(0u, data.length());
 
   data = "temp";
-  EXPECT_FALSE(ReadFileToString(file_path, &data, 2));
+  EXPECT_FALSE(ReadFileToStringWithMaxSize(file_path, &data, 2));
   EXPECT_EQ("01", data);
 
   data.clear();
-  EXPECT_FALSE(ReadFileToString(file_path, &data, 3));
+  EXPECT_FALSE(ReadFileToStringWithMaxSize(file_path, &data, 3));
   EXPECT_EQ("012", data);
 
   data.clear();
-  EXPECT_TRUE(ReadFileToString(file_path, &data, 4));
+  EXPECT_TRUE(ReadFileToStringWithMaxSize(file_path, &data, 4));
   EXPECT_EQ("0123", data);
 
   data.clear();
-  EXPECT_TRUE(ReadFileToString(file_path, &data, 6));
+  EXPECT_TRUE(ReadFileToStringWithMaxSize(file_path, &data, 6));
   EXPECT_EQ("0123", data);
 
-  EXPECT_TRUE(ReadFileToString(file_path, NULL, 6));
+  EXPECT_TRUE(ReadFileToStringWithMaxSize(file_path, NULL, 6));
 
   EXPECT_TRUE(ReadFileToString(file_path, NULL));
 
@@ -2099,13 +2148,13 @@ TEST_F(FileUtilTest, ReadFileToString) {
   EXPECT_EQ(0u, data.length());
 
   data = "temp";
-  EXPECT_FALSE(ReadFileToString(file_path, &data, 6));
+  EXPECT_FALSE(ReadFileToStringWithMaxSize(file_path, &data, 6));
   EXPECT_EQ(0u, data.length());
 }
 
 TEST_F(FileUtilTest, TouchFile) {
   FilePath data_dir =
-      temp_dir_.path().Append(FILE_PATH_LITERAL("FilePathTest"));
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("FilePathTest"));
 
   // Create a fresh, empty copy of this directory.
   if (PathExists(data_dir)) {
@@ -2139,7 +2188,8 @@ TEST_F(FileUtilTest, TouchFile) {
 }
 
 TEST_F(FileUtilTest, IsDirectoryEmpty) {
-  FilePath empty_dir = temp_dir_.path().Append(FILE_PATH_LITERAL("EmptyDir"));
+  FilePath empty_dir =
+      temp_dir_.GetPath().Append(FILE_PATH_LITERAL("EmptyDir"));
 
   ASSERT_FALSE(PathExists(empty_dir));
 
@@ -2174,7 +2224,7 @@ class VerifyPathControlledByUserTest : public FileUtilTest {
     //  |-> sub_dir_
     //       |-> text_file_
 
-    base_dir_ = temp_dir_.path().AppendASCII("base_dir");
+    base_dir_ = temp_dir_.GetPath().AppendASCII("base_dir");
     ASSERT_TRUE(CreateDirectory(base_dir_));
 
     sub_dir_ = base_dir_.AppendASCII("sub_dir");
@@ -2446,7 +2496,7 @@ TEST_F(FileUtilTest, ValidContentUriTest) {
   data_dir = data_dir.AppendASCII("file_util");
   ASSERT_TRUE(PathExists(data_dir));
   FilePath image_file = data_dir.Append(FILE_PATH_LITERAL("red.png"));
-  int64 image_size;
+  int64_t image_size;
   GetFileSize(image_file, &image_size);
   EXPECT_LT(0, image_size);
 
@@ -2457,7 +2507,7 @@ TEST_F(FileUtilTest, ValidContentUriTest) {
   EXPECT_TRUE(PathExists(path));
   // The file size may not equal to the input image as MediaStore may convert
   // the image.
-  int64 content_uri_size;
+  int64_t content_uri_size;
   GetFileSize(path, &content_uri_size);
   EXPECT_EQ(image_size, content_uri_size);
 
@@ -2474,7 +2524,7 @@ TEST_F(FileUtilTest, NonExistentContentUriTest) {
   EXPECT_TRUE(path.IsContentUri());
   EXPECT_FALSE(PathExists(path));
   // Size should be smaller than 0.
-  int64 size;
+  int64_t size;
   EXPECT_FALSE(GetFileSize(path, &size));
 
   // We should not be able to read the file.

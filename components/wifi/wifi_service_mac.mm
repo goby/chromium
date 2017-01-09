@@ -13,6 +13,7 @@
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/scoped_nsobject.h"
 #include "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/sys_string_conversions.h"
 #include "components/onc/onc_constants.h"
@@ -46,11 +47,11 @@ class WiFiServiceMac : public WiFiService {
                 std::string* error) override;
 
   void SetProperties(const std::string& network_guid,
-                     scoped_ptr<base::DictionaryValue> properties,
+                     std::unique_ptr<base::DictionaryValue> properties,
                      std::string* error) override;
 
   void CreateNetwork(bool shared,
-                     scoped_ptr<base::DictionaryValue> properties,
+                     std::unique_ptr<base::DictionaryValue> properties,
                      std::string* network_guid,
                      std::string* error) override;
 
@@ -99,9 +100,6 @@ class WiFiServiceMac : public WiFiService {
   // Populates |properties| from |network|.
   void NetworkPropertiesFromCWNetwork(const CWNetwork* network,
                                       NetworkProperties* properties) const;
-
-  // Converts |CWSecurityMode| into onc::wifi::k{WPA|WEP}* security constant.
-  std::string SecurityFromCWSecurityMode(CWSecurityMode security) const;
 
   // Returns onc::wifi::k{WPA|WEP}* security constant supported by the
   // |CWNetwork|.
@@ -194,7 +192,7 @@ void WiFiServiceMac::GetProperties(const std::string& network_guid,
   }
 
   it->connection_state = GetNetworkConnectionState(network_guid);
-  scoped_ptr<base::DictionaryValue> network(it->ToValue(false));
+  std::unique_ptr<base::DictionaryValue> network(it->ToValue(false));
   properties->Swap(network.get());
   DVLOG(1) << *properties;
 }
@@ -214,7 +212,7 @@ void WiFiServiceMac::GetState(const std::string& network_guid,
 
 void WiFiServiceMac::SetProperties(
     const std::string& network_guid,
-    scoped_ptr<base::DictionaryValue> properties,
+    std::unique_ptr<base::DictionaryValue> properties,
     std::string* error) {
   base::DictionaryValue* existing_properties;
   // If the network properties already exist, don't override previously set
@@ -230,7 +228,7 @@ void WiFiServiceMac::SetProperties(
 
 void WiFiServiceMac::CreateNetwork(
     bool shared,
-    scoped_ptr<base::DictionaryValue> properties,
+    std::unique_ptr<base::DictionaryValue> properties,
     std::string* network_guid,
     std::string* error) {
   NetworkProperties network_properties;
@@ -264,7 +262,8 @@ void WiFiServiceMac::GetVisibleNetworks(const std::string& network_type,
   for (NetworkList::const_iterator it = networks_.begin();
        it != networks_.end();
        ++it) {
-    scoped_ptr<base::DictionaryValue> network(it->ToValue(!include_details));
+    std::unique_ptr<base::DictionaryValue> network(
+        it->ToValue(!include_details));
     network_list->Append(network.release());
   }
 }
@@ -520,46 +519,8 @@ void WiFiServiceMac::NetworkPropertiesFromCWNetwork(
       static_cast<CWChannelBand>([[network wlanChannel] channelBand]));
   properties->frequency_set.insert(properties->frequency);
 
-  // -[CWNetwork supportsSecurity:] is available from 10.7 SDK while
-  // -[CWNetwork securityMode] is deprecated and hidden as private since
-  // 10.9 SDK. The latter is kept for now to support running on 10.6. It
-  // should be removed when 10.6 support is dropped.
-  if ([network respondsToSelector:@selector(supportsSecurity:)]) {
-    properties->security = SecurityFromCWNetwork(network);
-  } else {
-    properties->security = SecurityFromCWSecurityMode(
-        static_cast<CWSecurityMode>([[network securityMode] intValue]));
-  }
-
-  // rssiValue property of CWNetwork is available from 10.7 SDK while
-  // -[CWNetwork rssi] is deprecated and hidden as private since 10.9 SDK.
-  // The latter is kept for now to support running on 10.6. It should be
-  // removed when 10.6 support is dropped.
-  if ([network respondsToSelector:@selector(rssiValue)])
-    properties->signal_strength = [network rssiValue];
-  else
-    properties->signal_strength = [[network rssi] intValue];
-}
-
-std::string WiFiServiceMac::SecurityFromCWSecurityMode(
-    CWSecurityMode security) const {
-  switch (security) {
-    case kCWSecurityModeWPA_Enterprise:
-    case kCWSecurityModeWPA2_Enterprise:
-      return onc::wifi::kWPA_EAP;
-    case kCWSecurityModeWPA_PSK:
-    case kCWSecurityModeWPA2_PSK:
-      return onc::wifi::kWPA_PSK;
-    case kCWSecurityModeWEP:
-      return onc::wifi::kWEP_PSK;
-    case kCWSecurityModeOpen:
-      return onc::wifi::kSecurityNone;
-    // TODO(mef): Figure out correct mapping.
-    case kCWSecurityModeWPS:
-    case kCWSecurityModeDynamicWEP:
-      return onc::wifi::kWPA_EAP;
-  }
-  return onc::wifi::kWPA_EAP;
+  properties->security = SecurityFromCWNetwork(network);
+  properties->signal_strength = [network rssiValue];
 }
 
 std::string WiFiServiceMac::SecurityFromCWNetwork(

@@ -5,20 +5,16 @@
 #ifndef CHROME_BROWSER_DOWNLOAD_DOWNLOAD_SHELF_H_
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_SHELF_H_
 
+#include <stdint.h>
+
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "build/build_config.h"
 
 class Browser;
 
-namespace base {
-class TimeTicks;
-}
-
 namespace gfx {
 class Canvas;
-class ImageSkia;
-class Rect;
 }
 
 namespace content {
@@ -138,7 +134,7 @@ class DownloadShelf {
   // Similar to ShowDownload() but refers to the download using an ID. This
   // download should belong to the DownloadManager returned by
   // GetDownloadManager().
-  void ShowDownloadById(int32 download_id);
+  void ShowDownloadById(int32_t download_id);
 
   bool should_show_on_unhide_;
   bool is_hidden_;

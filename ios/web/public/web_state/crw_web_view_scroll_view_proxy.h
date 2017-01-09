@@ -25,14 +25,16 @@
 @property(nonatomic, assign) CGPoint contentOffset;
 @property(nonatomic, assign) UIEdgeInsets contentInset;
 @property(nonatomic, readonly) BOOL isZooming;
+@property(nonatomic, readonly) CGFloat zoomScale;
 @property(nonatomic, assign) UIEdgeInsets scrollIndicatorInsets;
 @property(nonatomic, assign) CGSize contentSize;
 @property(nonatomic, readonly) CGRect frame;
 @property(nonatomic, getter=isScrollEnabled) BOOL scrollEnabled;
 @property(nonatomic, assign) BOOL bounces;
-@property(nonatomic, readonly) UIPanGestureRecognizer* panGestureRecognizer;
+@property(weak, nonatomic, readonly)
+    UIPanGestureRecognizer* panGestureRecognizer;
 // Returns the scrollview's gesture recognizers.
-@property(nonatomic, readonly) NSArray* gestureRecognizers;
+@property(weak, nonatomic, readonly) NSArray* gestureRecognizers;
 
 // Calls UIScrollView's implementation of setContentInset: directly. This
 // bypasses a very slow update path in UIWebView.
@@ -78,6 +80,8 @@
         (CRWWebViewScrollViewProxy*)webViewScrollViewProxy;
 - (void)webViewScrollViewDidZoom:
         (CRWWebViewScrollViewProxy*)webViewScrollViewProxy;
+- (void)webViewScrollViewDidResetContentSize:
+    (CRWWebViewScrollViewProxy*)webViewScrollViewProxy;
 @end
 
 // A protocol to be implemented by objects to listen for changes to the

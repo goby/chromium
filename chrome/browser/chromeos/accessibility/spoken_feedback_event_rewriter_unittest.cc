@@ -6,6 +6,7 @@
 
 #include "ash/shell.h"
 #include "ash/test/ash_test_base.h"
+#include "base/macros.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/events/event.h"
@@ -23,7 +24,7 @@ class EventCapturer : public ui::EventHandler {
 
   void OnEvent(ui::Event* event) override {
     if (event->IsKeyEvent())
-      events_.push_back(new ui::KeyEvent(static_cast<ui::KeyEvent&>(*event)));
+      events_.push_back(new ui::KeyEvent(*event->AsKeyEvent()));
   }
 
   const ScopedVector<ui::KeyEvent>& captured_events() const { return events_; }
@@ -53,7 +54,8 @@ class TestDelegate : public SpokenFeedbackEventRewriterDelegate {
     return is_spoken_feedback_enabled_;
   }
 
-  bool DispatchKeyEventToChromeVox(const ui::KeyEvent& key_event) override {
+  bool DispatchKeyEventToChromeVox(const ui::KeyEvent& key_event,
+                                   bool capture) override {
     return dispatch_result_;
   }
 
@@ -70,7 +72,7 @@ class SpokenFeedbackEventRewriterTest : public ash::test::AshTestBase {
         spoken_feedback_event_rewriter_(new SpokenFeedbackEventRewriter()) {
     delegate_ = new TestDelegate();
     spoken_feedback_event_rewriter_->SetDelegateForTest(
-        scoped_ptr<TestDelegate>(delegate_));
+        std::unique_ptr<TestDelegate>(delegate_));
   }
 
   void SetUp() override {
@@ -95,7 +97,7 @@ class SpokenFeedbackEventRewriterTest : public ash::test::AshTestBase {
   EventCapturer event_capturer_;
 
  private:
-  scoped_ptr<SpokenFeedbackEventRewriter> spoken_feedback_event_rewriter_;
+  std::unique_ptr<SpokenFeedbackEventRewriter> spoken_feedback_event_rewriter_;
 
   DISALLOW_COPY_AND_ASSIGN(SpokenFeedbackEventRewriterTest);
 };

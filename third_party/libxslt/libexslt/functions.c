@@ -35,7 +35,6 @@ struct _exsltFuncData {
     xmlHashTablePtr funcs;	/* pointer to the stylesheet module data */
     xmlXPathObjectPtr result;	/* returned by func:result */
     int error;			/* did an error occur? */
-    xmlDocPtr RVT;   /* result tree fragment */
 };
 
 typedef struct _exsltFuncResultPreComp exsltFuncResultPreComp;
@@ -56,8 +55,6 @@ struct _exsltFuncImportRegData {
 static void exsltFuncFunctionFunction (xmlXPathParserContextPtr ctxt,
 				       int nargs);
 static exsltFuncFunctionData *exsltFuncNewFunctionData(void);
-
-#define MAX_FUNC_RECURSION 1000
 
 /*static const xmlChar *exsltResultDataID = (const xmlChar *) "EXSLT Result";*/
 
@@ -112,6 +109,8 @@ exsltFuncRegisterImportFunc (exsltFuncFunctionData *data,
     func = (exsltFuncFunctionData*)xmlHashLookup2(ch->hash, URI, name);
     if (func == NULL) {		/* Not yet present - copy it in */
 	func = exsltFuncNewFunctionData();
+        if (func == NULL)
+            return;
 	memcpy(func, data, sizeof(exsltFuncFunctionData));
 	if (xmlHashAddEntry2(ch->hash, URI, name, func) < 0) {
 	    xsltGenericError(xsltGenericErrorContext,
@@ -301,6 +300,14 @@ exsltFuncFunctionFunction (xmlXPathParserContextPtr ctxt, int nargs) {
     func = (exsltFuncFunctionData*) xmlHashLookup2 (data->funcs,
 						    ctxt->context->functionURI,
 						    ctxt->context->function);
+    if (func == NULL) {
+        /* Should never happen */
+        xsltGenericError(xsltGenericErrorContext,
+                         "{%s}%s: not found\n",
+                         ctxt->context->functionURI, ctxt->context->function);
+        ctxt->error = XPATH_UNKNOWN_FUNC_ERROR;
+        return;
+    }
 
     /*
      * params handling
@@ -323,14 +330,6 @@ exsltFuncFunctionFunction (xmlXPathParserContextPtr ctxt, int nargs) {
 			 "param == NULL\n");
 	return;
     }
-    if (tctxt->funcLevel > MAX_FUNC_RECURSION) {
-	xsltGenericError(xsltGenericErrorContext,
-			 "{%s}%s: detected a recursion\n",
-			 ctxt->context->functionURI, ctxt->context->function);
-	ctxt->error = XPATH_MEMORY_ERROR;
-	return;
-    }
-    tctxt->funcLevel++;
 
     /*
      * We have a problem with the evaluation of function parameters.
@@ -414,10 +413,16 @@ exsltFuncFunctionFunction (xmlXPathParserContextPtr ctxt, int nargs) {
 	xsltFreeStackElemList(params);
 
     if (data->error != 0)
-	goto error;
+	return;
 
     if (data->result != NULL) {
 	ret = data->result;
+        /*
+        * IMPORTANT: This enables previously tree fragments marked as
+        * being results of a function, to be garbage-collected after
+        * the calling process exits.
+        */
+        xsltFlagRVTs(tctxt, ret, XSLT_RVT_LOCAL);
     } else
 	ret = xmlXPathNewCString("");
 
@@ -436,19 +441,10 @@ exsltFuncFunctionFunction (xmlXPathParserContextPtr ctxt, int nargs) {
 			 "executing a function\n",
 			 ctxt->context->functionURI, ctxt->context->function);
 	xmlFreeNode(fake);
-	goto error;
+	return;
     }
     xmlFreeNode(fake);
     valuePush(ctxt, ret);
-
-error:
-    /*
-    * IMPORTANT: This enables previously tree fragments marked as
-    * being results of a function, to be garbage-collected after
-    * the calling process exits.
-    */
-    xsltExtensionInstructionResultFinalize(tctxt);
-    tctxt->funcLevel--;
 }
 
 
@@ -494,6 +490,10 @@ exsltFuncFunctionComp (xsltStylesheetPtr style, xmlNodePtr inst) {
      * Create function data
      */
     func = exsltFuncNewFunctionData();
+    if (func == NULL) {
+        xmlFree(name);
+        return;
+    }
     func->content = inst->children;
     while (IS_XSLT_ELEM(func->content) &&
 	   IS_XSLT_NAME(func->content, "param")) {
@@ -710,7 +710,7 @@ exsltFuncResultElem (xsltTransformContextPtr ctxt,
 	* Mark it as a function result in order to avoid garbage
 	* collecting of tree fragments before the function exits.
 	*/
-	xsltExtensionInstructionResultRegister(ctxt, ret);
+	xsltFlagRVTs(ctxt, ret, XSLT_RVT_FUNC_RESULT);
     } else if (inst->children != NULL) {
 	/* If the func:result element does not have a select attribute
 	 * and has non-empty content (i.e. the func:result element has
@@ -727,7 +727,8 @@ exsltFuncResultElem (xsltTransformContextPtr ctxt,
 	    data->error = 1;
 	    return;
 	}
-	xsltRegisterLocalRVT(ctxt, container);
+        /* Mark as function result. */
+        container->psvi = XSLT_RVT_FUNC_RESULT;
 
 	oldInsert = ctxt->insert;
 	ctxt->insert = (xmlNodePtr) container;
@@ -742,11 +743,6 @@ exsltFuncResultElem (xsltTransformContextPtr ctxt,
 	    data->error = 1;
 	} else {
 	    ret->boolval = 0; /* Freeing is not handled there anymore */
-	    /*
-	    * Mark it as a function result in order to avoid garbage
-	    * collecting of tree fragments before the function exits.
-	    */
-	    xsltExtensionInstructionResultRegister(ctxt, ret);
 	}
     } else {
 	/* If the func:result element has empty content and does not

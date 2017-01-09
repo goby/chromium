@@ -6,6 +6,8 @@
 
 #include <string>
 
+#include "base/memory/ptr_util.h"
+
 namespace media {
 
 class FakeAudioLogImpl : public AudioLog {
@@ -22,14 +24,15 @@ class FakeAudioLogImpl : public AudioLog {
   void OnSetVolume(int component_id, double volume) override {}
   void OnSwitchOutputDevice(int component_id,
                             const std::string& device_id) override {}
+  void OnLogMessage(int component_id, const std::string& message) override {}
 };
 
 FakeAudioLogFactory::FakeAudioLogFactory() {}
 FakeAudioLogFactory::~FakeAudioLogFactory() {}
 
-scoped_ptr<AudioLog> FakeAudioLogFactory::CreateAudioLog(
+std::unique_ptr<AudioLog> FakeAudioLogFactory::CreateAudioLog(
     AudioComponent component) {
-  return scoped_ptr<AudioLog>(new FakeAudioLogImpl());
+  return base::MakeUnique<FakeAudioLogImpl>();
 }
 
 }  // namespace media

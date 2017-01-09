@@ -4,6 +4,10 @@
 
 #include "chrome/browser/sync/test/integration/typed_urls_helper.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
@@ -11,13 +15,11 @@
 #include "base/time/time.h"
 #include "chrome/browser/history/history_service_factory.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/sync/test/integration/multi_client_status_change_checker.h"
 #include "chrome/browser/sync/test/integration/sync_datatype_helper.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 #include "components/history/core/browser/history_backend.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
-#include "components/history/core/browser/history_types.h"
 
 using sync_datatype_helper::test;
 
@@ -145,11 +147,12 @@ void WaitForHistoryDBThread(int index) {
   history::HistoryService* service =
       HistoryServiceFactory::GetForProfileWithoutCreating(
           test()->GetProfile(index));
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new FlushHistoryDBQueueTask(&wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new FlushHistoryDBQueueTask(&wait_event)),
+                          &tracker);
   wait_event.Wait();
 }
 
@@ -160,26 +163,23 @@ void AddToHistory(history::HistoryService* service,
                   ui::PageTransition transition,
                   history::VisitSource source,
                   const base::Time& timestamp) {
-  service->AddPage(url,
-                   timestamp,
-                   NULL, // scope
-                   1234, // nav_entry_id
-                   GURL(),  // referrer
-                   history::RedirectList(),
-                   transition,
-                   source,
-                   false);
+  service->AddPage(url, timestamp,
+                   nullptr,  // scope
+                   1234,     // nav_entry_id
+                   GURL(),   // referrer
+                   history::RedirectList(), transition, source, false);
 }
 
 history::URLRows GetTypedUrlsFromHistoryService(
     history::HistoryService* service) {
   base::CancelableTaskTracker tracker;
   history::URLRows rows;
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetTypedUrlsTask(&rows, &wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetTypedUrlsTask(&rows, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return rows;
 }
@@ -188,12 +188,13 @@ bool GetUrlFromHistoryService(history::HistoryService* service,
                               const GURL& url,
                               history::URLRow* row) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   bool found = false;
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetUrlTask(url, row, &found, &wait_event)),
-      &tracker);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetUrlTask(url, row, &found, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return found;
 }
@@ -202,12 +203,13 @@ history::VisitVector GetVisitsFromHistoryService(
     history::HistoryService* service,
     history::URLID id) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
   history::VisitVector visits;
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new GetVisitsTask(id, &visits, &wait_event)),
-      &tracker);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new GetVisitsTask(id, &visits, &wait_event)),
+                          &tracker);
   wait_event.Wait();
   return visits;
 }
@@ -215,15 +217,16 @@ history::VisitVector GetVisitsFromHistoryService(
 void RemoveVisitsFromHistoryService(history::HistoryService* service,
                                     const history::VisitVector& visits) {
   base::CancelableTaskTracker tracker;
-  base::WaitableEvent wait_event(true, false);
-  service->ScheduleDBTask(
-      scoped_ptr<history::HistoryDBTask>(
-          new RemoveVisitsTask(visits, &wait_event)),
-      &tracker);
+  base::WaitableEvent wait_event(
+      base::WaitableEvent::ResetPolicy::MANUAL,
+      base::WaitableEvent::InitialState::NOT_SIGNALED);
+  service->ScheduleDBTask(std::unique_ptr<history::HistoryDBTask>(
+                              new RemoveVisitsTask(visits, &wait_event)),
+                          &tracker);
   wait_event.Wait();
 }
 
-static base::Time* timestamp = NULL;
+static base::Time* timestamp = nullptr;
 
 }  // namespace
 
@@ -368,7 +371,8 @@ bool AreVisitsEqual(const history::VisitVector& visit1,
   if (visit1.size() != visit2.size())
     return false;
   for (size_t i = 0; i < visit1.size(); ++i) {
-    if (visit1[i].transition != visit2[i].transition)
+    if (!ui::PageTransitionTypeIncludingQualifiersIs(visit1[i].transition,
+                                                     visit2[i].transition))
       return false;
     if (visit1[i].visit_time != visit2[i].visit_time)
       return false;
@@ -414,39 +418,16 @@ bool CheckAllProfilesHaveSameURLs() {
   return true;
 }
 
-namespace {
-
-// Helper class used in the implementation of
-// AwaitCheckAllProfilesHaveSameURLs.
-class ProfilesHaveSameURLsChecker : public MultiClientStatusChangeChecker {
- public:
-  ProfilesHaveSameURLsChecker();
-  ~ProfilesHaveSameURLsChecker() override;
-
-  bool IsExitConditionSatisfied() override;
-  std::string GetDebugMessage() const override;
-};
+}  // namespace typed_urls_helper
 
 ProfilesHaveSameURLsChecker::ProfilesHaveSameURLsChecker()
     : MultiClientStatusChangeChecker(
         sync_datatype_helper::test()->GetSyncServices()) {}
 
-ProfilesHaveSameURLsChecker::~ProfilesHaveSameURLsChecker() {}
-
 bool ProfilesHaveSameURLsChecker::IsExitConditionSatisfied() {
-  return CheckAllProfilesHaveSameURLs();
+  return typed_urls_helper::CheckAllProfilesHaveSameURLs();
 }
 
 std::string ProfilesHaveSameURLsChecker::GetDebugMessage() const {
   return "Waiting for matching typed urls profiles";
 }
-
-}  //  namespace
-
-bool AwaitCheckAllProfilesHaveSameURLs() {
-  ProfilesHaveSameURLsChecker checker;
-  checker.Wait();
-  return !checker.TimedOut();
-}
-
-}  // namespace typed_urls_helper

@@ -5,14 +5,22 @@
 #ifndef MOJO_PUBLIC_CPP_BINDINGS_LIB_MESSAGE_INTERNAL_H_
 #define MOJO_PUBLIC_CPP_BINDINGS_LIB_MESSAGE_INTERNAL_H_
 
+#include <stdint.h>
+
+#include <string>
+
+#include "base/callback.h"
+#include "base/macros.h"
+#include "mojo/public/cpp/bindings/bindings_export.h"
 #include "mojo/public/cpp/bindings/lib/bindings_internal.h"
 
 namespace mojo {
+
+class Message;
+
 namespace internal {
 
 #pragma pack(push, 1)
-
-enum { kMessageExpectsResponse = 1 << 0, kMessageIsResponse = 1 << 1 };
 
 struct MessageHeader : internal::StructHeader {
   // Interface ID for identifying multiple interfaces running on the same
@@ -28,21 +36,36 @@ struct MessageHeader : internal::StructHeader {
 static_assert(sizeof(MessageHeader) == 24, "Bad sizeof(MessageHeader)");
 
 struct MessageHeaderWithRequestID : MessageHeader {
-  // Only used if either kMessageExpectsResponse or kMessageIsResponse is set in
+  // Only used if either kFlagExpectsResponse or kFlagIsResponse is set in
   // order to match responses with corresponding requests.
   uint64_t request_id;
 };
 static_assert(sizeof(MessageHeaderWithRequestID) == 32,
               "Bad sizeof(MessageHeaderWithRequestID)");
 
-struct MessageData {
-  MessageHeader header;
+#pragma pack(pop)
+
+class MOJO_CPP_BINDINGS_EXPORT MessageDispatchContext {
+ public:
+  explicit MessageDispatchContext(Message* message);
+  ~MessageDispatchContext();
+
+  static MessageDispatchContext* current();
+
+  const base::Callback<void(const std::string&)>& GetBadMessageCallback();
+
+ private:
+  MessageDispatchContext* outer_context_;
+  Message* message_;
+  base::Callback<void(const std::string&)> bad_message_callback_;
+
+  DISALLOW_COPY_AND_ASSIGN(MessageDispatchContext);
 };
 
-static_assert(sizeof(MessageData) == sizeof(MessageHeader),
-              "Bad sizeof(MessageData)");
-
-#pragma pack(pop)
+class MOJO_CPP_BINDINGS_EXPORT SyncMessageResponseSetup {
+ public:
+  static void SetCurrentSyncResponseMessage(Message* message);
+};
 
 }  // namespace internal
 }  // namespace mojo

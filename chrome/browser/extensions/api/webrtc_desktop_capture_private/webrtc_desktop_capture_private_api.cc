@@ -8,7 +8,6 @@
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/extension_tab_util.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/api/tabs.h"
 #include "chrome/common/extensions/api/webrtc_desktop_capture_private.h"
@@ -16,7 +15,7 @@
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/origin_util.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 
 namespace extensions {
 
@@ -48,7 +47,7 @@ bool WebrtcDesktopCapturePrivateChooseDesktopMediaFunction::RunAsync() {
 
   args_->Remove(0, NULL);
 
-  scoped_ptr<Params> params = Params::Create(*args_);
+  std::unique_ptr<Params> params = Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   content::RenderFrameHost* rfh = content::RenderFrameHost::FromID(

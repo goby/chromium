@@ -5,15 +5,15 @@
 #include "extensions/common/features/feature_provider.h"
 
 #include <map>
+#include <memory>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
-#include "base/memory/linked_ptr.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/trace_event/trace_event.h"
 #include "content/public/common/content_switches.h"
 #include "extensions/common/extensions_client.h"
+#include "extensions/common/features/feature.h"
 #include "extensions/common/features/feature_util.h"
 #include "extensions/common/switches.h"
 
@@ -23,29 +23,16 @@ namespace {
 
 class Static {
  public:
-  FeatureProvider* GetFeatures(const std::string& name) const {
-    FeatureProviderMap::const_iterator it = feature_providers_.find(name);
-    if (it == feature_providers_.end())
-      CRASH_WITH_MINIDUMP("FeatureProvider \"" + name + "\" not found");
-    return it->second.get();
-  }
-
- private:
-  friend struct base::DefaultLazyInstanceTraits<Static>;
-
   Static() {
     TRACE_EVENT0("startup", "extensions::FeatureProvider::Static");
     base::Time begin_time = base::Time::Now();
 
     ExtensionsClient* client = ExtensionsClient::Get();
-    feature_providers_["api"] =
-        make_linked_ptr(client->CreateFeatureProvider("api").release());
-    feature_providers_["manifest"] =
-        make_linked_ptr(client->CreateFeatureProvider("manifest").release());
+    feature_providers_["api"] = client->CreateFeatureProvider("api");
+    feature_providers_["manifest"] = client->CreateFeatureProvider("manifest");
     feature_providers_["permission"] =
-        make_linked_ptr(client->CreateFeatureProvider("permission").release());
-    feature_providers_["behavior"] =
-        make_linked_ptr(client->CreateFeatureProvider("behavior").release());
+        client->CreateFeatureProvider("permission");
+    feature_providers_["behavior"] = client->CreateFeatureProvider("behavior");
 
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     std::string process_type =
@@ -62,22 +49,29 @@ class Static {
     }
   }
 
-  typedef std::map<std::string, linked_ptr<FeatureProvider> >
-      FeatureProviderMap;
+  FeatureProvider* GetFeatures(const std::string& name) const {
+    auto it = feature_providers_.find(name);
+    if (it == feature_providers_.end())
+      CRASH_WITH_MINIDUMP("FeatureProvider \"" + name + "\" not found");
+    return it->second.get();
+  }
 
-  FeatureProviderMap feature_providers_;
+ private:
+  std::map<std::string, std::unique_ptr<FeatureProvider>> feature_providers_;
+
+  DISALLOW_COPY_AND_ASSIGN(Static);
 };
 
-base::LazyInstance<Static> g_static = LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<Static>::Leaky g_static = LAZY_INSTANCE_INITIALIZER;
 
 const Feature* GetFeatureFromProviderByName(const std::string& provider_name,
                                             const std::string& feature_name) {
   const Feature* feature =
       FeatureProvider::GetByName(provider_name)->GetFeature(feature_name);
-  if (!feature) {
-    CRASH_WITH_MINIDUMP("Feature \"" + feature_name + "\" not found in " +
-                        "FeatureProvider \"" + provider_name + "\"");
-  }
+  // We should always refer to existing features, but we can't CHECK here
+  // due to flaky JSONReader fails, see: crbug.com/176381, crbug.com/602936
+  DCHECK(feature) << "Feature \"" << feature_name << "\" not found in "
+                  << "FeatureProvider \"" << provider_name << "\"";
   return feature;
 }
 

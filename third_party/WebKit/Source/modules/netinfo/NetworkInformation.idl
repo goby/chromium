@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+// https://wicg.github.io/netinfo/#the-networkinformation-interface
+
 enum ConnectionType {
     "cellular",
     "bluetooth",
@@ -16,14 +18,13 @@ enum ConnectionType {
 typedef unrestricted double Megabit;
 
 [
-    RuntimeEnabled=NetworkInformation,
+    ActiveScriptWrappable,
+    DependentLifetime,
     Exposed=(Window,Worker),
-    GarbageCollected,
-    ActiveDOMObject
+    RuntimeEnabled=NetworkInformation,
 ] interface NetworkInformation : EventTarget {
     [MeasureAs=NetInfoType] readonly attribute ConnectionType type;
     [RuntimeEnabled=NetInfoDownlinkMax, MeasureAs=NetInfoDownlinkMax] readonly attribute Megabit downlinkMax;
     [RuntimeEnabled=NetInfoDownlinkMax, MeasureAs=NetInfoOnChange] attribute EventHandler onchange;
     [MeasureAs=NetInfoOnTypeChange] attribute EventHandler ontypechange;
 };
-

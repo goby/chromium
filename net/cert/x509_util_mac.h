@@ -43,19 +43,17 @@ OSStatus NET_EXPORT CreateBasicX509Policy(SecPolicyRef* policy);
 // Creates security policies to control revocation checking (OCSP and CRL).
 // If |enable_revocation_checking| is true, revocation checking will be
 // explicitly enabled.
-// If |enable_revocation_checking| is false, but |enable_ev_checking| is
-// true, then the system policies for EV checking (which include checking
-// for an online OCSP response) will be permitted. However, if the OS
-// does not believe the certificate is EV, no revocation checking will be
-// performed.
-// If both are false, then the policies returned will be explicitly
-// prohibited from accessing the network or the local cache, regardless of
-// system settings.
+// Otherwise, the policies returned will be explicitly prohibited from accessing
+// the network or the local cache, if possible.
 // If the policies are successfully created, they will be appended to
 // |policies|.
 OSStatus NET_EXPORT CreateRevocationPolicies(bool enable_revocation_checking,
-                                             bool enable_ev_checking,
                                              CFMutableArrayRef policies);
+
+// CSSM functions are deprecated as of OSX 10.7, but have no replacement.
+// https://bugs.chromium.org/p/chromium/issues/detail?id=590914#c1
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
 // Wrapper for a CSSM_DATA_PTR that was obtained via one of the CSSM field
 // accessors (such as CSSM_CL_CertGet[First/Next]Value or
@@ -131,6 +129,8 @@ class CSSMCachedCertificate {
   CSSM_CL_HANDLE cl_handle_;
   CSSM_HANDLE cached_cert_handle_;
 };
+
+#pragma clang diagnostic pop  // "-Wdeprecated-declarations"
 
 }  // namespace x509_util
 

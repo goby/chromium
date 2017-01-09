@@ -4,12 +4,13 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_H_
 #define CONTENT_SHELL_BROWSER_SHELL_H_
 
+#include <stdint.h>
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/strings/string_piece.h"
 #include "build/build_config.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -22,9 +23,11 @@
 #include "base/android/scoped_java_ref.h"
 #elif defined(USE_AURA)
 #if defined(OS_CHROMEOS)
-namespace gfx {
+
+namespace display {
 class Screen;
 }
+
 namespace wm {
 class WMTestHelper;
 }
@@ -32,6 +35,9 @@ class WMTestHelper;
 namespace views {
 class Widget;
 class ViewsDelegate;
+}
+namespace wm {
+class WMState;
 }
 #endif  // defined(USE_AURA)
 
@@ -60,13 +66,20 @@ class Shell : public WebContentsDelegate,
   void LoadDataWithBaseURL(const GURL& url,
                            const std::string& data,
                            const GURL& base_url);
+
+#if defined(OS_ANDROID)
+  // Android-only path to allow loading long data strings.
+  void LoadDataAsStringWithBaseURL(const GURL& url,
+                                   const std::string& data,
+                                   const GURL& base_url);
+#endif
   void GoBackOrForward(int offset);
   void Reload();
+  void ReloadBypassingCache();
   void Stop();
   void UpdateNavigationControls(bool to_different_document);
   void Close();
   void ShowDevTools();
-  void ShowDevToolsForElementAt(int x, int y);
   void CloseDevTools();
 #if defined(OS_MACOSX)
   // Resizes the web content view to the given dimensions.
@@ -76,10 +89,11 @@ class Shell : public WebContentsDelegate,
   // Do one time initialization at application startup.
   static void Initialize();
 
-  static Shell* CreateNewWindow(BrowserContext* browser_context,
-                                const GURL& url,
-                                SiteInstance* site_instance,
-                                const gfx::Size& initial_size);
+  static Shell* CreateNewWindow(
+      BrowserContext* browser_context,
+      const GURL& url,
+      const scoped_refptr<SiteInstance>& site_instance,
+      const gfx::Size& initial_size);
 
   // Returns the Shell object corresponding to the given RenderViewHost.
   static Shell* FromRenderViewHost(RenderViewHost* rvh);
@@ -107,6 +121,8 @@ class Shell : public WebContentsDelegate,
 #endif
 
   // WebContentsDelegate
+  WebContents* OpenURLFromTab(WebContents* source,
+                              const OpenURLParams& params) override;
   void AddNewContents(WebContents* source,
                       WebContents* new_contents,
                       WindowOpenDisposition disposition,
@@ -117,6 +133,8 @@ class Shell : public WebContentsDelegate,
                            bool to_different_document) override;
 #if defined(OS_ANDROID)
   void LoadProgressChanged(WebContents* source, double progress) override;
+  base::android::ScopedJavaLocalRef<jobject>
+      GetContentVideoViewEmbedder() override;
 #endif
   void EnterFullscreenModeForTab(WebContents* web_contents,
                                  const GURL& origin) override;
@@ -133,22 +151,22 @@ class Shell : public WebContentsDelegate,
   void DidNavigateMainFramePostCommit(WebContents* web_contents) override;
   JavaScriptDialogManager* GetJavaScriptDialogManager(
       WebContents* source) override;
-  scoped_ptr<BluetoothChooser> RunBluetoothChooser(
-      WebContents* web_contents,
-      const BluetoothChooser::EventHandler& event_handler,
-      const GURL& origin) override;
+  std::unique_ptr<BluetoothChooser> RunBluetoothChooser(
+      RenderFrameHost* frame,
+      const BluetoothChooser::EventHandler& event_handler) override;
 #if defined(OS_MACOSX)
   void HandleKeyboardEvent(WebContents* source,
                            const NativeWebKeyboardEvent& event) override;
 #endif
-  bool AddMessageToConsole(WebContents* source,
-                           int32 level,
-                           const base::string16& message,
-                           int32 line_no,
-                           const base::string16& source_id) override;
-  void RendererUnresponsive(WebContents* source) override;
+  bool DidAddMessageToConsole(WebContents* source,
+                              int32_t level,
+                              const base::string16& message,
+                              int32_t line_no,
+                              const base::string16& source_id) override;
+  void RendererUnresponsive(
+      WebContents* source,
+      const WebContentsUnresponsiveState& unresponsive_state) override;
   void ActivateContents(WebContents* contents) override;
-  bool HandleContextMenu(const content::ContextMenuParams& params) override;
 
   static gfx::Size GetShellDefaultSize();
 
@@ -194,14 +212,18 @@ class Shell : public WebContentsDelegate,
   void PlatformSetIsLoading(bool loading);
   // Set the title of shell window
   void PlatformSetTitle(const base::string16& title);
-  // User right-clicked on the web view
-  bool PlatformHandleContextMenu(const content::ContextMenuParams& params);
 #if defined(OS_ANDROID)
   void PlatformToggleFullscreenModeForTab(WebContents* web_contents,
                                           bool enter_fullscreen);
   bool PlatformIsFullscreenForTabOrPending(
       const WebContents* web_contents) const;
 #endif
+
+  // Helper method for the two public LoadData methods.
+  void LoadDataWithBaseURLInternal(const GURL& url,
+                                   const std::string& data,
+                                   const GURL& base_url,
+                                   bool load_as_string);
 
   gfx::NativeView GetContentView();
 
@@ -210,14 +232,13 @@ class Shell : public WebContentsDelegate,
   // WebContentsObserver
   void TitleWasSet(NavigationEntry* entry, bool explicit_set) override;
 
-  void InnerShowDevTools();
   void OnDevToolsWebContentsDestroyed();
 
-  scoped_ptr<ShellJavaScriptDialogManager> dialog_manager_;
+  std::unique_ptr<ShellJavaScriptDialogManager> dialog_manager_;
 
-  scoped_ptr<WebContents> web_contents_;
+  std::unique_ptr<WebContents> web_contents_;
 
-  scoped_ptr<DevToolsWebContentsObserver> devtools_observer_;
+  std::unique_ptr<DevToolsWebContentsObserver> devtools_observer_;
   ShellDevToolsFrontend* devtools_frontend_;
 
   bool is_fullscreen_;
@@ -234,7 +255,9 @@ class Shell : public WebContentsDelegate,
 #elif defined(USE_AURA)
 #if defined(OS_CHROMEOS)
   static wm::WMTestHelper* wm_test_helper_;
-  static gfx::Screen* test_screen_;
+  static display::Screen* test_screen_;
+#else
+  static wm::WMState* wm_state_;
 #endif
 #if defined(TOOLKIT_VIEWS)
   static views::ViewsDelegate* views_delegate_;

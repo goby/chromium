@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "ui/base/ime/ui_base_ime_export.h"
 #include "url/gurl.h"
 
@@ -27,6 +26,7 @@ class UI_BASE_IME_EXPORT InputMethodDescriptor {
                         bool is_login_keyboard,
                         const GURL& options_page_url,
                         const GURL& input_view_url);
+  InputMethodDescriptor(const InputMethodDescriptor& other);
   ~InputMethodDescriptor();
 
   // Accessors

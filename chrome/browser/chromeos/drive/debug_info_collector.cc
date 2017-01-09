@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/drive/debug_info_collector.h"
 
+#include <utility>
+
 #include "base/callback.h"
 #include "base/logging.h"
 #include "google_apis/drive/task_util.h"
@@ -15,7 +17,8 @@ namespace {
 void IterateFileCacheInternal(
     internal::ResourceMetadata* metadata,
     const DebugInfoCollector::IterateFileCacheCallback& iteration_callback) {
-  scoped_ptr<internal::ResourceMetadata::Iterator> it = metadata->GetIterator();
+  std::unique_ptr<internal::ResourceMetadata::Iterator> it =
+      metadata->GetIterator();
   for (; !it->IsAtEnd(); it->Advance()) {
     if (it->GetValue().file_specific_info().has_cache_state()) {
       iteration_callback.Run(it->GetID(),
@@ -27,23 +30,23 @@ void IterateFileCacheInternal(
 
 // Runs the callback with arguments.
 void RunGetResourceEntryCallback(const GetResourceEntryCallback& callback,
-                                 scoped_ptr<ResourceEntry> entry,
+                                 std::unique_ptr<ResourceEntry> entry,
                                  FileError error) {
   DCHECK(!callback.is_null());
   if (error != FILE_ERROR_OK)
     entry.reset();
-  callback.Run(error, entry.Pass());
+  callback.Run(error, std::move(entry));
 }
 
 // Runs the callback with arguments.
 void RunReadDirectoryCallback(
     const DebugInfoCollector::ReadDirectoryCallback& callback,
-    scoped_ptr<ResourceEntryVector> entries,
+    std::unique_ptr<ResourceEntryVector> entries,
     FileError error) {
   DCHECK(!callback.is_null());
   if (error != FILE_ERROR_OK)
     entries.reset();
-  callback.Run(error, entries.Pass());
+  callback.Run(error, std::move(entries));
 }
 
 }  // namespace
@@ -68,7 +71,7 @@ void DebugInfoCollector::GetResourceEntry(
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
-  scoped_ptr<ResourceEntry> entry(new ResourceEntry);
+  std::unique_ptr<ResourceEntry> entry(new ResourceEntry);
   ResourceEntry* entry_ptr = entry.get();
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(),
@@ -86,7 +89,7 @@ void DebugInfoCollector::ReadDirectory(
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!callback.is_null());
 
-  scoped_ptr<ResourceEntryVector> entries(new ResourceEntryVector);
+  std::unique_ptr<ResourceEntryVector> entries(new ResourceEntryVector);
   ResourceEntryVector* entries_ptr = entries.get();
   base::PostTaskAndReplyWithResult(
       blocking_task_runner_.get(),

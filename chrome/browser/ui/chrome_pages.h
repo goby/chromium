@@ -5,21 +5,20 @@
 #ifndef CHROME_BROWSER_UI_CHROME_PAGES_H_
 #define CHROME_BROWSER_UI_CHROME_PAGES_H_
 
+#include <stdint.h>
+
 #include <string>
 
-#include "chrome/browser/ui/host_desktop.h"
+#include "build/build_config.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "url/gurl.h"
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 #include "chrome/browser/signin/signin_promo.h"
 #endif
 
 class Browser;
-
-namespace content {
-class WebContents;
-}
+class Profile;
 
 namespace chrome {
 
@@ -28,7 +27,7 @@ enum HelpSource {
   // Keyboard accelerators.
   HELP_SOURCE_KEYBOARD,
 
-  // Menus (e.g. wrench menu or Chrome OS system menu).
+  // Menus (e.g. app menu or Chrome OS system menu).
   HELP_SOURCE_MENU,
 
   // WebUI (the "About" page).
@@ -37,7 +36,7 @@ enum HelpSource {
 
 
 void ShowBookmarkManager(Browser* browser);
-void ShowBookmarkManagerForNode(Browser* browser, int64 node_id);
+void ShowBookmarkManagerForNode(Browser* browser, int64_t node_id);
 void ShowHistory(Browser* browser);
 void ShowDownloads(Browser* browser);
 void ShowExtensions(Browser* browser,
@@ -51,12 +50,9 @@ void ShowFeedbackPage(Browser* browser,
                       const std::string& category_tag);
 
 void ShowHelp(Browser* browser, HelpSource source);
-void ShowHelpForProfile(Profile* profile,
-                        HostDesktopType host_desktop_type,
-                        HelpSource source);
+void ShowHelpForProfile(Profile* profile, HelpSource source);
 void ShowPolicy(Browser* browser);
 void ShowSlow(Browser* browser);
-void ShowMemory(Browser* browser);
 
 // Constructs a settings GURL for the specified |sub_page|.
 GURL GetSettingsUrl(const std::string& sub_page);
@@ -90,14 +86,15 @@ void ShowImportDialog(Browser* browser);
 void ShowAboutChrome(Browser* browser);
 void ShowSearchEngineSettings(Browser* browser);
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
 // Initiates signin in a new browser tab.
-void ShowBrowserSignin(Browser* browser, signin_metrics::Source source);
+void ShowBrowserSignin(Browser* browser,
+                       signin_metrics::AccessPoint access_point);
 
 // If the user is already signed in, shows the "Signin" portion of Settings,
 // otherwise initiates signin in a new browser tab.
 void ShowBrowserSigninOrSettings(Browser* browser,
-                                 signin_metrics::Source source);
+                                 signin_metrics::AccessPoint access_point);
 #endif
 
 }  // namespace chrome

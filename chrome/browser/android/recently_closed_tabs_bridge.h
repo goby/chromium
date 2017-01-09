@@ -9,6 +9,7 @@
 
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "components/sessions/core/tab_restore_service_observer.h"
 
 class Profile;
@@ -34,6 +35,9 @@ class RecentlyClosedTabsBridge : public sessions::TabRestoreServiceObserver {
       const base::android::JavaParamRef<jobject>& jtab,
       jint tab_id,
       jint j_disposition);
+  jboolean OpenMostRecentlyClosedTab(
+      JNIEnv* env,
+      const base::android::JavaParamRef<jobject>& obj);
   void ClearRecentlyClosedTabs(JNIEnv* env,
                                const base::android::JavaParamRef<jobject>& obj);
 

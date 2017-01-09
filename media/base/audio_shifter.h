@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef MEDIA_BASE_AUDIO_SHIFTER_H
-#define MEDIA_BASE_AUDIO_SHIFTER_H
+#ifndef MEDIA_BASE_AUDIO_SHIFTER_H_
+#define MEDIA_BASE_AUDIO_SHIFTER_H_
+
+#include <stddef.h>
 
 #include <deque>
+#include <memory>
 
 #include "base/memory/linked_ptr.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
 #include "media/base/media_export.h"
 #include "media/base/multi_channel_resampler.h"
@@ -54,9 +56,12 @@ class MEDIA_EXPORT AudioShifter {
   AudioShifter(base::TimeDelta max_buffer_size,
                base::TimeDelta clock_accuracy,
                base::TimeDelta adjustment_time,
-               size_t rate,
+               int rate,
                int channels);
   ~AudioShifter();
+
+  int sample_rate() const { return rate_; }
+  int channels() const { return channels_; }
 
   // Push Audio into the shifter. All inputs must have the same number of
   // channels, but bus size can vary. The playout time can be noisy and
@@ -69,7 +74,7 @@ class MEDIA_EXPORT AudioShifter {
   // the samples will be buffered until the approperiate time. If
   // playout_time is in the past, everything will still work, and we'll
   // try to keep the buffring to a minimum.
-  void Push(scoped_ptr<AudioBus> input, base::TimeTicks playout_time);
+  void Push(std::unique_ptr<AudioBus> input, base::TimeTicks playout_time);
 
   // Fills out |output| with samples. Tries to stretch/shrink the audio
   // to compensate for drift between input and output.
@@ -77,16 +82,14 @@ class MEDIA_EXPORT AudioShifter {
   // calculate playout_time would be now + audio pipeline delay.
   void Pull(AudioBus* output, base::TimeTicks playout_time);
 
-  // Flush audio (but leave timing info)
-  void Flush();
-
 private:
   void Zero(AudioBus* output);
   void ResamplerCallback(int frame_delay, AudioBus* destination);
 
   struct AudioQueueEntry {
     AudioQueueEntry(base::TimeTicks target_playout_time_,
-                    scoped_ptr<AudioBus> audio_);
+                    std::unique_ptr<AudioBus> audio_);
+    AudioQueueEntry(const AudioQueueEntry& other);
     ~AudioQueueEntry();
     base::TimeTicks target_playout_time;
     linked_ptr<AudioBus> audio;
@@ -98,12 +101,13 @@ private:
   const base::TimeDelta max_buffer_size_;
   const base::TimeDelta clock_accuracy_;
   const base::TimeDelta adjustment_time_;
-  const size_t rate_;
+  const int rate_;
+  const int channels_;
 
   // The clock smoothers are used to smooth out timestamps
   // and adjust for drift and inaccurate clocks.
-  scoped_ptr<ClockSmoother> input_clock_smoother_;
-  scoped_ptr<ClockSmoother> output_clock_smoother_;
+  std::unique_ptr<ClockSmoother> input_clock_smoother_;
+  std::unique_ptr<ClockSmoother> output_clock_smoother_;
 
   // Are we currently outputting data?
   bool running_;
@@ -136,4 +140,4 @@ private:
 
 }  // namespace media
 
-#endif  // MEDIA_BASE_AUDIO_SHIFTER_H
+#endif  // MEDIA_BASE_AUDIO_SHIFTER_H_

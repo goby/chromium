@@ -1,3 +1,4 @@
+CONSOLE WARNING: line 362: The <keygen> element is deprecated and will be removed in M57, around March 2017. See https://www.chromestatus.com/features/5716060992962560 for more details.
 This test setting various attributes of a elements to JavaScript null.
 
 TEST SUCCEEDED: The value was null. [tested Node.nodeValue]
@@ -248,7 +249,7 @@ TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.ch
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.chOff]
 TEST SUCCEEDED: The value was the empty string. [tested HTMLTableCellElement.headers]
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.height]
-TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.scope]
+TEST SUCCEEDED: The value was the empty string. [tested HTMLTableCellElement.scope]
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.vAlign]
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTableCellElement.width]
 
@@ -289,7 +290,7 @@ TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTextAreaElement.wra
 
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTitleElement.text]
 
-TEST SUCCEEDED: The value was the string 'subtitles'. [tested HTMLTrackElement.kind]
+TEST SUCCEEDED: The value was the string 'metadata'. [tested HTMLTrackElement.kind]
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTrackElement.label]
 TEST SUCCEEDED: The value was the string 'null' resolved as a URL. [tested HTMLTrackElement.src]
 TEST SUCCEEDED: The value was the string 'null'. [tested HTMLTrackElement.srclang]

@@ -5,7 +5,7 @@
 #ifndef COMPONENTS_SESSIONS_CONTENT_CONTENT_LIVE_TAB_H_
 #define COMPONENTS_SESSIONS_CONTENT_CONTENT_LIVE_TAB_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/supports_user_data.h"
 #include "components/sessions/content/content_serialized_navigation_builder.h"
 #include "components/sessions/core/live_tab.h"
@@ -14,8 +14,6 @@
 
 namespace content {
 class NavigationController;
-class NavigationEntry;
-class SessionStorageNamespace;
 }
 
 class PersistentTabRestoreServiceTest;
@@ -41,7 +39,8 @@ class SESSIONS_EXPORT ContentLiveTab
   sessions::SerializedNavigationEntry GetEntryAtIndex(int index) override;
   sessions::SerializedNavigationEntry GetPendingEntry() override;
   int GetEntryCount() override;
-  scoped_ptr<PlatformSpecificTabData> GetPlatformSpecificTabData() override;
+  std::unique_ptr<PlatformSpecificTabData> GetPlatformSpecificTabData()
+      override;
   void LoadIfNecessary() override;
   const std::string& GetUserAgentOverride() const override;
 

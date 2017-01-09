@@ -5,32 +5,52 @@
 #ifndef CC_TEST_FAKE_EXTERNAL_BEGIN_FRAME_SOURCE_H_
 #define CC_TEST_FAKE_EXTERNAL_BEGIN_FRAME_SOURCE_H_
 
+#include <set>
+
+#include "base/cancelable_callback.h"
 #include "base/memory/weak_ptr.h"
+#include "base/threading/non_thread_safe.h"
 #include "cc/scheduler/begin_frame_source.h"
 
 namespace cc {
 
 class FakeExternalBeginFrameSource
-    : public BeginFrameSourceBase,
+    : public BeginFrameSource,
       public NON_EXPORTED_BASE(base::NonThreadSafe) {
  public:
-  explicit FakeExternalBeginFrameSource(double refresh_rate);
+  class Client {
+   public:
+    virtual void OnAddObserver(BeginFrameObserver* obs) = 0;
+    virtual void OnRemoveObserver(BeginFrameObserver* obs) = 0;
+  };
+
+  explicit FakeExternalBeginFrameSource(double refresh_rate,
+                                        bool tick_automatically);
   ~FakeExternalBeginFrameSource() override;
 
-  bool is_ready() const { return is_ready_; }
+  void SetClient(Client* client) { client_ = client; }
+  void SetPaused(bool paused);
 
   // BeginFrameSource implementation.
-  void SetClientReady() override;
+  void AddObserver(BeginFrameObserver* obs) override;
+  void RemoveObserver(BeginFrameObserver* obs) override;
+  void DidFinishFrame(BeginFrameObserver* obs,
+                      size_t remaining_frames) override {}
+  bool IsThrottled() const override;
 
-  // BeginFrameSourceBase overrides.
-  void OnNeedsBeginFramesChange(bool needs_begin_frames) override;
+  void TestOnBeginFrame(const BeginFrameArgs& args);
 
-  void TestOnBeginFrame();
-  void PostTestOnBeginFrame();
+  size_t num_observers() const { return observers_.size(); }
 
  private:
-  double milliseconds_per_frame_;
-  bool is_ready_;
+  void PostTestOnBeginFrame();
+
+  const bool tick_automatically_;
+  const double milliseconds_per_frame_;
+  Client* client_ = nullptr;
+  bool paused_ = false;
+  std::set<BeginFrameObserver*> observers_;
+  base::CancelableCallback<void(const BeginFrameArgs&)> begin_frame_task_;
   base::WeakPtrFactory<FakeExternalBeginFrameSource> weak_ptr_factory_;
 };
 

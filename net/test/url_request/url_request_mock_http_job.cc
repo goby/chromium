@@ -120,19 +120,19 @@ GURL URLRequestMockHTTPJob::GetMockHttpsUrl(const std::string& path) {
 }
 
 // static
-scoped_ptr<URLRequestInterceptor> URLRequestMockHTTPJob::CreateInterceptor(
+std::unique_ptr<URLRequestInterceptor> URLRequestMockHTTPJob::CreateInterceptor(
     const base::FilePath& base_path,
     const scoped_refptr<base::SequencedWorkerPool>& worker_pool) {
-  return scoped_ptr<URLRequestInterceptor>(
+  return std::unique_ptr<URLRequestInterceptor>(
       new MockJobInterceptor(base_path, false, worker_pool));
 }
 
 // static
-scoped_ptr<URLRequestInterceptor>
+std::unique_ptr<URLRequestInterceptor>
 URLRequestMockHTTPJob::CreateInterceptorForSingleFile(
     const base::FilePath& file,
     const scoped_refptr<base::SequencedWorkerPool>& worker_pool) {
-  return scoped_ptr<URLRequestInterceptor>(
+  return std::unique_ptr<URLRequestInterceptor>(
       new MockJobInterceptor(file, true, worker_pool));
 }
 
@@ -162,6 +162,11 @@ bool URLRequestMockHTTPJob::IsRedirectResponse(GURL* location,
   return URLRequestJob::IsRedirectResponse(location, http_status_code);
 }
 
+void URLRequestMockHTTPJob::OnReadComplete(net::IOBuffer* buffer, int result) {
+  if (result >= 0)
+    total_received_bytes_ += result;
+}
+
 // Public virtual version.
 void URLRequestMockHTTPJob::Start() {
   base::PostTaskAndReplyWithResult(
@@ -185,6 +190,10 @@ void URLRequestMockHTTPJob::SetHeadersAndStart(const std::string& raw_headers) {
 // Private const version.
 void URLRequestMockHTTPJob::GetResponseInfoConst(HttpResponseInfo* info) const {
   info->headers = new HttpResponseHeaders(raw_headers_);
+}
+
+int64_t URLRequestMockHTTPJob::GetTotalReceivedBytes() const {
+  return total_received_bytes_;
 }
 
 bool URLRequestMockHTTPJob::GetMimeType(std::string* mime_type) const {

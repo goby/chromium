@@ -5,21 +5,23 @@
 #ifndef COMPONENTS_PROXIMITY_AUTH_PROXIMITY_AUTH_CLIENT_H_
 #define COMPONENTS_PROXIMITY_AUTH_PROXIMITY_AUTH_CLIENT_H_
 
+#include <memory>
 #include <string>
 
 #include "base/callback_forward.h"
-#include "base/memory/scoped_ptr.h"
-#include "components/proximity_auth/cryptauth/proto/cryptauth_api.pb.h"
+#include "components/cryptauth/proto/cryptauth_api.pb.h"
 #include "components/proximity_auth/screenlock_state.h"
 
 class PrefService;
 
-namespace proximity_auth {
-
+namespace cryptauth {
 class CryptAuthClientFactory;
 class CryptAuthDeviceManager;
 class CryptAuthEnrollmentManager;
 class SecureMessageDelegate;
+}
+
+namespace proximity_auth {
 
 // An interface that needs to be supplied to the Proximity Auth component by its
 // embedder. There should be one |ProximityAuthClient| per
@@ -59,10 +61,12 @@ class ProximityAuthClient {
   virtual PrefService* GetPrefService() = 0;
 
   // Returns the SecureMessageDelegate used by the system.
-  virtual scoped_ptr<SecureMessageDelegate> CreateSecureMessageDelegate() = 0;
+  virtual std::unique_ptr<cryptauth::SecureMessageDelegate>
+  CreateSecureMessageDelegate() = 0;
 
   // Constructs the CryptAuthClientFactory that can be used for API requests.
-  virtual scoped_ptr<CryptAuthClientFactory> CreateCryptAuthClientFactory() = 0;
+  virtual std::unique_ptr<cryptauth::CryptAuthClientFactory>
+  CreateCryptAuthClientFactory() = 0;
 
   // Constructs the DeviceClassifier message that is sent to CryptAuth for all
   // API requests.
@@ -71,11 +75,10 @@ class ProximityAuthClient {
   // Returns the account id of the user.
   virtual std::string GetAccountId() = 0;
 
-  virtual proximity_auth::CryptAuthEnrollmentManager*
+  virtual cryptauth::CryptAuthEnrollmentManager*
   GetCryptAuthEnrollmentManager() = 0;
 
-  virtual proximity_auth::CryptAuthDeviceManager*
-  GetCryptAuthDeviceManager() = 0;
+  virtual cryptauth::CryptAuthDeviceManager* GetCryptAuthDeviceManager() = 0;
 };
 
 }  // namespace proximity_auth

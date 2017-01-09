@@ -7,7 +7,10 @@
 
 #include <libevdev/libevdev.h>
 
+#include <memory>
+
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "ui/events/ozone/evdev/event_converter_evdev.h"
 #include "ui/events/ozone/evdev/event_device_info.h"
@@ -43,7 +46,7 @@ class EventReaderLibevdevCros : public EventConverterEvdev {
                           const base::FilePath& path,
                           int id,
                           const EventDeviceInfo& devinfo,
-                          scoped_ptr<Delegate> delegate);
+                          std::unique_ptr<Delegate> delegate);
   ~EventReaderLibevdevCros() override;
 
   // EventConverterEvdev:
@@ -78,7 +81,7 @@ class EventReaderLibevdevCros : public EventConverterEvdev {
   base::FilePath path_;
 
   // Delegate for event processing.
-  scoped_ptr<Delegate> delegate_;
+  std::unique_ptr<Delegate> delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(EventReaderLibevdevCros);
 };

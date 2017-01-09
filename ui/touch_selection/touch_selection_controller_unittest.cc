@@ -6,6 +6,8 @@
 
 #include <vector>
 
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/test/motion_event_test_utils.h"
@@ -100,14 +102,8 @@ class TouchSelectionControllerTest : public testing::Test,
     last_event_bounds_rect_ = controller_->GetRectBetweenBounds();
   }
 
-  scoped_ptr<TouchHandleDrawable> CreateDrawable() override {
-    return make_scoped_ptr(new MockTouchHandleDrawable(&dragging_enabled_));
-  }
-
-  void AllowShowingOnTapForEmptyEditable() {
-    TouchSelectionController::Config config = DefaultConfig();
-    config.show_on_tap_for_empty_editable = true;
-    controller_.reset(new TouchSelectionController(this, config));
+  std::unique_ptr<TouchHandleDrawable> CreateDrawable() override {
+    return base::MakeUnique<MockTouchHandleDrawable>(&dragging_enabled_);
   }
 
   void EnableLongPressDragSelection() {
@@ -120,15 +116,15 @@ class TouchSelectionControllerTest : public testing::Test,
   void SetDraggingEnabled(bool enabled) { dragging_enabled_ = enabled; }
 
   void ClearSelection() {
-    controller_->OnSelectionBoundsChanged(SelectionBound(),
-                                          SelectionBound());
+    controller_->OnSelectionBoundsChanged(gfx::SelectionBound(),
+                                          gfx::SelectionBound());
   }
 
   void ClearInsertion() { ClearSelection(); }
 
   void ChangeInsertion(const gfx::RectF& rect, bool visible) {
-    SelectionBound bound;
-    bound.set_type(SelectionBound::CENTER);
+    gfx::SelectionBound bound;
+    bound.set_type(gfx::SelectionBound::CENTER);
     bound.SetEdge(rect.origin(), rect.bottom_left());
     bound.set_visible(visible);
     controller_->OnSelectionBoundsChanged(bound, bound);
@@ -138,9 +134,9 @@ class TouchSelectionControllerTest : public testing::Test,
                        bool start_visible,
                        const gfx::RectF& end_rect,
                        bool end_visible) {
-    SelectionBound start_bound, end_bound;
-    start_bound.set_type(SelectionBound::LEFT);
-    end_bound.set_type(SelectionBound::RIGHT);
+    gfx::SelectionBound start_bound, end_bound;
+    start_bound.set_type(gfx::SelectionBound::LEFT);
+    end_bound.set_type(gfx::SelectionBound::RIGHT);
     start_bound.SetEdge(start_rect.origin(), start_rect.bottom_left());
     end_bound.SetEdge(end_rect.origin(), end_rect.bottom_left());
     start_bound.set_visible(start_visible);
@@ -212,14 +208,12 @@ class TouchSelectionControllerTest : public testing::Test,
 
  private:
   TouchSelectionController::Config DefaultConfig() {
-    // Both |show_on_tap_for_empty_editable| and
-    // |enable_longpress_drag_selection| are set to false by default, and should
+    // |enable_longpress_drag_selection| is set to false by default, and should
     // be overriden for explicit testing.
     TouchSelectionController::Config config;
     config.max_tap_duration =
         base::TimeDelta::FromMilliseconds(kDefaultTapTimeoutMs);
     config.tap_slop = kDefaulTapSlop;
-    config.show_on_tap_for_empty_editable = false;
     config.enable_longpress_drag_selection = false;
     return config;
   }
@@ -237,7 +231,7 @@ class TouchSelectionControllerTest : public testing::Test,
   bool needs_animate_;
   bool animation_enabled_;
   bool dragging_enabled_;
-  scoped_ptr<TouchSelectionController> controller_;
+  std::unique_ptr<TouchSelectionController> controller_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerTest);
 };
@@ -294,13 +288,12 @@ TEST_F(TouchSelectionControllerTest, InsertionClearedWhenNoLongerEditable) {
   EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_CLEARED));
 }
 
-TEST_F(TouchSelectionControllerTest, InsertionWithNoShowOnTapForEmptyEditable) {
+TEST_F(TouchSelectionControllerTest, InsertionEmptyEditable) {
   gfx::RectF insertion_rect(5, 5, 0, 10);
   bool visible = true;
   controller().OnSelectionEditable(true);
 
-  // Taps on an empty editable region should be ignored if the controller is
-  // created with |show_on_tap_for_empty_editable| set to false.
+  // Taps on an empty editable region should be ignored
   OnTapEvent();
   controller().OnSelectionEmpty(true);
   ChangeInsertion(insertion_rect, visible);
@@ -329,28 +322,6 @@ TEST_F(TouchSelectionControllerTest, InsertionWithNoShowOnTapForEmptyEditable) {
   // Single Tap on an empty edit field should clear insertion handle.
   OnTapEvent();
   EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_CLEARED));
-}
-
-TEST_F(TouchSelectionControllerTest, InsertionWithShowOnTapForEmptyEditable) {
-  AllowShowingOnTapForEmptyEditable();
-
-  gfx::RectF insertion_rect(5, 5, 0, 10);
-  bool visible = true;
-  controller().OnSelectionEditable(true);
-
-  // Taps on an empty editable region should show the insertion handle if the
-  // controller is created with |show_on_tap_for_empty_editable| set to true.
-  OnTapEvent();
-  controller().OnSelectionEmpty(true);
-  ChangeInsertion(insertion_rect, visible);
-  EXPECT_THAT(GetAndResetEvents(),
-              ElementsAre(SELECTION_ESTABLISHED, INSERTION_HANDLE_SHOWN));
-  EXPECT_EQ(insertion_rect.bottom_left(), GetLastEventStart());
-
-  // Additional taps should not hide the insertion handle in this case.
-  OnTapEvent();
-  ChangeInsertion(insertion_rect, visible);
-  EXPECT_THAT(GetAndResetEvents(), IsEmpty());
 }
 
 TEST_F(TouchSelectionControllerTest, InsertionAppearsAfterTapFollowingTyping) {
@@ -458,8 +429,65 @@ TEST_F(TouchSelectionControllerTest, InsertionDragged) {
   EXPECT_FALSE(GetAndResetCaretMoved());
   EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_DRAG_STOPPED));
 
-  // Once the drag is complete, no more touch events should be consumed until
-  // the next ACTION_DOWN.
+  // Following ACTION_DOWN should not be consumed if it does not start handle
+  // dragging.
+  SetDraggingEnabled(false);
+  event = MockMotionEvent(MotionEvent::ACTION_DOWN, event_time, 0, 0);
+  EXPECT_FALSE(controller().WillHandleTouchEvent(event));
+}
+
+TEST_F(TouchSelectionControllerTest, InsertionDeactivatedWhileDragging) {
+  base::TimeTicks event_time = base::TimeTicks::Now();
+  OnTapEvent();
+  controller().OnSelectionEditable(true);
+
+  float line_height = 10.f;
+  gfx::RectF start_rect(10, 0, 0, line_height);
+  bool visible = true;
+  ChangeInsertion(start_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(),
+              ElementsAre(SELECTION_ESTABLISHED, INSERTION_HANDLE_SHOWN));
+  EXPECT_EQ(start_rect.bottom_left(), GetLastEventStart());
+
+  // Enable dragging so that the following ACTION_DOWN starts handle dragging.
+  SetDraggingEnabled(true);
+
+  // Touch down to start dragging.
+  MockMotionEvent event(MockMotionEvent::ACTION_DOWN, event_time, 0, 0);
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_FALSE(GetAndResetCaretMoved());
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_DRAG_STARTED));
+
+  // Move the handle.
+  gfx::PointF start_offset = start_rect.CenterPoint();
+  event = MockMotionEvent(MockMotionEvent::ACTION_MOVE, event_time, 0, 5);
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_TRUE(GetAndResetCaretMoved());
+  EXPECT_EQ(start_offset + gfx::Vector2dF(0, 5), GetLastCaretPosition());
+
+  // Deactivate touch selection to end dragging.
+  controller().HideAndDisallowShowingAutomatically();
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(INSERTION_HANDLE_DRAG_STOPPED,
+                                               INSERTION_HANDLE_CLEARED));
+
+  // Move the finger. There is no handle to move, so the cursor is not moved;
+  // but, the event is still consumed because the touch down that started the
+  // touch sequence was consumed.
+  event = MockMotionEvent(MockMotionEvent::ACTION_MOVE, event_time, 5, 5);
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_FALSE(GetAndResetCaretMoved());
+  EXPECT_EQ(start_offset + gfx::Vector2dF(0, 5), GetLastCaretPosition());
+
+  // Lift the finger to end the touch sequence.
+  event = MockMotionEvent(MockMotionEvent::ACTION_UP, event_time, 5, 5);
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_FALSE(GetAndResetCaretMoved());
+  EXPECT_THAT(GetAndResetEvents(), IsEmpty());
+
+  // Following ACTION_DOWN should not be consumed if it does not start handle
+  // dragging.
+  SetDraggingEnabled(false);
+  event = MockMotionEvent(MotionEvent::ACTION_DOWN, event_time, 0, 0);
   EXPECT_FALSE(controller().WillHandleTouchEvent(event));
 }
 
@@ -743,8 +771,10 @@ TEST_F(TouchSelectionControllerTest, SelectionDragged) {
   EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STOPPED));
   EXPECT_FALSE(GetAndResetSelectionMoved());
 
-  // Once the drag is complete, no more touch events should be consumed until
-  // the next ACTION_DOWN.
+  // Following ACTION_DOWN should not be consumed if it does not start handle
+  // dragging.
+  SetDraggingEnabled(false);
+  event = MockMotionEvent(MotionEvent::ACTION_DOWN, event_time, 0, 0);
   EXPECT_FALSE(controller().WillHandleTouchEvent(event));
 }
 
@@ -1274,6 +1304,46 @@ TEST_F(TouchSelectionControllerTest, NoLongPressDragIfDisabled) {
   EXPECT_TRUE(test_controller.GetEndVisible());
 }
 
+// When there is a selection on the page and long-press drag is performed
+// somewhere that has nothing to select, long-press drag selector should not get
+// activated so the page can scroll.
+TEST_F(TouchSelectionControllerTest, LongPressDragScroll) {
+  EnableLongPressDragSelection();
+  TouchSelectionControllerTestApi test_controller(&controller());
+
+  gfx::RectF start_rect(10, 0, 0, 10);
+  gfx::RectF end_rect(20, 0, 0, 10);
+  gfx::PointF touch_point(0, 0);
+  bool visible = true;
+  MockMotionEvent event;
+
+  // Pre-select something.
+  ChangeSelection(start_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_ESTABLISHED));
+
+  // Start the touch sequence and perform the long-press out of the existing
+  // selection.
+  EXPECT_FALSE(controller().WillHandleTouchEvent(
+      event.PressPoint(touch_point.x(), touch_point.y())));
+  OnLongPressEvent();
+
+  // Drag down. Selection controller should not consume the touch-move event.
+  touch_point.Offset(0, 2 * kDefaulTapSlop);
+  EXPECT_FALSE(controller().WillHandleTouchEvent(
+      event.MovePoint(0, touch_point.x(), touch_point.y())));
+
+  // Begin page scroll and update the selection. Selection handles should not be
+  // shown which means long-press drag selector is not activated.
+  controller().OnScrollBeginEvent();
+  start_rect.Offset(0, 2 * kDefaulTapSlop);
+  end_rect.Offset(0, 2 * kDefaulTapSlop);
+  ChangeSelection(start_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), IsEmpty());
+
+  // Release the touch sequence.
+  EXPECT_FALSE(controller().WillHandleTouchEvent(event.ReleasePoint()));
+}
+
 TEST_F(TouchSelectionControllerTest, RectBetweenBounds) {
   gfx::RectF start_rect(5, 5, 0, 10);
   gfx::RectF end_rect(50, 5, 0, 10);
@@ -1319,6 +1389,124 @@ TEST_F(TouchSelectionControllerTest, RectBetweenBounds) {
   ASSERT_THAT(GetAndResetEvents(),
               ElementsAre(SELECTION_DISSOLVED, SELECTION_HANDLES_CLEARED));
   EXPECT_EQ(gfx::RectF(), controller().GetRectBetweenBounds());
+}
+
+TEST_F(TouchSelectionControllerTest, SelectionNoOrientationChangeWhenSwapped) {
+  TouchSelectionControllerTestApi test_controller(&controller());
+  base::TimeTicks event_time = base::TimeTicks::Now();
+  OnLongPressEvent();
+
+  float line_height = 10.f;
+  gfx::RectF start_rect(50, line_height, 0, line_height);
+  gfx::RectF end_rect(100, line_height, 0, line_height);
+  bool visible = true;
+  ChangeSelection(start_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(),
+              ElementsAre(SELECTION_ESTABLISHED, SELECTION_HANDLES_SHOWN));
+  EXPECT_EQ(start_rect.bottom_left(), GetLastEventStart());
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  SetDraggingEnabled(true);
+
+  // Simulate moving the base, not triggering a swap of points.
+  MockMotionEvent event(MockMotionEvent::ACTION_DOWN, event_time,
+                        start_rect.x(), start_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STARTED));
+
+  gfx::RectF offset_rect = end_rect;
+  offset_rect.Offset(gfx::Vector2dF(-10, 0));
+  ChangeSelection(offset_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLES_MOVED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  event_time += base::TimeDelta::FromMilliseconds(2 * kDefaultTapTimeoutMs);
+  event = MockMotionEvent(MockMotionEvent::ACTION_UP, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STOPPED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  // Simulate moving the base, triggering a swap of points.
+  event = MockMotionEvent(MockMotionEvent::ACTION_DOWN, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STARTED));
+
+  offset_rect.Offset(gfx::Vector2dF(20, 0));
+  ChangeSelection(end_rect, visible, offset_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLES_MOVED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+
+  event_time += base::TimeDelta::FromMilliseconds(2 * kDefaultTapTimeoutMs);
+  event = MockMotionEvent(MockMotionEvent::ACTION_UP, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STOPPED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  // Simulate moving the anchor, not triggering a swap of points.
+  event = MockMotionEvent(MockMotionEvent::ACTION_DOWN, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STARTED));
+
+  offset_rect.Offset(gfx::Vector2dF(-5, 0));
+  ChangeSelection(end_rect, visible, offset_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLES_MOVED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  event_time += base::TimeDelta::FromMilliseconds(2 * kDefaultTapTimeoutMs);
+  event = MockMotionEvent(MockMotionEvent::ACTION_UP, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STOPPED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  // Simulate moving the anchor, triggering a swap of points.
+  event = MockMotionEvent(MockMotionEvent::ACTION_DOWN, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STARTED));
+
+  offset_rect.Offset(gfx::Vector2dF(-15, 0));
+  ChangeSelection(offset_rect, visible, end_rect, visible);
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLES_MOVED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
+
+  event_time += base::TimeDelta::FromMilliseconds(2 * kDefaultTapTimeoutMs);
+  event = MockMotionEvent(MockMotionEvent::ACTION_UP, event_time,
+                          offset_rect.x(), offset_rect.bottom());
+  EXPECT_TRUE(controller().WillHandleTouchEvent(event));
+  EXPECT_THAT(GetAndResetEvents(), ElementsAre(SELECTION_HANDLE_DRAG_STOPPED));
+  EXPECT_EQ(test_controller.GetStartHandleOrientation(),
+            TouchHandleOrientation::LEFT);
+  EXPECT_EQ(test_controller.GetEndHandleOrientation(),
+            TouchHandleOrientation::RIGHT);
 }
 
 }  // namespace ui

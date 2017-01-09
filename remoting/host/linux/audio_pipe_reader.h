@@ -5,9 +5,15 @@
 #ifndef REMOTING_HOST_LINUX_AUDIO_PIPE_READER_H_
 #define REMOTING_HOST_LINUX_AUDIO_PIPE_READER_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
+#include "base/files/file_descriptor_watcher_posix.h"
 #include "base/files/file_path.h"
 #include "base/files/file_path_watcher.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/message_loop/message_loop.h"
@@ -24,8 +30,8 @@ struct AudioPipeReaderTraits;
 // pulseaudio) writes the sound that's being played back and then sends data to
 // all registered observers.
 class AudioPipeReader
-    : public base::RefCountedThreadSafe<AudioPipeReader, AudioPipeReaderTraits>,
-      public base::MessageLoopForIO::Watcher {
+    : public base::RefCountedThreadSafe<AudioPipeReader,
+                                        AudioPipeReaderTraits> {
  public:
   // PulseAudio's module-pipe-sink must be configured to use the following
   // parameters for the sink we read from.
@@ -51,10 +57,6 @@ class AudioPipeReader
   void AddObserver(StreamObserver* observer);
   void RemoveObserver(StreamObserver* observer);
 
-  // MessageLoopForIO::Watcher interface.
-  void OnFileCanReadWithoutBlocking(int fd) override;
-  void OnFileCanWriteWithoutBlocking(int fd) override;
-
  private:
   friend class base::DeleteHelper<AudioPipeReader>;
   friend class base::RefCountedThreadSafe<AudioPipeReader>;
@@ -62,7 +64,7 @@ class AudioPipeReader
 
   AudioPipeReader(scoped_refptr<base::SingleThreadTaskRunner> task_runner,
                   const base::FilePath& pipe_path);
-  ~AudioPipeReader() override;
+  ~AudioPipeReader();
 
   void StartOnAudioThread();
   void OnDirectoryChanged(const base::FilePath& path, bool error);
@@ -94,12 +96,13 @@ class AudioPipeReader
   // Stream position of the last capture in bytes with zero position
   // corresponding to |started_time_|. Must always be a multiple of the sample
   // size.
-  int64 last_capture_position_;
+  int64_t last_capture_position_;
 
   // Bytes left from the previous read.
   std::string left_over_bytes_;
 
-  base::MessageLoopForIO::FileDescriptorWatcher file_descriptor_watcher_;
+  std::unique_ptr<base::FileDescriptorWatcher::Controller>
+      pipe_watch_controller_;
 
   DISALLOW_COPY_AND_ASSIGN(AudioPipeReader);
 };

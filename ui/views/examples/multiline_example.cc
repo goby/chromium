@@ -4,6 +4,9 @@
 
 #include "ui/views/examples/multiline_example.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/events/event.h"
 #include "ui/gfx/render_text.h"
@@ -22,7 +25,7 @@ namespace examples {
 
 namespace {
 
-gfx::Range ClampRange(gfx::Range range, size_t max) {
+gfx::Range ClampRange(gfx::Range range, uint32_t max) {
   range.set_start(std::min(range.start(), max));
   range.set_end(std::min(range.end(), max));
   return range;
@@ -52,7 +55,7 @@ class MultilineExample::RenderTextView : public View {
     render_text_->SetHorizontalAlignment(gfx::ALIGN_TO_HEAD);
     render_text_->SetColor(SK_ColorBLACK);
     render_text_->SetMultiline(true);
-    SetBorder(Border::CreateSolidBorder(2, SK_ColorGRAY));
+    SetBorder(CreateSolidBorder(2, SK_ColorGRAY));
   }
 
   void OnPaint(gfx::Canvas* canvas) override {
@@ -98,9 +101,14 @@ class MultilineExample::RenderTextView : public View {
     render_text_->ApplyStyle(gfx::DIAGONAL_STRIKE, true, color_range);
     render_text_->SetStyle(gfx::UNDERLINE, false);
     render_text_->ApplyStyle(gfx::UNDERLINE, true, color_range);
-    render_text_->ApplyStyle(gfx::BOLD, true, bold_range);
     render_text_->ApplyStyle(gfx::ITALIC, true, italic_range);
+    render_text_->ApplyWeight(gfx::Font::Weight::BOLD, bold_range);
     InvalidateLayout();
+  }
+
+  void SetMaxLines(int max_lines) {
+    render_text_->SetMaxLines(max_lines);
+    render_text_->SetElideBehavior(max_lines ? gfx::ELIDE_TAIL : gfx::NO_ELIDE);
   }
 
  private:
@@ -110,7 +118,7 @@ class MultilineExample::RenderTextView : public View {
     render_text_->SetDisplayRect(bounds);
   }
 
-  scoped_ptr<gfx::RenderText> render_text_;
+  std::unique_ptr<gfx::RenderText> render_text_;
 
   DISALLOW_COPY_AND_ASSIGN(RenderTextView);
 };
@@ -120,8 +128,8 @@ MultilineExample::MultilineExample()
       render_text_view_(NULL),
       label_(NULL),
       textfield_(NULL),
-      label_checkbox_(NULL) {
-}
+      label_checkbox_(NULL),
+      elision_checkbox_(NULL) {}
 
 MultilineExample::~MultilineExample() {
 }
@@ -137,12 +145,17 @@ void MultilineExample::CreateExampleView(View* container) {
   label_ = new PreferredSizeLabel();
   label_->SetText(kTestString);
   label_->SetMultiLine(true);
-  label_->SetBorder(Border::CreateSolidBorder(2, SK_ColorCYAN));
+  label_->SetBorder(CreateSolidBorder(2, SK_ColorCYAN));
 
   label_checkbox_ = new Checkbox(ASCIIToUTF16("views::Label:"));
   label_checkbox_->SetChecked(true);
   label_checkbox_->set_listener(this);
   label_checkbox_->set_request_focus_on_press(false);
+
+  elision_checkbox_ = new Checkbox(ASCIIToUTF16("elide text?"));
+  elision_checkbox_->SetChecked(false);
+  elision_checkbox_->set_listener(this);
+  elision_checkbox_->set_request_focus_on_press(false);
 
   textfield_ = new Textfield();
   textfield_->set_controller(this);
@@ -166,6 +179,9 @@ void MultilineExample::CreateExampleView(View* container) {
   layout->AddView(label_);
 
   layout->StartRow(0, 0);
+  layout->AddView(elision_checkbox_);
+
+  layout->StartRow(0, 0);
   layout->AddView(new Label(ASCIIToUTF16("Sample Text:")));
   layout->AddView(textfield_);
 }
@@ -180,9 +196,12 @@ void MultilineExample::ContentsChanged(Textfield* sender,
 }
 
 void MultilineExample::ButtonPressed(Button* sender, const ui::Event& event) {
-  DCHECK_EQ(sender, label_checkbox_);
-  label_->SetText(label_checkbox_->checked() ? textfield_->text() :
-                                               base::string16());
+  if (sender == label_checkbox_) {
+    label_->SetText(label_checkbox_->checked() ? textfield_->text()
+                                               : base::string16());
+  } else if (sender == elision_checkbox_) {
+    render_text_view_->SetMaxLines(elision_checkbox_->checked() ? 3 : 0);
+  }
   container()->Layout();
   container()->SchedulePaint();
 }

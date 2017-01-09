@@ -7,38 +7,14 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "ipc/ipc_platform_file.h"
+#include "build/build_config.h"
 
 #if defined(OS_WIN)
 #include "base/win/scoped_handle.h"
 #endif  // defined(OS_WIN)
 
-namespace base {
-class File;
-class SingleThreadTaskRunner;
-}  // namespace base
-
-namespace IPC {
-class ChannelProxy;
-class Listener;
-}  // namespace IPC
-
 namespace remoting {
-
-// Creates an already connected IPC channel. The server end of the channel
-// is wrapped into a channel proxy that will invoke methods of |listener|
-// on the caller's thread while using |io_task_runner| to send and receive
-// messages in the background. The client end is returned as a pipe handle
-// (inheritable on Windows).
-bool CreateConnectedIpcChannel(
-    scoped_refptr<base::SingleThreadTaskRunner> io_task_runner,
-    IPC::Listener* listener,
-    base::File* client_out,
-    scoped_ptr<IPC::ChannelProxy>* server_out);
 
 #if defined(OS_WIN)
 

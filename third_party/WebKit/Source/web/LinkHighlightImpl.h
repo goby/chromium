@@ -26,16 +26,17 @@
 #ifndef LinkHighlightImpl_h
 #define LinkHighlightImpl_h
 
+#include "platform/animation/CompositorAnimationDelegate.h"
+#include "platform/animation/CompositorAnimationPlayer.h"
+#include "platform/animation/CompositorAnimationPlayerClient.h"
 #include "platform/graphics/LinkHighlight.h"
 #include "platform/graphics/Path.h"
 #include "platform/heap/Handle.h"
-#include "public/platform/WebCompositorAnimationDelegate.h"
-#include "public/platform/WebCompositorAnimationPlayer.h"
-#include "public/platform/WebCompositorAnimationPlayerClient.h"
 #include "public/platform/WebContentLayer.h"
 #include "public/platform/WebContentLayerClient.h"
+#include "web/WebExport.h"
 #include "wtf/Forward.h"
-#include "wtf/OwnPtr.h"
+#include <memory>
 
 namespace blink {
 
@@ -46,63 +47,70 @@ class WebContentLayer;
 class WebLayer;
 class WebViewImpl;
 
-class LinkHighlightImpl final : public LinkHighlight
-    , public WebContentLayerClient
-    , public WebCompositorAnimationDelegate
-    , public WebCompositorAnimationPlayerClient {
-public:
-    static PassOwnPtr<LinkHighlightImpl> create(Node*, WebViewImpl*);
-    ~LinkHighlightImpl() override;
+class WEB_EXPORT LinkHighlightImpl final
+    : public LinkHighlight,
+      public WebContentLayerClient,
+      public CompositorAnimationDelegate,
+      public CompositorAnimationPlayerClient {
+ public:
+  static std::unique_ptr<LinkHighlightImpl> create(Node*, WebViewImpl*);
+  ~LinkHighlightImpl() override;
 
-    WebContentLayer* contentLayer();
-    WebLayer* clipLayer();
-    void startHighlightAnimationIfNeeded();
-    void updateGeometry();
+  WebContentLayer* contentLayer();
+  WebLayer* clipLayer();
+  void startHighlightAnimationIfNeeded();
+  void updateGeometry();
 
-    // WebContentLayerClient implementation.
-    gfx::Rect paintableRegion() override;
-    void paintContents(WebDisplayItemList*, WebContentLayerClient::PaintingControlSetting) override;
+  // WebContentLayerClient implementation.
+  gfx::Rect paintableRegion() override;
+  void paintContents(WebDisplayItemList*,
+                     WebContentLayerClient::PaintingControlSetting) override;
 
-    // WebCompositorAnimationDelegate implementation.
-    void notifyAnimationStarted(double monotonicTime, int group) override;
-    void notifyAnimationFinished(double monotonicTime, int group) override;
+  // CompositorAnimationDelegate implementation.
+  void notifyAnimationStarted(double monotonicTime, int group) override;
+  void notifyAnimationFinished(double monotonicTime, int group) override;
+  void notifyAnimationAborted(double monotonicTime, int group) override {}
 
-    // LinkHighlight implementation.
-    void invalidate() override;
-    WebLayer* layer() override;
-    void clearCurrentGraphicsLayer() override;
+  // LinkHighlight implementation.
+  void invalidate() override;
+  WebLayer* layer() override;
+  void clearCurrentGraphicsLayer() override;
 
-    // WebCompositorAnimationPlayerClient implementation.
-    WebCompositorAnimationPlayer* compositorPlayer() const override;
+  // CompositorAnimationPlayerClient implementation.
+  CompositorAnimationPlayer* compositorPlayer() const override;
 
-    GraphicsLayer* currentGraphicsLayerForTesting() const { return m_currentGraphicsLayer; }
+  GraphicsLayer* currentGraphicsLayerForTesting() const {
+    return m_currentGraphicsLayer;
+  }
 
-private:
-    LinkHighlightImpl(Node*, WebViewImpl*);
+ private:
+  LinkHighlightImpl(Node*, WebViewImpl*);
 
-    void releaseResources();
-    void computeQuads(const Node&, Vector<FloatQuad>&) const;
+  void releaseResources();
+  void computeQuads(const Node&, Vector<FloatQuad>&) const;
 
-    void attachLinkHighlightToCompositingLayer(const LayoutBoxModelObject& paintInvalidationContainer);
-    void clearGraphicsLayerLinkHighlightPointer();
-    // This function computes the highlight path, and returns true if it has changed
-    // size since the last call to this function.
-    bool computeHighlightLayerPathAndPosition(const LayoutBoxModelObject&);
+  void attachLinkHighlightToCompositingLayer(
+      const LayoutBoxModelObject& paintInvalidationContainer);
+  void clearGraphicsLayerLinkHighlightPointer();
+  // This function computes the highlight path, and returns true if it has
+  // changed size since the last call to this function.
+  bool computeHighlightLayerPathAndPosition(const LayoutBoxModelObject&);
 
-    OwnPtr<WebContentLayer> m_contentLayer;
-    OwnPtr<WebLayer> m_clipLayer;
-    Path m_path;
+  std::unique_ptr<WebContentLayer> m_contentLayer;
+  std::unique_ptr<WebLayer> m_clipLayer;
+  Path m_path;
 
-    RefPtrWillBePersistent<Node> m_node;
-    WebViewImpl* m_owningWebViewImpl;
-    GraphicsLayer* m_currentGraphicsLayer;
-    OwnPtr<WebCompositorAnimationPlayer> m_compositorPlayer;
+  Persistent<Node> m_node;
+  WebViewImpl* m_owningWebViewImpl;
+  GraphicsLayer* m_currentGraphicsLayer;
+  bool m_isScrollingGraphicsLayer;
+  std::unique_ptr<CompositorAnimationPlayer> m_compositorPlayer;
 
-    bool m_geometryNeedsUpdate;
-    bool m_isAnimating;
-    double m_startTime;
+  bool m_geometryNeedsUpdate;
+  bool m_isAnimating;
+  double m_startTime;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // LinkHighlightImpl_h
+#endif  // LinkHighlightImpl_h

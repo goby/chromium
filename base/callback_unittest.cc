@@ -2,70 +2,50 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/bind.h"
 #include "base/callback.h"
+
+#include <memory>
+
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/callback_internal.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
 
-namespace {
-
-struct FakeInvoker {
-  typedef void(RunType)(internal::BindStateBase*);
-  static void Run(internal::BindStateBase*) {
-  }
-};
-
-}  // namespace
-
-namespace internal {
-template <typename Runnable, typename RunType, typename BoundArgsType>
-struct BindState;
+void NopInvokeFunc() {}
 
 // White-box testpoints to inject into a Callback<> object for checking
 // comparators and emptiness APIs.  Use a BindState that is specialized
 // based on a type we declared in the anonymous namespace above to remove any
 // chance of colliding with another instantiation and breaking the
 // one-definition-rule.
-template <>
-struct BindState<void(void), void(void), void(FakeInvoker)>
-    : public BindStateBase {
- public:
-  BindState() : BindStateBase(&Destroy) {}
-  typedef FakeInvoker InvokerType;
+struct FakeBindState1 : internal::BindStateBase {
+  FakeBindState1() : BindStateBase(&NopInvokeFunc, &Destroy, &IsCancelled) {}
  private:
-  ~BindState() {}
-  static void Destroy(BindStateBase* self) {
-    delete static_cast<BindState*>(self);
+  ~FakeBindState1() {}
+  static void Destroy(const internal::BindStateBase* self) {
+    delete static_cast<const FakeBindState1*>(self);
+  }
+  static bool IsCancelled(const internal::BindStateBase*) {
+    return false;
   }
 };
 
-template <>
-struct BindState<void(void), void(void),
-                           void(FakeInvoker, FakeInvoker)>
-    : public BindStateBase {
- public:
-  BindState() : BindStateBase(&Destroy) {}
-  typedef FakeInvoker InvokerType;
+struct FakeBindState2 : internal::BindStateBase {
+  FakeBindState2() : BindStateBase(&NopInvokeFunc, &Destroy, &IsCancelled) {}
  private:
-  ~BindState() {}
-  static void Destroy(BindStateBase* self) {
-    delete static_cast<BindState*>(self);
+  ~FakeBindState2() {}
+  static void Destroy(const internal::BindStateBase* self) {
+    delete static_cast<const FakeBindState2*>(self);
+  }
+  static bool IsCancelled(const internal::BindStateBase*) {
+    return false;
   }
 };
-}  // namespace internal
 
 namespace {
-
-typedef internal::BindState<void(void), void(void), void(FakeInvoker)>
-    FakeBindState1;
-typedef internal::BindState<void(void), void(void),
-                            void(FakeInvoker, FakeInvoker)>
-   FakeBindState2;
 
 class CallbackTest : public ::testing::Test {
  public:
@@ -77,15 +57,15 @@ class CallbackTest : public ::testing::Test {
   ~CallbackTest() override {}
 
  protected:
-  Callback<void(void)> callback_a_;
-  const Callback<void(void)> callback_b_;  // Ensure APIs work with const.
-  Callback<void(void)> null_callback_;
+  Callback<void()> callback_a_;
+  const Callback<void()> callback_b_;  // Ensure APIs work with const.
+  Callback<void()> null_callback_;
 };
 
 // Ensure we can create unbound callbacks. We need this to be able to store
 // them in class members that can be initialized later.
 TEST_F(CallbackTest, DefaultConstruction) {
-  Callback<void(void)> c0;
+  Callback<void()> c0;
   Callback<void(int)> c1;
   Callback<void(int,int)> c2;
   Callback<void(int,int,int)> c3;
@@ -114,13 +94,13 @@ TEST_F(CallbackTest, Equals) {
   EXPECT_FALSE(callback_b_.Equals(callback_a_));
 
   // We should compare based on instance, not type.
-  Callback<void(void)> callback_c(new FakeBindState1());
-  Callback<void(void)> callback_a2 = callback_a_;
+  Callback<void()> callback_c(new FakeBindState1());
+  Callback<void()> callback_a2 = callback_a_;
   EXPECT_TRUE(callback_a_.Equals(callback_a2));
   EXPECT_FALSE(callback_a_.Equals(callback_c));
 
   // Empty, however, is always equal to empty.
-  Callback<void(void)> empty2;
+  Callback<void()> empty2;
   EXPECT_TRUE(null_callback_.Equals(empty2));
 }
 

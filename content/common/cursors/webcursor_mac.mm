@@ -5,9 +5,9 @@
 #include "content/common/cursors/webcursor.h"
 
 #import <AppKit/AppKit.h>
+#include <stddef.h>
 
 #include "base/logging.h"
-#include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
 #include "base/mac/sdk_forward_declarations.h"
 #include "content/app/resources/grit/content_resources.h"
@@ -120,11 +120,9 @@ NSCursor* GetCoreCursorWithFallback(CrCoreCursorType type,
                                     int resource_id,
                                     int hotspot_x,
                                     int hotspot_y) {
-  if (base::mac::IsOSLionOrLater()) {
-    NSCursor* cursor = [CrCoreCursor cursorWithType:type];
-    if (cursor)
-      return cursor;
-  }
+  NSCursor* cursor = [CrCoreCursor cursorWithType:type];
+  if (cursor)
+    return cursor;
 
   return LoadCursor(resource_id, hotspot_x, hotspot_y);
 }
@@ -169,7 +167,7 @@ NSCursor* CreateCustomCursor(const std::vector<char>& custom_data,
   // Both the image and its representation need to have the same size for
   // cursors to appear in high resolution on retina displays. Note that the
   // size of a representation is not the same as pixelsWide or pixelsHigh.
-  NSImage* cursor_image = gfx::SkBitmapToNSImage(bitmap);
+  NSImage* cursor_image = skia::SkBitmapToNSImage(bitmap);
   [cursor_image setSize:dip_size];
   [[[cursor_image representations] objectAtIndex:0] setSize:dip_size];
 
@@ -191,12 +189,7 @@ gfx::NativeCursor WebCursor::GetNativeCursor() {
     case WebCursorInfo::TypeCross:
       return [NSCursor crosshairCursor];
     case WebCursorInfo::TypeHand:
-      // If >= 10.7, the pointingHandCursor has a shadow so use it. Otherwise
-      // use the custom one.
-      if (base::mac::IsOSLionOrLater())
-        return [NSCursor pointingHandCursor];
-      else
-        return LoadCursor(IDR_LINK_CURSOR, 6, 1);
+      return [NSCursor pointingHandCursor];
     case WebCursorInfo::TypeIBeam:
       return [NSCursor IBeamCursor];
     case WebCursorInfo::TypeWait:
@@ -354,7 +347,7 @@ void WebCursor::InitFromNSCursor(NSCursor* cursor) {
       cursor_info.type = WebCursorInfo::TypeCustom;
       NSPoint hot_spot = [cursor hotSpot];
       cursor_info.hotspot = gfx::Point(hot_spot.x, hot_spot.y);
-      cursor_info.custom_image = gfx::CGImageToSkBitmap(cg_image);
+      cursor_info.custom_image = skia::CGImageToSkBitmap(cg_image);
     } else {
       cursor_info.type = WebCursorInfo::TypePointer;
     }

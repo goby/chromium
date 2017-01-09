@@ -5,6 +5,7 @@
 #include "chrome/browser/data_usage/tab_id_annotator.h"
 
 #include <stdint.h>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
@@ -43,12 +44,12 @@ int32_t GetTabIdForRenderFrame(int render_process_id, int render_frame_id) {
 // destroyed. This doesn't make much of a difference for production code, but
 // makes it easier to test the TabIdAnnotator.
 void AnnotateDataUse(
-    scoped_ptr<DataUse> data_use,
+    std::unique_ptr<DataUse> data_use,
     const data_usage::DataUseAnnotator::DataUseConsumerCallback& callback,
     int32_t tab_id) {
   DCHECK(data_use);
   data_use->tab_id = tab_id;
-  callback.Run(data_use.Pass());
+  callback.Run(std::move(data_use));
 }
 
 }  // namespace
@@ -57,7 +58,7 @@ TabIdAnnotator::TabIdAnnotator() {}
 TabIdAnnotator::~TabIdAnnotator() {}
 
 void TabIdAnnotator::Annotate(net::URLRequest* request,
-                              scoped_ptr<DataUse> data_use,
+                              std::unique_ptr<DataUse> data_use,
                               const DataUseConsumerCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(data_use);
@@ -75,13 +76,13 @@ void TabIdAnnotator::Annotate(net::URLRequest* request,
           request, &render_process_id, &render_frame_id)) {
     // Run the callback immediately with a tab ID of -1 if the request has no
     // render frame.
-    AnnotateDataUse(data_use.Pass(), callback, -1 /* tab_id */);
+    AnnotateDataUse(std::move(data_use), callback, -1 /* tab_id */);
     return;
   }
 
   scoped_refptr<base::SingleThreadTaskRunner> ui_thread_task_runner =
-      BrowserThread::GetMessageLoopProxyForThread(BrowserThread::UI);
-  scoped_ptr<TabIdProvider> tab_id_provider(new TabIdProvider(
+      BrowserThread::GetTaskRunnerForThread(BrowserThread::UI);
+  std::unique_ptr<TabIdProvider> tab_id_provider(new TabIdProvider(
       ui_thread_task_runner.get(), FROM_HERE,
       base::Bind(&GetTabIdForRenderFrame, render_process_id, render_frame_id)));
   tab_id_provider->ProvideTabId(

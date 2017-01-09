@@ -5,9 +5,11 @@
 #ifndef CHROME_BROWSER_UI_TASK_MANAGER_TASK_MANAGER_COLUMNS_H_
 #define CHROME_BROWSER_UI_TASK_MANAGER_TASK_MANAGER_COLUMNS_H_
 
+#include <stddef.h>
+
 #include "ui/base/models/table_model.h"
 
-namespace task_management {
+namespace task_manager {
 
 // A collection of data to be used in the construction of a task manager table
 // column.
@@ -52,6 +54,6 @@ extern const char kSortIsAscendingKey[];
 // preferences.
 std::string GetColumnIdAsString(int column_id);
 
-}  // namespace task_management
+}  // namespace task_manager
 
 #endif  // CHROME_BROWSER_UI_TASK_MANAGER_TASK_MANAGER_COLUMNS_H_

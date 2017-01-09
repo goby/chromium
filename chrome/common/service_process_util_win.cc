@@ -4,11 +4,13 @@
 
 #include "chrome/common/service_process_util.h"
 
+#include <algorithm>
+#include <memory>
+
 #include "base/callback.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
@@ -78,8 +80,9 @@ class ServiceProcessTerminateMonitor
 }  // namespace
 
 // Gets the name of the service process IPC channel.
-IPC::ChannelHandle GetServiceProcessChannel() {
-  return GetServiceProcessScopedVersionedName("_service_ipc");
+mojo::edk::NamedPlatformHandle GetServiceProcessChannel() {
+  return mojo::edk::NamedPlatformHandle(
+      GetServiceProcessScopedVersionedName("_service_ipc"));
 }
 
 bool ForceServiceProcessShutdown(const std::string& version,
@@ -109,7 +112,7 @@ bool CheckServiceProcessReady() {
 struct ServiceProcessState::StateData {
   // An event that is signaled when a service process is ready.
   base::win::ScopedHandle ready_event;
-  scoped_ptr<ServiceProcessTerminateMonitor> terminate_monitor;
+  std::unique_ptr<ServiceProcessTerminateMonitor> terminate_monitor;
 };
 
 void ServiceProcessState::CreateState() {
@@ -132,8 +135,9 @@ bool ServiceProcessState::TakeSingletonLock() {
   return true;
 }
 
-bool ServiceProcessState::SignalReady(base::SingleThreadTaskRunner* task_runner,
-                                      const base::Closure& terminate_task) {
+bool ServiceProcessState::SignalReady(
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+    const base::Closure& terminate_task) {
   DCHECK(state_);
   DCHECK(state_->ready_event.IsValid());
   if (!SetEvent(state_->ready_event.Get())) {

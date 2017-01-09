@@ -36,6 +36,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/base/test_completion_callback.h"
@@ -266,8 +267,8 @@ void EntryWrapper::DoIdle() {
   state_ = NONE;
   g_data->pendig_operations--;
   DCHECK(g_data->pendig_operations);
-  base::MessageLoop::current()->task_runner()->PostTask(FROM_HERE,
-                                                        base::Bind(&LoopTask));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(&LoopTask));
 }
 
 // The task that keeps the main thread busy. Whenever an entry becomes idle this
@@ -287,8 +288,8 @@ void LoopTask() {
     g_data->entries[slot].DoOpen(key);
   }
 
-  base::MessageLoop::current()->task_runner()->PostTask(FROM_HERE,
-                                                        base::Bind(&LoopTask));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(&LoopTask));
 }
 
 // This thread will loop forever, adding and removing entries from the cache.
@@ -296,7 +297,7 @@ void LoopTask() {
 // to know which instance of the application wrote them.
 void StressTheCache(int iteration) {
   int cache_size = 0x2000000;  // 32MB.
-  uint32 mask = 0xfff;  // 4096 entries.
+  uint32_t mask = 0xfff;       // 4096 entries.
 
   base::FilePath path;
   PathService::Get(base::DIR_TEMP, &path);
@@ -330,8 +331,8 @@ void StressTheCache(int iteration) {
   for (int i = 0; i < kNumKeys; i++)
     g_data->keys[i] = GenerateStressKey();
 
-  base::MessageLoop::current()->task_runner()->PostTask(FROM_HERE,
-                                                        base::Bind(&LoopTask));
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                base::Bind(&LoopTask));
   base::RunLoop().Run();
 }
 
@@ -340,11 +341,11 @@ void StressTheCache(int iteration) {
 bool g_crashing = false;
 
 // RunSoon() and CrashCallback() reference each other, unfortunately.
-void RunSoon(base::MessageLoop* target_loop);
+void RunSoon(scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
 void CrashCallback() {
   // Keep trying to run.
-  RunSoon(base::MessageLoop::current());
+  RunSoon(base::ThreadTaskRunnerHandle::Get());
 
   if (g_crashing)
     return;
@@ -362,10 +363,10 @@ void CrashCallback() {
   }
 }
 
-void RunSoon(base::MessageLoop* target_loop) {
+void RunSoon(scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   const base::TimeDelta kTaskDelay = base::TimeDelta::FromSeconds(10);
-  target_loop->task_runner()->PostDelayedTask(
-      FROM_HERE, base::Bind(&CrashCallback), kTaskDelay);
+  task_runner->PostDelayedTask(FROM_HERE, base::Bind(&CrashCallback),
+                               kTaskDelay);
 }
 
 // We leak everything here :)
@@ -374,7 +375,7 @@ bool StartCrashThread() {
   if (!thread->Start())
     return false;
 
-  RunSoon(thread->message_loop());
+  RunSoon(thread->task_runner());
   return true;
 }
 

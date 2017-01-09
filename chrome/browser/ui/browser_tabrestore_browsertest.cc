@@ -47,10 +47,10 @@ void CreateTestTabs(Browser* browser) {
   GURL test_page(ui_test_utils::GetTestUrl(base::FilePath(),
       base::FilePath(FILE_PATH_LITERAL("tab-restore-visibility.html"))));
   ui_test_utils::NavigateToURLWithDisposition(
-      browser, test_page, NEW_FOREGROUND_TAB,
+      browser, test_page, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser, test_page, NEW_BACKGROUND_TAB,
+      browser, test_page, WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 }
 
@@ -69,12 +69,9 @@ IN_PROC_BROWSER_TEST_F(BrowserTabRestoreTest, RecentTabsMenuTabDisposition) {
 
   // Create a new browser.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(url::kAboutBlankURL),
-      NEW_WINDOW,
+      browser(), GURL(url::kAboutBlankURL), WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
-  BrowserList* active_browser_list =
-      BrowserList::GetInstance(browser()->host_desktop_type());
+  BrowserList* active_browser_list = BrowserList::GetInstance();
   EXPECT_EQ(2u, active_browser_list->size());
 
   // Close the first browser.
@@ -105,12 +102,9 @@ IN_PROC_BROWSER_TEST_F(BrowserTabRestoreTest, DelegateRestoreTabDisposition) {
 
   // Create a new browser.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(url::kAboutBlankURL),
-      NEW_WINDOW,
+      browser(), GURL(url::kAboutBlankURL), WindowOpenDisposition::NEW_WINDOW,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_BROWSER);
-  BrowserList* active_browser_list =
-      BrowserList::GetInstance(browser()->host_desktop_type());
+  BrowserList* active_browser_list = BrowserList::GetInstance();
   EXPECT_EQ(2u, active_browser_list->size());
 
   // Close the first browser.
@@ -131,8 +125,7 @@ IN_PROC_BROWSER_TEST_F(BrowserTabRestoreTest, DelegateRestoreTabDisposition) {
 
   // Restore tabs using that delegated restore service.
   content::DOMMessageQueue queue;
-  service->RestoreMostRecentEntry(
-      context, browser->host_desktop_type());
+  service->RestoreMostRecentEntry(context);
   AwaitTabsReady(&queue, 2);
 
   // There should be 3 restored tabs in the new browser.

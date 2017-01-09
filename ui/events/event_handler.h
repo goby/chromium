@@ -8,7 +8,7 @@
 #include <stack>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/events/event_constants.h"
 #include "ui/events/events_export.h"
 
@@ -17,7 +17,6 @@ namespace ui {
 class CancelModeEvent;
 class Event;
 class EventDispatcher;
-class EventTarget;
 class GestureEvent;
 class KeyEvent;
 class MouseEvent;

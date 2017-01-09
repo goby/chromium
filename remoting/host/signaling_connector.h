@@ -5,7 +5,7 @@
 #ifndef REMOTING_HOST_SIGNALING_CONNECTOR_H_
 #define REMOTING_HOST_SIGNALING_CONNECTOR_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/timer/timer.h"
@@ -32,7 +32,7 @@ class SignalingConnector
  public:
   // The |auth_failed_callback| is called when authentication fails.
   SignalingConnector(XmppSignalStrategy* signal_strategy,
-                     scoped_ptr<DnsBlackholeChecker> dns_blackhole_checker,
+                     std::unique_ptr<DnsBlackholeChecker> dns_blackhole_checker,
                      OAuthTokenGetter* oauth_token_getter,
                      const base::Closure& auth_failed_callback);
   ~SignalingConnector() override;
@@ -62,7 +62,7 @@ class SignalingConnector
 
   XmppSignalStrategy* signal_strategy_;
   base::Closure auth_failed_callback_;
-  scoped_ptr<DnsBlackholeChecker> dns_blackhole_checker_;
+  std::unique_ptr<DnsBlackholeChecker> dns_blackhole_checker_;
 
   OAuthTokenGetter* oauth_token_getter_;
 

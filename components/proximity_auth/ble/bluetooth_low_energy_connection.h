@@ -5,12 +5,15 @@
 #ifndef COMPONENTS_PROXIMITY_AUTH_BLE_BLUETOOTH_LOW_ENERGY_CONNECTION_H_
 #define COMPONENTS_PROXIMITY_AUTH_BLE_BLUETOOTH_LOW_ENERGY_CONNECTION_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "components/proximity_auth/ble/bluetooth_low_energy_characteristics_finder.h"
@@ -19,8 +22,8 @@
 #include "components/proximity_auth/connection.h"
 #include "device/bluetooth/bluetooth_adapter.h"
 #include "device/bluetooth/bluetooth_device.h"
-#include "device/bluetooth/bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_gatt_notify_session.h"
+#include "device/bluetooth/bluetooth_remote_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_uuid.h"
 
 namespace base {
@@ -59,7 +62,7 @@ class BluetoothLowEnergyConnection : public Connection,
                                      public device::BluetoothAdapter::Observer {
  public:
   // Signals sent to the remote device to indicate connection related events.
-  enum class ControlSignal : uint32 {
+  enum class ControlSignal : uint32_t {
     kInviteToConnectSignal = 0,
     kInvitationResponseSignal = 1,
     kSendSignal = 2,
@@ -84,12 +87,11 @@ class BluetoothLowEnergyConnection : public Connection,
   // initaalized and ready. The GATT connection may alreaady be established and
   // pass through |gatt_connection|. A subsequent call to Connect() must be
   // made.
-  BluetoothLowEnergyConnection(
-      const RemoteDevice& remote_device,
-      scoped_refptr<device::BluetoothAdapter> adapter,
-      const device::BluetoothUUID remote_service_uuid,
-      BluetoothThrottler* bluetooth_throttler,
-      int max_number_of_write_attempts);
+  BluetoothLowEnergyConnection(const cryptauth::RemoteDevice& remote_device,
+                               scoped_refptr<device::BluetoothAdapter> adapter,
+                               const device::BluetoothUUID remote_service_uuid,
+                               BluetoothThrottler* bluetooth_throttler,
+                               int max_number_of_write_attempts);
 
   ~BluetoothLowEnergyConnection() override;
 
@@ -114,7 +116,7 @@ class BluetoothLowEnergyConnection : public Connection,
           error_callback);
 
   // proximity_auth::Connection:
-  void SendMessageImpl(scoped_ptr<WireMessage> message) override;
+  void SendMessageImpl(std::unique_ptr<WireMessage> message) override;
 
   // device::BluetoothAdapter::Observer:
   void DeviceChanged(device::BluetoothAdapter* adapter,
@@ -123,8 +125,8 @@ class BluetoothLowEnergyConnection : public Connection,
                      device::BluetoothDevice* device) override;
   void GattCharacteristicValueChanged(
       device::BluetoothAdapter* adapter,
-      device::BluetoothGattCharacteristic* characteristic,
-      const std::vector<uint8>& value) override;
+      device::BluetoothRemoteGattCharacteristic* characteristic,
+      const std::vector<uint8_t>& value) override;
 
  private:
   // Represents a request to write |value| to a some characteristic.
@@ -134,10 +136,11 @@ class BluetoothLowEnergyConnection : public Connection,
   // a kSendSignal + the size of the WireMessage, and the second containing a
   // SendStatusSignal + the serialized WireMessage.
   struct WriteRequest {
-    WriteRequest(const std::vector<uint8>& val, bool flag);
+    WriteRequest(const std::vector<uint8_t>& val, bool flag);
+    WriteRequest(const WriteRequest& other);
     ~WriteRequest();
 
-    std::vector<uint8> value;
+    std::vector<uint8_t> value;
     bool is_last_write_for_wire_message;
     int number_of_failed_attempts;
   };
@@ -147,7 +150,7 @@ class BluetoothLowEnergyConnection : public Connection,
 
   // Called when a GATT connection is created.
   void OnGattConnectionCreated(
-      scoped_ptr<device::BluetoothGattConnection> gatt_connection);
+      std::unique_ptr<device::BluetoothGattConnection> gatt_connection);
 
   // Callback called when there is an error creating the GATT connection.
   void OnCreateGattConnectionError(
@@ -171,7 +174,7 @@ class BluetoothLowEnergyConnection : public Connection,
   // Called when a notification session is successfully started for
   // |from_peripheral_char_| characteristic.
   void OnNotifySessionStarted(
-      scoped_ptr<device::BluetoothGattNotifySession> notify_session);
+      std::unique_ptr<device::BluetoothGattNotifySession> notify_session);
 
   // Called when there is an error starting a notification session for
   // |from_peripheral_char_| characteristic.
@@ -203,7 +206,8 @@ class BluetoothLowEnergyConnection : public Connection,
   // Processes the next request in |write_requests_queue_|.
   void ProcessNextWriteRequest();
 
-  // Called when the BluetoothGattCharacteristic::RemoteCharacteristicWrite() is
+  // Called when the
+  // BluetoothRemoteGattCharacteristic::RemoteCharacteristicWrite() is
   // successfully complete.
   void OnRemoteCharacteristicWritten(bool run_did_send_message_callback);
 
@@ -211,12 +215,12 @@ class BluetoothLowEnergyConnection : public Connection,
   // |to_peripheral_char_|.
   void OnWriteRemoteCharacteristicError(
       bool run_did_send_message_callback,
-      device::BluetoothGattService::GattErrorCode error);
+      device::BluetoothRemoteGattService::GattErrorCode error);
 
   // Builds the value to be written on |to_peripheral_char_|. The value
   // corresponds to |signal| concatenated with |payload|.
-  WriteRequest BuildWriteRequest(const std::vector<uint8>& signal,
-                                 const std::vector<uint8>& bytes,
+  WriteRequest BuildWriteRequest(const std::vector<uint8_t>& signal,
+                                 const std::vector<uint8_t>& bytes,
                                  bool is_last_message_for_wire_message);
 
   // Prints the time elapsed since |Connect()| was called.
@@ -227,18 +231,18 @@ class BluetoothLowEnergyConnection : public Connection,
 
   // Returns the service corresponding to |remote_service_| in the current
   // device.
-  device::BluetoothGattService* GetRemoteService();
+  device::BluetoothRemoteGattService* GetRemoteService();
 
   // Returns the characteristic corresponding to |identifier| in the current
   // service.
-  device::BluetoothGattCharacteristic* GetGattCharacteristic(
+  device::BluetoothRemoteGattCharacteristic* GetGattCharacteristic(
       const std::string& identifier);
 
-  // Convert the first 4 bytes from a byte vector to a uint32.
-  uint32 ToUint32(const std::vector<uint8>& bytes);
+  // Convert the first 4 bytes from a byte vector to a uint32_t.
+  uint32_t ToUint32(const std::vector<uint8_t>& bytes);
 
-  // Convert an uint32 to a byte vector.
-  const std::vector<uint8> ToByteVector(uint32 value);
+  // Convert an uint32_t to a byte vector.
+  const std::vector<uint8_t> ToByteVector(uint32_t value);
 
   // The Bluetooth adapter over which the Bluetooth connection will be made.
   scoped_refptr<device::BluetoothAdapter> adapter_;
@@ -259,13 +263,14 @@ class BluetoothLowEnergyConnection : public Connection,
   scoped_refptr<base::TaskRunner> task_runner_;
 
   // The GATT connection with the remote device.
-  scoped_ptr<device::BluetoothGattConnection> gatt_connection_;
+  std::unique_ptr<device::BluetoothGattConnection> gatt_connection_;
 
   // The characteristics finder for remote device.
-  scoped_ptr<BluetoothLowEnergyCharacteristicsFinder> characteristic_finder_;
+  std::unique_ptr<BluetoothLowEnergyCharacteristicsFinder>
+      characteristic_finder_;
 
   // The notify session for |from_peripheral_char|.
-  scoped_ptr<device::BluetoothGattNotifySession> notify_session_;
+  std::unique_ptr<device::BluetoothGattNotifySession> notify_session_;
 
   // Internal connection status
   SubStatus sub_status_;
@@ -280,7 +285,8 @@ class BluetoothLowEnergyConnection : public Connection,
   // Bytes already received for the current receive operation.
   std::string incoming_bytes_buffer_;
 
-  // Indicates there is a BluetoothGattCharacteristic::WriteRemoteCharacteristic
+  // Indicates there is a
+  // BluetoothRemoteGattCharacteristic::WriteRemoteCharacteristic
   // operation pending.
   bool write_remote_characteristic_pending_;
 

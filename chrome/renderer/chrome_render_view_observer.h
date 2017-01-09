@@ -9,22 +9,20 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
-#include "content/public/common/top_controls_state.h"
+#include "build/build_config.h"
+#include "content/public/common/browser_controls_state.h"
 #include "content/public/renderer/render_view_observer.h"
+#include "extensions/features/features.h"
 #include "url/gurl.h"
 
-class ContentSettingsObserver;
-class SkBitmap;
-
 namespace blink {
-class WebView;
 struct WebWindowFeatures;
 }
 
 namespace web_cache {
-class WebCacheRenderProcessObserver;
+class WebCacheImpl;
 }
 
 // This class holds the Chrome specific parts of RenderView, and has the same
@@ -34,26 +32,27 @@ class ChromeRenderViewObserver : public content::RenderViewObserver {
   // translate_helper can be NULL.
   ChromeRenderViewObserver(
       content::RenderView* render_view,
-      web_cache::WebCacheRenderProcessObserver*
-          web_cache_render_process_observer);
+      web_cache::WebCacheImpl* web_cache_render_thread_observer);
   ~ChromeRenderViewObserver() override;
 
  private:
   // RenderViewObserver implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void DidStartLoading() override;
+  void DidCommitProvisionalLoad(blink::WebLocalFrame* frame,
+                                bool is_new_navigation) override;
   void Navigate(const GURL& url) override;
+  void OnDestruct() override;
 
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if !defined(OS_ANDROID)
   void OnWebUIJavaScript(const base::string16& javascript);
 #endif
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   void OnSetVisuallyDeemphasized(bool deemphasized);
 #endif
 #if defined(OS_ANDROID)
-  void OnUpdateTopControlsState(content::TopControlsState constraints,
-                                content::TopControlsState current,
-                                bool animate);
+  void OnUpdateBrowserControlsState(content::BrowserControlsState constraints,
+                                    content::BrowserControlsState current,
+                                    bool animate);
 #endif
   void OnGetWebApplicationInfo();
   void OnSetWindowFeatures(const blink::WebWindowFeatures& window_features);
@@ -65,7 +64,7 @@ class ChromeRenderViewObserver : public content::RenderViewObserver {
   std::vector<base::string16> webui_javascript_;
 
   // Owned by ChromeContentRendererClient and outlive us.
-  web_cache::WebCacheRenderProcessObserver* web_cache_render_process_observer_;
+  web_cache::WebCacheImpl* web_cache_impl_;
 
   // true if webview is overlayed with grey color.
   bool webview_visually_deemphasized_;

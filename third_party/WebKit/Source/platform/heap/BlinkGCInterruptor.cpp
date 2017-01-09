@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "platform/heap/BlinkGCInterruptor.h"
 
 #include "platform/heap/BlinkGC.h"
@@ -10,12 +9,11 @@
 
 namespace blink {
 
-void BlinkGCInterruptor::onInterrupted()
-{
-    ThreadState* state = ThreadState::current();
-    ASSERT(state);
-    ASSERT(!state->isAtSafePoint());
-    state->safePoint(BlinkGC::HeapPointersOnStack);
+void BlinkGCInterruptor::onInterrupted() {
+  ThreadState* state = ThreadState::current();
+  ASSERT(state);
+  ASSERT(!state->isAtSafePoint());
+  state->safePoint(BlinkGC::HeapPointersOnStack);
 }
 
-} // namespace blink
+}  // namespace blink

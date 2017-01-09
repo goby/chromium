@@ -4,14 +4,15 @@
 
 #include "ios/chrome/browser/google/google_url_tracker_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
-#include "base/prefs/pref_service.h"
 #include "components/google/core/browser/google_pref_names.h"
 #include "components/google/core/browser/google_url_tracker.h"
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
+#include "components/prefs/pref_service.h"
 #include "ios/chrome/browser/browser_state/browser_state_otr_helper.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/google/google_url_tracker_client_impl.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 
 namespace ios {
 
@@ -36,7 +37,7 @@ GoogleURLTrackerFactory::GoogleURLTrackerFactory()
 GoogleURLTrackerFactory::~GoogleURLTrackerFactory() {
 }
 
-scoped_ptr<KeyedService> GoogleURLTrackerFactory::BuildServiceInstanceFor(
+std::unique_ptr<KeyedService> GoogleURLTrackerFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
@@ -46,9 +47,9 @@ scoped_ptr<KeyedService> GoogleURLTrackerFactory::BuildServiceInstanceFor(
   browser_state->GetOriginalChromeBrowserState()->GetPrefs()->ClearPref(
       prefs::kLastPromptedGoogleURL);
 
-  return make_scoped_ptr(new GoogleURLTracker(
-      make_scoped_ptr(new GoogleURLTrackerClientImpl(browser_state)),
-      GoogleURLTracker::NORMAL_MODE));
+  return base::MakeUnique<GoogleURLTracker>(
+      base::WrapUnique(new GoogleURLTrackerClientImpl(browser_state)),
+      GoogleURLTracker::NORMAL_MODE);
 }
 
 web::BrowserState* GoogleURLTrackerFactory::GetBrowserStateToUse(

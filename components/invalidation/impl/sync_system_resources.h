@@ -2,21 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
-// Simple system resources class that uses the current message loop
-// for scheduling.  Assumes the current message loop is already
-// running.
+// Simple system resources class that uses the current thread for scheduling.
+// Assumes the current thread is already running tasks.
 
 #ifndef COMPONENTS_INVALIDATION_IMPL_SYNC_SYSTEM_RESOURCES_H_
 #define COMPONENTS_INVALIDATION_IMPL_SYNC_SYSTEM_RESOURCES_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/threading/non_thread_safe.h"
 #include "base/values.h"
 #include "components/invalidation/impl/state_writer.h"
@@ -70,9 +70,9 @@ class SyncInvalidationScheduler : public invalidation::Scheduler {
   void RunPostedTask(invalidation::Closure* task);
 
   // Holds all posted tasks that have not yet been run.
-  std::set<invalidation::Closure*> posted_tasks_;
+  std::set<std::unique_ptr<invalidation::Closure>> posted_tasks_;
 
-  const base::MessageLoop* created_on_loop_;
+  scoped_refptr<base::SingleThreadTaskRunner> const created_on_task_runner_;
   bool is_started_;
   bool is_stopped_;
 
@@ -133,11 +133,11 @@ class INVALIDATION_EXPORT SyncNetworkChannel
 
   // Helper functions that know how to construct network channels from channel
   // specific parameters.
-  static scoped_ptr<SyncNetworkChannel> CreatePushClientChannel(
+  static std::unique_ptr<SyncNetworkChannel> CreatePushClientChannel(
       const notifier::NotifierOptions& notifier_options);
-  static scoped_ptr<SyncNetworkChannel> CreateGCMNetworkChannel(
+  static std::unique_ptr<SyncNetworkChannel> CreateGCMNetworkChannel(
       scoped_refptr<net::URLRequestContextGetter> request_context_getter,
-      scoped_ptr<GCMNetworkChannelDelegate> delegate);
+      std::unique_ptr<GCMNetworkChannelDelegate> delegate);
 
   // Get the count of how many valid received messages were received.
   int GetReceivedMessagesCount() const;
@@ -159,12 +159,10 @@ class INVALIDATION_EXPORT SyncNetworkChannel
   bool DeliverIncomingMessage(const std::string& message);
 
  private:
-  typedef std::vector<invalidation::NetworkStatusCallback*>
-      NetworkStatusReceiverList;
-
   // Callbacks into invalidation library
-  scoped_ptr<invalidation::MessageCallback> incoming_receiver_;
-  NetworkStatusReceiverList network_status_receivers_;
+  std::unique_ptr<invalidation::MessageCallback> incoming_receiver_;
+  std::vector<std::unique_ptr<invalidation::NetworkStatusCallback>>
+      network_status_receivers_;
 
   // Last network status for new network status receivers.
   bool last_network_status_;
@@ -236,10 +234,10 @@ class INVALIDATION_EXPORT SyncSystemResources
  private:
   bool is_started_;
   std::string platform_;
-  scoped_ptr<SyncLogger> logger_;
-  scoped_ptr<SyncInvalidationScheduler> internal_scheduler_;
-  scoped_ptr<SyncInvalidationScheduler> listener_scheduler_;
-  scoped_ptr<SyncStorage> storage_;
+  std::unique_ptr<SyncLogger> logger_;
+  std::unique_ptr<SyncInvalidationScheduler> internal_scheduler_;
+  std::unique_ptr<SyncInvalidationScheduler> listener_scheduler_;
+  std::unique_ptr<SyncStorage> storage_;
   // sync_network_channel_ is owned by SyncInvalidationListener.
   SyncNetworkChannel* sync_network_channel_;
 };

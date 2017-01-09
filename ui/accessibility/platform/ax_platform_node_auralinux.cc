@@ -4,12 +4,15 @@
 
 #include "ui/accessibility/platform/ax_platform_node_auralinux.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/task_runner.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/accessibility/platform/atk_util_auralinux.h"
 #include "ui/accessibility/platform/ax_platform_node_delegate.h"
+#include "ui/gfx/geometry/rect_conversions.h"
 
 //
 // ax_platform_node_auralinux AtkObject definition and implementation.
@@ -394,6 +397,16 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
       return ATK_ROLE_ALERT;
     case ui::AX_ROLE_APPLICATION:
       return ATK_ROLE_APPLICATION;
+    case ui::AX_ROLE_AUDIO:
+#if defined(ATK_CHECK_VERSION)
+#if ATK_CHECK_VERSION(2, 12, 0)
+      return ATK_ROLE_AUDIO;
+#else
+      return ATK_ROLE_SECTION;
+#endif
+#else
+      return ATK_ROLE_SECTION;
+#endif
     case ui::AX_ROLE_BUTTON:
       return ATK_ROLE_PUSH_BUTTON;
     case ui::AX_ROLE_CHECK_BOX:
@@ -424,6 +437,16 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
       return ATK_ROLE_ENTRY;
     case ui::AX_ROLE_TOOLBAR:
       return ATK_ROLE_TOOL_BAR;
+    case ui::AX_ROLE_VIDEO:
+#if defined(ATK_CHECK_VERSION)
+#if ATK_CHECK_VERSION(2, 12, 0)
+      return ATK_ROLE_VIDEO;
+#else
+      return ATK_ROLE_SECTION;
+#endif
+#else
+      return ATK_ROLE_SECTION;
+#endif
     case ui::AX_ROLE_WINDOW:
       return ATK_ROLE_WINDOW;
     default:
@@ -432,7 +455,7 @@ AtkRole AXPlatformNodeAuraLinux::GetAtkRole() {
 }
 
 void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
-  uint32 state = GetData().state;
+  uint32_t state = GetData().state;
 
   if (state & (1 << ui::AX_STATE_CHECKED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_CHECKED);
@@ -440,20 +463,21 @@ void AXPlatformNodeAuraLinux::GetAtkState(AtkStateSet* atk_state_set) {
     atk_state_set_add_state(atk_state_set, ATK_STATE_DEFAULT);
   if (state & (1 << ui::AX_STATE_EDITABLE))
     atk_state_set_add_state(atk_state_set, ATK_STATE_EDITABLE);
-  if (state & (1 << ui::AX_STATE_ENABLED))
+  if (!(state & (1 << ui::AX_STATE_DISABLED)))
     atk_state_set_add_state(atk_state_set, ATK_STATE_ENABLED);
   if (state & (1 << ui::AX_STATE_EXPANDED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_EXPANDED);
   if (state & (1 << ui::AX_STATE_FOCUSABLE))
     atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSABLE);
-  if (state & (1 << ui::AX_STATE_FOCUSED))
-    atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
   if (state & (1 << ui::AX_STATE_PRESSED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_PRESSED);
   if (state & (1 << ui::AX_STATE_SELECTABLE))
     atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTABLE);
   if (state & (1 << ui::AX_STATE_SELECTED))
     atk_state_set_add_state(atk_state_set, ATK_STATE_SELECTED);
+
+  if (delegate_->GetFocus() == GetNativeViewAccessible())
+    atk_state_set_add_state(atk_state_set, ATK_STATE_FOCUSED);
 }
 
 void AXPlatformNodeAuraLinux::GetAtkRelations(AtkRelationSet* atk_relation_set)
@@ -472,11 +496,6 @@ void AXPlatformNodeAuraLinux::Init(AXPlatformNodeDelegate* delegate) {
   // Initialize ATK.
   AXPlatformNodeBase::Init(delegate);
   atk_object_ = ATK_OBJECT(ax_platform_node_auralinux_new(this));
-}
-
-void AXPlatformNodeAuraLinux::Destroy() {
-  delegate_ = nullptr;
-  delete this;
 }
 
 gfx::NativeViewAccessible AXPlatformNodeAuraLinux::GetNativeViewAccessible() {
@@ -530,7 +549,7 @@ void AXPlatformNodeAuraLinux::GetPosition(gint* x, gint* y,
 }
 
 void AXPlatformNodeAuraLinux::GetSize(gint* width, gint* height) {
-  gfx::Rect rect_size = GetData().location;
+  gfx::Rect rect_size = gfx::ToEnclosingRect(GetData().location);
   if (width)
     *width = rect_size.width();
   if (height)

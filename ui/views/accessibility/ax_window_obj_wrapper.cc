@@ -4,6 +4,8 @@
 
 #include "ui/views/accessibility/ax_window_obj_wrapper.h"
 
+#include <stddef.h>
+
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
 #include "ui/aura/window.h"
@@ -33,37 +35,45 @@ void AXWindowObjWrapper::GetChildren(
     std::vector<AXAuraObjWrapper*>* out_children) {
   aura::Window::Windows children = window_->children();
   for (size_t i = 0; i < children.size(); ++i) {
+    if (!children[i]->IsVisible())
+      continue;
     out_children->push_back(
         AXAuraObjCache::GetInstance()->GetOrCreate(children[i]));
   }
 
   // Also consider any associated widgets as children.
   Widget* widget = Widget::GetWidgetForNativeView(window_);
-  if (widget)
+  if (widget && widget->IsVisible())
     out_children->push_back(AXAuraObjCache::GetInstance()->GetOrCreate(widget));
 }
 
 void AXWindowObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
   out_node_data->id = GetID();
   out_node_data->role = is_alert_ ? ui::AX_ROLE_ALERT : ui::AX_ROLE_WINDOW;
-  // TODO(dtseng): Set better states.
+  out_node_data->AddStringAttribute(ui::AX_ATTR_NAME,
+                                    base::UTF16ToUTF8(window_->GetTitle()));
   out_node_data->state = 0;
-  out_node_data->location = window_->bounds();
-
-  // Root windows currently have a non readable name (e.g. Display1234...);
-  // ignore them unless the window is the only node in the tree.
-  if (window_->parent() || window_->children().size() == 0) {
-    out_node_data->AddStringAttribute(ui::AX_ATTR_NAME,
-                                      base::UTF16ToUTF8(window_->title()));
-  }
+  out_node_data->location = gfx::RectF(window_->bounds());
 }
 
-int32 AXWindowObjWrapper::GetID() {
+int32_t AXWindowObjWrapper::GetID() {
   return AXAuraObjCache::GetInstance()->GetID(window_);
 }
 
+void AXWindowObjWrapper::OnWindowDestroyed(aura::Window* window) {
+  AXAuraObjCache::GetInstance()->Remove(window, nullptr);
+}
+
 void AXWindowObjWrapper::OnWindowDestroying(aura::Window* window) {
-  AXAuraObjCache::GetInstance()->Remove(window);
+  Widget* widget = Widget::GetWidgetForNativeView(window);
+  if (widget)
+    AXAuraObjCache::GetInstance()->Remove(widget);
+}
+
+void AXWindowObjWrapper::OnWindowHierarchyChanged(
+    const HierarchyChangeParams& params) {
+  if (params.phase == WindowObserver::HierarchyChangeParams::HIERARCHY_CHANGED)
+    AXAuraObjCache::GetInstance()->Remove(params.target, params.old_parent);
 }
 
 }  // namespace views

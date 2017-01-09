@@ -9,11 +9,14 @@ import android.test.suitebuilder.annotation.MediumTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.MockLocationProvider;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content.browser.test.util.TestCallbackHelperContainer.OnEvaluateJavaScriptResultHelper;
 import org.chromium.content_public.browser.LoadUrlParams;
 import org.chromium.content_shell_apk.ContentShellTestBase;
+import org.chromium.device.geolocation.LocationProviderFactory;
+import org.chromium.device.geolocation.MockLocationProvider;
+
+import java.util.concurrent.Callable;
 
 /**
  * Test suite for ensureing that Geolocation interacts as expected
@@ -50,7 +53,7 @@ public class ContentViewLocationTest extends ContentShellTestBase {
         mJavascriptHelper.waitUntilHasValue();
         assertEquals(0, Integer.parseInt(mJavascriptHelper.getJsonResultAndClear()));
 
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(new Criteria() {
                 @Override
                 public boolean isSatisfied() {
                     mJavascriptHelper.evaluateJavaScriptForTests(getWebContents(), "positionCount");
@@ -71,12 +74,12 @@ public class ContentViewLocationTest extends ContentShellTestBase {
     }
 
     private void ensureGeolocationRunning(final boolean running) throws Exception {
-        CriteriaHelper.pollForCriteria(new Criteria() {
+        CriteriaHelper.pollInstrumentationThread(Criteria.equals(running, new Callable<Boolean>() {
             @Override
-            public boolean isSatisfied() {
-                return mMockLocationProvider.isRunning() == running;
+            public Boolean call() {
+                return mMockLocationProvider.isRunning();
             }
-        });
+        }));
     }
 
     @Override

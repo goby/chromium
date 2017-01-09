@@ -5,9 +5,15 @@
 #ifndef UI_GL_GL_IMAGE_SHARED_MEMORY_H_
 #define UI_GL_GL_IMAGE_SHARED_MEMORY_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/shared_memory_handle.h"
 #include "ui/gfx/generic_shared_memory_id.h"
+#include "ui/gl/gl_export.h"
 #include "ui/gl/gl_image_memory.h"
 
 namespace base {
@@ -27,7 +33,6 @@ class GL_EXPORT GLImageSharedMemory : public GLImageMemory {
                   size_t stride);
 
   // Overridden from GLImage:
-  void Destroy(bool have_context) override;
   void OnMemoryDump(base::trace_event::ProcessMemoryDump* pmd,
                     uint64_t process_tracing_id,
                     const std::string& dump_name) override;
@@ -36,7 +41,7 @@ class GL_EXPORT GLImageSharedMemory : public GLImageMemory {
   ~GLImageSharedMemory() override;
 
  private:
-  scoped_ptr<base::SharedMemory> shared_memory_;
+  std::unique_ptr<base::SharedMemory> shared_memory_;
   gfx::GenericSharedMemoryId shared_memory_id_;
 
   DISALLOW_COPY_AND_ASSIGN(GLImageSharedMemory);

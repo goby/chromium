@@ -2,12 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/task_runner.h"
 #include "base/threading/simple_thread.h"
@@ -146,8 +149,8 @@ class PluginProxyTestHarness : public ProxyTestHarnessBase {
 
     // PluginDispatcher::PluginDelegate implementation.
     std::set<PP_Instance>* GetGloballySeenInstanceIDSet() override;
-    uint32 Register(PluginDispatcher* plugin_dispatcher) override;
-    void Unregister(uint32 plugin_dispatcher_id) override;
+    uint32_t Register(PluginDispatcher* plugin_dispatcher) override;
+    void Unregister(uint32_t plugin_dispatcher_id) override;
 
     // PluginProxyDelegate implementation.
     IPC::Sender* GetBrowserSender() override;
@@ -174,9 +177,9 @@ class PluginProxyTestHarness : public ProxyTestHarnessBase {
       const scoped_refptr<base::TaskRunner>& ipc_task_runner);
 
   GlobalsConfiguration globals_config_;
-  scoped_ptr<PluginGlobals> plugin_globals_;
+  std::unique_ptr<PluginGlobals> plugin_globals_;
 
-  scoped_ptr<PluginDispatcher> plugin_dispatcher_;
+  std::unique_ptr<PluginDispatcher> plugin_dispatcher_;
   PluginDelegateMock plugin_delegate_mock_;
 };
 
@@ -237,8 +240,8 @@ class PluginProxyMultiThreadTest
   static void InternalSetUpTestOnSecondaryThread(void* user_data,
                                                  int32_t result);
 
-  scoped_ptr<base::DelegateSimpleThread> secondary_thread_;
-  scoped_ptr<base::RunLoop> nested_main_thread_message_loop_;
+  std::unique_ptr<base::DelegateSimpleThread> secondary_thread_;
+  std::unique_ptr<base::RunLoop> nested_main_thread_message_loop_;
 };
 
 class HostProxyTestHarness : public ProxyTestHarnessBase {
@@ -298,11 +301,11 @@ class HostProxyTestHarness : public ProxyTestHarnessBase {
   void CreateHostGlobals();
 
   GlobalsConfiguration globals_config_;
-  scoped_ptr<ppapi::TestGlobals> host_globals_;
-  scoped_ptr<HostDispatcher> host_dispatcher_;
+  std::unique_ptr<ppapi::TestGlobals> host_globals_;
+  std::unique_ptr<HostDispatcher> host_dispatcher_;
   // The host side of the real proxy doesn't lock, so this disables locking for
   // the thread the host side of the test runs on.
-  scoped_ptr<ProxyLock::LockingDisablerForTest> disable_locking_;
+  std::unique_ptr<ProxyLock::LockingDisablerForTest> disable_locking_;
   DelegateMock delegate_mock_;
 };
 

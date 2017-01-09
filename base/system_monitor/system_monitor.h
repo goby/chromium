@@ -6,7 +6,7 @@
 #define BASE_SYSTEM_MONITOR_SYSTEM_MONITOR_H_
 
 #include "base/base_export.h"
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list_threadsafe.h"
 #include "build/build_config.h"
@@ -20,9 +20,9 @@ class BASE_EXPORT SystemMonitor {
  public:
   // Type of devices whose change need to be monitored, such as add/remove.
   enum DeviceType {
-    DEVTYPE_AUDIO_CAPTURE,  // Audio capture device, e.g., microphone.
+    DEVTYPE_AUDIO,          // Audio device, e.g., microphone.
     DEVTYPE_VIDEO_CAPTURE,  // Video capture device, e.g., webcam.
-    DEVTYPE_UNKNOWN,  // Other devices.
+    DEVTYPE_UNKNOWN,        // Other devices.
   };
 
   // Create SystemMonitor. Only one SystemMonitor instance per application

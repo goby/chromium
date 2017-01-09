@@ -5,100 +5,80 @@
 #include "chrome/browser/ui/views/ash/chrome_browser_main_extra_parts_ash.h"
 
 #include "ash/root_window_controller.h"
-#include "ash/session/session_state_delegate.h"
 #include "ash/shell.h"
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/ui/ash/ash_init.h"
 #include "chrome/browser/ui/ash/ash_util.h"
+#include "chrome/browser/ui/ash/cast_config_client_media_router.h"
+#include "chrome/browser/ui/ash/chrome_new_window_client.h"
+#include "chrome/browser/ui/ash/launcher/chrome_launcher_controller_mus.h"
 #include "chrome/browser/ui/views/ash/tab_scrubber.h"
+#include "chrome/browser/ui/views/frame/immersive_context_mus.h"
+#include "chrome/browser/ui/views/frame/immersive_handler_factory_mus.h"
 #include "chrome/common/chrome_switches.h"
 #include "ui/aura/env.h"
-#include "ui/gfx/screen.h"
-#include "ui/gfx/screen_type_delegate.h"
 #include "ui/keyboard/content/keyboard.h"
 #include "ui/keyboard/keyboard_controller.h"
 
 #if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/ash/session_controller_client.h"
+#include "chrome/browser/ui/ash/system_tray_client.h"
+#include "chrome/browser/ui/ash/volume_controller.h"
+#include "chrome/browser/ui/ash/vpn_list_forwarder.h"
 #include "chrome/browser/ui/views/select_file_dialog_extension.h"
 #include "chrome/browser/ui/views/select_file_dialog_extension_factory.h"
-#endif
+#endif  // defined(OS_CHROMEOS)
 
-#if !defined(OS_CHROMEOS)
-#include "ui/shell_dialogs/select_file_dialog.h"
-#include "ui/shell_dialogs/shell_dialogs_delegate.h"
-#endif
+ChromeBrowserMainExtraPartsAsh::ChromeBrowserMainExtraPartsAsh() {}
 
-#if defined(OS_WIN)
-#include "base/win/windows_version.h"
-#endif
-
-#if !defined(OS_CHROMEOS)
-class ScreenTypeDelegateWin : public gfx::ScreenTypeDelegate {
- public:
-  ScreenTypeDelegateWin() {}
-  gfx::ScreenType GetScreenTypeForNativeView(gfx::NativeView view) override {
-    return chrome::IsNativeViewInAsh(view) ?
-        gfx::SCREEN_TYPE_ALTERNATE :
-        gfx::SCREEN_TYPE_NATIVE;
-  }
- private:
-  DISALLOW_COPY_AND_ASSIGN(ScreenTypeDelegateWin);
-};
-
-class ShellDialogsDelegateWin : public ui::ShellDialogsDelegate {
- public:
-  ShellDialogsDelegateWin() {}
-  bool IsWindowInMetro(gfx::NativeWindow window) override {
-#if defined(OS_WIN)
-    if (base::win::GetVersion() < base::win::VERSION_WIN8)
-      return false;
-#endif
-    return chrome::IsNativeViewInAsh(window);
-  }
- private:
-  DISALLOW_COPY_AND_ASSIGN(ShellDialogsDelegateWin);
-};
-
-base::LazyInstance<ShellDialogsDelegateWin> g_shell_dialogs_delegate;
-
-#endif
-
-ChromeBrowserMainExtraPartsAsh::ChromeBrowserMainExtraPartsAsh() {
-}
-
-ChromeBrowserMainExtraPartsAsh::~ChromeBrowserMainExtraPartsAsh() {
-}
+ChromeBrowserMainExtraPartsAsh::~ChromeBrowserMainExtraPartsAsh() {}
 
 void ChromeBrowserMainExtraPartsAsh::PreProfileInit() {
-  if (chrome::ShouldOpenAshOnStartup()) {
+  if (chrome::ShouldOpenAshOnStartup())
     chrome::OpenAsh(gfx::kNullAcceleratedWidget);
 
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
-  ash::Shell::GetInstance()->CreateShelf();
-  ash::Shell::GetInstance()->ShowShelf();
-#endif
-  } else {
-#if !defined(OS_CHROMEOS)
-    gfx::Screen::SetScreenTypeDelegate(new ScreenTypeDelegateWin);
-    ui::SelectFileDialog::SetShellDialogsDelegate(
-        g_shell_dialogs_delegate.Pointer());
-#endif
+  if (chrome::IsRunningInMash()) {
+    immersive_context_ = base::MakeUnique<ImmersiveContextMus>();
+    immersive_handler_factory_ = base::MakeUnique<ImmersiveHandlerFactoryMus>();
   }
+
 #if defined(OS_CHROMEOS)
+  // TODO(xiyuan): Update after SesssionStateDelegate is deprecated.
+  if (chrome::IsRunningInMash())
+    session_controller_client_ = base::MakeUnique<SessionControllerClient>();
+
+  // Must be available at login screen, so initialize before profile.
+  system_tray_client_ = base::MakeUnique<SystemTrayClient>();
+  new_window_client_ = base::MakeUnique<ChromeNewWindowClient>();
+  volume_controller_ = base::MakeUnique<VolumeController>();
+  vpn_list_forwarder_ = base::MakeUnique<VpnListForwarder>();
+
   // For OS_CHROMEOS, virtual keyboard needs to be initialized before profile
   // initialized. Otherwise, virtual keyboard extension will not load at login
   // screen.
   keyboard::InitializeKeyboard();
-#endif
 
-#if defined(OS_CHROMEOS)
   ui::SelectFileDialog::SetFactory(new SelectFileDialogExtensionFactory);
-#endif
+#endif  // defined(OS_CHROMEOS)
 }
 
 void ChromeBrowserMainExtraPartsAsh::PostProfileInit() {
+  if (chrome::IsRunningInMash()) {
+    DCHECK(!ash::Shell::HasInstance());
+    DCHECK(!ChromeLauncherController::instance());
+    chrome_launcher_controller_mus_ =
+        base::MakeUnique<ChromeLauncherControllerMus>();
+    chrome_launcher_controller_mus_->Init();
+  }
+
+  cast_config_client_media_router_ =
+      base::MakeUnique<CastConfigClientMediaRouter>();
+
   if (!ash::Shell::HasInstance())
     return;
 
@@ -111,5 +91,13 @@ void ChromeBrowserMainExtraPartsAsh::PostProfileInit() {
 }
 
 void ChromeBrowserMainExtraPartsAsh::PostMainMessageLoopRun() {
+#if defined(OS_CHROMEOS)
+  vpn_list_forwarder_.reset();
+  volume_controller_.reset();
+  new_window_client_.reset();
+  system_tray_client_.reset();
+  cast_config_client_media_router_.reset();
+  session_controller_client_.reset();
+#endif
   chrome::CloseAsh();
 }

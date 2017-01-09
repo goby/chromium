@@ -4,6 +4,9 @@
 
 #include "ppapi/shared_impl/test_utils.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <cmath>
 
 #include "base/containers/hash_tables.h"
@@ -210,8 +213,11 @@ bool TestEqual(const PP_Var& expected,
 }
 
 std::string StripTestPrefixes(const std::string& test_name) {
-  if (test_name.find("DISABLED_") == 0)
-    return test_name.substr(strlen("DISABLED_"));
+  const char kDisabledPrefix[] = "DISABLED_";
+  if (base::StartsWith(test_name, kDisabledPrefix,
+                       base::CompareCase::SENSITIVE)) {
+    return test_name.substr(sizeof(kDisabledPrefix) - 1);
+  }
   return test_name;
 }
 

@@ -6,15 +6,12 @@
 #define UI_EVENTS_EVENTS_SWITCHES_H_
 
 #include "base/compiler_specific.h"
+#include "build/build_config.h"
 #include "ui/events/events_base_export.h"
 
 namespace switches {
 
 EVENTS_BASE_EXPORT extern const char kEnableScrollPrediction[];
-EVENTS_BASE_EXPORT extern const char kTouchEvents[];
-EVENTS_BASE_EXPORT extern const char kTouchEventsAuto[];
-EVENTS_BASE_EXPORT extern const char kTouchEventsEnabled[];
-EVENTS_BASE_EXPORT extern const char kTouchEventsDisabled[];
 EVENTS_BASE_EXPORT extern const char kCompensateForUnstablePinchZoom[];
 
 #if defined(OS_LINUX)

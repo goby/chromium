@@ -6,8 +6,12 @@
 
 #import <Cocoa/Cocoa.h>
 
+#import "base/mac/mac_util.h"
 #import "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
+#include "ui/base/test/ui_controls.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/test/test_widget_observer.h"
 #include "ui/views/test/widget_test.h"
 
@@ -23,7 +27,11 @@ class NativeWidgetMacInteractiveUITest
   class Observer;
 
   NativeWidgetMacInteractiveUITest()
-      : activationCount_(0), deactivationCount_(0) {}
+      : activationCount_(0), deactivationCount_(0) {
+    // TODO(tapted): Remove this when these are absorbed into Chrome's
+    // interactive_ui_tests target. See http://crbug.com/403679.
+    ui_controls::EnableUIControls();
+  }
 
   Widget* MakeWidget() {
     return GetParam() ? CreateTopLevelFramelessPlatformWidget()
@@ -31,7 +39,7 @@ class NativeWidgetMacInteractiveUITest
   }
 
  protected:
-  scoped_ptr<Observer> observer_;
+  std::unique_ptr<Observer> observer_;
   int activationCount_;
   int deactivationCount_;
 
@@ -130,6 +138,87 @@ TEST_P(NativeWidgetMacInteractiveUITest, ShowInactiveIgnoresKeyStatus) {
   EXPECT_TRUE([widget->GetNativeWindow() isKeyWindow]);
 
   widget->CloseNow();
+}
+
+namespace {
+
+// Show |widget| and wait for it to become the key window.
+void ShowKeyWindow(Widget* widget) {
+  base::scoped_nsobject<WindowedNSNotificationObserver> waiter(
+      [[WindowedNSNotificationObserver alloc]
+          initForNotification:NSWindowDidBecomeKeyNotification
+                       object:widget->GetNativeWindow()]);
+  widget->Show();
+  EXPECT_TRUE([waiter wait]);
+  EXPECT_TRUE([widget->GetNativeWindow() isKeyWindow]);
+}
+
+NSData* ViewAsTIFF(NSView* view) {
+  NSBitmapImageRep* bitmap =
+      [view bitmapImageRepForCachingDisplayInRect:[view bounds]];
+  [view cacheDisplayInRect:[view bounds] toBitmapImageRep:bitmap];
+  return [bitmap TIFFRepresentation];
+}
+
+class TestBubbleView : public BubbleDialogDelegateView {
+ public:
+  explicit TestBubbleView(Widget* parent) {
+    SetAnchorView(parent->GetContentsView());
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(TestBubbleView);
+};
+
+}  // namespace
+
+// Test that parent windows keep their traffic lights enabled when showing
+// dialogs.
+TEST_F(NativeWidgetMacInteractiveUITest, ParentWindowTrafficLights) {
+  Widget* parent_widget = CreateTopLevelPlatformWidget();
+  parent_widget->SetBounds(gfx::Rect(100, 100, 100, 100));
+  ShowKeyWindow(parent_widget);
+
+  NSWindow* parent = parent_widget->GetNativeWindow();
+  EXPECT_TRUE([parent isMainWindow]);
+
+  NSButton* button = [parent standardWindowButton:NSWindowCloseButton];
+  EXPECT_TRUE(button);
+  NSData* active_button_image = ViewAsTIFF(button);
+  EXPECT_TRUE(active_button_image);
+
+  // Pop open a bubble on the parent Widget. When the visibility of Bubbles with
+  // an anchor View changes, BubbleDialogDelegateView::HandleVisibilityChanged()
+  // updates Widget::SetAlwaysRenderAsActive(..) accordingly.
+  ShowKeyWindow(BubbleDialogDelegateView::CreateBubble(
+      new TestBubbleView(parent_widget)));
+
+  // Ensure the button instance is still valid.
+  EXPECT_EQ(button, [parent standardWindowButton:NSWindowCloseButton]);
+
+  // Parent window should still be main, and have its traffic lights active.
+  EXPECT_TRUE([parent isMainWindow]);
+  EXPECT_FALSE([parent isKeyWindow]);
+
+  // Enabled status doesn't actually change, but check anyway.
+  EXPECT_TRUE([button isEnabled]);
+  NSData* button_image_with_child = ViewAsTIFF(button);
+  EXPECT_TRUE([active_button_image isEqualToData:button_image_with_child]);
+
+  // Verify that activating some other random window does change the button.
+  // When the bubble loses activation, it will dismiss itself and update
+  // Widget::SetAlwaysRenderAsActive().
+  Widget* other_widget = CreateTopLevelPlatformWidget();
+  other_widget->SetBounds(gfx::Rect(200, 200, 100, 100));
+  ShowKeyWindow(other_widget);
+  EXPECT_FALSE([parent isMainWindow]);
+  EXPECT_FALSE([parent isKeyWindow]);
+  EXPECT_TRUE([button isEnabled]);
+  NSData* inactive_button_image = ViewAsTIFF(button);
+  EXPECT_FALSE([active_button_image isEqualToData:inactive_button_image]);
+
+  other_widget->CloseNow();
+  parent_widget->CloseNow();
 }
 
 INSTANTIATE_TEST_CASE_P(NativeWidgetMacInteractiveUITestInstance,

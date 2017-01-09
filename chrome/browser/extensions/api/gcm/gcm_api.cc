@@ -4,11 +4,15 @@
 
 #include "chrome/browser/extensions/api/gcm/gcm_api.h"
 
+#include <stddef.h>
 #include <algorithm>
 #include <map>
+#include <utility>
 #include <vector>
 
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "chrome/browser/profiles/profile.h"
@@ -109,7 +113,7 @@ GcmRegisterFunction::GcmRegisterFunction() {}
 GcmRegisterFunction::~GcmRegisterFunction() {}
 
 bool GcmRegisterFunction::DoWork() {
-  scoped_ptr<api::gcm::Register::Params> params(
+  std::unique_ptr<api::gcm::Register::Params> params(
       api::gcm::Register::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -124,7 +128,7 @@ bool GcmRegisterFunction::DoWork() {
 void GcmRegisterFunction::CompleteFunctionWithResult(
     const std::string& registration_id,
     gcm::GCMClient::Result result) {
-  SetResult(new base::StringValue(registration_id));
+  SetResult(base::MakeUnique<base::StringValue>(registration_id));
   SetError(GcmResultToError(result));
   SendResponse(gcm::GCMClient::SUCCESS == result);
 }
@@ -154,7 +158,7 @@ GcmSendFunction::GcmSendFunction() {}
 GcmSendFunction::~GcmSendFunction() {}
 
 bool GcmSendFunction::DoWork() {
-  scoped_ptr<api::gcm::Send::Params> params(
+  std::unique_ptr<api::gcm::Send::Params> params(
       api::gcm::Send::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
   EXTENSION_FUNCTION_VALIDATE(
@@ -178,7 +182,7 @@ bool GcmSendFunction::DoWork() {
 void GcmSendFunction::CompleteFunctionWithResult(
     const std::string& message_id,
     gcm::GCMClient::Result result) {
-  SetResult(new base::StringValue(message_id));
+  SetResult(base::MakeUnique<base::StringValue>(message_id));
   SetError(GcmResultToError(result));
   SendResponse(gcm::GCMClient::SUCCESS == result);
 }
@@ -214,17 +218,19 @@ void GcmJsEventRouter::OnMessage(const std::string& app_id,
   if (!message.collapse_key.empty())
     message_arg.collapse_key.reset(new std::string(message.collapse_key));
 
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::GCM_ON_MESSAGE, api::gcm::OnMessage::kEventName,
-                api::gcm::OnMessage::Create(message_arg).Pass(), profile_));
-  EventRouter::Get(profile_)->DispatchEventToExtension(app_id, event.Pass());
+                api::gcm::OnMessage::Create(message_arg), profile_));
+  EventRouter::Get(profile_)
+      ->DispatchEventToExtension(app_id, std::move(event));
 }
 
 void GcmJsEventRouter::OnMessagesDeleted(const std::string& app_id) {
-  scoped_ptr<Event> event(new Event(
+  std::unique_ptr<Event> event(new Event(
       events::GCM_ON_MESSAGES_DELETED, api::gcm::OnMessagesDeleted::kEventName,
-      api::gcm::OnMessagesDeleted::Create().Pass(), profile_));
-  EventRouter::Get(profile_)->DispatchEventToExtension(app_id, event.Pass());
+      api::gcm::OnMessagesDeleted::Create(), profile_));
+  EventRouter::Get(profile_)
+      ->DispatchEventToExtension(app_id, std::move(event));
 }
 
 void GcmJsEventRouter::OnSendError(
@@ -235,10 +241,11 @@ void GcmJsEventRouter::OnSendError(
   error.error_message = GcmResultToError(send_error_details.result);
   error.details.additional_properties = send_error_details.additional_data;
 
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::GCM_ON_SEND_ERROR, api::gcm::OnSendError::kEventName,
-                api::gcm::OnSendError::Create(error).Pass(), profile_));
-  EventRouter::Get(profile_)->DispatchEventToExtension(app_id, event.Pass());
+                api::gcm::OnSendError::Create(error), profile_));
+  EventRouter::Get(profile_)
+      ->DispatchEventToExtension(app_id, std::move(event));
 }
 
 }  // namespace extensions

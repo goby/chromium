@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
@@ -50,7 +53,7 @@ class HistoryDataLoadWaiter : public HistoryDataObserver {
   void OnHistoryDataLoadedFromStore() override { run_loop_->Quit(); }
 
   HistoryData* data_;  // Not owned.
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(HistoryDataLoadWaiter);
 };
@@ -78,7 +81,7 @@ class StoreFlushWaiter {
   }
 
   HistoryDataStore* store_;  // Not owned.
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(StoreFlushWaiter);
 };
@@ -93,7 +96,7 @@ class SearchHistoryTest : public testing::Test {
   // testing::Test overrides:
   void SetUp() override {
     worker_pool_owner_.reset(
-        new base::SequencedWorkerPoolOwner(1, "AppLauncherTest"));
+        new base::SequencedWorkerPoolOwner(2, "AppLauncherTest"));
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     CreateHistory();
   }
@@ -104,7 +107,7 @@ class SearchHistoryTest : public testing::Test {
   void CreateHistory() {
     const char kStoreDataFileName[] = "app-launcher-test";
     const base::FilePath data_file =
-        temp_dir_.path().AppendASCII(kStoreDataFileName);
+        temp_dir_.GetPath().AppendASCII(kStoreDataFileName);
     scoped_refptr<DictionaryDataStore> dictionary_data_store(
         new DictionaryDataStore(data_file, worker_pool_owner_->pool().get()));
     history_.reset(new History(scoped_refptr<HistoryDataStore>(
@@ -125,7 +128,7 @@ class SearchHistoryTest : public testing::Test {
   }
 
   size_t GetKnownResults(const std::string& query) {
-    known_results_ = history()->GetKnownResults(query).Pass();
+    known_results_ = history()->GetKnownResults(query);
     return known_results_->size();
   }
 
@@ -143,10 +146,10 @@ class SearchHistoryTest : public testing::Test {
  private:
   base::MessageLoopForUI message_loop_;
   base::ScopedTempDir temp_dir_;
-  scoped_ptr<base::SequencedWorkerPoolOwner> worker_pool_owner_;
+  std::unique_ptr<base::SequencedWorkerPoolOwner> worker_pool_owner_;
 
-  scoped_ptr<History> history_;
-  scoped_ptr<KnownResults> known_results_;
+  std::unique_ptr<History> history_;
+  std::unique_ptr<KnownResults> known_results_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchHistoryTest);
 };

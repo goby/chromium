@@ -2,20 +2,25 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/history/history_service_factory.h"
+#include "chrome/browser/history/history_test_utils.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
@@ -23,6 +28,7 @@
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/history/core/browser/history_db_task.h"
 #include "components/history/core/browser/history_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_browser_thread.h"
@@ -35,33 +41,6 @@ namespace {
 
 const base::FilePath::CharType kDocRoot[] =
     FILE_PATH_LITERAL("chrome/test/data");
-
-// Note: WaitableEvent is not used for synchronization between the main thread
-// and history backend thread because the history subsystem posts tasks back
-// to the main thread. Had we tried to Signal an event in such a task
-// and Wait for it on the main thread, the task would not run at all because
-// the main thread would be blocked on the Wait call, resulting in a deadlock.
-
-// A task to be scheduled on the history backend thread.
-// Notifies the main thread after all history backend thread tasks have run.
-class WaitForHistoryTask : public history::HistoryDBTask {
- public:
-  WaitForHistoryTask() {}
-
-  bool RunOnDBThread(history::HistoryBackend* backend,
-                     history::HistoryDatabase* db) override {
-    return true;
-  }
-
-  void DoneRunOnMainThread() override {
-    base::MessageLoop::current()->QuitWhenIdle();
-  }
-
- private:
-  ~WaitForHistoryTask() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(WaitForHistoryTask);
-};
 
 }  // namespace
 
@@ -93,15 +72,6 @@ class HistoryBrowserTest : public InProcessBrowserTest {
     return ui_test_utils::GetTestUrl(
         base::FilePath(base::FilePath::kCurrentDirectory),
         base::FilePath(FILE_PATH_LITERAL("title2.html")));
-  }
-
-  void WaitForHistoryBackendToRun() {
-    base::CancelableTaskTracker task_tracker;
-    scoped_ptr<history::HistoryDBTask> task(new WaitForHistoryTask());
-    history::HistoryService* history = HistoryServiceFactory::GetForProfile(
-        GetProfile(), ServiceAccessType::EXPLICIT_ACCESS);
-    history->ScheduleDBTask(task.Pass(), &task_tracker);
-    content::RunMessageLoop();
   }
 
   void ExpectEmptyHistory() {
@@ -140,7 +110,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, SavingHistoryEnabled) {
   ExpectEmptyHistory();
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
 
   {
     std::vector<GURL> urls(GetHistoryContents());
@@ -163,7 +133,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, SavingHistoryDisabled) {
   ExpectEmptyHistory();
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
   ExpectEmptyHistory();
 }
 
@@ -176,7 +146,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, SavingHistoryEnabledThenDisabled) {
       browser()->profile(), ServiceAccessType::EXPLICIT_ACCESS));
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
 
   {
     std::vector<GURL> urls(GetHistoryContents());
@@ -187,7 +157,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, SavingHistoryEnabledThenDisabled) {
   GetPrefs()->SetBoolean(prefs::kSavingBrowserHistoryDisabled, true);
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
 
   {
     // No additional entries should be present in the history.
@@ -207,13 +177,13 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, SavingHistoryDisabledThenEnabled) {
   ExpectEmptyHistory();
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
   ExpectEmptyHistory();
 
   GetPrefs()->SetBoolean(prefs::kSavingBrowserHistoryDisabled, false);
 
   ui_test_utils::NavigateToURL(browser(), GetTestUrl());
-  WaitForHistoryBackendToRun();
+  WaitForHistoryBackendToRun(GetProfile());
 
   {
     std::vector<GURL> urls(GetHistoryContents());
@@ -265,7 +235,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest,
 
   content::SimulateMouseClick(
       browser()->tab_strip_model()->GetActiveWebContents(), 0,
-      blink::WebMouseEvent::ButtonLeft);
+      blink::WebMouseEvent::Button::Left);
   LoadAndWaitForFile("history_length_test_page_11.html");
 }
 
@@ -290,6 +260,11 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest,
 #define MAYBE_HistorySearchXSS HistorySearchXSS
 #endif
 IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, MAYBE_HistorySearchXSS) {
+  // TODO(tsergeant): Enable this test on MD History once it is possible to pass
+  // in a query via URL (crbug.com/619799).
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(features::kMaterialDesignHistory);
+
   GURL url(std::string(chrome::kChromeUIHistoryURL) +
       "#q=%3Cimg%20src%3Dx%3Ax%20onerror%3D%22document.title%3D'XSS'%22%3E");
   ui_test_utils::NavigateToURL(browser(), url);
@@ -328,6 +303,19 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, InvalidURLNoHistory) {
   ExpectEmptyHistory();
 }
 
+// URLs with special schemes should not go in history.
+IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, InvalidSchemeNoHistory) {
+  GURL about_blank("about:blank");
+  ui_test_utils::NavigateToURL(browser(), about_blank);
+  ExpectEmptyHistory();
+  GURL view_source("view-source:about:blank");
+  ui_test_utils::NavigateToURL(browser(), view_source);
+  ExpectEmptyHistory();
+  GURL chrome("chrome://about");
+  ui_test_utils::NavigateToURL(browser(), chrome);
+  ExpectEmptyHistory();
+}
+
 // New tab page should not show up in history.
 IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, NewTabNoHistory) {
   ui_test_utils::NavigateToURL(browser(), GURL(chrome::kChromeUINewTabURL));
@@ -363,10 +351,10 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, MultiTabsWindowsHistory) {
   Browser* browser2 = CreateBrowser(browser()->profile());
   ui_test_utils::NavigateToURL(browser2, url2);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser2, url3, NEW_FOREGROUND_TAB,
+      browser2, url3, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser2, url4, NEW_FOREGROUND_TAB,
+      browser2, url4, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   std::vector<GURL> urls(GetHistoryContents());
@@ -427,7 +415,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, ReloadBringPageToTop) {
 
   ui_test_utils::NavigateToURL(browser(), url1);
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url2, NEW_BACKGROUND_TAB,
+      browser(), url2, WindowOpenDisposition::NEW_BACKGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
 
   std::vector<GURL> urls(GetHistoryContents());
@@ -457,7 +445,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, BackForwardBringPageToTop) {
 
   content::WebContents* tab =
       browser()->tab_strip_model()->GetActiveWebContents();
-  chrome::GoBack(browser(), CURRENT_TAB);
+  chrome::GoBack(browser(), WindowOpenDisposition::CURRENT_TAB);
   content::WaitForLoadStop(tab);
 
   std::vector<GURL> urls(GetHistoryContents());
@@ -465,7 +453,7 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, BackForwardBringPageToTop) {
   ASSERT_EQ(url1, urls[0]);
   ASSERT_EQ(url2, urls[1]);
 
-  chrome::GoForward(browser(), CURRENT_TAB);
+  chrome::GoForward(browser(), WindowOpenDisposition::CURRENT_TAB);
   content::WaitForLoadStop(tab);
   urls = GetHistoryContents();
   ASSERT_EQ(2u, urls.size());
@@ -513,9 +501,8 @@ IN_PROC_BROWSER_TEST_F(HistoryBrowserTest, OneHistoryTabPerWindow) {
   EXPECT_EQ(expected_title, title_watcher.WaitAndGetTitle());
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(),
-      GURL(url::kAboutBlankURL),
-      NEW_FOREGROUND_TAB,
+      browser(), GURL(url::kAboutBlankURL),
+      WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   chrome::ExecuteCommand(browser(), IDC_SHOW_HISTORY);
 

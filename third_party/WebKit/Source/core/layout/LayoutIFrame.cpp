@@ -23,56 +23,41 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/layout/LayoutIFrame.h"
 
-#include "core/HTMLNames.h"
-#include "core/frame/FrameView.h"
-#include "core/frame/LocalFrame.h"
-#include "core/html/HTMLIFrameElement.h"
 #include "core/layout/LayoutAnalyzer.h"
-#include "core/layout/LayoutView.h"
 
 namespace blink {
 
-using namespace HTMLNames;
+LayoutIFrame::LayoutIFrame(Element* element) : LayoutPart(element) {}
 
-LayoutIFrame::LayoutIFrame(Element* element)
-    : LayoutPart(element)
-{
+bool LayoutIFrame::shouldComputeSizeAsReplaced() const {
+  return true;
 }
 
-bool LayoutIFrame::shouldComputeSizeAsReplaced() const
-{
-    return true;
+bool LayoutIFrame::isInlineBlockOrInlineTable() const {
+  return isInline();
 }
 
-bool LayoutIFrame::isInlineBlockOrInlineTable() const
-{
-    return isInline();
+PaintLayerType LayoutIFrame::layerTypeRequired() const {
+  if (style()->resize() != RESIZE_NONE)
+    return NormalPaintLayer;
+  return LayoutPart::layerTypeRequired();
 }
 
-PaintLayerType LayoutIFrame::layerTypeRequired() const
-{
-    if (style()->resize() != RESIZE_NONE)
-        return NormalPaintLayer;
-    return LayoutPart::layerTypeRequired();
+void LayoutIFrame::layout() {
+  ASSERT(needsLayout());
+  LayoutAnalyzer::Scope analyzer(*this);
+
+  updateLogicalWidth();
+  // No kids to layout as a replaced element.
+  updateLogicalHeight();
+
+  m_overflow.reset();
+  addVisualEffectOverflow();
+  updateLayerTransformAfterLayout();
+
+  clearNeedsLayout();
 }
 
-void LayoutIFrame::layout()
-{
-    ASSERT(needsLayout());
-    LayoutAnalyzer::Scope analyzer(*this);
-
-    updateLogicalWidth();
-    // No kids to layout as a replaced element.
-    updateLogicalHeight();
-
-    m_overflow.clear();
-    addVisualEffectOverflow();
-    updateLayerTransformAfterLayout();
-
-    clearNeedsLayout();
-}
-
-}
+}  // namespace blink

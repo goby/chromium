@@ -24,7 +24,6 @@
  * ings in this Software without prior written authorization from him.
  */
 
-#include "config.h"
 #include "core/xml/XSLTExtensions.h"
 
 #include "platform/RuntimeEnabledFeatures.h"
@@ -38,41 +37,41 @@ namespace blink {
 
 // FIXME: This code is taken from libexslt 1.1.11; should sync with newer
 // versions.
-static void exsltNodeSetFunction(xmlXPathParserContextPtr ctxt, int nargs)
-{
-    xmlChar* strval;
-    xmlNodePtr retNode;
-    xmlXPathObjectPtr ret;
+static void exsltNodeSetFunction(xmlXPathParserContextPtr ctxt, int nargs) {
+  xmlChar* strval;
+  xmlNodePtr retNode;
+  xmlXPathObjectPtr ret;
 
-    if (nargs != 1) {
-        xmlXPathSetArityError(ctxt);
-        return;
-    }
+  if (nargs != 1) {
+    xmlXPathSetArityError(ctxt);
+    return;
+  }
 
-    if (xmlXPathStackIsNodeSet(ctxt)) {
-        xsltFunctionNodeSet(ctxt, nargs);
-        return;
-    }
+  if (xmlXPathStackIsNodeSet(ctxt)) {
+    xsltFunctionNodeSet(ctxt, nargs);
+    return;
+  }
 
-    strval = xmlXPathPopString(ctxt);
-    retNode = xmlNewDocText(0, strval);
-    ret = xmlXPathNewValueTree(retNode);
+  strval = xmlXPathPopString(ctxt);
+  retNode = xmlNewDocText(0, strval);
+  ret = xmlXPathNewValueTree(retNode);
 
-    // FIXME: It might be helpful to push any errors from xmlXPathNewValueTree
-    // up to the Javascript Console.
-    if (ret)
-        ret->type = XPATH_NODESET;
+  // FIXME: It might be helpful to push any errors from xmlXPathNewValueTree
+  // up to the Javascript Console.
+  if (ret)
+    ret->type = XPATH_NODESET;
 
-    if (strval)
-        xmlFree(strval);
+  if (strval)
+    xmlFree(strval);
 
-    valuePush(ctxt, ret);
+  valuePush(ctxt, ret);
 }
 
-void registerXSLTExtensions(xsltTransformContextPtr ctxt)
-{
-    ASSERT(RuntimeEnabledFeatures::xsltEnabled());
-    xsltRegisterExtFunction(ctxt, (const xmlChar*)"node-set", (const xmlChar*)"http://exslt.org/common", exsltNodeSetFunction);
+void registerXSLTExtensions(xsltTransformContextPtr ctxt) {
+  DCHECK(RuntimeEnabledFeatures::xsltEnabled());
+  xsltRegisterExtFunction(ctxt, (const xmlChar*)"node-set",
+                          (const xmlChar*)"http://exslt.org/common",
+                          exsltNodeSetFunction);
 }
 
-} // namespace blink
+}  // namespace blink

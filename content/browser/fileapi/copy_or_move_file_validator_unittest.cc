@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+#include <stdint.h>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/mock_special_storage_policy.h"
 #include "content/public/test/test_file_system_backend.h"
@@ -57,7 +61,7 @@ class CopyOrMoveFileValidatorTestHelper {
 
   void SetUp() {
     ASSERT_TRUE(base_.CreateUniqueTempDir());
-    base::FilePath base_dir = base_.path();
+    base::FilePath base_dir = base_.GetPath();
 
     file_system_context_ = CreateFileSystemContextForTesting(NULL, base_dir);
 
@@ -96,10 +100,10 @@ class CopyOrMoveFileValidatorTestHelper {
   }
 
   void SetMediaCopyOrMoveFileValidatorFactory(
-      scoped_ptr<storage::CopyOrMoveFileValidatorFactory> factory) {
+      std::unique_ptr<storage::CopyOrMoveFileValidatorFactory> factory) {
     TestFileSystemBackend* backend = static_cast<TestFileSystemBackend*>(
         file_system_context_->GetFileSystemBackend(kWithValidatorType));
-    backend->InitializeCopyOrMoveFileValidatorFactory(factory.Pass());
+    backend->InitializeCopyOrMoveFileValidatorFactory(std::move(factory));
   }
 
   void CopyTest(base::File::Error expected) {
@@ -161,7 +165,7 @@ class CopyOrMoveFileValidatorTestHelper {
                                                 url);
   }
 
-  bool FileExists(const FileSystemURL& url, int64 expected_size) {
+  bool FileExists(const FileSystemURL& url, int64_t expected_size) {
     return AsyncFileTestHelper::FileExists(
         file_system_context_.get(), url, expected_size);
   }
@@ -277,9 +281,9 @@ TEST(CopyOrMoveFileValidatorTest, AcceptAll) {
                                            kNoValidatorType,
                                            kWithValidatorType);
   helper.SetUp();
-  scoped_ptr<CopyOrMoveFileValidatorFactory> factory(
+  std::unique_ptr<CopyOrMoveFileValidatorFactory> factory(
       new TestCopyOrMoveFileValidatorFactory(VALID));
-  helper.SetMediaCopyOrMoveFileValidatorFactory(factory.Pass());
+  helper.SetMediaCopyOrMoveFileValidatorFactory(std::move(factory));
 
   helper.CopyTest(base::File::FILE_OK);
   helper.MoveTest(base::File::FILE_OK);
@@ -290,9 +294,9 @@ TEST(CopyOrMoveFileValidatorTest, AcceptNone) {
                                            kNoValidatorType,
                                            kWithValidatorType);
   helper.SetUp();
-  scoped_ptr<CopyOrMoveFileValidatorFactory> factory(
+  std::unique_ptr<CopyOrMoveFileValidatorFactory> factory(
       new TestCopyOrMoveFileValidatorFactory(PRE_WRITE_INVALID));
-  helper.SetMediaCopyOrMoveFileValidatorFactory(factory.Pass());
+  helper.SetMediaCopyOrMoveFileValidatorFactory(std::move(factory));
 
   helper.CopyTest(base::File::FILE_ERROR_SECURITY);
   helper.MoveTest(base::File::FILE_ERROR_SECURITY);
@@ -304,13 +308,13 @@ TEST(CopyOrMoveFileValidatorTest, OverrideValidator) {
                                            kNoValidatorType,
                                            kWithValidatorType);
   helper.SetUp();
-  scoped_ptr<CopyOrMoveFileValidatorFactory> reject_factory(
+  std::unique_ptr<CopyOrMoveFileValidatorFactory> reject_factory(
       new TestCopyOrMoveFileValidatorFactory(PRE_WRITE_INVALID));
-  helper.SetMediaCopyOrMoveFileValidatorFactory(reject_factory.Pass());
+  helper.SetMediaCopyOrMoveFileValidatorFactory(std::move(reject_factory));
 
-  scoped_ptr<CopyOrMoveFileValidatorFactory> accept_factory(
+  std::unique_ptr<CopyOrMoveFileValidatorFactory> accept_factory(
       new TestCopyOrMoveFileValidatorFactory(VALID));
-  helper.SetMediaCopyOrMoveFileValidatorFactory(accept_factory.Pass());
+  helper.SetMediaCopyOrMoveFileValidatorFactory(std::move(accept_factory));
 
   helper.CopyTest(base::File::FILE_ERROR_SECURITY);
   helper.MoveTest(base::File::FILE_ERROR_SECURITY);
@@ -321,9 +325,9 @@ TEST(CopyOrMoveFileValidatorTest, RejectPostWrite) {
                                            kNoValidatorType,
                                            kWithValidatorType);
   helper.SetUp();
-  scoped_ptr<CopyOrMoveFileValidatorFactory> factory(
+  std::unique_ptr<CopyOrMoveFileValidatorFactory> factory(
       new TestCopyOrMoveFileValidatorFactory(POST_WRITE_INVALID));
-  helper.SetMediaCopyOrMoveFileValidatorFactory(factory.Pass());
+  helper.SetMediaCopyOrMoveFileValidatorFactory(std::move(factory));
 
   helper.CopyTest(base::File::FILE_ERROR_SECURITY);
   helper.MoveTest(base::File::FILE_ERROR_SECURITY);

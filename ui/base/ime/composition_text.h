@@ -5,6 +5,8 @@
 #ifndef UI_BASE_IME_COMPOSITION_TEXT_H_
 #define UI_BASE_IME_COMPOSITION_TEXT_H_
 
+#include <stddef.h>
+
 #include "base/strings/string16.h"
 #include "ui/base/ime/composition_underline.h"
 #include "ui/base/ime/ui_base_ime_export.h"
@@ -15,6 +17,7 @@ namespace ui {
 // A struct represents the status of an ongoing composition text.
 struct UI_BASE_IME_EXPORT CompositionText {
   CompositionText();
+  CompositionText(const CompositionText& other);
   ~CompositionText();
 
   bool operator==(const CompositionText& rhs) const {

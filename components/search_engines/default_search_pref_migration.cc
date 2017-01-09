@@ -4,15 +4,19 @@
 
 #include "components/search_engines/default_search_pref_migration.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
+#include "components/prefs/pref_service.h"
 #include "components/search_engines/default_search_manager.h"
 #include "components/search_engines/search_engines_pref_names.h"
 #include "components/search_engines/template_url_data.h"
@@ -22,26 +26,26 @@
 namespace {
 
 // Loads the user-selected DSE (if there is one) from legacy preferences.
-scoped_ptr<TemplateURLData> LoadDefaultSearchProviderFromLegacyPrefs(
+std::unique_ptr<TemplateURLData> LoadDefaultSearchProviderFromLegacyPrefs(
     PrefService* prefs) {
   if (!prefs->HasPrefPath(prefs::kDefaultSearchProviderSearchURL) ||
       !prefs->HasPrefPath(prefs::kDefaultSearchProviderKeyword))
-    return scoped_ptr<TemplateURLData>();
+    return std::unique_ptr<TemplateURLData>();
 
   const PrefService::Preference* pref =
       prefs->FindPreference(prefs::kDefaultSearchProviderSearchURL);
   DCHECK(pref);
   if (pref->IsManaged())
-    return scoped_ptr<TemplateURLData>();
+    return std::unique_ptr<TemplateURLData>();
 
   base::string16 keyword =
       base::UTF8ToUTF16(prefs->GetString(prefs::kDefaultSearchProviderKeyword));
   std::string search_url =
       prefs->GetString(prefs::kDefaultSearchProviderSearchURL);
   if (keyword.empty() || search_url.empty())
-    return scoped_ptr<TemplateURLData>();
+    return std::unique_ptr<TemplateURLData>();
 
-  scoped_ptr<TemplateURLData> default_provider_data(new TemplateURLData);
+  std::unique_ptr<TemplateURLData> default_provider_data(new TemplateURLData);
   default_provider_data->SetShortName(
       base::UTF8ToUTF16(prefs->GetString(prefs::kDefaultSearchProviderName)));
   default_provider_data->SetKeyword(keyword);
@@ -64,7 +68,6 @@ scoped_ptr<TemplateURLData> LoadDefaultSearchProviderFromLegacyPrefs(
       prefs->GetString(prefs::kDefaultSearchProviderImageURLPostParams);
   default_provider_data->favicon_url =
       GURL(prefs->GetString(prefs::kDefaultSearchProviderIconURL));
-  default_provider_data->show_in_default_list = true;
   default_provider_data->search_terms_replacement_key =
       prefs->GetString(prefs::kDefaultSearchProviderSearchTermsReplacementKey);
   default_provider_data->input_encodings = base::SplitString(
@@ -82,7 +85,7 @@ scoped_ptr<TemplateURLData> LoadDefaultSearchProviderFromLegacyPrefs(
 
   std::string id_string = prefs->GetString(prefs::kDefaultSearchProviderID);
   if (!id_string.empty()) {
-    int64 value;
+    int64_t value;
     base::StringToInt64(id_string, &value);
     default_provider_data->id = value;
   }
@@ -95,7 +98,7 @@ scoped_ptr<TemplateURLData> LoadDefaultSearchProviderFromLegacyPrefs(
     default_provider_data->prepopulate_id = value;
   }
 
-  return default_provider_data.Pass();
+  return default_provider_data;
 }
 
 void ClearDefaultSearchProviderFromLegacyPrefs(PrefService* prefs) {
@@ -120,7 +123,7 @@ void ClearDefaultSearchProviderFromLegacyPrefs(PrefService* prefs) {
 void MigrateDefaultSearchPref(PrefService* pref_service) {
   DCHECK(pref_service);
 
-  scoped_ptr<TemplateURLData> legacy_dse_from_prefs =
+  std::unique_ptr<TemplateURLData> legacy_dse_from_prefs =
       LoadDefaultSearchProviderFromLegacyPrefs(pref_service);
   if (!legacy_dse_from_prefs)
     return;

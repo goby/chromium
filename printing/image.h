@@ -5,10 +5,12 @@
 #ifndef PRINTING_IMAGE_H_
 #define PRINTING_IMAGE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/logging.h"
 #include "printing/printing_export.h"
 #include "ui/gfx/geometry/size.h"
@@ -25,11 +27,6 @@ class Metafile;
 // The main purpose is testing image contents.
 class PRINTING_EXPORT Image {
  public:
-  // Creates the image from the given file on disk.  Uses extension to
-  // defer file type. PNG and EMF (on Windows) currently supported.
-  // If image loading fails size().IsEmpty() will be true.
-  explicit Image(const base::FilePath& path);
-
   // Creates the image from the metafile.  Deduces bounds based on bounds in
   // metafile.  If loading fails size().IsEmpty() will be true.
   explicit Image(const Metafile& metafile);
@@ -74,8 +71,6 @@ class PRINTING_EXPORT Image {
   Image(const void* data, size_t size);
 
   bool LoadPng(const std::string& compressed);
-
-  bool LoadMetafile(const std::string& data);
 
   bool LoadMetafile(const Metafile& metafile);
 

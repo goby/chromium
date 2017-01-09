@@ -4,11 +4,12 @@
 
 #include "remoting/host/win/worker_process_launcher.h"
 
+#include <utility>
+
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/time.h"
-#include "base/win/windows_version.h"
 #include "ipc/ipc_message.h"
 #include "remoting/host/chromoting_messages.h"
 #include "remoting/host/host_exit_codes.h"
@@ -48,14 +49,13 @@ const int kLaunchResultTimeoutSeconds = 5;
 
 namespace remoting {
 
-WorkerProcessLauncher::Delegate::~Delegate() {
-}
+WorkerProcessLauncher::Delegate::~Delegate() {}
 
 WorkerProcessLauncher::WorkerProcessLauncher(
-    scoped_ptr<WorkerProcessLauncher::Delegate> launcher_delegate,
+    std::unique_ptr<WorkerProcessLauncher::Delegate> launcher_delegate,
     WorkerProcessIpcDelegate* ipc_handler)
     : ipc_handler_(ipc_handler),
-      launcher_delegate_(launcher_delegate.Pass()),
+      launcher_delegate_(std::move(launcher_delegate)),
       exit_code_(CONTROL_C_EXIT),
       ipc_enabled_(false),
       kill_process_timeout_(
@@ -119,7 +119,7 @@ void WorkerProcessLauncher::OnProcessLaunched(
   }
 
   ipc_enabled_ = true;
-  worker_process_ = worker_process.Pass();
+  worker_process_ = std::move(worker_process);
 }
 
 void WorkerProcessLauncher::OnFatalError() {
@@ -138,7 +138,7 @@ bool WorkerProcessLauncher::OnMessageReceived(
   return ipc_handler_->OnMessageReceived(message);
 }
 
-void WorkerProcessLauncher::OnChannelConnected(int32 peer_pid) {
+void WorkerProcessLauncher::OnChannelConnected(int32_t peer_pid) {
   DCHECK(CalledOnValidThread());
 
   if (!ipc_enabled_)

@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/ui/tabs/pinned_tab_service.h"
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/tabs/pinned_tab_codec.h"
-#include "chrome/browser/ui/tabs/pinned_tab_service.h"
 #include "chrome/browser/ui/tabs/pinned_tab_service_factory.h"
 #include "chrome/browser/ui/tabs/pinned_tab_test_utils.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
@@ -19,9 +22,9 @@
 
 namespace {
 
-scoped_ptr<KeyedService> BuildPinnedTabService(
+std::unique_ptr<KeyedService> BuildPinnedTabService(
     content::BrowserContext* profile) {
-  return make_scoped_ptr(new PinnedTabService(static_cast<Profile*>(profile)));
+  return base::MakeUnique<PinnedTabService>(static_cast<Profile*>(profile));
 }
 
 PinnedTabService* BuildForProfile(Profile* profile) {
@@ -54,9 +57,8 @@ TEST_F(PinnedTabServiceTest, Popup) {
   browser()->tab_strip_model()->SetTabPinned(0, true);
 
   // Create a popup.
-  Browser::CreateParams params(Browser::TYPE_POPUP, profile(),
-                               browser()->host_desktop_type());
-  scoped_ptr<Browser> popup(
+  Browser::CreateParams params(Browser::TYPE_POPUP, profile());
+  std::unique_ptr<Browser> popup(
       chrome::CreateBrowserWithTestWindowForParams(&params));
 
   // Close the browser. This should trigger saving the tabs. No need to destroy

@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <utility>
+
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "chromeos/geolocation/geoposition.h"
@@ -86,7 +90,7 @@ class TestTimeZoneAPIURLFetcherCallback {
         attempts_(0),
         provider_(provider) {}
 
-  scoped_ptr<net::FakeURLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* delegate,
       const std::string& response_data,
@@ -94,7 +98,7 @@ class TestTimeZoneAPIURLFetcherCallback {
       net::URLRequestStatus::Status status) {
     EXPECT_EQ(provider_->requests_.size(), 1U);
 
-    TimeZoneRequest* timezone_request = provider_->requests_[0];
+    TimeZoneRequest* timezone_request = provider_->requests_[0].get();
 
     const base::TimeDelta base_retry_interval =
         base::TimeDelta::FromMilliseconds(kRequestRetryIntervalMilliSeconds);
@@ -109,13 +113,13 @@ class TestTimeZoneAPIURLFetcherCallback {
       status = net::URLRequestStatus::SUCCESS;
       factory_->SetFakeResponse(url, response_, response_code, status);
     }
-    scoped_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
+    std::unique_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
         url, delegate, response_, response_code, status));
     scoped_refptr<net::HttpResponseHeaders> download_headers =
         new net::HttpResponseHeaders(std::string());
     download_headers->AddHeader("Content-Type: application/json");
     fetcher->set_response_headers(download_headers);
-    return fetcher.Pass();
+    return fetcher;
   }
 
   void Initialize(net::FakeURLFetcherFactory* factory) {
@@ -162,8 +166,8 @@ class TimeZoneAPIFetcherFactory {
   size_t attempts() const { return url_callback_->attempts(); }
 
  private:
-  scoped_ptr<TestTimeZoneAPIURLFetcherCallback> url_callback_;
-  scoped_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
+  std::unique_ptr<TestTimeZoneAPIURLFetcherCallback> url_callback_;
+  std::unique_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TimeZoneAPIFetcherFactory);
 };
@@ -172,9 +176,9 @@ class TimeZoneReceiver {
  public:
   TimeZoneReceiver() : server_error_(false) {}
 
-  void OnRequestDone(scoped_ptr<TimeZoneResponseData> timezone,
+  void OnRequestDone(std::unique_ptr<TimeZoneResponseData> timezone,
                      bool server_error) {
-    timezone_ = timezone.Pass();
+    timezone_ = std::move(timezone);
     server_error_ = server_error;
 
     message_loop_runner_->Quit();
@@ -189,9 +193,9 @@ class TimeZoneReceiver {
   bool server_error() const { return server_error_; }
 
  private:
-  scoped_ptr<TimeZoneResponseData> timezone_;
+  std::unique_ptr<TimeZoneResponseData> timezone_;
   bool server_error_;
-  scoped_ptr<base::RunLoop> message_loop_runner_;
+  std::unique_ptr<base::RunLoop> message_loop_runner_;
 };
 
 class TimeZoneTest : public testing::Test {
@@ -275,12 +279,12 @@ TEST_F(TimeZoneTest, InvalidResponse) {
   EXPECT_GE(url_factory.attempts(), 2U);
   if (url_factory.attempts() > expected_retries + 1) {
     LOG(WARNING) << "TimeZoneTest::InvalidResponse: Too many attempts ("
-                 << url_factory.attempts() << "), no more then "
+                 << url_factory.attempts() << "), no more than "
                  << expected_retries + 1 << " expected.";
   }
   if (url_factory.attempts() < expected_retries - 1) {
     LOG(WARNING) << "TimeZoneTest::InvalidResponse: Too less attempts ("
-                 << url_factory.attempts() << "), greater then "
+                 << url_factory.attempts() << "), greater than "
                  << expected_retries - 1 << " expected.";
   }
 }

@@ -21,10 +21,15 @@ import logging
 import multiprocessing
 import os
 import re
+import struct
 import subprocess
 import time
+import zipfile
 
 import symbol
+
+
+from pylib import constants
 
 UNKNOWN = '<unknown>'
 HEAP = '[heap]'
@@ -33,14 +38,18 @@ _DEFAULT_JOBS=8
 _CHUNK_SIZE = 1000
 
 _BASE_APK = 'base.apk'
-_LIBCHROME_SO = 'libchrome.so'
+_FALLBACK_SO = 'libchrome.so'
 
+_ABI_LINE = re.compile('ABI: \'(?P<abi>[a-z0-9A-Z]+)\'')
 _PROCESS_INFO_LINE = re.compile('(pid: [0-9]+, tid: [0-9]+.*)')
+# Same as above, but used to extract the pid.
+_PROCESS_INFO_PID = re.compile('pid: ([0-9]+)')
 _SIGNAL_LINE = re.compile('(signal [0-9]+ \(.*\).*)')
 _REGISTER_LINE = re.compile('(([ ]*[0-9a-z]{2} [0-9a-f]{8}){4})')
 _THREAD_LINE = re.compile('(.*)(\-\-\- ){15}\-\-\-')
 _DALVIK_JNI_THREAD_LINE = re.compile("(\".*\" prio=[0-9]+ tid=[0-9]+ NATIVE.*)")
 _DALVIK_NATIVE_THREAD_LINE = re.compile("(\".*\" sysTid=[0-9]+ nice=[0-9]+.*)")
+_JAVA_STDERR_LINE = re.compile("([0-9]+)\s+[0-9]+\s+.\s+System.err:\s*(.+)")
 
 _WIDTH = '{8}'
 if symbol.ARCH == 'arm64' or symbol.ARCH == 'x86_64' or symbol.ARCH == 'x64':
@@ -89,6 +98,11 @@ code_line = re.compile('(.*)[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[a-f0-9]' + _WIDTH
                        '[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[a-f0-9]' + _WIDTH +
                        '[ \t]*[a-f0-9]' + _WIDTH + '[ \t]*[ \r\n]')  # pylint: disable-msg=C6310
 
+# This pattern is used to find shared library offset in APK.
+# Example:
+#    (offset 0x568000)
+_SHARED_LIB_OFFSET_IN_APK = re.compile(' \(offset 0x(?P<offset>[0-9a-f]{0,16})\)$')
+
 def PrintTraceLines(trace_lines):
   """Print back trace."""
   maxlen = max(map(lambda tl: len(tl[1]), trace_lines))
@@ -114,7 +128,16 @@ def PrintValueLines(value_lines):
   return
 
 
-def PrintOutput(trace_lines, value_lines, more_info):
+def PrintJavaLines(java_lines):
+  """Print java stderr lines."""
+  print
+  print 'Java stderr from crashing pid (may identify underlying Java exception):'
+  for l in java_lines:
+    if l.startswith('at'):
+      print ' ',
+    print l
+
+def PrintOutput(trace_lines, value_lines, java_lines, more_info):
   if trace_lines:
     PrintTraceLines(trace_lines)
   if value_lines:
@@ -125,22 +148,41 @@ def PrintOutput(trace_lines, value_lines, more_info):
     # libraries), don't completely disable them.
     if more_info:
       PrintValueLines(value_lines)
+  if java_lines:
+    PrintJavaLines(java_lines)
 
 def PrintDivider():
   print
   print '-----------------------------------------------------\n'
 
-def ConvertTrace(lines, load_vaddrs, more_info):
+def ConvertTrace(lines, load_vaddrs, more_info, fallback_monochrome, arch_defined):
   """Convert strings containing native crash to a stack."""
+  if fallback_monochrome:
+    global _FALLBACK_SO
+    _FALLBACK_SO = 'libmonochrome.so'
   start = time.time()
 
   chunks = [lines[i: i+_CHUNK_SIZE] for i in xrange(0, len(lines), _CHUNK_SIZE)]
   pool = multiprocessing.Pool(processes=_DEFAULT_JOBS)
-  useful_log = itertools.chain(*pool.map(PreProcessLog(load_vaddrs), chunks))
+  results = pool.map(PreProcessLog(load_vaddrs), chunks)
+  useful_log = []
+  so_dirs = []
+  for result in results:
+    useful_log += result[0]
+    so_dirs += result[1]
   pool.close()
   pool.join()
   end = time.time()
   logging.debug('Finished processing. Elapsed time: %.4fs', (end - start))
+  if so_dirs:
+    UpdateLibrarySearchPath(so_dirs)
+
+  # if arch isn't defined in command line, find it from log
+  if not arch_defined:
+    arch = FindAbi(useful_log)
+    if arch:
+      print ('Find ABI:' + arch)
+      symbol.ARCH = arch
 
   ResolveCrashSymbol(list(useful_log), more_info)
   end = time.time()
@@ -155,6 +197,37 @@ class PreProcessLog:
       load_vaddrs: LOAD segment min_vaddrs keyed on mapped executable
     """
     self._load_vaddrs = load_vaddrs;
+    # This is mapping from apk's offset to shared libraries.
+    self._shared_libraries_mapping = dict()
+    # The list of directires in which instead of default output dir,
+    # the shared libraries is found.
+    self._so_dirs = []
+
+  def _DetectSharedLibrary(self, lib, symbol_present):
+    """Detect the possible shared library from the mapping offset of APK
+    Return:
+       the shared library in APK if only one is found.
+    """
+    offset_match = _SHARED_LIB_OFFSET_IN_APK.match(symbol_present)
+    if not offset_match:
+      return
+    offset = offset_match.group('offset')
+    key = '%s:%s' % (lib, offset)
+    if self._shared_libraries_mapping.has_key(key):
+      soname = self._shared_libraries_mapping[key]
+    else:
+      soname, host_so = FindSharedLibraryFromAPKs(constants.GetOutDirectory(),
+                                                  int(offset, 16))
+      if soname:
+        self._shared_libraries_mapping[key] = soname
+        so_dir = os.path.dirname(host_so)
+        # Store the directory if it is not the default output dir, so
+        # we can update library search path in main process.
+        if not os.path.samefile(constants.GetOutDirectory(), so_dir):
+          self._so_dirs.append(so_dir)
+        print ("Detected: %s is %s which is loaded directly from APK."
+                % (host_so, soname))
+    return soname
 
   def _AdjustAddress(self, address, lib):
     """Add the vaddr of the library's first LOAD segment to address.
@@ -191,17 +264,25 @@ class PreProcessLog:
           or _DALVIK_JNI_THREAD_LINE.search(line)
           or _DALVIK_NATIVE_THREAD_LINE.search(line)
           or _LOG_FATAL_LINE.search(line)
-          or _DEBUG_TRACE_LINE.match(line)):
+          or _DEBUG_TRACE_LINE.search(line)
+          or _ABI_LINE.search(line)
+          or _JAVA_STDERR_LINE.search(line)):
         useful_log.append(line)
         continue
 
       match = _TRACE_LINE.match(line)
       if match:
-        # If the trace line suggests a direct load from APK, replace the
-        # APK name with libchrome.so. Current load from APK supports only
-        # single library load, so it must be libchrome.so that was loaded
-        # in this way.
-        line = line.replace('/' + _BASE_APK, '/' + _LIBCHROME_SO)
+        lib, symbol_present = match.group('lib', 'symbol_present')
+        if os.path.splitext(lib)[1] == '.apk' and symbol_present:
+          soname = self._DetectSharedLibrary(lib, symbol_present)
+          if soname:
+            line = line.replace('/' + os.path.basename(lib), '/' + soname)
+          else:
+            # If the trace line suggests a direct load from APK, replace the
+            # APK name with _FALLBACK_SO.
+            line = line.replace('/' + _BASE_APK, '/' + _FALLBACK_SO)
+            logging.debug("Can't detect shared library in APK, fallback to" +
+                          " library " + _FALLBACK_SO)
         # For trace lines specifically, the address may need to be adjusted
         # to account for relocation packing. This is because debuggerd on
         # pre-M platforms does not understand non-zero vaddr LOAD segments.
@@ -216,7 +297,7 @@ class PreProcessLog:
         continue
       if _VALUE_LINE.match(line):
         useful_log.append(line)
-    return useful_log
+    return useful_log, self._so_dirs
 
 def ResolveCrashSymbol(lines, more_info):
   """Convert unicode strings which contains native crash to a stack
@@ -225,6 +306,7 @@ def ResolveCrashSymbol(lines, more_info):
   trace_lines = []
   value_lines = []
   last_frame = -1
+  pid = -1
 
   # It is faster to get symbol information with a single call rather than with
   # separate calls for each line. Since symbol.SymbolInformation caches results,
@@ -232,6 +314,10 @@ def ResolveCrashSymbol(lines, more_info):
   # from the log and call symbol.SymbolInformation so that the results are
   # cached in the following lookups.
   code_addresses = {}
+
+  # Collects all java exception lines, keyed by pid for later output during
+  # native crash handling.
+  java_stderr_by_pid = {}
   for line in lines:
     lib, address = None, None
 
@@ -245,6 +331,11 @@ def ResolveCrashSymbol(lines, more_info):
 
     if lib:
       code_addresses.setdefault(lib, set()).add(address)
+
+    java_stderr_match = _JAVA_STDERR_LINE.search(line)
+    if java_stderr_match:
+      pid, msg = java_stderr_match.groups()
+      java_stderr_by_pid.setdefault(pid, []).append(msg)
 
   for lib in code_addresses:
     symbol.SymbolInformationForSet(
@@ -264,12 +355,18 @@ def ResolveCrashSymbol(lines, more_info):
         dalvik_jni_thread_header or dalvik_native_thread_header or
         log_fatal_header) :
       if trace_lines or value_lines:
-        PrintOutput(trace_lines, value_lines, more_info)
+        java_lines = []
+        if pid != -1 and pid in java_stderr_by_pid:
+          java_lines = java_stderr_by_pid[pid]
+        PrintOutput(trace_lines, value_lines, java_lines, more_info)
         PrintDivider()
         trace_lines = []
         value_lines = []
         last_frame = -1
+        pid = -1
       if process_header:
+        # Track the last reported pid to find java exceptions.
+        pid = _PROCESS_INFO_PID.search(process_header.group(1)).group(1)
         print process_header.group(1)
       if signal_header:
         print signal_header.group(1)
@@ -292,10 +389,14 @@ def ResolveCrashSymbol(lines, more_info):
       logging.debug('Found trace line: %s' % line.strip())
 
       if frame <= last_frame and (trace_lines or value_lines):
-        PrintOutput(trace_lines, value_lines, more_info)
+        java_lines = []
+        if pid != -1 and pid in java_stderr_by_pid:
+          java_lines = java_stderr_by_pid[pid]
+        PrintOutput(trace_lines, value_lines, java_lines, more_info)
         PrintDivider()
         trace_lines = []
         value_lines = []
+        pid = -1
       last_frame = frame
 
       if area == UNKNOWN or area == HEAP or area == STACK:
@@ -346,4 +447,103 @@ def ResolveCrashSymbol(lines, more_info):
                             object_symbol_with_offset,
                             source_location))
 
-  PrintOutput(trace_lines, value_lines, more_info)
+  java_lines = []
+  if pid != -1 and pid in java_stderr_by_pid:
+    java_lines = java_stderr_by_pid[pid]
+  PrintOutput(trace_lines, value_lines, java_lines, more_info)
+
+def UpdateLibrarySearchPath(so_dirs):
+  # All dirs in so_dirs must be same, since a dir represents the cpu arch.
+  so_dir = set(so_dirs)
+  so_dir_len = len(so_dir)
+  if so_dir_len > 0:
+    if so_dir_len > 1:
+      raise Exception("Found different so dirs, they are %s", repr(so_dir))
+    else:
+      search_path = so_dir.pop()
+      print "Search libraries in " + search_path
+      symbol.SetSecondaryAbiOutputPath(search_path)
+
+def GetUncompressedSharedLibraryFromAPK(apkname, offset):
+  """Check if there is uncompressed shared library at specifc offset of APK."""
+  FILE_NAME_LEN_OFFSET = 26
+  FILE_NAME_OFFSET = 30
+  soname = ""
+  sosize = 0
+  with zipfile.ZipFile(apkname, 'r') as apk:
+    for infoList in apk.infolist():
+      filename, file_extension = os.path.splitext(infoList.filename)
+      if (file_extension == '.so' and
+           infoList.file_size == infoList.compress_size):
+        with open(apkname, 'rb') as f:
+          f.seek(infoList.header_offset + FILE_NAME_LEN_OFFSET)
+          file_name_len = struct.unpack('H', f.read(2))[0]
+          extra_field_len = struct.unpack('H', f.read(2))[0]
+          file_offset = (infoList.header_offset + FILE_NAME_OFFSET +
+                         file_name_len + extra_field_len)
+          f.seek(file_offset)
+          if offset == file_offset and f.read(4) == "\x7fELF":
+            soname = infoList.filename
+            sosize = infoList.file_size
+            break
+  return soname, sosize
+
+def GetSharedLibraryInHost(soname, dirs):
+  """Find the shared library in given host directories by comparing
+     the name.
+  Return:
+     the shared libray in host if found.
+  """
+  for dir in dirs:
+    host_so_file = os.path.join(dir, os.path.basename(soname))
+    if not os.path.isfile(host_so_file):
+      continue
+    logging.debug("%s match to the one in APK" % host_so_file)
+    return host_so_file
+
+def FindSharedLibraryFromAPKs(out_dir, offset):
+  """Find the shared library at the specifc offset of APK.
+  Return:
+     a pair of library which is in apk and host respectively
+     only if one library is found, otherwise, it means detecting
+     library failed.
+  """
+  apk_dir = os.path.join(out_dir, "apks")
+  if not os.path.isdir(apk_dir):
+    return (None, None)
+
+  apks = [os.path.join(apk_dir, f) for f in os.listdir(apk_dir)
+              if (os.path.isfile(os.path.join(apk_dir, f)) and
+                   os.path.splitext(f)[1] == '.apk')]
+  shared_libraries = []
+  for apk in apks:
+    soname, sosize = GetUncompressedSharedLibraryFromAPK(apk, offset)
+    if soname == "":
+      continue
+    # The relocation section of libraries in APK is packed, we can't
+    # detect library by its size, and have to rely on the order of lib
+    # directories; for a specific ARCH, the libraries are in either
+    # out_dir or out_dir/android_ARCH, and android_ARCH directory could
+    # exists or not, so having android_ARCH directory be in first, we
+    # will find the correct lib.
+    dirs = [
+           os.path.join(out_dir, "android_%s" % symbol.ARCH),
+           out_dir,
+           ]
+    host_so_file = GetSharedLibraryInHost(soname, dirs)
+    if host_so_file:
+      shared_libraries += [(soname, host_so_file)]
+  # If there are more than one libraries found, it means detecting
+  # library failed.
+  number_of_library = len(shared_libraries)
+  if number_of_library == 1:
+    return shared_libraries[0]
+  elif number_of_library > 1:
+    print "More than one libraries could be loaded from APK."
+  return (None, None)
+
+def FindAbi(lines):
+  for line in lines:
+    match = _ABI_LINE.search(line)
+    if match:
+      return match.group('abi')

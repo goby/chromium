@@ -66,8 +66,8 @@ cr.define('options', function() {
 
       this.guid_ = '';
       this.populateCountryList_();
-      this.rebuildInputFields_(
-          loadTimeData.getValue('autofillDefaultCountryComponents'));
+      this.rebuildInputFields_(/** @type {Array<Array<Object>>} */(
+          loadTimeData.getValue('autofillDefaultCountryComponents')));
       this.languageCode_ =
           loadTimeData.getString('autofillDefaultCountryLanguageCode');
       this.connectInputEvents_();
@@ -301,12 +301,12 @@ cr.define('options', function() {
 
       var customInputElements = {addrLines: 'textarea'};
 
-      for (var i in components) {
+      for (var i = 0; i < components.length; i++) {
         var row = document.createElement('div');
         row.classList.add('input-group', 'settings-row');
         content.appendChild(row);
 
-        for (var j in components[i]) {
+        for (var j = 0; j < components[i].length; j++) {
           if (components[i][j].field == 'country')
             continue;
 

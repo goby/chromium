@@ -5,12 +5,12 @@
 #include "chrome/browser/supervised_user/supervised_user_resource_throttle.h"
 
 #include "base/bind.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/browser/supervised_user/supervised_user_interstitial.h"
 #include "chrome/browser/supervised_user/supervised_user_navigation_observer.h"
 #include "chrome/browser/supervised_user/supervised_user_url_filter.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/resource_controller.h"
 #include "content/public/browser/resource_request_info.h"
 #include "net/url_request/redirect_info.h"
 #include "net/url_request/url_request.h"
@@ -30,14 +30,15 @@ enum {
   FILTERING_BEHAVIOR_BLOCK_SAFESITES,
   FILTERING_BEHAVIOR_BLOCK_MANUAL,
   FILTERING_BEHAVIOR_BLOCK_DEFAULT,
-  FILTERING_BEHAVIOR_MAX = FILTERING_BEHAVIOR_BLOCK_DEFAULT
+  FILTERING_BEHAVIOR_ALLOW_WHITELIST,
+  FILTERING_BEHAVIOR_MAX = FILTERING_BEHAVIOR_ALLOW_WHITELIST
 };
 const int kHistogramFilteringBehaviorSpacing = 100;
 const int kHistogramPageTransitionMaxKnownValue =
     static_cast<int>(ui::PAGE_TRANSITION_KEYWORD_GENERATED);
 const int kHistogramPageTransitionFallbackValue =
     kHistogramFilteringBehaviorSpacing - 1;
-const int kHistogramMax = 700;
+const int kHistogramMax = 800;
 
 static_assert(kHistogramPageTransitionMaxKnownValue <
                   kHistogramPageTransitionFallbackValue,
@@ -48,22 +49,27 @@ static_assert(FILTERING_BEHAVIOR_MAX * kHistogramFilteringBehaviorSpacing +
 
 int GetHistogramValueForFilteringBehavior(
     SupervisedUserURLFilter::FilteringBehavior behavior,
-    SupervisedUserURLFilter::FilteringBehaviorReason reason,
+    supervised_user_error_page::FilteringBehaviorReason reason,
     bool uncertain) {
   switch (behavior) {
     case SupervisedUserURLFilter::ALLOW:
     case SupervisedUserURLFilter::WARN:
+      if (reason == supervised_user_error_page::WHITELIST)
+        return FILTERING_BEHAVIOR_ALLOW_WHITELIST;
       return uncertain ? FILTERING_BEHAVIOR_ALLOW_UNCERTAIN
                        : FILTERING_BEHAVIOR_ALLOW;
     case SupervisedUserURLFilter::BLOCK:
       switch (reason) {
-        case SupervisedUserURLFilter::BLACKLIST:
+        case supervised_user_error_page::BLACKLIST:
           return FILTERING_BEHAVIOR_BLOCK_BLACKLIST;
-        case SupervisedUserURLFilter::ASYNC_CHECKER:
+        case supervised_user_error_page::ASYNC_CHECKER:
           return FILTERING_BEHAVIOR_BLOCK_SAFESITES;
-        case SupervisedUserURLFilter::MANUAL:
+        case supervised_user_error_page::WHITELIST:
+          NOTREACHED();
+          break;
+        case supervised_user_error_page::MANUAL:
           return FILTERING_BEHAVIOR_BLOCK_MANUAL;
-        case SupervisedUserURLFilter::DEFAULT:
+        case supervised_user_error_page::DEFAULT:
           return FILTERING_BEHAVIOR_BLOCK_DEFAULT;
       }
     case SupervisedUserURLFilter::INVALID:
@@ -84,7 +90,7 @@ int GetHistogramValueForTransitionType(ui::PageTransition transition_type) {
 void RecordFilterResultEvent(
     bool safesites_histogram,
     SupervisedUserURLFilter::FilteringBehavior behavior,
-    SupervisedUserURLFilter::FilteringBehaviorReason reason,
+    supervised_user_error_page::FilteringBehaviorReason reason,
     bool uncertain,
     ui::PageTransition transition_type) {
   int value =
@@ -103,12 +109,26 @@ void RecordFilterResultEvent(
 
 }  // namespace
 
+// static
+std::unique_ptr<SupervisedUserResourceThrottle>
+SupervisedUserResourceThrottle::MaybeCreate(
+    const net::URLRequest* request,
+    content::ResourceType resource_type,
+    const SupervisedUserURLFilter* url_filter) {
+  // Only treat main frame requests (ignoring subframes and subresources).
+  bool is_main_frame = resource_type == content::RESOURCE_TYPE_MAIN_FRAME;
+  if (!is_main_frame || !url_filter->enabled())
+    return nullptr;
+
+  // Can't use base::MakeUnique because the constructor is private.
+  return base::WrapUnique(
+      new SupervisedUserResourceThrottle(request, url_filter));
+}
+
 SupervisedUserResourceThrottle::SupervisedUserResourceThrottle(
     const net::URLRequest* request,
-    bool is_main_frame,
     const SupervisedUserURLFilter* url_filter)
     : request_(request),
-      is_main_frame_(is_main_frame),
       url_filter_(url_filter),
       deferred_(false),
       behavior_(SupervisedUserURLFilter::INVALID),
@@ -116,13 +136,7 @@ SupervisedUserResourceThrottle::SupervisedUserResourceThrottle(
 
 SupervisedUserResourceThrottle::~SupervisedUserResourceThrottle() {}
 
-void SupervisedUserResourceThrottle::ShowInterstitialIfNeeded(bool is_redirect,
-                                                              const GURL& url,
-                                                              bool* defer) {
-  // Only treat main frame requests for now (ignoring subresources).
-  if (!is_main_frame_)
-    return;
-
+void SupervisedUserResourceThrottle::CheckURL(const GURL& url, bool* defer) {
   deferred_ = false;
   DCHECK_EQ(SupervisedUserURLFilter::INVALID, behavior_);
   bool got_result = url_filter_->GetFilteringBehaviorForURLWithAsyncChecks(
@@ -139,25 +153,26 @@ void SupervisedUserResourceThrottle::ShowInterstitialIfNeeded(bool is_redirect,
 
 void SupervisedUserResourceThrottle::ShowInterstitial(
     const GURL& url,
-    SupervisedUserURLFilter::FilteringBehaviorReason reason) {
+    supervised_user_error_page::FilteringBehaviorReason reason) {
   const content::ResourceRequestInfo* info =
       content::ResourceRequestInfo::ForRequest(request_);
-  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE,
-      base::Bind(&SupervisedUserNavigationObserver::OnRequestBlocked,
-                 info->GetChildID(), info->GetRouteID(), url, reason,
-                 base::Bind(
-                     &SupervisedUserResourceThrottle::OnInterstitialResult,
+  BrowserThread::PostTask(
+      BrowserThread::UI, FROM_HERE,
+      base::Bind(
+          &SupervisedUserNavigationObserver::OnRequestBlocked,
+          info->GetWebContentsGetterForRequest(), url, reason,
+          base::Bind(&SupervisedUserResourceThrottle::OnInterstitialResult,
                      weak_ptr_factory_.GetWeakPtr())));
 }
 
 void SupervisedUserResourceThrottle::WillStartRequest(bool* defer) {
-  ShowInterstitialIfNeeded(false, request_->url(), defer);
+  CheckURL(request_->url(), defer);
 }
 
 void SupervisedUserResourceThrottle::WillRedirectRequest(
     const net::RedirectInfo& redirect_info,
     bool* defer) {
-  ShowInterstitialIfNeeded(true, redirect_info.new_url, defer);
+  CheckURL(redirect_info.new_url, defer);
 }
 
 const char* SupervisedUserResourceThrottle::GetNameForLogging() const {
@@ -167,7 +182,7 @@ const char* SupervisedUserResourceThrottle::GetNameForLogging() const {
 void SupervisedUserResourceThrottle::OnCheckDone(
     const GURL& url,
     SupervisedUserURLFilter::FilteringBehavior behavior,
-    SupervisedUserURLFilter::FilteringBehaviorReason reason,
+    supervised_user_error_page::FilteringBehaviorReason reason,
     bool uncertain) {
   DCHECK_EQ(SupervisedUserURLFilter::INVALID, behavior_);
   // If we got a result synchronously, pass it back to ShowInterstitialIfNeeded.
@@ -182,21 +197,21 @@ void SupervisedUserResourceThrottle::OnCheckDone(
   // If both the static blacklist and the async checker are enabled, also record
   // SafeSites-only UMA events.
   if (url_filter_->HasBlacklist() && url_filter_->HasAsyncURLChecker() &&
-      (reason == SupervisedUserURLFilter::ASYNC_CHECKER ||
-       reason == SupervisedUserURLFilter::BLACKLIST)) {
+      (reason == supervised_user_error_page::ASYNC_CHECKER ||
+       reason == supervised_user_error_page::BLACKLIST)) {
     RecordFilterResultEvent(true, behavior, reason, uncertain, transition);
   }
 
   if (behavior == SupervisedUserURLFilter::BLOCK)
     ShowInterstitial(url, reason);
   else if (deferred_)
-    controller()->Resume();
+    Resume();
 }
 
 void SupervisedUserResourceThrottle::OnInterstitialResult(
     bool continue_request) {
   if (continue_request)
-    controller()->Resume();
+    Resume();
   else
-    controller()->Cancel();
+    Cancel();
 }

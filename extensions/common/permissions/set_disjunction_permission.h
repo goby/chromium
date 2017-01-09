@@ -5,11 +5,14 @@
 #ifndef EXTENSIONS_COMMON_PERMISSIONS_SET_DISJUNCTION_PERMISSION_H_
 #define EXTENSIONS_COMMON_PERMISSIONS_SET_DISJUNCTION_PERMISSION_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "extensions/common/extension_messages.h"
 #include "extensions/common/permissions/api_permission.h"
@@ -70,7 +73,7 @@ class SetDisjunctionPermission : public APIPermission {
     CHECK(rhs->info() == info());
     const SetDisjunctionPermission* perm =
         static_cast<const SetDisjunctionPermission*>(rhs);
-    scoped_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
+    std::unique_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
     result->data_set_ = base::STLSetDifference<std::set<PermissionDataType> >(
         data_set_, perm->data_set_);
     return result->data_set_.empty() ? NULL : result.release();
@@ -80,7 +83,7 @@ class SetDisjunctionPermission : public APIPermission {
     CHECK(rhs->info() == info());
     const SetDisjunctionPermission* perm =
         static_cast<const SetDisjunctionPermission*>(rhs);
-    scoped_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
+    std::unique_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
     result->data_set_ = base::STLSetUnion<std::set<PermissionDataType> >(
         data_set_, perm->data_set_);
     return result.release();
@@ -90,7 +93,7 @@ class SetDisjunctionPermission : public APIPermission {
     CHECK(rhs->info() == info());
     const SetDisjunctionPermission* perm =
         static_cast<const SetDisjunctionPermission*>(rhs);
-    scoped_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
+    std::unique_ptr<SetDisjunctionPermission> result(new DerivedType(info()));
     result->data_set_ = base::STLSetIntersection<std::set<PermissionDataType> >(
         data_set_, perm->data_set_);
     return result->data_set_.empty() ? NULL : result.release();
@@ -103,9 +106,14 @@ class SetDisjunctionPermission : public APIPermission {
     data_set_.clear();
     const base::ListValue* list = NULL;
 
-    if (!value || !value->GetAsList(&list) || list->GetSize() == 0) {
+    if (!value) {
+      // treat null as an empty list.
+      return true;
+    }
+
+    if (!value->GetAsList(&list)) {
       if (error)
-        *error = "NULL or empty permission list";
+        *error = "Cannot parse the permission list. It's not a list.";
       return false;
     }
 
@@ -135,21 +143,23 @@ class SetDisjunctionPermission : public APIPermission {
     return true;
   }
 
-  scoped_ptr<base::Value> ToValue() const override {
+  std::unique_ptr<base::Value> ToValue() const override {
     base::ListValue* list = new base::ListValue();
     typename std::set<PermissionDataType>::const_iterator i;
     for (i = data_set_.begin(); i != data_set_.end(); ++i) {
-      scoped_ptr<base::Value> item_value(i->ToValue());
-      list->Append(item_value.release());
+      std::unique_ptr<base::Value> item_value(i->ToValue());
+      list->Append(std::move(item_value));
     }
-    return scoped_ptr<base::Value>(list);
+    return std::unique_ptr<base::Value>(list);
   }
 
-  void Write(IPC::Message* m) const override {
-    IPC::WriteParam(m, data_set_);
+  void GetSize(base::PickleSizer* s) const override {
+    IPC::GetParamSize(s, data_set_);
   }
 
-  bool Read(const IPC::Message* m, base::PickleIterator* iter) override {
+  void Write(base::Pickle* m) const override { IPC::WriteParam(m, data_set_); }
+
+  bool Read(const base::Pickle* m, base::PickleIterator* iter) override {
     return IPC::ReadParam(m, iter, &data_set_);
   }
 

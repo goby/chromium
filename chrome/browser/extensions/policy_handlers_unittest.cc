@@ -2,16 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "base/json/json_reader.h"
-#include "base/prefs/pref_value_map.h"
 #include "chrome/browser/extensions/external_policy_loader.h"
 #include "chrome/browser/extensions/policy_handlers.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
 #include "components/policy/core/common/schema.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 #include "extensions/browser/pref_names.h"
-#include "policy/policy_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -42,44 +44,32 @@ TEST(ExtensionListPolicyHandlerTest, CheckPolicySettings) {
       policy::key::kExtensionInstallBlacklist, kTestPref, true);
 
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("abcdefghijklmnopabcdefghijklmnop"));
+  list.AppendString("abcdefghijklmnopabcdefghijklmnop");
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("*"));
+  list.AppendString("*");
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("invalid"));
+  list.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_FALSE(errors.empty());
@@ -96,26 +86,20 @@ TEST(ExtensionListPolicyHandlerTest, ApplyPolicySettings) {
   ExtensionListPolicyHandler handler(
       policy::key::kExtensionInstallBlacklist, kTestPref, false);
 
-  policy.Append(new base::StringValue("abcdefghijklmnopabcdefghijklmnop"));
-  expected.Append(new base::StringValue("abcdefghijklmnopabcdefghijklmnop"));
+  policy.AppendString("abcdefghijklmnopabcdefghijklmnop");
+  expected.AppendString("abcdefghijklmnopabcdefghijklmnop");
 
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(kTestPref, &value));
   EXPECT_TRUE(base::Value::Equals(&expected, value));
 
-  policy.Append(new base::StringValue("invalid"));
+  policy.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallBlacklist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(kTestPref, &value));
   EXPECT_TRUE(base::Value::Equals(&expected, value));
@@ -128,22 +112,16 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   ExtensionInstallForcelistPolicyHandler handler;
 
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
   list.AppendString("abcdefghijklmnopabcdefghijklmnop;http://example.com");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
@@ -152,11 +130,8 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   // entry should still be translated successfully.
   list.AppendString("adfasdf;http://example.com");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_EQ(1U, errors.size());
@@ -164,11 +139,8 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   // Add an entry with bad URL, which should generate another error.
   list.AppendString("abcdefghijklmnopabcdefghijklmnop;nourl");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_EQ(2U, errors.size());
@@ -176,11 +148,8 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, CheckPolicySettings) {
   // Just an extension ID should also generate an error.
   list.AppendString("abcdefghijklmnopabcdefghijklmnop");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_EQ(3U, errors.size());
@@ -199,11 +168,8 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
   EXPECT_FALSE(value);
 
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_TRUE(base::Value::Equals(&expected, value));
@@ -212,22 +178,16 @@ TEST(ExtensionInstallForcelistPolicyHandlerTest, ApplyPolicySettings) {
   extensions::ExternalPolicyLoader::AddExtension(
       &expected, "abcdefghijklmnopabcdefghijklmnop", "http://example.com");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_TRUE(base::Value::Equals(&expected, value));
 
   policy.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallForcelist,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   EXPECT_TRUE(prefs.GetValue(pref_names::kInstallForceList, &value));
   EXPECT_TRUE(base::Value::Equals(&expected, value));
@@ -241,44 +201,32 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, CheckPolicySettings) {
       policy::key::kExtensionInstallSources, kTestPref);
 
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("http://*.google.com/*"));
+  list.AppendString("http://*.google.com/*");
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("<all_urls>"));
+  list.AppendString("<all_urls>");
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_TRUE(errors.empty());
 
-  list.Append(new base::StringValue("invalid"));
+  list.AppendString("invalid");
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_FALSE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_FALSE(errors.empty());
@@ -286,13 +234,10 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, CheckPolicySettings) {
 
   // URLPattern syntax has a different way to express 'all urls'. Though '*'
   // would be compatible today, it would be brittle, so we disallow.
-  list.Append(new base::StringValue("*"));
+  list.AppendString("*");
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   errors.Clear();
   EXPECT_FALSE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_FALSE(errors.empty());
@@ -307,13 +252,10 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
   ExtensionURLPatternListPolicyHandler handler(
       policy::key::kExtensionInstallSources, kTestPref);
 
-  list.Append(new base::StringValue("https://corp.monkey.net/*"));
+  list.AppendString("https://corp.monkey.net/*");
   policy_map.Set(policy::key::kExtensionInstallSources,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 list.DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, list.CreateDeepCopy(), nullptr);
   handler.ApplyPolicySettings(policy_map, &prefs);
   ASSERT_TRUE(prefs.GetValue(kTestPref, &value));
   EXPECT_TRUE(base::Value::Equals(&list, value));
@@ -321,9 +263,10 @@ TEST(ExtensionURLPatternListPolicyHandlerTest, ApplyPolicySettings) {
 
 TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   std::string error;
-  scoped_ptr<base::Value> policy_value = base::JSONReader::ReadAndReturnError(
-      kTestManagementPolicy1,
-      base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
+  std::unique_ptr<base::Value> policy_value =
+      base::JSONReader::ReadAndReturnError(
+          kTestManagementPolicy1,
+          base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
 
   policy::Schema chrome_schema =
@@ -333,11 +276,8 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
   ExtensionSettingsPolicyHandler handler(chrome_schema);
 
   policy_map.Set(policy::key::kExtensionSettings,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy_value.release(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, std::move(policy_value), nullptr);
   // CheckPolicySettings() fails due to missing update URL.
   EXPECT_FALSE(handler.CheckPolicySettings(policy_map, &errors));
   EXPECT_FALSE(errors.empty());
@@ -345,9 +285,10 @@ TEST(ExtensionSettingsPolicyHandlerTest, CheckPolicySettings) {
 
 TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
   std::string error;
-  scoped_ptr<base::Value> policy_value = base::JSONReader::ReadAndReturnError(
-      kTestManagementPolicy2,
-      base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
+  std::unique_ptr<base::Value> policy_value =
+      base::JSONReader::ReadAndReturnError(
+          kTestManagementPolicy2,
+          base::JSONParserOptions::JSON_ALLOW_TRAILING_COMMAS, NULL, &error);
   ASSERT_TRUE(policy_value.get()) << error;
 
   policy::Schema chrome_schema =
@@ -358,11 +299,9 @@ TEST(ExtensionSettingsPolicyHandlerTest, ApplyPolicySettings) {
   ExtensionSettingsPolicyHandler handler(chrome_schema);
 
   policy_map.Set(policy::key::kExtensionSettings,
-                 policy::POLICY_LEVEL_MANDATORY,
-                 policy::POLICY_SCOPE_USER,
-                 policy::POLICY_SOURCE_CLOUD,
-                 policy_value->DeepCopy(),
-                 NULL);
+                 policy::POLICY_LEVEL_MANDATORY, policy::POLICY_SCOPE_USER,
+                 policy::POLICY_SOURCE_CLOUD, policy_value->CreateDeepCopy(),
+                 nullptr);
   EXPECT_TRUE(handler.CheckPolicySettings(policy_map, &errors));
   handler.ApplyPolicySettings(policy_map, &prefs);
   base::Value* value = NULL;

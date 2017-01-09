@@ -5,10 +5,17 @@
 #ifndef CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_PROVIDER_HOST_H_
 #define CONTENT_BROWSER_SERVICE_WORKER_SERVICE_WORKER_PROVIDER_HOST_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <map>
+#include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/browser/service_worker/service_worker_registration.h"
@@ -18,46 +25,48 @@
 #include "content/public/common/request_context_type.h"
 #include "content/public/common/resource_type.h"
 
-namespace IPC {
-class Sender;
-}
-
 namespace storage {
 class BlobStorageContext;
 }
 
 namespace content {
 
-class ResourceRequestBody;
+class ResourceRequestBodyImpl;
 class ServiceWorkerContextCore;
 class ServiceWorkerDispatcherHost;
 class ServiceWorkerRequestHandler;
 class ServiceWorkerVersion;
 
 // This class is the browser-process representation of a service worker
-// provider. There is a provider per document or a worker and the lifetime
-// of this object is tied to the lifetime of its document or the worker
-// in the renderer process.
-// This class holds service worker state that is scoped to an individual
-// document or a worker.
+// provider. There are two general types of providers: 1) those for a client
+// (windows, dedicated workers, or shared workers), and 2) those for hosting a
+// running service worker.
 //
-// Note this class can also host a running service worker, in which
-// case it will observe resource loads made directly by the service worker.
+// For client providers, there is a provider per document or a worker and the
+// lifetime of this object is tied to the lifetime of its document or the worker
+// in the renderer process. This class holds service worker state that is scoped
+// to an individual document or a worker.
+//
+// For providers hosting a running service worker, this class will observe
+// resource loads made directly by the service worker.
 class CONTENT_EXPORT ServiceWorkerProviderHost
     : public NON_EXPORTED_BASE(ServiceWorkerRegistration::Listener),
       public base::SupportsWeakPtr<ServiceWorkerProviderHost> {
  public:
-  using GetClientInfoCallback =
-      base::Callback<void(const ServiceWorkerClientInfo&)>;
   using GetRegistrationForReadyCallback =
       base::Callback<void(ServiceWorkerRegistration* reigstration)>;
 
   // PlzNavigate
   // Used to pre-create a ServiceWorkerProviderHost for a navigation. The
   // ServiceWorkerNetworkProvider will later be created in the renderer, should
-  // the navigation succeed.
-  static scoped_ptr<ServiceWorkerProviderHost> PreCreateNavigationHost(
-      base::WeakPtr<ServiceWorkerContextCore> context);
+  // the navigation succeed. |is_parent_frame_is_secure| should be true for main
+  // frames. Otherwise it is true iff all ancestor frames of this frame have a
+  // secure origin.
+  static std::unique_ptr<ServiceWorkerProviderHost> PreCreateNavigationHost(
+      base::WeakPtr<ServiceWorkerContextCore> context,
+      bool are_ancestors_secure);
+
+  enum class FrameSecurityLevel { UNINITIALIZED, INSECURE, SECURE };
 
   // When this provider host is for a Service Worker context, |route_id| is
   // MSG_ROUTING_NONE. When this provider host is for a Document,
@@ -70,6 +79,7 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
                             int route_id,
                             int provider_id,
                             ServiceWorkerProviderType provider_type,
+                            FrameSecurityLevel parent_frame_security_level,
                             base::WeakPtr<ServiceWorkerContextCore> context,
                             ServiceWorkerDispatcherHost* dispatcher_host);
   virtual ~ServiceWorkerProviderHost();
@@ -79,6 +89,26 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   int provider_id() const { return provider_id_; }
   int frame_id() const;
   int route_id() const { return route_id_; }
+
+  bool is_parent_frame_secure() const {
+    return parent_frame_security_level_ == FrameSecurityLevel::SECURE;
+  }
+  void set_parent_frame_secure(bool is_parent_frame_secure) {
+    CHECK_EQ(parent_frame_security_level_, FrameSecurityLevel::UNINITIALIZED);
+    parent_frame_security_level_ = is_parent_frame_secure
+                                       ? FrameSecurityLevel::SECURE
+                                       : FrameSecurityLevel::INSECURE;
+  }
+
+  // Returns whether this provider host is secure enough to have a service
+  // worker controller.
+  // Analogous to Blink's Document::isSecureContext. Because of how service
+  // worker intercepts main resource requests, this check must be done
+  // browser-side once the URL is known (see comments in
+  // ServiceWorkerNetworkProvider::CreateForNavigation). This function uses
+  // |document_url_| and |is_parent_frame_secure_| to determine context
+  // security, so they must be set properly before calling this function.
+  bool IsContextSecureForServiceWorker() const;
 
   bool IsHostToRunningServiceWorker() {
     return running_hosted_version_.get() != NULL;
@@ -110,6 +140,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
     return running_hosted_version_.get();
   }
 
+  // Sets the |document_url_|.  When this object is for a client,
+  // |matching_registrations_| gets also updated to ensure that |document_url_|
+  // is in scope of all |matching_registrations_|.
   void SetDocumentUrl(const GURL& url);
   const GURL& document_url() const { return document_url_; }
 
@@ -129,13 +162,11 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Clears the associated registration and stop listening to it.
   void DisassociateRegistration();
 
-  // Returns false if the version is not in the expected STARTING in our
-  // process state. That would be indicative of a bad IPC message.
-  bool SetHostedVersionId(int64 versions_id);
+  void SetHostedVersion(ServiceWorkerVersion* version);
 
   // Returns a handler for a request, the handler may return NULL if
   // the request doesn't require special handling.
-  scoped_ptr<ServiceWorkerRequestHandler> CreateRequestHandler(
+  std::unique_ptr<ServiceWorkerRequestHandler> CreateRequestHandler(
       FetchRequestMode request_mode,
       FetchCredentialsMode credentials_mode,
       FetchRedirectMode redirect_mode,
@@ -143,7 +174,8 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
       RequestContextType request_context_type,
       RequestContextFrameType frame_type,
       base::WeakPtr<storage::BlobStorageContext> blob_storage_context,
-      scoped_refptr<ResourceRequestBody> body);
+      scoped_refptr<ResourceRequestBodyImpl> body,
+      bool skip_service_worker);
 
   // Used to get a ServiceWorkerObjectInfo to send to the renderer. Finds an
   // existing ServiceWorkerHandle, and increments its reference count, or else
@@ -166,24 +198,9 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   bool IsContextAlive();
 
   // Dispatches message event to the document.
-  void PostMessage(
-      ServiceWorkerVersion* version,
-      const base::string16& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports);
-
-  // Activates the WebContents associated with
-  // { render_process_id_, route_id_ }.
-  // Runs the |callback| with the updated ServiceWorkerClientInfo in parameter.
-  void Focus(const GetClientInfoCallback& callback);
-
-  // Asks the renderer to send back the document information.
-  void GetWindowClientInfo(const GetClientInfoCallback& callback) const;
-
-  // Same as above but has to be called from the UI thread.
-  // It is taking the process and frame ids in parameter because |this| is meant
-  // to live on the IO thread.
-  static ServiceWorkerClientInfo GetWindowClientInfoOnUI(int render_process_id,
-                                                         int render_frame_id);
+  void PostMessageToClient(ServiceWorkerVersion* version,
+                           const base::string16& message,
+                           const std::vector<int>& sent_message_ports);
 
   // Adds reference of this host's process to the |pattern|, the reference will
   // be removed in destructor.
@@ -236,9 +253,6 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   void AddMatchingRegistration(ServiceWorkerRegistration* registration);
   void RemoveMatchingRegistration(ServiceWorkerRegistration* registration);
 
-  // Add matched registrations for document generated by shift-reload.
-  void AddAllMatchingRegistrations();
-
   // An optimized implementation of [[Match Service Worker Registration]]
   // for current document.
   ServiceWorkerRegistration* MatchRegistration() const;
@@ -246,10 +260,13 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Called when our controller has been terminated and doomed due to an
   // exceptional condition like it could no longer be read from the script
   // cache.
-  void NotifyControllerLost();
+  void NotifyControllerLost(bool was_deleted);
+  bool controller_was_deleted() { return controller_was_deleted_; }
 
  private:
-  friend class ServiceWorkerProviderHostTest;
+  friend class ForeignFetchRequestHandlerTest;
+  friend class LinkHeaderServiceWorkerTest;
+  friend class ServiceWorkerProviderHostTestP;
   friend class ServiceWorkerWriteToCacheJobTest;
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerWriteToCacheJobTest, Update_SameScript);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerWriteToCacheJobTest,
@@ -260,12 +277,19 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
                            Update_ElongatedScript);
   FRIEND_TEST_ALL_PREFIXES(ServiceWorkerWriteToCacheJobTest,
                            Update_EmptyScript);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDispatcherHostTestP,
+                           DispatchExtendableMessageEvent);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerDispatcherHostTestP,
+                           DispatchExtendableMessageEvent_Fail);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTestP,
                            UpdateBefore24Hours);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTestP,
                            UpdateAfter24Hours);
-  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTest,
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTestP,
                            UpdateForceBypassCache);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerContextRequestHandlerTestP,
+                           ServiceWorkerDataRequestAnnotation);
+  FRIEND_TEST_ALL_PREFIXES(ServiceWorkerProviderHostTestP, ContextSecurity);
 
   struct OneShotGetReadyCallback {
     GetRegistrationForReadyCallback callback;
@@ -294,6 +318,12 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
 
   void SendAssociateRegistrationMessage();
 
+  // Syncs matching registrations with live registrations.
+  void SyncMatchingRegistrations();
+
+  // Discards all references to matching registrations.
+  void RemoveAllMatchingRegistrations();
+
   // Increase/decrease this host's process reference for |pattern|.
   void IncreaseProcessReference(const GURL& pattern);
   void DecreaseProcessReference(const GURL& pattern);
@@ -310,10 +340,21 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
 
   std::string client_uuid_;
   int render_process_id_;
+
+  // See the constructor's documentation.
   int route_id_;
+
+  // For provider hosts that are hosting a running service worker, the id of the
+  // service worker thread. Otherwise, |kDocumentMainThreadId|. May be
+  // |kInvalidEmbeddedWorkerThreadId| before the hosted service worker starts
+  // up, or during cross-site transfers.
   int render_thread_id_;
+
+  // Unique within the renderer process.
   int provider_id_;
+
   ServiceWorkerProviderType provider_type_;
+  FrameSecurityLevel parent_frame_security_level_;
   GURL document_url_;
   GURL topmost_frame_url_;
 
@@ -323,16 +364,19 @@ class CONTENT_EXPORT ServiceWorkerProviderHost
   // Keyed by registration scope URL length.
   typedef std::map<size_t, scoped_refptr<ServiceWorkerRegistration>>
       ServiceWorkerRegistrationMap;
-  // Contains all living registrations which has pattern this document's
-  // URL starts with.
+  // Contains all living registrations whose pattern this document's URL
+  // starts with. It is empty if IsContextSecureForServiceWorker() is
+  // false.
   ServiceWorkerRegistrationMap matching_registrations_;
 
-  scoped_ptr<OneShotGetReadyCallback> get_ready_callback_;
+  std::unique_ptr<OneShotGetReadyCallback> get_ready_callback_;
   scoped_refptr<ServiceWorkerVersion> controlling_version_;
   scoped_refptr<ServiceWorkerVersion> running_hosted_version_;
   base::WeakPtr<ServiceWorkerContextCore> context_;
   ServiceWorkerDispatcherHost* dispatcher_host_;
   bool allow_association_;
+  // TODO(falken): Remove once https://crbug.com/655910 is resolved.
+  bool controller_was_deleted_;
 
   std::vector<base::Closure> queued_events_;
 

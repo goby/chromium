@@ -5,8 +5,12 @@
 #include "chrome/utility/importer/edge_database_reader_win.h"
 
 #include <windows.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <vector>
+
+#include "base/memory/ptr_util.h"
 
 namespace {
 
@@ -239,8 +243,8 @@ bool EdgeDatabaseReader::OpenDatabase(const base::string16& database_file) {
   return true;
 }
 
-scoped_ptr<EdgeDatabaseTableEnumerator> EdgeDatabaseReader::OpenTableEnumerator(
-    const base::string16& table_name) {
+std::unique_ptr<EdgeDatabaseTableEnumerator>
+EdgeDatabaseReader::OpenTableEnumerator(const base::string16& table_name) {
   JET_TABLEID table_id;
 
   if (!IsOpen()) {
@@ -252,6 +256,6 @@ scoped_ptr<EdgeDatabaseTableEnumerator> EdgeDatabaseReader::OpenTableEnumerator(
                                  nullptr, 0, JET_bitTableReadOnly, &table_id)))
     return nullptr;
 
-  return make_scoped_ptr(
-      new EdgeDatabaseTableEnumerator(table_name, session_id_, table_id));
+  return base::MakeUnique<EdgeDatabaseTableEnumerator>(table_name, session_id_,
+                                                       table_id);
 }

@@ -5,19 +5,22 @@
 #include "remoting/codec/video_decoder_vpx.h"
 
 #include <math.h>
+#include <stdint.h>
 
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "remoting/base/util.h"
 #include "remoting/proto/video.pb.h"
 #include "third_party/libyuv/include/libyuv/convert_argb.h"
+#include "third_party/libyuv/include/libyuv/convert_from.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_frame.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_geometry.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_region.h"
 
 extern "C" {
 #define VPX_CODEC_DISABLE_COMPAT 1
-#include "third_party/libvpx_new/source/libvpx/vpx/vp8dx.h"
-#include "third_party/libvpx_new/source/libvpx/vpx/vpx_decoder.h"
+#include "third_party/libvpx/source/libvpx/vpx/vp8dx.h"
+#include "third_party/libvpx/source/libvpx/vpx/vpx_decoder.h"
 }
 
 namespace remoting {
@@ -26,35 +29,32 @@ namespace {
 
 void RenderRect(vpx_image_t* image,
                 webrtc::DesktopRect rect,
+                VideoDecoder::PixelFormat pixel_format,
                 webrtc::DesktopFrame* frame) {
+  auto yuv_to_rgb_function = libyuv::I420ToARGB;
+  int u_offset;
+  int v_offset;
+
   switch (image->fmt) {
     case VPX_IMG_FMT_I420: {
       // Align position of the top left corner so that its coordinates are
       // always even.
       rect = webrtc::DesktopRect::MakeLTRB(rect.left() & ~1, rect.top() & ~1,
                                            rect.right(), rect.bottom());
-      uint8_t* image_data_ptr = frame->GetFrameDataAtPos(rect.top_left());
-      int y_offset = rect.top() * image->stride[0] + rect.left();
-      int u_offset = rect.top() / 2 * image->stride[1] + rect.left() / 2;
-      int v_offset = rect.top() / 2 * image->stride[2] + rect.left() / 2;
-      libyuv::I420ToARGB(image->planes[0] + y_offset, image->stride[0],
-                         image->planes[1] + u_offset, image->stride[1],
-                         image->planes[2] + v_offset, image->stride[2],
-                         image_data_ptr, frame->stride(),
-                         rect.width(), rect.height());
+      u_offset = rect.top() / 2 * image->stride[1] + rect.left() / 2;
+      v_offset = rect.top() / 2 * image->stride[2] + rect.left() / 2;
+      yuv_to_rgb_function = (pixel_format == VideoDecoder::PixelFormat::BGRA)
+                                ? libyuv::I420ToARGB
+                                : libyuv::I420ToABGR;
       break;
     }
     // VP8 only outputs I420 frames, but VP9 can also produce I444.
     case VPX_IMG_FMT_I444: {
-      uint8_t* image_data_ptr = frame->GetFrameDataAtPos(rect.top_left());
-      int y_offset = rect.top() * image->stride[0] + rect.left();
-      int u_offset = rect.top() * image->stride[1] + rect.left();
-      int v_offset = rect.top() * image->stride[2] + rect.left();
-      libyuv::I444ToARGB(image->planes[0] + y_offset, image->stride[0],
-                         image->planes[1] + u_offset, image->stride[1],
-                         image->planes[2] + v_offset, image->stride[2],
-                         image_data_ptr, frame->stride(),
-                         rect.width(), rect.height());
+      u_offset = rect.top() * image->stride[1] + rect.left();
+      v_offset = rect.top() * image->stride[2] + rect.left();
+      yuv_to_rgb_function = (pixel_format == VideoDecoder::PixelFormat::BGRA)
+                                ? libyuv::I444ToARGB
+                                : libyuv::I444ToABGR;
       break;
     }
     default: {
@@ -62,27 +62,39 @@ void RenderRect(vpx_image_t* image,
       return;
     }
   }
+
+  int y_offset = rect.top() * image->stride[0] + rect.left();
+  uint8_t* image_data_ptr = frame->GetFrameDataAtPos(rect.top_left());
+  yuv_to_rgb_function(image->planes[0] + y_offset, image->stride[0],
+                      image->planes[1] + u_offset, image->stride[1],
+                      image->planes[2] + v_offset, image->stride[2],
+                      image_data_ptr, frame->stride(), rect.width(),
+                      rect.height());
 }
 
 }  // namespace
 
 // static
-scoped_ptr<VideoDecoderVpx> VideoDecoderVpx::CreateForVP8() {
-  return make_scoped_ptr(new VideoDecoderVpx(vpx_codec_vp8_dx()));
+std::unique_ptr<VideoDecoderVpx> VideoDecoderVpx::CreateForVP8() {
+  return base::WrapUnique(new VideoDecoderVpx(vpx_codec_vp8_dx()));
 }
 
 // static
-scoped_ptr<VideoDecoderVpx> VideoDecoderVpx::CreateForVP9() {
-  return make_scoped_ptr(new VideoDecoderVpx(vpx_codec_vp9_dx()));
+std::unique_ptr<VideoDecoderVpx> VideoDecoderVpx::CreateForVP9() {
+  return base::WrapUnique(new VideoDecoderVpx(vpx_codec_vp9_dx()));
 }
 
 VideoDecoderVpx::~VideoDecoderVpx() {}
+
+void VideoDecoderVpx::SetPixelFormat(PixelFormat pixel_format) {
+  pixel_format_ = pixel_format;
+}
 
 bool VideoDecoderVpx::DecodePacket(const VideoPacket& packet,
                                    webrtc::DesktopFrame* frame) {
   // Pass the packet to the codec to process.
   vpx_codec_err_t ret = vpx_codec_decode(
-      codec_.get(), reinterpret_cast<const uint8*>(packet.data().data()),
+      codec_.get(), reinterpret_cast<const uint8_t*>(packet.data().data()),
       packet.data().size(), nullptr, 0);
   if (ret != VPX_CODEC_OK) {
     const char* error = vpx_codec_error(codec_.get());
@@ -113,28 +125,8 @@ bool VideoDecoderVpx::DecodePacket(const VideoPacket& packet,
         webrtc::DesktopRect::MakeXYWH(proto_rect.x(), proto_rect.y(),
                                       proto_rect.width(), proto_rect.height());
     region->AddRect(rect);
-    RenderRect(image, rect, frame);
+    RenderRect(image, rect, pixel_format_, frame);
   }
-
-  // Process the frame shape, if supplied.
-  if (packet.has_use_desktop_shape()) {
-    if (packet.use_desktop_shape()) {
-      if (!desktop_shape_)
-        desktop_shape_ = make_scoped_ptr(new webrtc::DesktopRegion);
-      desktop_shape_->Clear();
-      for (int i = 0; i < packet.desktop_shape_rects_size(); ++i) {
-        Rect proto_rect = packet.desktop_shape_rects(i);
-        desktop_shape_->AddRect(webrtc::DesktopRect::MakeXYWH(
-            proto_rect.x(), proto_rect.y(), proto_rect.width(),
-            proto_rect.height()));
-      }
-    } else {
-      desktop_shape_.reset();
-    }
-  }
-
-  if (desktop_shape_)
-    frame->set_shape(new webrtc::DesktopRegion(*desktop_shape_));
 
   return true;
 }

@@ -5,9 +5,13 @@
 #ifndef STORAGE_BROWSER_FILEAPI_QUOTA_QUOTA_RESERVATION_H_
 #define STORAGE_BROWSER_FILEAPI_QUOTA_QUOTA_RESERVATION_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "storage/browser/fileapi/quota/quota_reservation_manager.h"
@@ -32,11 +36,11 @@ class STORAGE_EXPORT QuotaReservation
   // space is enough.  |remaining_quota_| may be less than |size| if there is
   // not enough space available.
   // Invokes |callback| upon completion.
-  void RefreshReservation(int64 size, const StatusCallback& callback);
+  void RefreshReservation(int64_t size, const StatusCallback& callback);
 
   // Associates |platform_path| to the QuotaReservation instance.
   // Returns an OpenFileHandle instance that represents a quota managed file.
-  scoped_ptr<OpenFileHandle> GetOpenFileHandle(
+  std::unique_ptr<OpenFileHandle> GetOpenFileHandle(
       const base::FilePath& platform_path);
 
   // Should be called when the associated client is crashed.
@@ -49,10 +53,10 @@ class STORAGE_EXPORT QuotaReservation
 
   // Consumes |size| of reserved quota for a associated file.
   // Consumed quota is sent to associated QuotaReservationBuffer for staging.
-  void ConsumeReservation(int64 size);
+  void ConsumeReservation(int64_t size);
 
   // Returns amount of unused reserved quota.
-  int64 remaining_quota() const { return remaining_quota_; }
+  int64_t remaining_quota() const { return remaining_quota_; }
 
   QuotaReservationManager* reservation_manager();
   const GURL& origin() const;
@@ -69,18 +73,18 @@ class STORAGE_EXPORT QuotaReservation
 
   static bool AdaptDidUpdateReservedQuota(
       const base::WeakPtr<QuotaReservation>& reservation,
-      int64 previous_size,
+      int64_t previous_size,
       const StatusCallback& callback,
       base::File::Error error,
-      int64 delta);
-  bool DidUpdateReservedQuota(int64 previous_size,
+      int64_t delta);
+  bool DidUpdateReservedQuota(int64_t previous_size,
                               const StatusCallback& callback,
                               base::File::Error error,
-                              int64 delta);
+                              int64_t delta);
 
   bool client_crashed_;
   bool running_refresh_request_;
-  int64 remaining_quota_;
+  int64_t remaining_quota_;
 
   scoped_refptr<QuotaReservationBuffer> reservation_buffer_;
 

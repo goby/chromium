@@ -5,7 +5,11 @@
 #ifndef CHROME_BROWSER_POLICY_CHROME_BROWSER_POLICY_CONNECTOR_H_
 #define CHROME_BROWSER_POLICY_CHROME_BROWSER_POLICY_CONNECTOR_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 
@@ -25,7 +29,7 @@ class ChromeBrowserPolicyConnector : public BrowserPolicyConnector {
  public:
   // Service initialization delay time in millisecond on startup. (So that
   // displaying Chrome's GUI does not get delayed.)
-  static const int64 kServiceInitializationStartupDelay = 5000;
+  static const int64_t kServiceInitializationStartupDelay = 5000;
 
   // Builds an uninitialized ChromeBrowserPolicyConnector, suitable for testing.
   // Init() should be called to create and start the policy machinery.
@@ -38,7 +42,7 @@ class ChromeBrowserPolicyConnector : public BrowserPolicyConnector {
       scoped_refptr<net::URLRequestContextGetter> request_context) override;
 
  private:
-  ConfigurationPolicyProvider* CreatePlatformProvider();
+  std::unique_ptr<ConfigurationPolicyProvider> CreatePlatformProvider();
 
   DISALLOW_COPY_AND_ASSIGN(ChromeBrowserPolicyConnector);
 };

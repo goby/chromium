@@ -19,7 +19,7 @@
 class GeneratedPasswordSavedInfoBar : public InfoBarAndroid {
  public:
   explicit GeneratedPasswordSavedInfoBar(
-      scoped_ptr<GeneratedPasswordSavedInfoBarDelegateAndroid> delegate);
+      std::unique_ptr<GeneratedPasswordSavedInfoBarDelegateAndroid> delegate);
   ~GeneratedPasswordSavedInfoBar() override;
 
  private:
@@ -32,8 +32,5 @@ class GeneratedPasswordSavedInfoBar : public InfoBarAndroid {
 
   DISALLOW_COPY_AND_ASSIGN(GeneratedPasswordSavedInfoBar);
 };
-
-// Registers native methods.
-bool RegisterGeneratedPasswordSavedInfoBarDelegate(JNIEnv* env);
 
 #endif  // CHROME_BROWSER_UI_ANDROID_INFOBARS_GENERATED_PASSWORD_SAVED_INFOBAR_H_

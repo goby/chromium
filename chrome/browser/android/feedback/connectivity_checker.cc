@@ -7,11 +7,14 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
-#include "base/message_loop/message_loop.h"
+#include "base/location.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_android.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
 #include "jni/ConnectivityChecker_jni.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
@@ -20,6 +23,8 @@
 #include "net/url_request/url_request_context_getter.h"
 #include "net/url_request/url_request_status.h"
 #include "url/gurl.h"
+
+using base::android::JavaParamRef;
 
 namespace chrome {
 namespace android {
@@ -36,27 +41,21 @@ enum ConnectivityCheckResult {
   CONNECTIVITY_CHECK_RESULT_END = 5
 };
 
-void ExecuteCallback(jobject callback, ConnectivityCheckResult result) {
+void ExecuteCallback(const base::android::JavaRef<jobject>& callback,
+                     ConnectivityCheckResult result) {
   CHECK(result >= CONNECTIVITY_CHECK_RESULT_UNKNOWN);
   CHECK(result < CONNECTIVITY_CHECK_RESULT_END);
   Java_ConnectivityChecker_executeCallback(base::android::AttachCurrentThread(),
                                            callback, result);
 }
 
-void ExecuteCallbackFromRef(
-    base::android::ScopedJavaGlobalRef<jobject>* callback,
-    ConnectivityCheckResult result) {
-  ExecuteCallback(callback->obj(), result);
-}
-
 void PostCallback(JNIEnv* env,
-                  jobject j_callback,
+                  const base::android::JavaRef<jobject>& j_callback,
                   ConnectivityCheckResult result) {
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE,
-      base::Bind(&ExecuteCallbackFromRef,
-                 base::Owned(new base::android::ScopedJavaGlobalRef<jobject>(
-                     env, j_callback)),
+      base::Bind(&ExecuteCallback,
+                 base::android::ScopedJavaGlobalRef<jobject>(j_callback),
                  result));
 }
 
@@ -94,13 +93,13 @@ class ConnectivityChecker : public net::URLFetcherDelegate {
   base::android::ScopedJavaGlobalRef<jobject> java_callback_;
 
   // The URLFetcher that executes the connectivity check.
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
 
   // Whether |this| is already being destroyed, at which point the callback
   // has already happened, and no further action should be taken.
   bool is_being_destroyed_;
 
-  scoped_ptr<base::OneShotTimer> expiration_timer_;
+  std::unique_ptr<base::OneShotTimer> expiration_timer_;
 };
 
 void ConnectivityChecker::OnURLFetchComplete(const net::URLFetcher* source) {
@@ -114,13 +113,12 @@ void ConnectivityChecker::OnURLFetchComplete(const net::URLFetcher* source) {
 
   bool connected = status.is_success() && response_code == net::HTTP_NO_CONTENT;
   if (connected) {
-    ExecuteCallback(java_callback_.obj(), CONNECTIVITY_CHECK_RESULT_CONNECTED);
+    ExecuteCallback(java_callback_, CONNECTIVITY_CHECK_RESULT_CONNECTED);
   } else {
-    ExecuteCallback(java_callback_.obj(),
-                    CONNECTIVITY_CHECK_RESULT_NOT_CONNECTED);
+    ExecuteCallback(java_callback_, CONNECTIVITY_CHECK_RESULT_NOT_CONNECTED);
   }
 
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 ConnectivityChecker::ConnectivityChecker(
@@ -136,8 +134,10 @@ ConnectivityChecker::ConnectivityChecker(
 }
 
 void ConnectivityChecker::StartAsyncCheck() {
-  url_fetcher_ =
-      net::URLFetcher::Create(url_, net::URLFetcher::GET, this).Pass();
+  url_fetcher_ = net::URLFetcher::Create(url_, net::URLFetcher::GET, this);
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      url_fetcher_.get(),
+      data_use_measurement::DataUseUserData::FEEDBACK_UPLOADER);
   url_fetcher_->SetRequestContext(request_context_);
   url_fetcher_->SetStopOnRedirect(true);
   url_fetcher_->SetAutomaticallyRetryOn5xx(false);
@@ -157,8 +157,8 @@ void ConnectivityChecker::OnTimeout() {
     return;
   is_being_destroyed_ = true;
   url_fetcher_.reset();
-  ExecuteCallback(java_callback_.obj(), CONNECTIVITY_CHECK_RESULT_TIMEOUT);
-  base::MessageLoop::current()->DeleteSoon(FROM_HERE, this);
+  ExecuteCallback(java_callback_, CONNECTIVITY_CHECK_RESULT_TIMEOUT);
+  base::ThreadTaskRunnerHandle::Get()->DeleteSoon(FROM_HERE, this);
 }
 
 }  // namespace

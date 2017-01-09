@@ -4,9 +4,11 @@
 
 #include "components/policy/core/common/schema_registry_tracking_policy_provider.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "components/policy/core/common/mock_configuration_policy_provider.h"
 #include "components/policy/core/common/policy_bundle.h"
@@ -83,24 +85,18 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, Empty) {
 TEST_F(SchemaRegistryTrackingPolicyProviderTest, PassOnChromePolicy) {
   PolicyBundle bundle;
   const PolicyNamespace chrome_ns(POLICY_DOMAIN_CHROME, "");
-  bundle.Get(chrome_ns).Set("policy",
-                            POLICY_LEVEL_MANDATORY,
-                            POLICY_SCOPE_USER,
-                            POLICY_SOURCE_CLOUD,
-                            new base::StringValue("visible"),
-                            NULL);
+  bundle.Get(chrome_ns).Set(
+      "policy", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::MakeUnique<base::StringValue>("visible"), nullptr);
 
   EXPECT_CALL(observer_, OnUpdatePolicy(&schema_registry_tracking_provider_));
-  scoped_ptr<PolicyBundle> delegate_bundle(new PolicyBundle);
+  std::unique_ptr<PolicyBundle> delegate_bundle(new PolicyBundle);
   delegate_bundle->CopyFrom(bundle);
   delegate_bundle->Get(PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, "xyz"))
-      .Set("foo",
-           POLICY_LEVEL_MANDATORY,
-           POLICY_SCOPE_USER,
+      .Set("foo", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
            POLICY_SOURCE_CLOUD,
-           new base::StringValue("not visible"),
-           NULL);
-  mock_provider_.UpdatePolicy(delegate_bundle.Pass());
+           base::MakeUnique<base::StringValue>("not visible"), nullptr);
+  mock_provider_.UpdatePolicy(std::move(delegate_bundle));
   Mock::VerifyAndClearExpectations(&observer_);
 
   EXPECT_FALSE(schema_registry_tracking_provider_.IsInitializationComplete(
@@ -116,8 +112,7 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, RefreshPolicies) {
 
 TEST_F(SchemaRegistryTrackingPolicyProviderTest, SchemaReady) {
   EXPECT_CALL(observer_, OnUpdatePolicy(&schema_registry_tracking_provider_));
-  schema_registry_.SetReady(POLICY_DOMAIN_CHROME);
-  schema_registry_.SetReady(POLICY_DOMAIN_EXTENSIONS);
+  schema_registry_.SetAllDomainsReady();
   Mock::VerifyAndClearExpectations(&observer_);
 
   EXPECT_TRUE(schema_registry_tracking_provider_.IsInitializationComplete(
@@ -126,28 +121,25 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, SchemaReady) {
 
 TEST_F(SchemaRegistryTrackingPolicyProviderTest, SchemaReadyWithComponents) {
   PolicyMap policy_map;
-  policy_map.Set("foo",
-                 POLICY_LEVEL_MANDATORY,
-                 POLICY_SCOPE_USER,
+  policy_map.Set("foo", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                  POLICY_SOURCE_CLOUD,
-                 new base::StringValue("omg"),
-                 NULL);
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle);
+                 base::MakeUnique<base::StringValue>("omg"), nullptr);
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle);
   bundle->Get(PolicyNamespace(POLICY_DOMAIN_CHROME, "")).CopyFrom(policy_map);
   bundle->Get(PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, "xyz"))
       .CopyFrom(policy_map);
   EXPECT_CALL(observer_, OnUpdatePolicy(&schema_registry_tracking_provider_));
-  mock_provider_.UpdatePolicy(bundle.Pass());
+  mock_provider_.UpdatePolicy(std::move(bundle));
   Mock::VerifyAndClearExpectations(&observer_);
 
   EXPECT_CALL(mock_provider_, RefreshPolicies()).Times(0);
   schema_registry_.RegisterComponent(
       PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, "xyz"), CreateTestSchema());
-  schema_registry_.SetReady(POLICY_DOMAIN_EXTENSIONS);
+  schema_registry_.SetExtensionsDomainsReady();
   Mock::VerifyAndClearExpectations(&mock_provider_);
 
   EXPECT_CALL(mock_provider_, RefreshPolicies());
-  schema_registry_.SetReady(POLICY_DOMAIN_CHROME);
+  schema_registry_.SetDomainReady(POLICY_DOMAIN_CHROME);
   Mock::VerifyAndClearExpectations(&mock_provider_);
 
   EXPECT_FALSE(schema_registry_tracking_provider_.IsInitializationComplete(
@@ -178,20 +170,16 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, DelegateUpdates) {
       policy::POLICY_DOMAIN_EXTENSIONS));
 
   PolicyMap policy_map;
-  policy_map.Set("foo",
-                 POLICY_LEVEL_MANDATORY,
-                 POLICY_SCOPE_USER,
+  policy_map.Set("foo", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                  POLICY_SOURCE_CLOUD,
-                 new base::StringValue("omg"),
-                 NULL);
+                 base::MakeUnique<base::StringValue>("omg"), nullptr);
   // Chrome policy updates are visible even if the components aren't ready.
   EXPECT_CALL(observer_, OnUpdatePolicy(&schema_registry_tracking_provider_));
   mock_provider_.UpdateChromePolicy(policy_map);
   Mock::VerifyAndClearExpectations(&observer_);
 
   EXPECT_CALL(mock_provider_, RefreshPolicies());
-  schema_registry_.SetReady(POLICY_DOMAIN_CHROME);
-  schema_registry_.SetReady(POLICY_DOMAIN_EXTENSIONS);
+  schema_registry_.SetAllDomainsReady();
   EXPECT_TRUE(schema_registry_.IsReady());
   Mock::VerifyAndClearExpectations(&mock_provider_);
   EXPECT_FALSE(schema_registry_tracking_provider_.IsInitializationComplete(
@@ -215,23 +203,19 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, DelegateUpdates) {
 TEST_F(SchemaRegistryTrackingPolicyProviderTest, RemoveAndAddComponent) {
   EXPECT_CALL(mock_provider_, RefreshPolicies());
   const PolicyNamespace ns(POLICY_DOMAIN_EXTENSIONS, "xyz");
-  schema_registry_.SetReady(POLICY_DOMAIN_CHROME);
   schema_registry_.RegisterComponent(ns, CreateTestSchema());
-  schema_registry_.SetReady(POLICY_DOMAIN_EXTENSIONS);
+  schema_registry_.SetAllDomainsReady();
   Mock::VerifyAndClearExpectations(&mock_provider_);
 
   // Serve policy for |ns|.
   PolicyBundle platform_policy;
-  platform_policy.Get(ns).Set("foo",
-                              POLICY_LEVEL_MANDATORY,
-                              POLICY_SCOPE_USER,
-                              POLICY_SOURCE_CLOUD,
-                              new base::StringValue("omg"),
-                              NULL);
-  scoped_ptr<PolicyBundle> copy(new PolicyBundle);
+  platform_policy.Get(ns).Set(
+      "foo", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+      base::MakeUnique<base::StringValue>("omg"), nullptr);
+  std::unique_ptr<PolicyBundle> copy(new PolicyBundle);
   copy->CopyFrom(platform_policy);
   EXPECT_CALL(observer_, OnUpdatePolicy(_));
-  mock_provider_.UpdatePolicy(copy.Pass());
+  mock_provider_.UpdatePolicy(std::move(copy));
   Mock::VerifyAndClearExpectations(&observer_);
   EXPECT_TRUE(
       schema_registry_tracking_provider_.policies().Equals(platform_policy));
@@ -252,7 +236,7 @@ TEST_F(SchemaRegistryTrackingPolicyProviderTest, RemoveAndAddComponent) {
   EXPECT_CALL(observer_, OnUpdatePolicy(_));
   copy.reset(new PolicyBundle);
   copy->CopyFrom(platform_policy);
-  mock_provider_.UpdatePolicy(copy.Pass());
+  mock_provider_.UpdatePolicy(std::move(copy));
   Mock::VerifyAndClearExpectations(&observer_);
   EXPECT_TRUE(
       schema_registry_tracking_provider_.policies().Equals(platform_policy));

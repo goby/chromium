@@ -34,6 +34,8 @@ enum CommandType {
   // These correspond to pathing commands.
   MOVE_TO,
   R_MOVE_TO,
+  ARC_TO,
+  R_ARC_TO,
   LINE_TO,
   R_LINE_TO,
   H_LINE_TO,
@@ -42,6 +44,7 @@ enum CommandType {
   R_V_LINE_TO,
   CUBIC_TO,
   R_CUBIC_TO,
+  CUBIC_TO_SHORTHAND,
   CIRCLE,
   ROUND_RECT,
   CLOSE,
@@ -52,6 +55,9 @@ enum CommandType {
   CLIP,
   // Disables anti-aliasing for this path.
   DISABLE_AA,
+  // Flips the x-axis in RTL locales. Default is false, this command sets it to
+  // true.
+  FLIPS_IN_RTL,
   // Marks the end of the list of commands.
   END
 };
@@ -65,6 +71,17 @@ struct PathElement {
     CommandType type;
     SkScalar arg;
   };
+};
+
+struct VectorIcon {
+  VectorIcon() : path_(nullptr), path_1x_(nullptr) {}
+  VectorIcon(gfx::PathElement* path, gfx::PathElement* path_1x)
+      : path_(path), path_1x_(path_1x) {}
+
+  bool is_empty() const { return !path_; }
+
+  gfx::PathElement* path_;
+  gfx::PathElement* path_1x_;
 };
 
 // Returns an array of path commands and arguments, terminated by END.

@@ -4,14 +4,19 @@
 
 #include "storage/browser/fileapi/sandbox_file_system_backend_delegate.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_util.h"
-#include "base/metrics/histogram.h"
+#include "base/macros.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/task_runner_util.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "storage/browser/fileapi/async_file_util_adapter.h"
 #include "storage/browser/fileapi/file_stream_reader.h"
 #include "storage/browser/fileapi/file_system_context.h"
@@ -39,7 +44,7 @@ const char kOpenFileSystemLabel[] = "FileSystem.OpenFileSystem";
 const char kOpenFileSystemDetailLabel[] = "FileSystem.OpenFileSystemDetail";
 const char kOpenFileSystemDetailNonThrottledLabel[] =
     "FileSystem.OpenFileSystemDetailNonthrottled";
-int64 kMinimumStatsCollectionIntervalHours = 1;
+int64_t kMinimumStatsCollectionIntervalHours = 1;
 
 // For type directory names in ObfuscatedFileUtil.
 // TODO(kinuko,nhiroki): Each type string registration should be done
@@ -102,7 +107,7 @@ class ObfuscatedOriginEnumerator
   }
 
  private:
-  scoped_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enum_;
+  std::unique_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enum_;
 };
 
 void OpenFileSystemOnFileTaskRunner(
@@ -188,7 +193,7 @@ SandboxFileSystemBackendDelegate::SandboxFileSystemBackendDelegate(
                                                obfuscated_file_util(),
                                                usage_cache())),
       quota_reservation_manager_(new QuotaReservationManager(
-          scoped_ptr<QuotaReservationManager::QuotaBackend>(
+          std::unique_ptr<QuotaReservationManager::QuotaBackend>(
               new QuotaBackendImpl(file_task_runner_.get(),
                                    obfuscated_file_util(),
                                    usage_cache(),
@@ -270,53 +275,53 @@ void SandboxFileSystemBackendDelegate::OpenFileSystem(
   is_filesystem_opened_ = true;
 }
 
-scoped_ptr<FileSystemOperationContext>
+std::unique_ptr<FileSystemOperationContext>
 SandboxFileSystemBackendDelegate::CreateFileSystemOperationContext(
     const FileSystemURL& url,
     FileSystemContext* context,
     base::File::Error* error_code) const {
   if (!IsAccessValid(url)) {
     *error_code = base::File::FILE_ERROR_SECURITY;
-    return scoped_ptr<FileSystemOperationContext>();
+    return std::unique_ptr<FileSystemOperationContext>();
   }
 
   const UpdateObserverList* update_observers = GetUpdateObservers(url.type());
   const ChangeObserverList* change_observers = GetChangeObservers(url.type());
   DCHECK(update_observers);
 
-  scoped_ptr<FileSystemOperationContext> operation_context(
+  std::unique_ptr<FileSystemOperationContext> operation_context(
       new FileSystemOperationContext(context));
   operation_context->set_update_observers(*update_observers);
   operation_context->set_change_observers(
       change_observers ? *change_observers : ChangeObserverList());
 
-  return operation_context.Pass();
+  return operation_context;
 }
 
-scoped_ptr<storage::FileStreamReader>
+std::unique_ptr<storage::FileStreamReader>
 SandboxFileSystemBackendDelegate::CreateFileStreamReader(
     const FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     const base::Time& expected_modification_time,
     FileSystemContext* context) const {
   if (!IsAccessValid(url))
-    return scoped_ptr<storage::FileStreamReader>();
-  return scoped_ptr<storage::FileStreamReader>(
+    return std::unique_ptr<storage::FileStreamReader>();
+  return std::unique_ptr<storage::FileStreamReader>(
       storage::FileStreamReader::CreateForFileSystemFile(
           context, url, offset, expected_modification_time));
 }
 
-scoped_ptr<FileStreamWriter>
+std::unique_ptr<FileStreamWriter>
 SandboxFileSystemBackendDelegate::CreateFileStreamWriter(
     const FileSystemURL& url,
-    int64 offset,
+    int64_t offset,
     FileSystemContext* context,
     FileSystemType type) const {
   if (!IsAccessValid(url))
-    return scoped_ptr<FileStreamWriter>();
+    return std::unique_ptr<FileStreamWriter>();
   const UpdateObserverList* observers = GetUpdateObservers(type);
   DCHECK(observers);
-  return scoped_ptr<FileStreamWriter>(
+  return std::unique_ptr<FileStreamWriter>(
       new SandboxFileStreamWriter(context, url, offset, *observers));
 }
 
@@ -327,8 +332,8 @@ SandboxFileSystemBackendDelegate::DeleteOriginDataOnFileTaskRunner(
     const GURL& origin_url,
     FileSystemType type) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
-  int64 usage = GetOriginUsageOnFileTaskRunner(
-      file_system_context, origin_url, type);
+  int64_t usage =
+      GetOriginUsageOnFileTaskRunner(file_system_context, origin_url, type);
   usage_cache()->CloseCacheFiles();
   bool result = obfuscated_file_util()->DeleteDirectoryForOriginAndType(
       origin_url, GetTypeString(type));
@@ -348,7 +353,7 @@ void SandboxFileSystemBackendDelegate::GetOriginsForTypeOnFileTaskRunner(
     FileSystemType type, std::set<GURL>* origins) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
   DCHECK(origins);
-  scoped_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
+  std::unique_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
   while (!(origin = enumerator->Next()).is_empty()) {
     if (enumerator->HasFileSystemType(type))
@@ -371,7 +376,7 @@ void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileTaskRunner(
     std::set<GURL>* origins) {
   DCHECK(file_task_runner_->RunsTasksOnCurrentThread());
   DCHECK(origins);
-  scoped_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
+  std::unique_ptr<OriginEnumerator> enumerator(CreateOriginEnumerator());
   GURL origin;
   while (!(origin = enumerator->Next()).is_empty()) {
     if (host == net::GetHostOrSpecFromURL(origin) &&
@@ -380,7 +385,7 @@ void SandboxFileSystemBackendDelegate::GetOriginsForHostOnFileTaskRunner(
   }
 }
 
-int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
+int64_t SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
     FileSystemContext* file_system_context,
     const GURL& origin_url,
     FileSystemType type) {
@@ -388,7 +393,8 @@ int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
 
   // Don't use usage cache and return recalculated usage for sticky invalidated
   // origins.
-  if (ContainsKey(sticky_dirty_origins_, std::make_pair(origin_url, type)))
+  if (base::ContainsKey(sticky_dirty_origins_,
+                        std::make_pair(origin_url, type)))
     return RecalculateUsage(file_system_context, origin_url, type);
 
   base::FilePath base_path =
@@ -399,21 +405,21 @@ int64 SandboxFileSystemBackendDelegate::GetOriginUsageOnFileTaskRunner(
       base_path.Append(FileSystemUsageCache::kUsageFileName);
 
   bool is_valid = usage_cache()->IsValid(usage_file_path);
-  uint32 dirty_status = 0;
+  uint32_t dirty_status = 0;
   bool dirty_status_available =
       usage_cache()->GetDirty(usage_file_path, &dirty_status);
   bool visited = !visited_origins_.insert(origin_url).second;
   if (is_valid && (dirty_status == 0 || (dirty_status_available && visited))) {
     // The usage cache is clean (dirty == 0) or the origin is already
     // initialized and running.  Read the cache file to get the usage.
-    int64 usage = 0;
+    int64_t usage = 0;
     return usage_cache()->GetUsage(usage_file_path, &usage) ? usage : -1;
   }
   // The usage cache has not been initialized or the cache is dirty.
   // Get the directory size now and update the cache.
   usage_cache()->Delete(usage_file_path);
 
-  int64 usage = RecalculateUsage(file_system_context, origin_url, type);
+  int64_t usage = RecalculateUsage(file_system_context, origin_url, type);
 
   // This clears the dirty flag too.
   usage_cache()->UpdateUsage(usage_file_path, usage);
@@ -589,19 +595,19 @@ SandboxFileSystemBackendDelegate::GetUsageCachePathForOriginAndType(
   return base_path.Append(FileSystemUsageCache::kUsageFileName);
 }
 
-int64 SandboxFileSystemBackendDelegate::RecalculateUsage(
+int64_t SandboxFileSystemBackendDelegate::RecalculateUsage(
     FileSystemContext* context,
     const GURL& origin,
     FileSystemType type) {
   FileSystemOperationContext operation_context(context);
   FileSystemURL url = context->CreateCrackedFileSystemURL(
       origin, type, base::FilePath());
-  scoped_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator(
-      obfuscated_file_util()->CreateFileEnumerator(
-          &operation_context, url, true));
+  std::unique_ptr<FileSystemFileUtil::AbstractFileEnumerator> enumerator(
+      obfuscated_file_util()->CreateFileEnumerator(&operation_context, url,
+                                                   true));
 
   base::FilePath file_path_each;
-  int64 usage = 0;
+  int64_t usage = 0;
 
   while (!(file_path_each = enumerator->Next()).empty()) {
     usage += enumerator->Size();

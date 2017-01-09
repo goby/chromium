@@ -4,6 +4,8 @@
 
 #include "components/user_prefs/tracked/tracked_preferences_migration.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
@@ -32,9 +34,8 @@ class TrackedPreferencesMigrator
           register_on_successful_unprotected_store_write_callback,
       const base::Callback<void(const base::Closure&)>&
           register_on_successful_protected_store_write_callback,
-      scoped_ptr<PrefHashStore> unprotected_pref_hash_store,
-      scoped_ptr<PrefHashStore> protected_pref_hash_store,
-      scoped_ptr<HashStoreContents> legacy_pref_hash_store,
+      std::unique_ptr<PrefHashStore> unprotected_pref_hash_store,
+      std::unique_ptr<PrefHashStore> protected_pref_hash_store,
       InterceptablePrefFilter* unprotected_pref_filter,
       InterceptablePrefFilter* protected_pref_filter);
 
@@ -54,7 +55,7 @@ class TrackedPreferencesMigrator
       PrefFilterID id,
       const InterceptablePrefFilter::FinalizeFilterOnLoadCallback&
           finalize_filter_on_load,
-      scoped_ptr<base::DictionaryValue> prefs);
+      std::unique_ptr<base::DictionaryValue> prefs);
 
   // Proceeds with migration if both |unprotected_prefs_| and |protected_prefs_|
   // have been set.
@@ -75,12 +76,11 @@ class TrackedPreferencesMigrator
   InterceptablePrefFilter::FinalizeFilterOnLoadCallback
       finalize_protected_filter_on_load_;
 
-  scoped_ptr<PrefHashStore> unprotected_pref_hash_store_;
-  scoped_ptr<PrefHashStore> protected_pref_hash_store_;
-  scoped_ptr<HashStoreContents> legacy_pref_hash_store_;
+  std::unique_ptr<PrefHashStore> unprotected_pref_hash_store_;
+  std::unique_ptr<PrefHashStore> protected_pref_hash_store_;
 
-  scoped_ptr<base::DictionaryValue> unprotected_prefs_;
-  scoped_ptr<base::DictionaryValue> protected_prefs_;
+  std::unique_ptr<base::DictionaryValue> unprotected_prefs_;
+  std::unique_ptr<base::DictionaryValue> protected_prefs_;
 
   DISALLOW_COPY_AND_ASSIGN(TrackedPreferencesMigrator);
 };
@@ -120,9 +120,9 @@ void ScheduleSourcePrefStoreCleanup(
 void CleanupMigratedHashes(const std::set<std::string>& migrated_pref_names,
                            PrefHashStore* origin_pref_hash_store,
                            base::DictionaryValue* origin_pref_store) {
-  scoped_ptr<PrefHashStoreTransaction> transaction(
-      origin_pref_hash_store->BeginTransaction(scoped_ptr<HashStoreContents>(
-          new DictionaryHashStoreContents(origin_pref_store))));
+  DictionaryHashStoreContents dictionary_contents(origin_pref_store);
+  std::unique_ptr<PrefHashStoreTransaction> transaction(
+      origin_pref_hash_store->BeginTransaction(&dictionary_contents));
   for (std::set<std::string>::const_iterator it = migrated_pref_names.begin();
        it != migrated_pref_names.end();
        ++it) {
@@ -138,17 +138,13 @@ void MigratePrefsFromOldToNewStore(const std::set<std::string>& pref_names,
                                    base::DictionaryValue* old_store,
                                    base::DictionaryValue* new_store,
                                    PrefHashStore* new_hash_store,
-                                   HashStoreContents* legacy_hash_store,
                                    bool* old_store_needs_cleanup,
-                                   bool* new_store_altered,
-                                   bool* used_legacy_pref_hashes) {
+                                   bool* new_store_altered) {
   const base::DictionaryValue* old_hash_store_contents =
       DictionaryHashStoreContents(old_store).GetContents();
-  const base::DictionaryValue* legacy_hash_store_contents =
-      legacy_hash_store->GetContents();
-  scoped_ptr<PrefHashStoreTransaction> new_hash_store_transaction(
-      new_hash_store->BeginTransaction(scoped_ptr<HashStoreContents>(
-          new DictionaryHashStoreContents(new_store))));
+  DictionaryHashStoreContents dictionary_contents(new_store);
+  std::unique_ptr<PrefHashStoreTransaction> new_hash_store_transaction(
+      new_hash_store->BeginTransaction(&dictionary_contents));
 
   for (std::set<std::string>::const_iterator it = pref_names.begin();
        it != pref_names.end();
@@ -183,11 +179,6 @@ void MigratePrefsFromOldToNewStore(const std::set<std::string>& pref_names,
       const base::Value* old_hash = NULL;
       if (old_hash_store_contents)
         old_hash_store_contents->Get(pref_name, &old_hash);
-      if (!old_hash && legacy_hash_store_contents) {
-        legacy_hash_store_contents->Get(pref_name, &old_hash);
-        if (old_hash)
-          *used_legacy_pref_hashes = true;
-      }
       if (old_hash) {
         new_hash_store_transaction->ImportHash(pref_name, old_hash);
         *new_store_altered = true;
@@ -214,9 +205,8 @@ TrackedPreferencesMigrator::TrackedPreferencesMigrator(
         register_on_successful_unprotected_store_write_callback,
     const base::Callback<void(const base::Closure&)>&
         register_on_successful_protected_store_write_callback,
-    scoped_ptr<PrefHashStore> unprotected_pref_hash_store,
-    scoped_ptr<PrefHashStore> protected_pref_hash_store,
-    scoped_ptr<HashStoreContents> legacy_pref_hash_store,
+    std::unique_ptr<PrefHashStore> unprotected_pref_hash_store,
+    std::unique_ptr<PrefHashStore> protected_pref_hash_store,
     InterceptablePrefFilter* unprotected_pref_filter,
     InterceptablePrefFilter* protected_pref_filter)
     : unprotected_pref_names_(unprotected_pref_names),
@@ -227,9 +217,8 @@ TrackedPreferencesMigrator::TrackedPreferencesMigrator(
           register_on_successful_unprotected_store_write_callback),
       register_on_successful_protected_store_write_callback_(
           register_on_successful_protected_store_write_callback),
-      unprotected_pref_hash_store_(unprotected_pref_hash_store.Pass()),
-      protected_pref_hash_store_(protected_pref_hash_store.Pass()),
-      legacy_pref_hash_store_(legacy_pref_hash_store.Pass()) {
+      unprotected_pref_hash_store_(std::move(unprotected_pref_hash_store)),
+      protected_pref_hash_store_(std::move(protected_pref_hash_store)) {
   // The callbacks bound below will own this TrackedPreferencesMigrator by
   // reference.
   unprotected_pref_filter->InterceptNextFilterOnLoad(
@@ -248,15 +237,15 @@ void TrackedPreferencesMigrator::InterceptFilterOnLoad(
     PrefFilterID id,
     const InterceptablePrefFilter::FinalizeFilterOnLoadCallback&
         finalize_filter_on_load,
-    scoped_ptr<base::DictionaryValue> prefs) {
+    std::unique_ptr<base::DictionaryValue> prefs) {
   switch (id) {
     case UNPROTECTED_PREF_FILTER:
       finalize_unprotected_filter_on_load_ = finalize_filter_on_load;
-      unprotected_prefs_ = prefs.Pass();
+      unprotected_prefs_ = std::move(prefs);
       break;
     case PROTECTED_PREF_FILTER:
       finalize_protected_filter_on_load_ = finalize_filter_on_load;
-      protected_prefs_ = prefs.Pass();
+      protected_prefs_ = std::move(prefs);
       break;
   }
 
@@ -268,29 +257,18 @@ void TrackedPreferencesMigrator::MigrateIfReady() {
   if (!protected_prefs_ || !unprotected_prefs_)
     return;
 
-  bool used_legacy_pref_hashes = false;
   bool protected_prefs_need_cleanup = false;
   bool unprotected_prefs_altered = false;
-  MigratePrefsFromOldToNewStore(unprotected_pref_names_,
-                                protected_prefs_.get(),
-                                unprotected_prefs_.get(),
-                                unprotected_pref_hash_store_.get(),
-                                legacy_pref_hash_store_.get(),
-                                &protected_prefs_need_cleanup,
-                                &unprotected_prefs_altered,
-                                &used_legacy_pref_hashes);
+  MigratePrefsFromOldToNewStore(
+      unprotected_pref_names_, protected_prefs_.get(), unprotected_prefs_.get(),
+      unprotected_pref_hash_store_.get(), &protected_prefs_need_cleanup,
+      &unprotected_prefs_altered);
   bool unprotected_prefs_need_cleanup = false;
   bool protected_prefs_altered = false;
-  MigratePrefsFromOldToNewStore(protected_pref_names_,
-                                unprotected_prefs_.get(),
-                                protected_prefs_.get(),
-                                protected_pref_hash_store_.get(),
-                                legacy_pref_hash_store_.get(),
-                                &unprotected_prefs_need_cleanup,
-                                &protected_prefs_altered,
-                                &used_legacy_pref_hashes);
-  UMA_HISTOGRAM_BOOLEAN("Settings.MigratedHashesFromLocalState",
-                        used_legacy_pref_hashes);
+  MigratePrefsFromOldToNewStore(
+      protected_pref_names_, unprotected_prefs_.get(), protected_prefs_.get(),
+      protected_pref_hash_store_.get(), &unprotected_prefs_need_cleanup,
+      &protected_prefs_altered);
 
   if (!unprotected_prefs_altered && !protected_prefs_altered) {
     // Clean up any MACs that might have been previously migrated from the
@@ -305,13 +283,12 @@ void TrackedPreferencesMigrator::MigrateIfReady() {
     CleanupMigratedHashes(protected_pref_names_,
                           unprotected_pref_hash_store_.get(),
                           unprotected_prefs_.get());
-    legacy_pref_hash_store_->Reset();
   }
 
   // Hand the processed prefs back to their respective filters.
-  finalize_unprotected_filter_on_load_.Run(unprotected_prefs_.Pass(),
+  finalize_unprotected_filter_on_load_.Run(std::move(unprotected_prefs_),
                                            unprotected_prefs_altered);
-  finalize_protected_filter_on_load_.Run(protected_prefs_.Pass(),
+  finalize_protected_filter_on_load_.Run(std::move(protected_prefs_),
                                          protected_prefs_altered);
 
   if (unprotected_prefs_need_cleanup) {
@@ -349,22 +326,17 @@ void SetupTrackedPreferencesMigration(
         register_on_successful_unprotected_store_write_callback,
     const base::Callback<void(const base::Closure&)>&
         register_on_successful_protected_store_write_callback,
-    scoped_ptr<PrefHashStore> unprotected_pref_hash_store,
-    scoped_ptr<PrefHashStore> protected_pref_hash_store,
-    scoped_ptr<HashStoreContents> legacy_pref_hash_store,
+    std::unique_ptr<PrefHashStore> unprotected_pref_hash_store,
+    std::unique_ptr<PrefHashStore> protected_pref_hash_store,
     InterceptablePrefFilter* unprotected_pref_filter,
     InterceptablePrefFilter* protected_pref_filter) {
   scoped_refptr<TrackedPreferencesMigrator> prefs_migrator(
       new TrackedPreferencesMigrator(
-          unprotected_pref_names,
-          protected_pref_names,
-          unprotected_store_cleaner,
-          protected_store_cleaner,
+          unprotected_pref_names, protected_pref_names,
+          unprotected_store_cleaner, protected_store_cleaner,
           register_on_successful_unprotected_store_write_callback,
           register_on_successful_protected_store_write_callback,
-          unprotected_pref_hash_store.Pass(),
-          protected_pref_hash_store.Pass(),
-          legacy_pref_hash_store.Pass(),
-          unprotected_pref_filter,
+          std::move(unprotected_pref_hash_store),
+          std::move(protected_pref_hash_store), unprotected_pref_filter,
           protected_pref_filter));
 }

@@ -6,6 +6,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -15,13 +16,6 @@
 #include "base/logging.h"
 
 namespace base {
-
-SharedMemoryCreateOptions::SharedMemoryCreateOptions()
-    : name_deprecated(nullptr),
-      open_existing_deprecated(false),
-      size(0),
-      executable(false),
-      share_read_only(false) {}
 
 SharedMemory::SharedMemory()
     : mapped_file_(-1),
@@ -37,17 +31,6 @@ SharedMemory::SharedMemory(const SharedMemoryHandle& handle, bool read_only)
       memory_(NULL),
       read_only_(read_only),
       requested_size_(0) {
-}
-
-SharedMemory::SharedMemory(const SharedMemoryHandle& handle,
-                           bool read_only,
-                           ProcessHandle process)
-    : mapped_file_(handle.fd),
-      mapped_size_(0),
-      memory_(NULL),
-      read_only_(read_only),
-      requested_size_(0) {
-  NOTREACHED();
 }
 
 SharedMemory::~SharedMemory() {
@@ -137,6 +120,14 @@ bool SharedMemory::Unmap() {
 
 SharedMemoryHandle SharedMemory::handle() const {
   return FileDescriptor(mapped_file_, false);
+}
+
+SharedMemoryHandle SharedMemory::TakeHandle() {
+  FileDescriptor handle(mapped_file_, true);
+  mapped_file_ = -1;
+  memory_ = nullptr;
+  mapped_size_ = 0;
+  return handle;
 }
 
 void SharedMemory::Close() {

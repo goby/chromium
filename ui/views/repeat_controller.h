@@ -6,6 +6,7 @@
 #define UI_VIEWS_REPEAT_CONTROLLER_H_
 
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
 
 namespace views {
@@ -31,6 +32,8 @@ class RepeatController {
 
   // Stop repeating.
   void Stop();
+
+  const base::OneShotTimer& timer_for_testing() const { return timer_; }
 
  private:
   // Called when the timer expires.

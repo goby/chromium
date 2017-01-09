@@ -5,12 +5,15 @@
 #include "chrome/browser/process_singleton.h"
 
 #include <fcntl.h>
+#include <limits.h>
 #include <signal.h>
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,9 +30,10 @@
 #include "base/test/test_timeouts.h"
 #include "base/test/thread_test_helper.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "chrome/common/chrome_constants.h"
 #include "content/public/test/test_browser_thread.h"
-#include "net/base/net_util.h"
+#include "net/base/network_interfaces.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using content::BrowserThread;
@@ -65,8 +69,10 @@ class ProcessSingletonPosixTest : public testing::Test {
   ProcessSingletonPosixTest()
       : kill_callbacks_(0),
         io_thread_(BrowserThread::IO),
-        wait_event_(true, false),
-        signal_event_(true, false),
+        wait_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                    base::WaitableEvent::InitialState::NOT_SIGNALED),
+        signal_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                      base::WaitableEvent::InitialState::NOT_SIGNALED),
         process_singleton_on_thread_(NULL) {
     io_thread_.StartIOThread();
   }
@@ -80,7 +86,7 @@ class ProcessSingletonPosixTest : public testing::Test {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
     // Use a long directory name to ensure that the socket isn't opened through
     // the symlink.
-    user_data_path_ = temp_dir_.path().Append(
+    user_data_path_ = temp_dir_.GetPath().Append(
         std::string(sizeof(sockaddr_un::sun_path), 'a'));
     ASSERT_TRUE(CreateDirectory(user_data_path_));
 
@@ -91,7 +97,7 @@ class ProcessSingletonPosixTest : public testing::Test {
 
   void TearDown() override {
     scoped_refptr<base::ThreadTestHelper> io_helper(new base::ThreadTestHelper(
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO).get()));
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get()));
     ASSERT_TRUE(io_helper->Run());
 
     // Destruct the ProcessSingleton object before the IO thread so that its
@@ -160,7 +166,7 @@ class ProcessSingletonPosixTest : public testing::Test {
   }
 
   ProcessSingleton::NotifyResult NotifyOtherProcess(bool override_kill) {
-    scoped_ptr<TestableProcessSingleton> process_singleton(
+    std::unique_ptr<TestableProcessSingleton> process_singleton(
         CreateProcessSingleton());
     base::CommandLine command_line(
         base::CommandLine::ForCurrentProcess()->GetProgram());
@@ -180,7 +186,7 @@ class ProcessSingletonPosixTest : public testing::Test {
   // A helper method to call ProcessSingleton::NotifyOtherProcessOrCreate().
   ProcessSingleton::NotifyResult NotifyOtherProcessOrCreate(
       const std::string& url) {
-    scoped_ptr<TestableProcessSingleton> process_singleton(
+    std::unique_ptr<TestableProcessSingleton> process_singleton(
         CreateProcessSingleton());
     base::CommandLine command_line(
         base::CommandLine::ForCurrentProcess()->GetProgram());
@@ -257,7 +263,7 @@ class ProcessSingletonPosixTest : public testing::Test {
   base::WaitableEvent wait_event_;
   base::WaitableEvent signal_event_;
 
-  scoped_ptr<base::Thread> worker_thread_;
+  std::unique_ptr<base::Thread> worker_thread_;
   TestableProcessSingleton* process_singleton_on_thread_;
 };
 
@@ -359,7 +365,7 @@ TEST_F(ProcessSingletonPosixTest, NotifyOtherProcessOrCreate_DifferingHost) {
 TEST_F(ProcessSingletonPosixTest, CreateFailsWithExistingBrowser) {
   CreateProcessSingletonOnThread();
 
-  scoped_ptr<TestableProcessSingleton> process_singleton(
+  std::unique_ptr<TestableProcessSingleton> process_singleton(
       CreateProcessSingleton());
   process_singleton->OverrideCurrentPidForTesting(base::GetCurrentProcId() + 1);
   EXPECT_FALSE(process_singleton->Create());
@@ -369,7 +375,7 @@ TEST_F(ProcessSingletonPosixTest, CreateFailsWithExistingBrowser) {
 // but with the old socket location.
 TEST_F(ProcessSingletonPosixTest, CreateChecksCompatibilitySocket) {
   CreateProcessSingletonOnThread();
-  scoped_ptr<TestableProcessSingleton> process_singleton(
+  std::unique_ptr<TestableProcessSingleton> process_singleton(
       CreateProcessSingleton());
   process_singleton->OverrideCurrentPidForTesting(base::GetCurrentProcId() + 1);
 
@@ -406,7 +412,7 @@ TEST_F(ProcessSingletonPosixTest, NotifyOtherProcessOrCreate_BadCookie) {
 // Test that if there is an existing lock file, and we could not flock()
 // it, then exit.
 TEST_F(ProcessSingletonPosixTest, CreateRespectsOldMacLock) {
-  scoped_ptr<TestableProcessSingleton> process_singleton(
+  std::unique_ptr<TestableProcessSingleton> process_singleton(
       CreateProcessSingleton());
   base::ScopedFD lock_fd(HANDLE_EINTR(
       open(lock_path_.value().c_str(), O_RDWR | O_CREAT | O_EXLOCK, 0644)));
@@ -421,7 +427,7 @@ TEST_F(ProcessSingletonPosixTest, CreateRespectsOldMacLock) {
 // Test that if there is an existing lock file, and it's not locked, we replace
 // it.
 TEST_F(ProcessSingletonPosixTest, CreateReplacesOldMacLock) {
-  scoped_ptr<TestableProcessSingleton> process_singleton(
+  std::unique_ptr<TestableProcessSingleton> process_singleton(
       CreateProcessSingleton());
   EXPECT_EQ(0, base::WriteFile(lock_path_, "", 0));
   EXPECT_TRUE(process_singleton->Create());

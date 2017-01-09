@@ -8,11 +8,12 @@
 #include <map>
 #include <set>
 #include <string>
+#include <vector>
 
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
 #include "base/observer_list.h"
-#include "content/public/renderer/render_process_observer.h"
+#include "content/public/renderer/render_thread_observer.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/user_script.h"
 #include "extensions/renderer/user_script_set.h"
@@ -37,15 +38,14 @@ class ScriptInjection;
 //                         only programmatically-declared scripts, instantiated
 //                         when an extension first creates a declarative rule
 //                         that would, if triggered, request a script injection.
-class UserScriptSetManager : public content::RenderProcessObserver {
+class UserScriptSetManager : public content::RenderThreadObserver {
  public:
   // Like a UserScriptSet::Observer, but automatically subscribes to all sets
   // associated with the manager.
   class Observer {
    public:
     virtual void OnUserScriptsUpdated(
-        const std::set<HostID>& changed_hosts,
-        const std::vector<UserScript*>& scripts) = 0;
+        const std::set<HostID>& changed_hosts) = 0;
   };
 
   UserScriptSetManager();
@@ -58,7 +58,7 @@ class UserScriptSetManager : public content::RenderProcessObserver {
   // Looks up the script injection associated with |script_id| and
   // |extension_id| in the context of the given |web_frame|, |tab_id|,
   // and |url|.
-  scoped_ptr<ScriptInjection> GetInjectionForDeclarativeScript(
+  std::unique_ptr<ScriptInjection> GetInjectionForDeclarativeScript(
       int script_id,
       content::RenderFrame* render_frame,
       int tab_id,
@@ -67,10 +67,11 @@ class UserScriptSetManager : public content::RenderProcessObserver {
 
   // Append all injections from |static_scripts| and each of
   // |programmatic_scripts_| to |injections|.
-  void GetAllInjections(ScopedVector<ScriptInjection>* injections,
-                        content::RenderFrame* render_frame,
-                        int tab_id,
-                        UserScript::RunLocation run_location);
+  void GetAllInjections(
+      std::vector<std::unique_ptr<ScriptInjection>>* injections,
+      content::RenderFrame* render_frame,
+      int tab_id,
+      UserScript::RunLocation run_location);
 
   // Get active extension IDs from |static_scripts| and each of
   // |programmatic_scripts_|.
@@ -78,11 +79,15 @@ class UserScriptSetManager : public content::RenderProcessObserver {
 
   const UserScriptSet* static_scripts() const { return &static_scripts_; }
 
+  void set_activity_logging_enabled(bool enabled) {
+    activity_logging_enabled_ = enabled;
+  }
+
  private:
   // Map for per-extension sets that may be defined programmatically.
-  typedef std::map<HostID, linked_ptr<UserScriptSet> > UserScriptSetMap;
+  using UserScriptSetMap = std::map<HostID, std::unique_ptr<UserScriptSet>>;
 
-  // content::RenderProcessObserver implementation.
+  // content::RenderThreadObserver implementation.
   bool OnControlMessageReceived(const IPC::Message& message) override;
 
   UserScriptSet* GetProgrammaticScriptsByHostID(const HostID& host_id);
@@ -99,6 +104,9 @@ class UserScriptSetManager : public content::RenderProcessObserver {
   // Scripts programmatically-defined through API calls (initialized and stored
   // per-extension).
   UserScriptSetMap programmatic_scripts_;
+
+  // Whether or not dom activity should be logged for injected scripts.
+  bool activity_logging_enabled_;
 
   // The associated observers.
   base::ObserverList<Observer> observers_;

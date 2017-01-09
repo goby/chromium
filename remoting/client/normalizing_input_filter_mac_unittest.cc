@@ -4,6 +4,8 @@
 
 #include "remoting/client/normalizing_input_filter_mac.h"
 
+#include <stdint.h>
+
 #include "remoting/proto/event.pb.h"
 #include "remoting/protocol/protocol_mock_objects.h"
 #include "remoting/protocol/test_event_matchers.h"
@@ -35,7 +37,7 @@ KeyEvent MakeKeyEvent(ui::DomCode keycode, bool pressed) {
 // Test CapsLock press/release.
 TEST(NormalizingInputFilterMacTest, CapsLock) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
@@ -55,27 +57,27 @@ TEST(NormalizingInputFilterMacTest, CapsLock) {
 // Test without pressing command key.
 TEST(NormalizingInputFilterMacTest, NoInjection) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
   }
 
   // C Down and C Up.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, false));
 }
 
 // Test pressing command key and other normal keys.
 TEST(NormalizingInputFilterMacTest, CmdKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
@@ -83,60 +85,60 @@ TEST(NormalizingInputFilterMacTest, CmdKey) {
 
     // Left command key.
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
 
     // Right command key.
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, true)));
+        ui::DomCode::META_RIGHT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, false)));
+        ui::DomCode::META_RIGHT, false)));
 
     // More than one keys after CMD.
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, true)));
+        ui::DomCode::META_RIGHT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_V, true)));
+        ui::DomCode::US_V, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_V, false)));
+        ui::DomCode::US_V, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, false)));
+        ui::DomCode::META_RIGHT, false)));
   }
 
   // Left command key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 
   // Right command key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, false));
 
   // More than one keys after CMD.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_V, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_V, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, false));
 }
 
 // Test pressing command and special keys.
 TEST(NormalizingInputFilterMacTest, SpecialKeys) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
@@ -144,93 +146,93 @@ TEST(NormalizingInputFilterMacTest, SpecialKeys) {
 
     // Command + Shift.
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::SHIFT_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::SHIFT_LEFT, false)));
 
     // Command + Option.
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::ALT_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
         ui::DomCode::ALT_LEFT, false)));
   }
 
   // Command + Shift.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::SHIFT_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
   processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::SHIFT_LEFT, false));
 
   // Command + Option.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
   processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::ALT_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
   processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::ALT_LEFT, false));
 }
 
 // Test pressing multiple command keys.
 TEST(NormalizingInputFilterMacTest, MultipleCmdKeys) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, true)));
+        ui::DomCode::META_LEFT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, true)));
+        ui::DomCode::META_RIGHT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_LEFT, false)));
+        ui::DomCode::META_LEFT, false)));
   }
 
   // Test multiple CMD keys at the same time.
   // L CMD Down, C Down, R CMD Down, L CMD Up.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_LEFT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_LEFT, false));
 }
 
 // Test press C key before command key.
 TEST(NormalizingInputFilterMacTest, BeforeCmdKey) {
   MockInputStub stub;
-  scoped_ptr<protocol::InputFilter> processor(
+  std::unique_ptr<protocol::InputFilter> processor(
       new NormalizingInputFilterMac(&stub));
 
   {
     InSequence s;
 
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, true)));
+        ui::DomCode::US_C, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, true)));
+        ui::DomCode::META_RIGHT, true)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::OS_RIGHT, false)));
+        ui::DomCode::META_RIGHT, false)));
     EXPECT_CALL(stub, InjectKeyEvent(EqualsKeyEventWithNumLock(
-        ui::DomCode::KEY_C, false)));
+        ui::DomCode::US_C, false)));
   }
 
   // Press C before command key.
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, true));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::OS_RIGHT, false));
-  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::KEY_C, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, true));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::META_RIGHT, false));
+  processor->InjectKeyEvent(MakeKeyEvent(ui::DomCode::US_C, false));
 }
 
 }  // namespace remoting

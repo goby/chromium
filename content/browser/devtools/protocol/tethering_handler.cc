@@ -4,21 +4,25 @@
 
 #include "content/browser/devtools/protocol/tethering_handler.h"
 
-#include "base/stl_util.h"
+#include <map>
+
+#include "base/memory/ptr_util.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_source.h"
 #include "net/socket/server_socket.h"
 #include "net/socket/stream_socket.h"
 #include "net/socket/tcp_server_socket.h"
 
 namespace content {
-namespace devtools {
-namespace tethering {
+namespace protocol {
+
+using BindCallback = Tethering::Backend::BindCallback;
+using UnbindCallback = Tethering::Backend::UnbindCallback;
 
 namespace {
-
-const char kLocalhost[] = "127.0.0.1";
 
 const int kListenBacklog = 5;
 const int kBufferSize = 16 * 1024;
@@ -26,9 +30,8 @@ const int kBufferSize = 16 * 1024;
 const int kMinTetheringPort = 1024;
 const int kMaxTetheringPort = 32767;
 
-using Response = DevToolsProtocolClient::Response;
 using CreateServerSocketCallback =
-    base::Callback<scoped_ptr<net::ServerSocket>(std::string*)>;
+    base::Callback<std::unique_ptr<net::ServerSocket>(std::string*)>;
 
 class SocketPump {
  public:
@@ -41,8 +44,10 @@ class SocketPump {
   std::string Init(const CreateServerSocketCallback& socket_callback) {
     std::string channel_name;
     server_socket_ = socket_callback.Run(&channel_name);
-    if (!server_socket_.get() || channel_name.empty())
+    if (!server_socket_.get() || channel_name.empty()) {
       SelfDestruct();
+      return std::string();
+    }
 
     int result = server_socket_->Accept(
         &accepted_socket_,
@@ -147,35 +152,31 @@ class SocketPump {
 
 
  private:
-  scoped_ptr<net::StreamSocket> client_socket_;
-  scoped_ptr<net::ServerSocket> server_socket_;
-  scoped_ptr<net::StreamSocket> accepted_socket_;
+  std::unique_ptr<net::StreamSocket> client_socket_;
+  std::unique_ptr<net::ServerSocket> server_socket_;
+  std::unique_ptr<net::StreamSocket> accepted_socket_;
   int pending_writes_;
   bool pending_destruction_;
 };
 
 class BoundSocket {
  public:
-  typedef base::Callback<void(uint16, const std::string&)> AcceptedCallback;
+  typedef base::Callback<void(uint16_t, const std::string&)> AcceptedCallback;
 
   BoundSocket(AcceptedCallback accepted_callback,
               const CreateServerSocketCallback& socket_callback)
       : accepted_callback_(accepted_callback),
         socket_callback_(socket_callback),
-        socket_(new net::TCPServerSocket(NULL, net::NetLog::Source())),
+        socket_(new net::TCPServerSocket(NULL, net::NetLogSource())),
         port_(0) {
   }
 
   virtual ~BoundSocket() {
   }
 
-  bool Listen(uint16 port) {
+  bool Listen(uint16_t port) {
     port_ = port;
-    net::IPAddressNumber ip_number;
-    if (!net::ParseIPLiteralToNumber(kLocalhost, &ip_number))
-      return false;
-
-    net::IPEndPoint end_point(ip_number, port);
+    net::IPEndPoint end_point(net::IPAddress::IPv4Localhost(), port);
     int result = socket_->Listen(end_point, kListenBacklog);
     if (result < 0)
       return false;
@@ -222,9 +223,9 @@ class BoundSocket {
 
   AcceptedCallback accepted_callback_;
   CreateServerSocketCallback socket_callback_;
-  scoped_ptr<net::ServerSocket> socket_;
-  scoped_ptr<net::StreamSocket> accept_socket_;
-  uint16 port_;
+  std::unique_ptr<net::ServerSocket> socket_;
+  std::unique_ptr<net::StreamSocket> accept_socket_;
+  uint16_t port_;
 };
 
 }  // namespace
@@ -238,19 +239,14 @@ class TetheringHandler::TetheringImpl {
       const CreateServerSocketCallback& socket_callback);
   ~TetheringImpl();
 
-  void Bind(DevToolsCommandId command_id, uint16 port);
-  void Unbind(DevToolsCommandId command_id, uint16 port);
-  void Accepted(uint16 port, const std::string& name);
+  void Bind(uint16_t port, std::unique_ptr<BindCallback> callback);
+  void Unbind(uint16_t port, std::unique_ptr<UnbindCallback> callback);
+  void Accepted(uint16_t port, const std::string& name);
 
  private:
-  void SendInternalError(DevToolsCommandId command_id,
-                         const std::string& message);
-
   base::WeakPtr<TetheringHandler> handler_;
   CreateServerSocketCallback socket_callback_;
-
-  typedef std::map<uint16, BoundSocket*> BoundSockets;
-  BoundSockets bound_sockets_;
+  std::map<uint16_t, std::unique_ptr<BoundSocket>> bound_sockets_;
 };
 
 TetheringHandler::TetheringImpl::TetheringImpl(
@@ -260,66 +256,59 @@ TetheringHandler::TetheringImpl::TetheringImpl(
       socket_callback_(socket_callback) {
 }
 
-TetheringHandler::TetheringImpl::~TetheringImpl() {
-  STLDeleteValues(&bound_sockets_);
-}
+TetheringHandler::TetheringImpl::~TetheringImpl() = default;
 
 void TetheringHandler::TetheringImpl::Bind(
-    DevToolsCommandId command_id, uint16 port) {
+    uint16_t port, std::unique_ptr<BindCallback> callback) {
   if (bound_sockets_.find(port) != bound_sockets_.end()) {
-    SendInternalError(command_id, "Port already bound");
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
+        &BindCallback::sendFailure,
+        base::Passed(std::move(callback)),
+        Response::Error("Port already bound")));
     return;
   }
 
-  BoundSocket::AcceptedCallback callback = base::Bind(
+  BoundSocket::AcceptedCallback accepted = base::Bind(
       &TetheringHandler::TetheringImpl::Accepted, base::Unretained(this));
-  scoped_ptr<BoundSocket> bound_socket(
-      new BoundSocket(callback, socket_callback_));
+  std::unique_ptr<BoundSocket> bound_socket =
+      base::MakeUnique<BoundSocket>(accepted, socket_callback_);
   if (!bound_socket->Listen(port)) {
-    SendInternalError(command_id, "Could not bind port");
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
+        &BindCallback::sendFailure,
+        base::Passed(std::move(callback)),
+        Response::Error("Could not bind port")));
     return;
   }
 
-  bound_sockets_[port] = bound_socket.release();
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&TetheringHandler::SendBindSuccess, handler_, command_id));
+  bound_sockets_[port] = std::move(bound_socket);
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
+      &BindCallback::sendSuccess,
+      base::Passed(std::move(callback))));
 }
 
 void TetheringHandler::TetheringImpl::Unbind(
-    DevToolsCommandId command_id, uint16 port) {
-
-  BoundSockets::iterator it = bound_sockets_.find(port);
+    uint16_t port, std::unique_ptr<UnbindCallback> callback) {
+  auto it = bound_sockets_.find(port);
   if (it == bound_sockets_.end()) {
-    SendInternalError(command_id, "Port is not bound");
+    BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
+        &UnbindCallback::sendFailure,
+        base::Passed(std::move(callback)),
+        Response::InvalidParams("Port is not bound")));
     return;
   }
 
-  delete it->second;
   bound_sockets_.erase(it);
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&TetheringHandler::SendUnbindSuccess, handler_, command_id));
+  BrowserThread::PostTask(BrowserThread::UI, FROM_HERE, base::Bind(
+      &UnbindCallback::sendSuccess,
+      base::Passed(std::move(callback))));
 }
 
-void TetheringHandler::TetheringImpl::Accepted(
-    uint16 port, const std::string& name) {
+void TetheringHandler::TetheringImpl::Accepted(uint16_t port,
+                                               const std::string& name) {
   BrowserThread::PostTask(
       BrowserThread::UI,
       FROM_HERE,
       base::Bind(&TetheringHandler::Accepted, handler_, port, name));
-}
-
-void TetheringHandler::TetheringImpl::SendInternalError(
-    DevToolsCommandId command_id,
-    const std::string& message) {
-  BrowserThread::PostTask(
-      BrowserThread::UI,
-      FROM_HERE,
-      base::Bind(&TetheringHandler::SendInternalError, handler_,
-                 command_id, message));
 }
 
 
@@ -344,13 +333,17 @@ TetheringHandler::~TetheringHandler() {
   }
 }
 
-void TetheringHandler::SetClient(scoped_ptr<Client> client) {
-  client_.swap(client);
+void TetheringHandler::Wire(UberDispatcher* dispatcher) {
+  frontend_.reset(new Tethering::Frontend(dispatcher->channel()));
+  Tethering::Dispatcher::wire(dispatcher, this);
 }
 
-void TetheringHandler::Accepted(uint16 port, const std::string& name) {
-  client_->Accepted(AcceptedParams::Create()->set_port(port)
-                                            ->set_connection_id(name));
+Response TetheringHandler::Disable() {
+  return Response::OK();
+}
+
+void TetheringHandler::Accepted(uint16_t port, const std::string& name) {
+  frontend_->Accepted(port, name);
 }
 
 bool TetheringHandler::Activate() {
@@ -363,44 +356,38 @@ bool TetheringHandler::Activate() {
   return true;
 }
 
-Response TetheringHandler::Bind(DevToolsCommandId command_id, int port) {
-  if (port < kMinTetheringPort || port > kMaxTetheringPort)
-    return Response::InvalidParams("port");
+void TetheringHandler::Bind(
+    int port, std::unique_ptr<BindCallback> callback) {
+  if (port < kMinTetheringPort || port > kMaxTetheringPort) {
+    callback->sendFailure(Response::InvalidParams("port"));
+    return;
+  }
 
-  if (!Activate())
-    return Response::ServerError("Tethering is used by another connection");
+  if (!Activate()) {
+    callback->sendFailure(
+        Response::Error("Tethering is used by another connection"));
+    return;
+  }
 
   DCHECK(impl_);
   task_runner_->PostTask(
       FROM_HERE, base::Bind(&TetheringImpl::Bind, base::Unretained(impl_),
-                            command_id, port));
-  return Response::OK();
+                            port, base::Passed(std::move(callback))));
 }
 
-Response TetheringHandler::Unbind(DevToolsCommandId command_id, int port) {
-  if (!Activate())
-    return Response::ServerError("Tethering is used by another connection");
+void TetheringHandler::Unbind(
+    int port, std::unique_ptr<UnbindCallback> callback) {
+  if (!Activate()) {
+    callback->sendFailure(
+        Response::Error("Tethering is used by another connection"));
+    return;
+  }
 
   DCHECK(impl_);
   task_runner_->PostTask(
       FROM_HERE, base::Bind(&TetheringImpl::Unbind, base::Unretained(impl_),
-                            command_id, port));
-  return Response::OK();
+                            port, base::Passed(std::move(callback))));
 }
 
-void TetheringHandler::SendBindSuccess(DevToolsCommandId command_id) {
-  client_->SendBindResponse(command_id, BindResponse::Create());
-}
-
-void TetheringHandler::SendUnbindSuccess(DevToolsCommandId command_id) {
-  client_->SendUnbindResponse(command_id, UnbindResponse::Create());
-}
-
-void TetheringHandler::SendInternalError(DevToolsCommandId command_id,
-                                         const std::string& message) {
-  client_->SendError(command_id, Response::InternalError(message));
-}
-
-}  // namespace tethering
-}  // namespace devtools
+}  // namespace protocol
 }  // namespace content

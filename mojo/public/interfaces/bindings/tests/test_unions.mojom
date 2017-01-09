@@ -8,6 +8,11 @@ enum AnEnum {
   FIRST, SECOND
 };
 
+[Extensible]
+enum AnExtensibleEnum {
+  FIRST, SECOND, THIRD
+};
+
 union PodUnion {
   int8   f_int8;
   int8   f_int8_other;
@@ -22,6 +27,7 @@ union PodUnion {
   double f_double;
   bool   f_bool;
   AnEnum f_enum;
+  AnExtensibleEnum f_extensible_enum;
 };
 
 union ObjectUnion {
@@ -32,6 +38,8 @@ union ObjectUnion {
   array<int8> f_array_int8;
   map<string, int8> f_map_int8;
   PodUnion f_pod_union;
+  // Test that Clone() is defined after SmallStruct is declared.
+  array<SmallStruct> f_small_structs;
 };
 
 union HandleUnion {
@@ -41,6 +49,7 @@ union HandleUnion {
   handle<data_pipe_producer> f_data_pipe_producer;
   handle<shared_buffer> f_shared_buffer;
   SmallCache f_small_cache;
+  SmallCache& f_small_cache_request;
 };
 
 struct WrapperStruct {

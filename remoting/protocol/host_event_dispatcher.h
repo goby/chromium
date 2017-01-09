@@ -5,21 +5,21 @@
 #ifndef REMOTING_PROTOCOL_HOST_EVENT_DISPATCHER_H_
 #define REMOTING_PROTOCOL_HOST_EVENT_DISPATCHER_H_
 
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "remoting/protocol/channel_dispatcher_base.h"
-#include "remoting/protocol/protobuf_message_parser.h"
+#include "remoting/protocol/input_event_timestamps.h"
 
 namespace remoting {
 namespace protocol {
 
-class EventMessage;
 class InputStub;
 
 // HostEventDispatcher dispatches incoming messages on the event
 // channel to InputStub.
 class HostEventDispatcher : public ChannelDispatcherBase {
  public:
-  typedef base::Callback<void(int64_t)> OnInputEventCallback;
-
   HostEventDispatcher();
   ~HostEventDispatcher() override;
 
@@ -28,20 +28,24 @@ class HostEventDispatcher : public ChannelDispatcherBase {
   // the dispatcher.
   void set_input_stub(InputStub* input_stub) { input_stub_ = input_stub; }
 
-  // Set callback to notify of each message's sequence number. The
-  // callback cannot tear down this object.
-  void set_on_input_event_callback(const OnInputEventCallback& value) {
-    on_input_event_callback_ = value;
+  // Returns InputEventTimestampsSource for events received on input channel.
+  //
+  // TODO(sergeyu): This timestamps source generates timestamps for input events
+  // as they are received. This means that any potential delay in the input
+  // injector is not accounted for. Consider moving this to InputInjector to
+  // ensure that the timestamps source emits timestamps for each input event
+  // only after it's injected. This would require updating InputStub to get
+  // timestamps for each event.
+  scoped_refptr<InputEventTimestampsSource> event_timestamps_source() {
+    return event_timestamps_source_;
   }
 
  private:
-  void OnMessageReceived(scoped_ptr<EventMessage> message,
-                         const base::Closure& done_task);
+  void OnIncomingMessage(std::unique_ptr<CompoundBuffer> buffer) override;
 
-  InputStub* input_stub_;
-  OnInputEventCallback on_input_event_callback_;
+  scoped_refptr<InputEventTimestampsSourceImpl> event_timestamps_source_;
 
-  ProtobufMessageParser<EventMessage> parser_;
+  InputStub* input_stub_ = nullptr;
 
   DISALLOW_COPY_AND_ASSIGN(HostEventDispatcher);
 };

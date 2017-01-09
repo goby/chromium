@@ -6,12 +6,13 @@
 #include <string>
 
 #include "base/memory/ref_counted.h"
-#include "base/prefs/testing_pref_store.h"
 #include "base/values.h"
+#include "chrome/browser/net/safe_search_util.h"
 #include "chrome/browser/supervised_user/supervised_user_constants.h"
 #include "chrome/browser/supervised_user/supervised_user_pref_store.h"
 #include "chrome/browser/supervised_user/supervised_user_settings_service.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/testing_pref_store.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 using base::DictionaryValue;
@@ -113,16 +114,17 @@ TEST_F(SupervisedUserPrefStoreTest, ConfigureSettings) {
   EXPECT_FALSE(fixture.changed_prefs()->GetDictionary(
       prefs::kSupervisedUserManualHosts, &manual_hosts));
 
-  // kForceGoogleSafeSearch and kForceYouTubeSafetyMode default to true for
-  // supervised users.
+  // kForceGoogleSafeSearch defaults to true and kForceYouTubeRestrict defaults
+  // to Moderate for supervised users.
   bool force_google_safesearch = false;
-  bool force_youtube_safety_mode = false;
+  int force_youtube_restrict = safe_search_util::YOUTUBE_RESTRICT_OFF;
   EXPECT_TRUE(fixture.changed_prefs()->GetBoolean(prefs::kForceGoogleSafeSearch,
                                                   &force_google_safesearch));
-  EXPECT_TRUE(fixture.changed_prefs()->GetBoolean(
-      prefs::kForceYouTubeSafetyMode, &force_youtube_safety_mode));
+  EXPECT_TRUE(fixture.changed_prefs()->GetInteger(prefs::kForceYouTubeRestrict,
+                                                  &force_youtube_restrict));
   EXPECT_TRUE(force_google_safesearch);
-  EXPECT_TRUE(force_youtube_safety_mode);
+  EXPECT_EQ(force_youtube_restrict,
+            safe_search_util::YOUTUBE_RESTRICT_MODERATE);
 
   // Activating the service again should not change anything.
   fixture.changed_prefs()->Clear();
@@ -130,30 +132,29 @@ TEST_F(SupervisedUserPrefStoreTest, ConfigureSettings) {
   EXPECT_EQ(0u, fixture.changed_prefs()->size());
 
   // kSupervisedModeManualHosts can be configured by the custodian.
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetBoolean("example.com", true);
   dict->SetBoolean("moose.org", false);
-  service_.SetLocalSetting(
-      supervised_users::kContentPackManualBehaviorHosts,
-      scoped_ptr<base::Value>(dict->DeepCopy()));
+  service_.SetLocalSetting(supervised_users::kContentPackManualBehaviorHosts,
+                           std::unique_ptr<base::Value>(dict->DeepCopy()));
   EXPECT_EQ(1u, fixture.changed_prefs()->size());
   ASSERT_TRUE(fixture.changed_prefs()->GetDictionary(
       prefs::kSupervisedUserManualHosts, &manual_hosts));
   EXPECT_TRUE(manual_hosts->Equals(dict.get()));
 
-  // kForceGoogleSafeSearch and kForceYouTubeSafetyMode can be configured by the
+  // kForceGoogleSafeSearch and kForceYouTubeRestrict can be configured by the
   // custodian, overriding the hardcoded default.
   fixture.changed_prefs()->Clear();
   service_.SetLocalSetting(
       supervised_users::kForceSafeSearch,
-      scoped_ptr<base::Value>(new base::FundamentalValue(false)));
+      std::unique_ptr<base::Value>(new base::FundamentalValue(false)));
   EXPECT_EQ(1u, fixture.changed_prefs()->size());
   EXPECT_TRUE(fixture.changed_prefs()->GetBoolean(prefs::kForceGoogleSafeSearch,
                                                   &force_google_safesearch));
-  EXPECT_TRUE(fixture.changed_prefs()->GetBoolean(
-      prefs::kForceYouTubeSafetyMode, &force_youtube_safety_mode));
-  EXPECT_FALSE(force_youtube_safety_mode);
+  EXPECT_TRUE(fixture.changed_prefs()->GetInteger(prefs::kForceYouTubeRestrict,
+                                                  &force_youtube_restrict));
   EXPECT_FALSE(force_google_safesearch);
+  EXPECT_EQ(force_youtube_restrict, safe_search_util::YOUTUBE_RESTRICT_OFF);
 }
 
 TEST_F(SupervisedUserPrefStoreTest, ActivateSettingsBeforeInitialization) {

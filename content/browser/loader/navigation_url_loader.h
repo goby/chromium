@@ -5,18 +5,19 @@
 #ifndef CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_H_
 #define CONTENT_BROWSER_LOADER_NAVIGATION_URL_LOADER_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "content/common/content_export.h"
 
 namespace content {
 
+class AppCacheNavigationHandle;
 class BrowserContext;
+class NavigationUIData;
 class NavigationURLLoaderDelegate;
 class NavigationURLLoaderFactory;
 class ServiceWorkerNavigationHandle;
-struct CommonNavigationParams;
 struct NavigationRequestInfo;
 
 // PlzNavigate: The navigation logic's UI thread entry point into the resource
@@ -33,10 +34,12 @@ class CONTENT_EXPORT NavigationURLLoader {
   // request parameters should not come in as a navigation-specific
   // structure. Information like has_user_gesture and
   // should_replace_current_entry shouldn't be needed at this layer.
-  static scoped_ptr<NavigationURLLoader> Create(
+  static std::unique_ptr<NavigationURLLoader> Create(
       BrowserContext* browser_context,
-      scoped_ptr<NavigationRequestInfo> request_info,
+      std::unique_ptr<NavigationRequestInfo> request_info,
+      std::unique_ptr<NavigationUIData> navigation_ui_data,
       ServiceWorkerNavigationHandle* service_worker_handle,
+      AppCacheNavigationHandle* appcache_handle,
       NavigationURLLoaderDelegate* delegate);
 
   // For testing purposes; sets the factory for use in testing.
@@ -47,6 +50,9 @@ class CONTENT_EXPORT NavigationURLLoader {
   // Called in response to OnRequestRedirected to continue processing the
   // request.
   virtual void FollowRedirect() = 0;
+
+  // Called in response to OnResponseStarted to process the response.
+  virtual void ProceedWithResponse() = 0;
 
  protected:
   NavigationURLLoader() {}

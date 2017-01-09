@@ -5,16 +5,18 @@
 // Implement a DirectShow sink filter used for receiving captured frames from
 // a DirectShow Capture filter.
 
-#ifndef MEDIA_VIDEO_CAPTURE_WIN_SINK_FILTER_WIN_H_
-#define MEDIA_VIDEO_CAPTURE_WIN_SINK_FILTER_WIN_H_
+#ifndef MEDIA_CAPTURE_VIDEO_WIN_SINK_FILTER_WIN_H_
+#define MEDIA_CAPTURE_VIDEO_WIN_SINK_FILTER_WIN_H_
 
 #include <windows.h>
+#include <stddef.h>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "media/base/video_capture_types.h"
 #include "media/capture/video/video_capture_device.h"
 #include "media/capture/video/win/filter_base_win.h"
 #include "media/capture/video/win/sink_filter_observer_win.h"
+#include "media/capture/video_capture_types.h"
 
 namespace media {
 
@@ -29,6 +31,11 @@ extern GUID kMediaSubTypeI420;
 // pixel format with the characters HDYC encoded in the first array word.
 extern GUID kMediaSubTypeHDYC;
 
+// 16-bit grey-scale single plane formats provided by some depth cameras.
+extern GUID kMediaSubTypeZ16;
+extern GUID kMediaSubTypeINVZ;
+extern GUID kMediaSubTypeY16;
+
 class SinkInputPin;
 
 class __declspec(uuid("88cdbbdc-a73b-4afa-acbf-15d5e2ce12c3")) SinkFilter
@@ -39,9 +46,6 @@ class __declspec(uuid("88cdbbdc-a73b-4afa-acbf-15d5e2ce12c3")) SinkFilter
   void SetRequestedMediaFormat(VideoPixelFormat pixel_format,
                                float frame_rate,
                                const BITMAPINFOHEADER& info_header);
-  // Returns the format that is negotiated when this
-  // filter is connected to a media filter.
-  const VideoCaptureFormat& ResultingFormat() const;
 
   // Implement FilterBase.
   size_t NoOfPins() override;
@@ -59,4 +63,4 @@ class __declspec(uuid("88cdbbdc-a73b-4afa-acbf-15d5e2ce12c3")) SinkFilter
 
 }  // namespace media
 
-#endif  // MEDIA_VIDEO_CAPTURE_WIN_SINK_FILTER_WIN_H_
+#endif  // MEDIA_CAPTURE_VIDEO_WIN_SINK_FILTER_WIN_H_

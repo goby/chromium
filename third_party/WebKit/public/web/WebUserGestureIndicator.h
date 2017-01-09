@@ -35,22 +35,27 @@
 
 namespace blink {
 
+class WebLocalFrame;
 class WebUserGestureToken;
 
 class WebUserGestureIndicator {
-public:
-    // Returns true if a user gesture is currently being processed.
-    BLINK_EXPORT static bool isProcessingUserGesture();
+ public:
+  // Returns true if a user gesture is currently being processed.
+  BLINK_EXPORT static bool isProcessingUserGesture();
 
-    // Returns true if a consumable gesture exists and has been successfully consumed.
-    BLINK_EXPORT static bool consumeUserGesture();
+  // Returns true if a consumable gesture exists and has been successfully
+  // consumed.
+  BLINK_EXPORT static bool consumeUserGesture();
 
-    // Returns a token for the currently active user gesture. It can be used to
-    // continue processing the user gesture later on using a
-    // WebScopedUserGesture.
-    BLINK_EXPORT static WebUserGestureToken currentUserGestureToken();
+  // Returns true if a user gesture was processed on the provided frame since
+  // the time the frame was loaded.
+  BLINK_EXPORT static bool processedUserGestureSinceLoad(WebLocalFrame*);
+
+  // Returns a token for the currently active user gesture. It can be used to
+  // continue processing the user gesture later on using a
+  // WebScopedUserGesture.
+  BLINK_EXPORT static WebUserGestureToken currentUserGestureToken();
 };
-
 }
 
-#endif // WebUserGestureIndicator_h
+#endif  // WebUserGestureIndicator_h

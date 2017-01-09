@@ -2,10 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/ui/zoom/zoom_controller.h"
+#include "components/zoom/zoom_controller.h"
 
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/process/kill.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
@@ -15,6 +16,7 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/host_zoom_map.h"
 #include "content/public/browser/navigation_entry.h"
@@ -25,8 +27,8 @@
 #include "content/public/test/browser_test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
-using ui_zoom::ZoomController;
-using ui_zoom::ZoomObserver;
+using zoom::ZoomController;
+using zoom::ZoomObserver;
 
 bool operator==(const ZoomController::ZoomChangedEventData& lhs,
                 const ZoomController::ZoomChangedEventData& rhs) {
@@ -178,7 +180,7 @@ IN_PROC_BROWSER_TEST_F(ZoomControllerBrowserTest,
   ASSERT_TRUE(tab_strip);
 
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), url, NEW_FOREGROUND_TAB,
+      browser(), url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   {
     content::WebContents* web_contents = tab_strip->GetActiveWebContents();
@@ -276,15 +278,15 @@ IN_PROC_BROWSER_TEST_F(ZoomControllerBrowserTest, NavigationResetsManualMode) {
 // Regression test: crbug.com/438979.
 IN_PROC_BROWSER_TEST_F(ZoomControllerBrowserTest,
                        SettingsZoomAfterSigninWorks) {
-  GURL signin_url(
-      std::string(chrome::kChromeUIChromeSigninURL).append("?source=0"));
+  GURL signin_url(std::string(chrome::kChromeUIChromeSigninURL)
+                      .append("?access_point=0&reason=0"));
   // We open the signin page in a new tab so that the ZoomController is
   // created against the HostZoomMap of the special StoragePartition that
   // backs the signin page. When we subsequently navigate away from the
   // signin page, the HostZoomMap changes, and we need to test that the
   // ZoomController correctly detects this.
   ui_test_utils::NavigateToURLWithDisposition(
-      browser(), signin_url, NEW_FOREGROUND_TAB,
+      browser(), signin_url, WindowOpenDisposition::NEW_FOREGROUND_TAB,
       ui_test_utils::BROWSER_TEST_WAIT_FOR_NAVIGATION);
   login_ui_test_utils::WaitUntilUIReady(browser());
   content::WebContents* web_contents =
@@ -296,9 +298,6 @@ IN_PROC_BROWSER_TEST_F(ZoomControllerBrowserTest,
   EXPECT_EQ(signin_url, web_contents->GetLastCommittedURL());
   ZoomController* zoom_controller =
       ZoomController::FromWebContents(web_contents);
-
-  content::HostZoomMap* host_zoom_map_signin =
-      content::HostZoomMap::GetForWebContents(web_contents);
 
   GURL settings_url(chrome::kChromeUISettingsURL);
   ui_test_utils::NavigateToURL(browser(), settings_url);
@@ -314,17 +313,6 @@ IN_PROC_BROWSER_TEST_F(ZoomControllerBrowserTest,
   // test not properly trigger a navigation to the settings page.
   EXPECT_EQ(settings_url, web_contents->GetLastCommittedURL());
   EXPECT_EQ(zoom_controller, ZoomController::FromWebContents(web_contents));
-
-  // For the webview based sign-in code, the sign in page uses the default host
-  // zoom map.
-  if (!switches::IsEnableWebviewBasedSignin()) {
-    // We expect the navigation from the chrome sign in page to the settings
-    // page to invoke a storage partition switch, and thus a different
-    // HostZoomMap for the web_contents.
-    content::HostZoomMap* host_zoom_map_settings =
-        content::HostZoomMap::GetForWebContents(web_contents);
-    EXPECT_NE(host_zoom_map_signin, host_zoom_map_settings);
-  }
 
   // If we zoom the new page, it should still generate a ZoomController event.
   double old_zoom_level = zoom_controller->GetZoomLevel();

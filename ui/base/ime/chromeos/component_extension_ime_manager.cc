@@ -4,8 +4,12 @@
 
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
 
+#include <stddef.h>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "chromeos/chromeos_switches.h"
 #include "ui/base/ime/chromeos/extension_ime_util.h"
@@ -89,11 +93,17 @@ bool InputMethodCompare(const input_method::InputMethodDescriptor& im1,
 ComponentExtensionEngine::ComponentExtensionEngine() {
 }
 
+ComponentExtensionEngine::ComponentExtensionEngine(
+    const ComponentExtensionEngine& other) = default;
+
 ComponentExtensionEngine::~ComponentExtensionEngine() {
 }
 
 ComponentExtensionIME::ComponentExtensionIME() {
 }
+
+ComponentExtensionIME::ComponentExtensionIME(
+    const ComponentExtensionIME& other) = default;
 
 ComponentExtensionIME::~ComponentExtensionIME() {
 }
@@ -114,8 +124,8 @@ ComponentExtensionIMEManager::~ComponentExtensionIMEManager() {
 }
 
 void ComponentExtensionIMEManager::Initialize(
-    scoped_ptr<ComponentExtensionIMEManagerDelegate> delegate) {
-  delegate_ = delegate.Pass();
+    std::unique_ptr<ComponentExtensionIMEManagerDelegate> delegate) {
+  delegate_ = std::move(delegate);
   std::vector<ComponentExtensionIME> ext_list = delegate_->ListIME();
   for (size_t i = 0; i < ext_list.size(); ++i) {
     ComponentExtensionIME& ext = ext_list[i];

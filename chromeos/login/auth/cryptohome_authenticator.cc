@@ -4,14 +4,17 @@
 
 #include "chromeos/login/auth/cryptohome_authenticator.h"
 
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/weak_ptr.h"
+#include "base/metrics/histogram_macros.h"
+#include "chromeos/chromeos_switches.h"
 #include "chromeos/cryptohome/async_method_caller.h"
 #include "chromeos/cryptohome/cryptohome_parameters.h"
 #include "chromeos/cryptohome/homedir_methods.h"
@@ -22,10 +25,11 @@
 #include "chromeos/login/auth/key.h"
 #include "chromeos/login/auth/user_context.h"
 #include "chromeos/login/login_state.h"
-#include "chromeos/login/user_names.h"
 #include "chromeos/login_event_recorder.h"
 #include "components/device_event_log/device_event_log.h"
 #include "components/signin/core/account_id/account_id.h"
+#include "components/user_manager/known_user.h"
+#include "components/user_manager/user_names.h"
 #include "components/user_manager/user_type.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
@@ -44,15 +48,39 @@ const char kKeyProviderDataTypeName[] = "type";
 // credentials is stored.
 const char kKeyProviderDataSaltName[] = "salt";
 
+// Name of UMA histogram.
+const char kCryptohomeMigrationToGaiaId[] = "Cryptohome.MigrationToGaiaId";
+
+// This enum is used to define the buckets for an enumerated UMA histogram.
+// Hence,
+//   (a) existing enumerated constants should never be deleted or reordered, and
+//   (b) new constants should only be appended at the end of the enumeration.
+//
+// This must be kept in sync with enum CryptohomeMigrationToGaiaId in
+// histograms.xml .
+enum CryptohomeMigrationToGaiaId {
+  NOT_STARTED = 0,
+  ALREADY_MIGRATED = 1,
+  SUCCESS = 2,
+  FAILURE = 3,
+  ENTRIES_COUNT
+};
+
+// Report to UMA.
+void UMACryptohomeMigrationToGaiaId(const CryptohomeMigrationToGaiaId status) {
+  UMA_HISTOGRAM_ENUMERATION(kCryptohomeMigrationToGaiaId, status,
+                            CryptohomeMigrationToGaiaId::ENTRIES_COUNT);
+}
+
 // Hashes |key| with |system_salt| if it its type is KEY_TYPE_PASSWORD_PLAIN.
 // Returns the keys unmodified otherwise.
-scoped_ptr<Key> TransformKeyIfNeeded(const Key& key,
-                                     const std::string& system_salt) {
-  scoped_ptr<Key> result(new Key(key));
+std::unique_ptr<Key> TransformKeyIfNeeded(const Key& key,
+                                          const std::string& system_salt) {
+  std::unique_ptr<Key> result(new Key(key));
   if (result->GetKeyType() == Key::KEY_TYPE_PASSWORD_PLAIN)
     result->Transform(Key::KEY_TYPE_SALTED_SHA256_TOP_HALF, system_salt);
 
-  return result.Pass();
+  return result;
 }
 
 // Records status and calls resolver->Resolve().
@@ -148,10 +176,89 @@ void DoMount(const base::WeakPtr<AuthAttemptState>& attempt,
   }
 
   cryptohome::HomedirMethods::GetInstance()->MountEx(
-      cryptohome::Identification(
-          attempt->user_context.GetAccountId().GetUserEmail()),
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
       cryptohome::Authorization(auth_key), mount,
       base::Bind(&OnMount, attempt, resolver));
+}
+
+// Handle cryptohome migration status.
+void OnCryptohomeRenamed(const base::WeakPtr<AuthAttemptState>& attempt,
+                         scoped_refptr<CryptohomeAuthenticator> resolver,
+                         bool ephemeral,
+                         bool create_if_nonexistent,
+                         bool success,
+                         cryptohome::MountError return_code) {
+  chromeos::LoginEventRecorder::Get()->AddLoginTimeMarker(
+      "CryptohomeRename-End", false);
+  const AccountId account_id = attempt->user_context.GetAccountId();
+  if (success) {
+    cryptohome::SetGaiaIdMigrationStatusDone(account_id);
+    UMACryptohomeMigrationToGaiaId(CryptohomeMigrationToGaiaId::SUCCESS);
+  } else {
+    LOG(ERROR) << "Failed to rename cryptohome for account_id='"
+               << account_id.Serialize() << "' (return_code=" << return_code
+               << ")";
+    // If rename fails, we can still use legacy cryptohome identifier.
+    // Proceed to DoMount.
+    UMACryptohomeMigrationToGaiaId(CryptohomeMigrationToGaiaId::FAILURE);
+  }
+  DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
+}
+
+// This method migrates cryptohome identifier to gaia id (if needed),
+// and then calls Mount.
+void EnsureCryptohomeMigratedToGaiaId(
+    const base::WeakPtr<AuthAttemptState>& attempt,
+    scoped_refptr<CryptohomeAuthenticator> resolver,
+    bool ephemeral,
+    bool create_if_nonexistent) {
+  const bool is_gaiaid_migration_started = switches::IsGaiaIdMigrationStarted();
+  if (!is_gaiaid_migration_started) {
+    UMACryptohomeMigrationToGaiaId(CryptohomeMigrationToGaiaId::NOT_STARTED);
+    DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
+    return;
+  }
+  const bool already_migrated = cryptohome::GetGaiaIdMigrationStatus(
+      attempt->user_context.GetAccountId());
+  const bool has_gaia_id =
+      !attempt->user_context.GetAccountId().GetGaiaId().empty();
+
+  bool need_migration = false;
+  if (!create_if_nonexistent && !already_migrated) {
+    if (has_gaia_id) {
+      need_migration = true;
+    } else {
+      LOG(WARNING) << "Account '"
+                   << attempt->user_context.GetAccountId().Serialize()
+                   << "' has no gaia id. Cryptohome migration skipped.";
+    }
+  }
+  if (need_migration) {
+    chromeos::LoginEventRecorder::Get()->AddLoginTimeMarker(
+        "CryptohomeRename-Start", false);
+    const std::string& cryptohome_id_from =
+        attempt->user_context.GetAccountId().GetUserEmail();  // Migrated
+    const std::string cryptohome_id_to =
+        attempt->user_context.GetAccountId().GetAccountIdKey();
+
+    cryptohome::HomedirMethods::GetInstance()->RenameCryptohome(
+        cryptohome::Identification::FromString(cryptohome_id_from),
+        cryptohome::Identification::FromString(cryptohome_id_to),
+        base::Bind(&OnCryptohomeRenamed, attempt, resolver, ephemeral,
+                   create_if_nonexistent));
+    return;
+  }
+  if (!already_migrated && has_gaia_id) {
+    // Mark new users migrated.
+    cryptohome::SetGaiaIdMigrationStatusDone(
+        attempt->user_context.GetAccountId());
+  }
+  if (already_migrated) {
+    UMACryptohomeMigrationToGaiaId(
+        CryptohomeMigrationToGaiaId::ALREADY_MIGRATED);
+  }
+
+  DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
 }
 
 // Callback invoked when the system salt has been retrieved. Transforms the key
@@ -169,7 +276,8 @@ void OnGetSystemSalt(const base::WeakPtr<AuthAttemptState>& attempt,
       Key::KEY_TYPE_SALTED_SHA256_TOP_HALF,
       system_salt);
 
-  DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
+  EnsureCryptohomeMigratedToGaiaId(attempt, resolver, ephemeral,
+                                   create_if_nonexistent);
 }
 
 // Callback invoked when cryptohome's GetKeyDataEx() method has finished.
@@ -194,14 +302,14 @@ void OnGetKeyDataEx(
       DCHECK_EQ(kCryptohomeGAIAKeyLabel, key_definition.label);
 
       // Extract the key type and salt from |key_definition|, if present.
-      scoped_ptr<int64> type;
-      scoped_ptr<std::string> salt;
+      std::unique_ptr<int64_t> type;
+      std::unique_ptr<std::string> salt;
       for (std::vector<cryptohome::KeyDefinition::ProviderData>::
                const_iterator it = key_definition.provider_data.begin();
            it != key_definition.provider_data.end(); ++it) {
         if (it->name == kKeyProviderDataTypeName) {
           if (it->number)
-            type.reset(new int64(*it->number));
+            type.reset(new int64_t(*it->number));
           else
             NOTREACHED();
         } else if (it->name == kKeyProviderDataSaltName) {
@@ -228,7 +336,8 @@ void OnGetKeyDataEx(
         attempt->user_context.GetKey()->Transform(
             static_cast<Key::KeyType>(*type),
             *salt);
-        DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
+        EnsureCryptohomeMigratedToGaiaId(attempt, resolver, ephemeral,
+                                         create_if_nonexistent);
         return;
       }
     } else {
@@ -261,13 +370,13 @@ void StartMount(const base::WeakPtr<AuthAttemptState>& attempt,
 
   if (attempt->user_context.GetKey()->GetKeyType() !=
           Key::KEY_TYPE_PASSWORD_PLAIN) {
-    DoMount(attempt, resolver, ephemeral, create_if_nonexistent);
+    EnsureCryptohomeMigratedToGaiaId(attempt, resolver, ephemeral,
+                                     create_if_nonexistent);
     return;
   }
 
   cryptohome::HomedirMethods::GetInstance()->GetKeyDataEx(
-      cryptohome::Identification(
-          attempt->user_context.GetAccountId().GetUserEmail()),
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
       kCryptohomeGAIAKeyLabel, base::Bind(&OnGetKeyDataEx, attempt, resolver,
                                           ephemeral, create_if_nonexistent));
 }
@@ -283,7 +392,7 @@ void MountGuestAndGetHash(const base::WeakPtr<AuthAttemptState>& attempt,
                  attempt,
                  resolver));
   cryptohome::AsyncMethodCaller::GetInstance()->AsyncGetSanitizedUsername(
-      attempt->user_context.GetAccountId().GetUserEmail(),
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
       base::Bind(&TriggerResolveHash, attempt, resolver));
 }
 
@@ -292,11 +401,11 @@ void MountPublic(const base::WeakPtr<AuthAttemptState>& attempt,
                  scoped_refptr<CryptohomeAuthenticator> resolver,
                  int flags) {
   cryptohome::AsyncMethodCaller::GetInstance()->AsyncMountPublic(
-      attempt->user_context.GetAccountId().GetUserEmail(), flags,
+      cryptohome::Identification(attempt->user_context.GetAccountId()), flags,
       base::Bind(&TriggerResolveWithLoginTimeMarker,
                  "CryptohomeMountPublic-End", attempt, resolver));
   cryptohome::AsyncMethodCaller::GetInstance()->AsyncGetSanitizedUsername(
-      attempt->user_context.GetAccountId().GetUserEmail(),
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
       base::Bind(&TriggerResolveHash, attempt, resolver));
 }
 
@@ -313,19 +422,19 @@ void Migrate(const base::WeakPtr<AuthAttemptState>& attempt,
 
   // TODO(bartfab): Retrieve the hashing algorithm and salt to use for |old_key|
   // from cryptohomed.
-  scoped_ptr<Key> old_key =
+  std::unique_ptr<Key> old_key =
       TransformKeyIfNeeded(Key(old_password), system_salt);
-  scoped_ptr<Key> new_key =
+  std::unique_ptr<Key> new_key =
       TransformKeyIfNeeded(*attempt->user_context.GetKey(), system_salt);
   if (passing_old_hash) {
     caller->AsyncMigrateKey(
-        attempt->user_context.GetAccountId().GetUserEmail(),
+        cryptohome::Identification(attempt->user_context.GetAccountId()),
         old_key->GetSecret(), new_key->GetSecret(),
         base::Bind(&TriggerResolveWithLoginTimeMarker, "CryptohomeMount-End",
                    attempt, resolver));
   } else {
     caller->AsyncMigrateKey(
-        attempt->user_context.GetAccountId().GetUserEmail(),
+        cryptohome::Identification(attempt->user_context.GetAccountId()),
         new_key->GetSecret(), old_key->GetSecret(),
         base::Bind(&TriggerResolveWithLoginTimeMarker, "CryptohomeMount-End",
                    attempt, resolver));
@@ -338,7 +447,7 @@ void Remove(const base::WeakPtr<AuthAttemptState>& attempt,
   chromeos::LoginEventRecorder::Get()->AddLoginTimeMarker(
       "CryptohomeRemove-Start", false);
   cryptohome::AsyncMethodCaller::GetInstance()->AsyncRemove(
-      attempt->user_context.GetAccountId().GetUserEmail(),
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
       base::Bind(&TriggerResolveWithLoginTimeMarker, "CryptohomeRemove-End",
                  attempt, resolver));
 }
@@ -347,11 +456,11 @@ void Remove(const base::WeakPtr<AuthAttemptState>& attempt,
 void CheckKey(const base::WeakPtr<AuthAttemptState>& attempt,
               scoped_refptr<CryptohomeAuthenticator> resolver,
               const std::string& system_salt) {
-  scoped_ptr<Key> key =
+  std::unique_ptr<Key> key =
       TransformKeyIfNeeded(*attempt->user_context.GetKey(), system_salt);
   cryptohome::AsyncMethodCaller::GetInstance()->AsyncCheckKey(
-      attempt->user_context.GetAccountId().GetUserEmail(), key->GetSecret(),
-      base::Bind(&TriggerResolve, attempt, resolver));
+      cryptohome::Identification(attempt->user_context.GetAccountId()),
+      key->GetSecret(), base::Bind(&TriggerResolve, attempt, resolver));
 }
 
 }  // namespace
@@ -448,7 +557,7 @@ void CryptohomeAuthenticator::LoginOffTheRecord() {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
   current_state_.reset(
       new AuthAttemptState(UserContext(user_manager::USER_TYPE_GUEST,
-                                       login::GuestAccountId().GetUserEmail()),
+                                       user_manager::GuestAccountId()),
                            false,    // unlock
                            false,    // online_complete
                            false));  // user_is_new
@@ -476,14 +585,14 @@ void CryptohomeAuthenticator::LoginAsPublicSession(
 }
 
 void CryptohomeAuthenticator::LoginAsKioskAccount(
-    const std::string& app_user_id,
+    const AccountId& app_account_id,
     bool use_guest_mount) {
   DCHECK(task_runner_->RunsTasksOnCurrentThread());
 
-  const std::string user_id =
-      use_guest_mount ? login::GuestAccountId().GetUserEmail() : app_user_id;
+  const AccountId& account_id =
+      use_guest_mount ? user_manager::GuestAccountId() : app_account_id;
   current_state_.reset(new AuthAttemptState(
-      UserContext(user_manager::USER_TYPE_KIOSK_APP, user_id),
+      UserContext(user_manager::USER_TYPE_KIOSK_APP, account_id),
       false,    // unlock
       false,    // online_complete
       false));  // user_is_new
@@ -498,6 +607,22 @@ void CryptohomeAuthenticator::LoginAsKioskAccount(
     MountGuestAndGetHash(current_state_->AsWeakPtr(),
                          scoped_refptr<CryptohomeAuthenticator>(this));
   }
+}
+
+void CryptohomeAuthenticator::LoginAsArcKioskAccount(
+    const AccountId& app_account_id) {
+  DCHECK(task_runner_->RunsTasksOnCurrentThread());
+
+  current_state_.reset(new AuthAttemptState(
+      UserContext(user_manager::USER_TYPE_ARC_KIOSK_APP, app_account_id),
+      false,    // unlock
+      false,    // online_complete
+      false));  // user_is_new
+
+  remove_user_data_on_failure_ = true;
+  MountPublic(current_state_->AsWeakPtr(),
+              scoped_refptr<CryptohomeAuthenticator>(this),
+              cryptohome::CREATE_IF_MISSING);
 }
 
 void CryptohomeAuthenticator::OnAuthSuccess() {
@@ -614,7 +739,7 @@ void CryptohomeAuthenticator::Resolve() {
                      AuthFailure(AuthFailure::COULD_NOT_MOUNT_CRYPTOHOME)));
       break;
     case FAILED_REMOVE:
-      // In this case, we tried to remove the user's old cryptohome at her
+      // In this case, we tried to remove the user's old cryptohome at their
       // request, and the remove failed.
       remove_user_data_on_failure_ = false;
       task_runner_->PostTask(
@@ -803,7 +928,7 @@ CryptohomeAuthenticator::ResolveCryptohomeFailureState() {
     if (current_state_->cryptohome_code() ==
         cryptohome::MOUNT_ERROR_KEY_FAILURE) {
       // If we tried a mount but they used the wrong key, we may need to
-      // ask the user for her old password.  We'll only know once we've
+      // ask the user for their old password.  We'll only know once we've
       // done the online check.
       return POSSIBLE_PW_CHANGE;
     }

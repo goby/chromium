@@ -3,15 +3,22 @@
 // found in the LICENSE file.
 
 // Multiply-included message file, no traditional include guard.
-#include "content/public/common/common_param_traits.h"
+
+#include <stdint.h>
+
+#include "chrome/common/prerender_types.h"
 #include "content/public/common/referrer.h"
 #include "ipc/ipc_message.h"
 #include "ipc/ipc_message_macros.h"
 #include "ipc/ipc_param_traits.h"
 #include "ui/gfx/geometry/size.h"
 #include "url/gurl.h"
+#include "url/ipc/url_param_traits.h"
 
 #define IPC_MESSAGE_START PrerenderMsgStart
+
+IPC_ENUM_TRAITS_MAX_VALUE(prerender::PrerenderMode,
+                          prerender::PRERENDER_MODE_COUNT - 1)
 
 // PrerenderLinkManager Messages
 // These are messages sent from the renderer to the browser in
@@ -19,7 +26,7 @@
 
 IPC_STRUCT_BEGIN(PrerenderAttributes)
   IPC_STRUCT_MEMBER(GURL, url)
-  IPC_STRUCT_MEMBER(uint32, rel_types)
+  IPC_STRUCT_MEMBER(uint32_t, rel_types)
 IPC_STRUCT_END()
 
 // Notifies of the insertion of a <link rel=prerender> element in the
@@ -39,15 +46,18 @@ IPC_MESSAGE_CONTROL1(PrerenderHostMsg_CancelLinkRelPrerender,
 IPC_MESSAGE_CONTROL1(PrerenderHostMsg_AbandonLinkRelPrerender,
                      int /* prerender_id, assigned by WebPrerendererClient */)
 
+// Sent by the renderer process to notify that the resource prefetcher has
+// discovered all possible subresources and issued requests for them.
+IPC_MESSAGE_CONTROL0(PrerenderHostMsg_PrefetchFinished)
+
 // PrerenderDispatcher Messages
 // These are messages sent from the browser to the renderer in relation to
 // running prerenders.
 
 // Tells a renderer if it's currently being prerendered.  Must only be set
-// to true before any navigation occurs, and only set to false at most once
-// after that.
-IPC_MESSAGE_ROUTED1(PrerenderMsg_SetIsPrerendering,
-                    bool /* whether the RenderView is prerendering */)
+// before any navigation occurs, and only set to NO_PRERENDER at most once after
+// that.
+IPC_MESSAGE_ROUTED1(PrerenderMsg_SetIsPrerendering, prerender::PrerenderMode)
 
 // Signals to launcher that a prerender is running.
 IPC_MESSAGE_CONTROL1(PrerenderMsg_OnPrerenderStart,

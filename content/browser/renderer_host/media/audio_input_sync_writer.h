@@ -5,17 +5,22 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_INPUT_SYNC_WRITER_H_
 #define CONTENT_BROWSER_RENDERER_HOST_MEDIA_AUDIO_INPUT_SYNC_WRITER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <deque>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/process/process.h"
 #include "base/sync_socket.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "media/audio/audio_input_controller.h"
-#include "media/audio/audio_parameters.h"
 #include "media/base/audio_bus.h"
+#include "media/base/audio_parameters.h"
 
 #if defined(OS_POSIX)
 #include "base/file_descriptor_posix.h"
@@ -45,7 +50,7 @@ class CONTENT_EXPORT AudioInputSyncWriter
   void Write(const media::AudioBus* data,
              double volume,
              bool key_pressed,
-             uint32 hardware_delay_bytes) override;
+             uint32_t hardware_delay_bytes) override;
   void Close() override;
 
   bool Init();
@@ -54,7 +59,7 @@ class CONTENT_EXPORT AudioInputSyncWriter
 
  protected:
   // Socket for transmitting audio data.
-  scoped_ptr<base::CancelableSyncSocket> socket_;
+  std::unique_ptr<base::CancelableSyncSocket> socket_;
 
  private:
   friend class AudioInputSyncWriterTest;
@@ -78,7 +83,7 @@ class CONTENT_EXPORT AudioInputSyncWriter
   bool PushDataToFifo(const media::AudioBus* data,
                       double volume,
                       bool key_pressed,
-                      uint32 hardware_delay_bytes);
+                      uint32_t hardware_delay_bytes);
 
   // Writes as much data as possible from the fifo (|overflow_buses_|) to the
   // shared memory ring buffer. Returns true if all operations were successful,
@@ -88,21 +93,21 @@ class CONTENT_EXPORT AudioInputSyncWriter
   // Write audio parameters to current segment in shared memory.
   void WriteParametersToCurrentSegment(double volume,
                                        bool key_pressed,
-                                       uint32 hardware_delay_bytes);
+                                       uint32_t hardware_delay_bytes);
 
   // Signals over the socket that data has been written to the current segment.
   // Updates counters and returns true if successful. Logs error and returns
   // false if failure.
   bool SignalDataWrittenAndUpdateCounters();
 
-  uint8* shared_memory_;
-  uint32 shared_memory_segment_size_;
-  uint32 shared_memory_segment_count_;
-  uint32 current_segment_id_;
+  uint8_t* shared_memory_;
+  uint32_t shared_memory_segment_size_;
+  uint32_t shared_memory_segment_count_;
+  uint32_t current_segment_id_;
 
   // Socket to be used by the renderer. The reference is released after
   // PrepareForeignSocketHandle() is called and ran successfully.
-  scoped_ptr<base::CancelableSyncSocket> foreign_socket_;
+  std::unique_ptr<base::CancelableSyncSocket> foreign_socket_;
 
   // The time of the creation of this object.
   base::Time creation_time_;

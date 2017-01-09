@@ -5,10 +5,12 @@
 #ifndef CHROME_BROWSER_UI_APP_LIST_ARC_ARC_APP_MODEL_BUILDER_H_
 #define CHROME_BROWSER_UI_APP_LIST_ARC_ARC_APP_MODEL_BUILDER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/ui/app_list/app_list_model_builder.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_list_prefs.h"
 
@@ -29,17 +31,19 @@ class ArcAppModelBuilder : public AppListModelBuilder,
   // ArcAppListPrefs::Observer
   void OnAppRegistered(const std::string& app_id,
                        const ArcAppListPrefs::AppInfo& app_info) override;
-  void OnAppReadyChanged(const std::string& app_id, bool ready) override;
+  void OnAppRemoved(const std::string& id) override;
   void OnAppIconUpdated(const std::string& app_id,
                         ui::ScaleFactor scale_factor) override;
+  void OnAppNameUpdated(const std::string& app_id,
+                        const std::string& name) override;
 
   // AppListItemListObserver.
   void OnListItemMoved(size_t from_index,
                        size_t to_index,
                        app_list::AppListItem* item) override;
 
-  scoped_ptr<ArcAppItem> CreateApp(const std::string& app_id,
-                                   const ArcAppListPrefs::AppInfo& info);
+  std::unique_ptr<ArcAppItem> CreateApp(const std::string& app_id,
+                                        const ArcAppListPrefs::AppInfo& info);
 
   ArcAppItem* GetArcAppItem(const std::string& app_id);
 

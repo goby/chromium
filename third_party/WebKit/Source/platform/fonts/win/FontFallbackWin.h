@@ -33,6 +33,7 @@
 
 #include "platform/PlatformExport.h"
 #include "platform/fonts/FontDescription.h"
+#include "platform/fonts/FontFallbackPriority.h"
 #include <unicode/locid.h>
 #include <unicode/uscript.h>
 #include <usp10.h>
@@ -47,12 +48,14 @@ namespace blink {
 // that characters belong to.
 // When scriptChecked is non-zero, the script used to determine
 // the family is returned.
-PLATFORM_EXPORT const UChar* getFallbackFamily(UChar32 character,
+PLATFORM_EXPORT const UChar* getFallbackFamily(
+    UChar32 character,
     FontDescription::GenericFamilyType,
+    const LayoutLocale* contentLocale,
     UScriptCode* scriptChecked,
+    FontFallbackPriority,
     SkFontMgr* fontManager);
-PLATFORM_EXPORT UScriptCode scriptCodeForUnifiedHanFromLocale(const icu::Locale&);
 
-} // namespace blink
+}  // namespace blink
 
-#endif // FontFallbackWin_h
+#endif  // FontFallbackWin_h

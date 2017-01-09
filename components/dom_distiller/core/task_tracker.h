@@ -10,6 +10,7 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/dom_distiller/core/article_distillation_update.h"
 #include "components/dom_distiller/core/article_entry.h"
@@ -83,7 +84,7 @@ class TaskTracker {
 
   // |factory| will not be stored after this call.
   void StartDistiller(DistillerFactory* factory,
-                      scoped_ptr<DistillerPage> distiller_page);
+                      std::unique_ptr<DistillerPage> distiller_page);
   void StartBlobFetcher();
 
   void AddSaveCallback(const SaveCallback& callback);
@@ -91,7 +92,7 @@ class TaskTracker {
   void CancelSaveCallbacks();
 
   // The ViewerHandle should be destroyed before the ViewRequestDelegate.
-  scoped_ptr<ViewerHandle> AddViewer(ViewRequestDelegate* delegate);
+  std::unique_ptr<ViewerHandle> AddViewer(ViewRequestDelegate* delegate);
 
   const std::string& GetEntryId() const;
   bool HasEntryId(const std::string& entry_id) const;
@@ -101,14 +102,15 @@ class TaskTracker {
   void OnArticleDistillationUpdated(
       const ArticleDistillationUpdate& article_update);
 
-  void OnDistillerFinished(scoped_ptr<DistilledArticleProto> distilled_article);
+  void OnDistillerFinished(
+      std::unique_ptr<DistilledArticleProto> distilled_article);
   void OnBlobFetched(bool success,
-                     scoped_ptr<DistilledArticleProto> distilled_article);
+                     std::unique_ptr<DistilledArticleProto> distilled_article);
 
   void RemoveViewer(ViewRequestDelegate* delegate);
 
   void DistilledArticleReady(
-      scoped_ptr<DistilledArticleProto> distilled_article);
+      std::unique_ptr<DistilledArticleProto> distilled_article);
 
   // Posts a task to run DoSaveCallbacks with |distillation_succeeded|.
   void ScheduleSaveCallbacks(bool distillation_succeeded);
@@ -136,11 +138,11 @@ class TaskTracker {
   // made and removed when the corresponding ViewerHandle is destroyed.
   std::vector<ViewRequestDelegate*> viewers_;
 
-  scoped_ptr<Distiller> distiller_;
+  std::unique_ptr<Distiller> distiller_;
   bool blob_fetcher_running_;
 
   ArticleEntry entry_;
-  scoped_ptr<DistilledArticleProto> distilled_article_;
+  std::unique_ptr<DistilledArticleProto> distilled_article_;
 
   bool content_ready_;
 

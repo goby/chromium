@@ -74,7 +74,7 @@ function overrideGetMessage() {
    * @return {string} Translated resource.
    */
   chrome.i18n.getMessage = function(key) {
-    if (key.indexOf('@@') == 0)
+    if (key.startsWith('@@'))
       return originalGetMessage(key);
 
     // TODO(kevers): Add support for other locales.
@@ -224,6 +224,16 @@ function registerInputviewApi() {
   }
 
   /**
+   * Retrieve the current display size in inches.
+   * @param {function} callback
+   * @private
+   */
+  function getDisplayInInches_(callback) {
+    callback(0);
+  }
+
+
+  /**
    * Retrieve the current input method configuration.
    * @param {function} callback The callback function for processing the
    *     name of the active input mehtod.
@@ -320,6 +330,7 @@ function registerInputviewApi() {
     getCurrentInputMethod: getCurrentInputMethod_,
     getInputMethodConfig: getInputMethodConfig_,
     switchToInputMethod: switchToInputMethod_,
+    getDisplayInInches: getDisplayInInches_,
     openSettings: openSettings_
   };
 

@@ -7,11 +7,12 @@
 #include <string>
 
 #include "base/values.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if !defined(OS_MACOSX)
 TEST(LanguageOptionsHandlerTest, GetUILanguageCodeSet) {
-  scoped_ptr<base::DictionaryValue> dictionary(
+  std::unique_ptr<base::DictionaryValue> dictionary(
       options::LanguageOptionsHandler::GetUILanguageCodeSet());
   EXPECT_TRUE(dictionary->HasKey("en-US"));
   // Note that we don't test a false case, as such an expectation will
@@ -21,7 +22,7 @@ TEST(LanguageOptionsHandlerTest, GetUILanguageCodeSet) {
 #endif  // !defined(OS_MACOSX)
 
 TEST(LanguageOptionsHandlerTest, GetSpellCheckLanguageCodeSet) {
-  scoped_ptr<base::DictionaryValue> dictionary(
+  std::unique_ptr<base::DictionaryValue> dictionary(
       options::LanguageOptionsHandler::GetSpellCheckLanguageCodeSet());
   EXPECT_TRUE(dictionary->HasKey("en-US"));
 }

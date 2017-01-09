@@ -8,8 +8,8 @@
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #import "chrome/browser/ui/cocoa/bubble_combobox.h"
-#include "chrome/browser/ui/cocoa/cocoa_test_helper.h"
 #include "chrome/browser/ui/cocoa/passwords/base_passwords_controller_test.h"
+#include "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
 #include "chrome/browser/ui/passwords/manage_passwords_ui_controller_mock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -17,46 +17,46 @@
 
 namespace {
 
-class ManagePasswordsBubbleConfirmationViewControllerTest
+class ConfirmationPasswordSavedViewControllerTest
     : public ManagePasswordsControllerTest {
  public:
-  ManagePasswordsBubbleConfirmationViewControllerTest() : controller_(nil) {}
-
   void SetUp() override {
     ManagePasswordsControllerTest::SetUp();
-    delegate_.reset([[ContentViewDelegateMock alloc] init]);
     SetUpConfirmationState();
+    controller_.reset([[ConfirmationPasswordSavedViewController alloc]
+        initWithDelegate:delegate()]);
+    [controller_ view];
   }
 
-  ContentViewDelegateMock* delegate() { return delegate_.get(); }
-
-  ManagePasswordsBubbleConfirmationViewController* controller() {
-    if (!controller_) {
-      controller_.reset([[ManagePasswordsBubbleConfirmationViewController alloc]
-          initWithModel:GetModelAndCreateIfNull()
-               delegate:delegate()]);
-      [controller_ loadView];
-    }
+  ConfirmationPasswordSavedViewController* controller() {
     return controller_.get();
   }
 
  private:
-  base::scoped_nsobject<ManagePasswordsBubbleConfirmationViewController>
-      controller_;
-  base::scoped_nsobject<ContentViewDelegateMock> delegate_;
+  base::scoped_nsobject<ConfirmationPasswordSavedViewController> controller_;
 };
 
-TEST_F(ManagePasswordsBubbleConfirmationViewControllerTest,
+TEST_F(ConfirmationPasswordSavedViewControllerTest,
        ShouldDismissWhenOKClicked) {
   [controller().okButton performClick:nil];
   EXPECT_TRUE([delegate() dismissed]);
 }
 
-TEST_F(ManagePasswordsBubbleConfirmationViewControllerTest,
+TEST_F(ConfirmationPasswordSavedViewControllerTest,
        ShouldOpenPasswordsAndDismissWhenLinkClicked) {
   EXPECT_CALL(*ui_controller(), NavigateToPasswordManagerSettingsPage());
   [controller().confirmationText clickedOnLink:@"about:blank" atIndex:0];
   EXPECT_TRUE([delegate() dismissed]);
+}
+
+TEST_F(ConfirmationPasswordSavedViewControllerTest, CloseBubbleAndHandleClick) {
+  // A user may press mouse down, some navigation closes the bubble, mouse up
+  // still sends the action.
+  EXPECT_CALL(*ui_controller(), NavigateToPasswordManagerSettingsPage())
+      .Times(0);
+  [delegate() setModel:nil];
+  [controller().confirmationText clickedOnLink:@"about:blank" atIndex:0];
+  [controller().okButton performClick:nil];
 }
 
 }  // namespace

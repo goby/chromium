@@ -4,6 +4,7 @@
 
 #include "content/browser/child_process_launcher.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
@@ -11,25 +12,34 @@
 #include "base/files/file_util.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/field_trial.h"
+#include "base/metrics/histogram_macros.h"
+#include "base/process/launch.h"
 #include "base/process/process.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "content/public/browser/content_browser_client.h"
 #include "content/public/common/content_descriptors.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/result_codes.h"
 #include "content/public/common/sandboxed_process_launcher_delegate.h"
+#include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/embedder/named_platform_channel_pair.h"
+#include "mojo/edk/embedder/platform_channel_pair.h"
+#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "ppapi/features/features.h"
 
 #if defined(OS_WIN)
 #include "base/files/file_path.h"
+#include "base/win/scoped_handle.h"
+#include "base/win/win_util.h"
 #include "content/common/sandbox_win.h"
 #include "content/public/common/sandbox_init.h"
+#include "sandbox/win/src/sandbox_types.h"
 #elif defined(OS_MACOSX)
 #include "content/browser/bootstrap_sandbox_manager_mac.h"
-#include "content/browser/browser_io_surface_manager_mac.h"
 #include "content/browser/mach_broker_mac.h"
 #include "sandbox/mac/bootstrap_sandbox.h"
 #include "sandbox/mac/pre_exec_delegate.h"
@@ -39,8 +49,10 @@
 #elif defined(OS_POSIX)
 #include "base/memory/singleton.h"
 #include "content/browser/renderer_host/render_sandbox_host_linux.h"
+#include "content/browser/zygote_host/zygote_communication_linux.h"
 #include "content/browser/zygote_host/zygote_host_impl_linux.h"
 #include "content/common/child_process_sandbox_support_impl_linux.h"
+#include "content/public/browser/zygote_handle_linux.h"
 #endif
 
 #if defined(OS_POSIX)
@@ -53,11 +65,13 @@ namespace content {
 
 namespace {
 
-typedef base::Callback<void(bool,
+typedef base::Callback<void(ZygoteHandle,
 #if defined(OS_ANDROID)
                             base::ScopedFD,
 #endif
-                            base::Process)> NotifyCallback;
+                            base::Process,
+                            int)>
+    NotifyCallback;
 
 void RecordHistogramsOnLauncherThread(base::TimeDelta launch_time) {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
@@ -78,8 +92,11 @@ void RecordHistogramsOnLauncherThread(base::TimeDelta launch_time) {
 void OnChildProcessStartedAndroid(const NotifyCallback& callback,
                                   BrowserThread::ID client_thread_id,
                                   const base::TimeTicks begin_launch_time,
-                                  base::ScopedFD ipcfd,
+                                  base::ScopedFD mojo_fd,
                                   base::ProcessHandle handle) {
+  int launch_result = (handle == base::kNullProcessHandle)
+                          ? LAUNCH_RESULT_FAILURE
+                          : LAUNCH_RESULT_SUCCESS;
   // This can be called on the launcher thread or UI thread.
   base::TimeDelta launch_time = base::TimeTicks::Now() - begin_launch_time;
   BrowserThread::PostTask(
@@ -87,8 +104,8 @@ void OnChildProcessStartedAndroid(const NotifyCallback& callback,
       base::Bind(&RecordHistogramsOnLauncherThread, launch_time));
 
   base::Closure callback_on_client_thread(
-      base::Bind(callback, false, base::Passed(&ipcfd),
-                 base::Passed(base::Process(handle))));
+      base::Bind(callback, nullptr, base::Passed(&mojo_fd),
+                 base::Passed(base::Process(handle)), launch_result));
   if (BrowserThread::CurrentlyOn(client_thread_id)) {
     callback_on_client_thread.Run();
   } else {
@@ -102,46 +119,58 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
                             BrowserThread::ID client_thread_id,
                             int child_process_id,
                             SandboxedProcessLauncherDelegate* delegate,
-#if defined(OS_ANDROID)
-                            base::ScopedFD ipcfd,
-#endif
+                            mojo::edk::ScopedPlatformHandle client_handle,
                             base::CommandLine* cmd_line) {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
-  scoped_ptr<SandboxedProcessLauncherDelegate> delegate_deleter(delegate);
+  std::unique_ptr<SandboxedProcessLauncherDelegate> delegate_deleter(delegate);
+#if !defined(OS_ANDROID)
+  ZygoteHandle zygote = nullptr;
+  int launch_result = LAUNCH_RESULT_FAILURE;
+#endif
 #if defined(OS_WIN)
-  bool use_zygote = false;
   bool launch_elevated = delegate->ShouldLaunchElevated();
 #elif defined(OS_MACOSX)
-  bool use_zygote = false;
   base::EnvironmentMap env = delegate->GetEnvironment();
-  base::ScopedFD ipcfd = delegate->TakeIpcFd();
 #elif defined(OS_POSIX) && !defined(OS_ANDROID)
-  bool use_zygote = delegate->ShouldUseZygote();
   base::EnvironmentMap env = delegate->GetEnvironment();
-  base::ScopedFD ipcfd = delegate->TakeIpcFd();
 #endif
-  scoped_ptr<base::CommandLine> cmd_line_deleter(cmd_line);
+  std::unique_ptr<base::CommandLine> cmd_line_deleter(cmd_line);
   base::TimeTicks begin_launch_time = base::TimeTicks::Now();
 
   base::Process process;
 #if defined(OS_WIN)
   if (launch_elevated) {
+    // When establishing a Mojo connection, the pipe path has already been added
+    // to the command line.
     base::LaunchOptions options;
     options.start_hidden = true;
     process = base::LaunchElevatedProcess(*cmd_line, options);
   } else {
-    process = StartSandboxedProcess(delegate, cmd_line);
+    base::HandlesToInheritVector handles;
+    handles.push_back(client_handle.get().handle);
+    base::FieldTrialList::AppendFieldTrialHandleIfNeeded(&handles);
+    cmd_line->AppendSwitchASCII(
+        mojo::edk::PlatformChannelPair::kMojoPlatformChannelHandleSwitch,
+        base::UintToString(base::win::HandleToUint32(handles[0])));
+    launch_result =
+        StartSandboxedProcess(delegate, cmd_line, handles, &process);
   }
 #elif defined(OS_POSIX)
   std::string process_type =
       cmd_line->GetSwitchValueASCII(switches::kProcessType);
-  scoped_ptr<FileDescriptorInfo> files_to_register(
+  std::unique_ptr<FileDescriptorInfo> files_to_register(
       FileDescriptorInfoImpl::Create());
 
+  base::ScopedFD mojo_fd(client_handle.release().handle);
+  DCHECK(mojo_fd.is_valid());
+
+  int field_trial_handle = base::FieldTrialList::GetFieldTrialHandle();
+  if (field_trial_handle != base::kInvalidPlatformFile)
+    files_to_register->Share(kFieldTrialDescriptor, field_trial_handle);
 #if defined(OS_ANDROID)
-  files_to_register->Share(kPrimaryIPCChannel, ipcfd.get());
+  files_to_register->Share(kMojoIPCChannel, mojo_fd.get());
 #else
-  files_to_register->Transfer(kPrimaryIPCChannel, std::move(ipcfd));
+  files_to_register->Transfer(kMojoIPCChannel, std::move(mojo_fd));
 #endif
 #endif
 
@@ -154,6 +183,28 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
 #endif
       );
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
+  bool snapshot_loaded = false;
+#if defined(OS_ANDROID)
+  base::MemoryMappedFile::Region region;
+  auto maybe_register = [&region, &regions, &files_to_register](int key,
+                                                                int fd) {
+    if (fd != -1) {
+      files_to_register->Share(key, fd);
+      regions.insert(std::make_pair(key, region));
+    }
+  };
+  maybe_register(
+      kV8NativesDataDescriptor,
+      gin::V8Initializer::GetOpenNativesFileForChildProcesses(&region));
+  maybe_register(
+      kV8SnapshotDataDescriptor32,
+      gin::V8Initializer::GetOpenSnapshotFileForChildProcesses(&region, true));
+  maybe_register(
+      kV8SnapshotDataDescriptor64,
+      gin::V8Initializer::GetOpenSnapshotFileForChildProcesses(&region, false));
+
+  snapshot_loaded = true;
+#else
   base::PlatformFile natives_pf =
       gin::V8Initializer::GetOpenNativesFileForChildProcesses(
           &regions[kV8NativesDataDescriptor]);
@@ -167,13 +218,15 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
   // Failure to load the V8 snapshot is not necessarily an error. V8 can start
   // up (slower) without the snapshot.
   if (snapshot_pf != -1) {
+    snapshot_loaded = true;
     files_to_register->Share(kV8SnapshotDataDescriptor, snapshot_pf);
     regions.insert(std::make_pair(kV8SnapshotDataDescriptor, snapshot_region));
   }
+#endif
 
   if (process_type != switches::kZygoteProcess) {
     cmd_line->AppendSwitch(::switches::kV8NativesPassedByFD);
-    if (snapshot_pf != -1) {
+    if (snapshot_loaded) {
       cmd_line->AppendSwitch(::switches::kV8SnapshotPassedByFD);
     }
   }
@@ -181,9 +234,11 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
 #endif  // defined(OS_POSIX) && !defined(OS_MACOSX)
 
 #if defined(OS_ANDROID)
+#if ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
   files_to_register->Share(
       kAndroidICUDataDescriptor,
       base::i18n::GetIcuDataFileHandle(&regions[kAndroidICUDataDescriptor]));
+#endif  // ICU_UTIL_DATA_IMPL == ICU_UTIL_DATA_FILE
 
   // Android WebView runs in single process, ensure that we never get here
   // when running in single process mode.
@@ -192,15 +247,26 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
   StartChildProcess(
       cmd_line->argv(), child_process_id, std::move(files_to_register), regions,
       base::Bind(&OnChildProcessStartedAndroid, callback, client_thread_id,
-                 begin_launch_time, base::Passed(&ipcfd)));
+                 begin_launch_time, base::Passed(&mojo_fd)));
 
 #elif defined(OS_POSIX)
   // We need to close the client end of the IPC channel to reliably detect
   // child termination.
 
 #if !defined(OS_MACOSX)
-  if (use_zygote) {
-    base::ProcessHandle handle = ZygoteHostImpl::GetInstance()->ForkRequest(
+  ZygoteHandle* zygote_handle =
+      !base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kNoZygote)
+          ? delegate->GetZygote()
+          : nullptr;
+  // If |zygote_handle| is null, a zygote should not be used.
+  if (zygote_handle) {
+    // This code runs on the PROCESS_LAUNCHER thread so race conditions are not
+    // an issue with the lazy initialization.
+    if (*zygote_handle == nullptr) {
+      *zygote_handle = CreateZygote();
+    }
+    zygote = *zygote_handle;
+    base::ProcessHandle handle = zygote->ForkRequest(
         cmd_line->argv(), std::move(files_to_register), process_type);
     process = base::Process(handle);
   } else
@@ -242,17 +308,13 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
     // check-in from the new process.
     broker->EnsureRunning();
 
-    // Make sure the IOSurfaceManager service is running.
-    BrowserIOSurfaceManager::GetInstance()->EnsureRunning();
-
     const SandboxType sandbox_type = delegate->GetSandboxType();
-    scoped_ptr<sandbox::PreExecDelegate> pre_exec_delegate;
+    std::unique_ptr<sandbox::PreExecDelegate> pre_exec_delegate;
     if (BootstrapSandboxManager::ShouldEnable()) {
       BootstrapSandboxManager* sandbox_manager =
           BootstrapSandboxManager::GetInstance();
       if (sandbox_manager->EnabledForSandbox(sandbox_type)) {
-        pre_exec_delegate =
-            sandbox_manager->sandbox()->NewClient(sandbox_type).Pass();
+        pre_exec_delegate = sandbox_manager->sandbox()->NewClient(sandbox_type);
       }
     }
     options.pre_exec_delegate = pre_exec_delegate.get();
@@ -278,17 +340,17 @@ void LaunchOnLauncherThread(const NotifyCallback& callback,
 #endif  // else defined(OS_POSIX)
 #if !defined(OS_ANDROID)
   if (process.IsValid()) {
+    launch_result = LAUNCH_RESULT_SUCCESS;
     RecordHistogramsOnLauncherThread(base::TimeTicks::Now() -
                                      begin_launch_time);
   }
   BrowserThread::PostTask(client_thread_id, FROM_HERE,
-                          base::Bind(callback,
-                                     use_zygote,
-                                     base::Passed(&process)));
+                          base::Bind(callback, zygote, base::Passed(&process),
+                                     launch_result));
 #endif  // !defined(OS_ANDROID)
 }
 
-void TerminateOnLauncherThread(bool zygote, base::Process process) {
+void TerminateOnLauncherThread(ZygoteHandle zygote, base::Process process) {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
 #if defined(OS_ANDROID)
   VLOG(1) << "ChromeProcess: Stopping process with handle "
@@ -304,7 +366,7 @@ void TerminateOnLauncherThread(bool zygote, base::Process process) {
   if (zygote) {
     // If the renderer was created via a zygote, we have to proxy the reaping
     // through the zygote process.
-    ZygoteHostImpl::GetInstance()->EnsureProcessTerminated(process.Handle());
+    zygote->EnsureProcessTerminated(process.Handle());
   } else
 #endif  // !OS_MACOSX
     base::EnsureProcessTerminated(std::move(process));
@@ -316,7 +378,11 @@ void SetProcessBackgroundedOnLauncherThread(base::Process process,
                                             bool background) {
   DCHECK_CURRENTLY_ON(BrowserThread::PROCESS_LAUNCHER);
   if (process.CanBackgroundProcesses()) {
+#if defined(OS_MACOSX)
+    process.SetProcessBackgrounded(MachBroker::GetInstance(), background);
+#else
     process.SetProcessBackgrounded(background);
+#endif  // defined(OS_MACOSX)
   }
 #if defined(OS_ANDROID)
   SetChildProcessInForeground(process.Handle(), !background);
@@ -330,12 +396,15 @@ ChildProcessLauncher::ChildProcessLauncher(
     base::CommandLine* cmd_line,
     int child_process_id,
     Client* client,
+    const std::string& mojo_child_token,
+    const mojo::edk::ProcessErrorCallback& process_error_callback,
     bool terminate_on_shutdown)
     : client_(client),
       termination_status_(base::TERMINATION_STATUS_NORMAL_TERMINATION),
       exit_code_(RESULT_CODE_NORMAL_EXIT),
-      zygote_(false),
+      zygote_(nullptr),
       starting_(true),
+      process_error_callback_(process_error_callback),
 #if defined(ADDRESS_SANITIZER) || defined(LEAK_SANITIZER) ||  \
     defined(MEMORY_SANITIZER) || defined(THREAD_SANITIZER) || \
     defined(UNDEFINED_SANITIZER)
@@ -343,6 +412,7 @@ ChildProcessLauncher::ChildProcessLauncher(
 #else
       terminate_child_on_shutdown_(terminate_on_shutdown),
 #endif
+      mojo_child_token_(mojo_child_token),
       weak_factory_(this) {
   DCHECK(CalledOnValidThread());
   CHECK(BrowserThread::GetCurrentThreadIdentifier(&client_thread_id_));
@@ -360,10 +430,9 @@ ChildProcessLauncher::~ChildProcessLauncher() {
   }
 }
 
-void ChildProcessLauncher::Launch(
-    SandboxedProcessLauncherDelegate* delegate,
-    base::CommandLine* cmd_line,
-    int child_process_id) {
+void ChildProcessLauncher::Launch(SandboxedProcessLauncherDelegate* delegate,
+                                  base::CommandLine* cmd_line,
+                                  int child_process_id) {
   DCHECK(CalledOnValidThread());
 
 #if defined(OS_ANDROID)
@@ -372,7 +441,7 @@ void ChildProcessLauncher::Launch(
       cmd_line->GetSwitchValueASCII(switches::kProcessType);
   CHECK(process_type == switches::kGpuProcess ||
         process_type == switches::kRendererProcess ||
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
         process_type == switches::kPpapiPluginProcess ||
 #endif
         process_type == switches::kUtilityProcess)
@@ -382,30 +451,38 @@ void ChildProcessLauncher::Launch(
   DCHECK(process_type == switches::kGpuProcess ||
          !cmd_line->HasSwitch(switches::kNoSandbox));
 
-  // We need to close the client end of the IPC channel to reliably detect
-  // child termination. We will close this fd after we create the child
-  // process which is asynchronous on Android.
-  base::ScopedFD ipcfd(delegate->TakeIpcFd().release());
 #endif
+  mojo::edk::ScopedPlatformHandle server_handle;
+  mojo::edk::ScopedPlatformHandle client_handle;
+#if defined(OS_WIN)
+  if (delegate->ShouldLaunchElevated()) {
+    mojo::edk::NamedPlatformChannelPair named_pair;
+    server_handle = named_pair.PassServerHandle();
+    named_pair.PrepareToPassClientHandleToChildProcess(cmd_line);
+  } else
+#endif
+  {
+    mojo::edk::PlatformChannelPair channel_pair;
+    server_handle = channel_pair.PassServerHandle();
+    client_handle = channel_pair.PassClientHandle();
+  }
   NotifyCallback reply_callback(base::Bind(&ChildProcessLauncher::DidLaunch,
                                            weak_factory_.GetWeakPtr(),
-                                           terminate_child_on_shutdown_));
+                                           terminate_child_on_shutdown_,
+                                           base::Passed(&server_handle)));
   BrowserThread::PostTask(
       BrowserThread::PROCESS_LAUNCHER, FROM_HERE,
       base::Bind(&LaunchOnLauncherThread, reply_callback, client_thread_id_,
                  child_process_id, delegate,
-#if defined(OS_ANDROID)
-                 base::Passed(&ipcfd),
-#endif
-                 cmd_line));
+                 base::Passed(&client_handle), cmd_line));
 }
 
 void ChildProcessLauncher::UpdateTerminationStatus(bool known_dead) {
   DCHECK(CalledOnValidThread());
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
   if (zygote_) {
-    termination_status_ = ZygoteHostImpl::GetInstance()->
-        GetTerminationStatus(process_.Handle(), known_dead, &exit_code_);
+    termination_status_ = zygote_->GetTerminationStatus(
+        process_.Handle(), known_dead, &exit_code_);
   } else if (known_dead) {
     termination_status_ =
         base::GetKnownDeadTerminationStatus(process_.Handle(), &exit_code_);
@@ -438,20 +515,19 @@ void ChildProcessLauncher::SetProcessBackgrounded(bool background) {
 void ChildProcessLauncher::DidLaunch(
     base::WeakPtr<ChildProcessLauncher> instance,
     bool terminate_on_shutdown,
-    bool zygote,
+    mojo::edk::ScopedPlatformHandle server_handle,
+    ZygoteHandle zygote,
 #if defined(OS_ANDROID)
-    base::ScopedFD ipcfd,
+    base::ScopedFD mojo_fd,
 #endif
-    base::Process process) {
+    base::Process process,
+    int error_code) {
   if (!process.IsValid())
     LOG(ERROR) << "Failed to launch child process";
 
   if (instance.get()) {
-    instance->Notify(zygote,
-#if defined(OS_ANDROID)
-                     std::move(ipcfd),
-#endif
-                     std::move(process));
+    instance->Notify(zygote, std::move(server_handle),
+                     std::move(process), error_code);
   } else {
     if (process.IsValid() && terminate_on_shutdown) {
       // On Posix, EnsureProcessTerminated can lead to 2 seconds of sleep!  So
@@ -463,15 +539,19 @@ void ChildProcessLauncher::DidLaunch(
   }
 }
 
-void ChildProcessLauncher::Notify(
-    bool zygote,
-#if defined(OS_ANDROID)
-    base::ScopedFD ipcfd,
-#endif
-    base::Process process) {
+void ChildProcessLauncher::Notify(ZygoteHandle zygote,
+                                  mojo::edk::ScopedPlatformHandle server_handle,
+                                  base::Process process,
+                                  int error_code) {
   DCHECK(CalledOnValidThread());
   starting_ = false;
   process_ = std::move(process);
+
+  if (process_.IsValid()) {
+    // Set up Mojo IPC to the new process.
+    mojo::edk::ChildProcessLaunched(process_.Handle(), std::move(server_handle),
+                                    mojo_child_token_, process_error_callback_);
+  }
 
 #if defined(OS_POSIX) && !defined(OS_MACOSX) && !defined(OS_ANDROID)
   zygote_ = zygote;
@@ -479,8 +559,9 @@ void ChildProcessLauncher::Notify(
   if (process_.IsValid()) {
     client_->OnProcessLaunched();
   } else {
+    mojo::edk::ChildProcessLaunchFailed(mojo_child_token_);
     termination_status_ = base::TERMINATION_STATUS_LAUNCH_FAILED;
-    client_->OnProcessLaunchFailed();
+    client_->OnProcessLaunchFailed(error_code);
   }
 }
 

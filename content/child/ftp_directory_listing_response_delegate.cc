@@ -4,9 +4,12 @@
 
 #include "content/child/ftp_directory_listing_response_delegate.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
-#include "base/i18n/icu_encoding_detection.h"
+#include "base/i18n/encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
 #include "base/logging.h"
 #include "base/strings/string_util.h"
@@ -14,10 +17,11 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "content/child/weburlresponse_extradata_impl.h"
+#include "net/base/directory_listing.h"
 #include "net/base/escape.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
 #include "net/ftp/ftp_directory_listing_parser.h"
+#include "net/net_features.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/platform/WebURLLoaderClient.h"
 
@@ -37,7 +41,7 @@ base::string16 ConvertPathToUTF16(const std::string& path) {
   // Try detecting the encoding. The sample is rather small though, so it may
   // fail.
   std::string encoding;
-  if (base::DetectEncoding(path, &encoding) && !encoding.empty()) {
+  if (base::DetectEncoding(path, &encoding) && encoding != "US-ASCII") {
     base::string16 path_utf16;
     if (base::CodepageToUTF16(path, encoding.c_str(),
                               base::OnStringConversionError::SUBSTITUTE,
@@ -60,10 +64,10 @@ FtpDirectoryListingResponseDelegate::FtpDirectoryListingResponseDelegate(
     const WebURLResponse& response)
     : client_(client),
       loader_(loader) {
-  if (response.extraData()) {
+  if (response.getExtraData()) {
     // extraData can be NULL during tests.
     WebURLResponseExtraDataImpl* extra_data =
-        static_cast<WebURLResponseExtraDataImpl*>(response.extraData());
+        static_cast<WebURLResponseExtraDataImpl*>(response.getExtraData());
     extra_data->set_is_ftp_directory_listing(true);
   }
   Init(response.url());
@@ -82,7 +86,7 @@ void FtpDirectoryListingResponseDelegate::OnReceivedData(const char* data,
 void FtpDirectoryListingResponseDelegate::OnCompletedRequest() {
   std::vector<FtpDirectoryListingEntry> entries;
   int rv = -1;
-#if !defined(DISABLE_FTP_SUPPORT)
+#if !BUILDFLAG(DISABLE_FTP_SUPPORT)
   rv = net::ParseFtpDirectoryListing(buffer_, base::Time::Now(), &entries);
 #endif
   if (rv != net::OK) {
@@ -99,7 +103,7 @@ void FtpDirectoryListingResponseDelegate::OnCompletedRequest() {
       continue;
 
     bool is_directory = (entry.type == FtpDirectoryListingEntry::DIRECTORY);
-    int64 size = entry.size;
+    int64_t size = entry.size;
     if (entry.type != FtpDirectoryListingEntry::FILE)
       size = 0;
     SendDataToClient(net::GetDirectoryListingEntry(
@@ -108,8 +112,9 @@ void FtpDirectoryListingResponseDelegate::OnCompletedRequest() {
 }
 
 void FtpDirectoryListingResponseDelegate::Init(const GURL& response_url) {
-  net::UnescapeRule::Type unescape_rules = net::UnescapeRule::SPACES |
-                                           net::UnescapeRule::URL_SPECIAL_CHARS;
+  net::UnescapeRule::Type unescape_rules =
+      net::UnescapeRule::SPACES |
+      net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS;
   std::string unescaped_path = net::UnescapeURLComponent(response_url.path(),
                                                          unescape_rules);
   SendDataToClient(net::GetDirectoryListingHeader(
@@ -125,8 +130,9 @@ void FtpDirectoryListingResponseDelegate::Init(const GURL& response_url) {
 
 void FtpDirectoryListingResponseDelegate::SendDataToClient(
     const std::string& data) {
-  if (client_)
-    client_->didReceiveData(loader_, data.data(), data.length(), -1);
+  if (client_) {
+    client_->didReceiveData(data.data(), data.length());
+  }
 }
 
 }  // namespace content

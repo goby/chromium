@@ -4,12 +4,15 @@
 
 #include "chrome/browser/media_galleries/fileapi/supported_image_type_validator.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/stl_util.h"
 #include "base/threading/thread_restrictions.h"
@@ -23,37 +26,36 @@ namespace {
 // Arbitrary limit to sanity check the file size.
 const int kMaxImageFileSize = 50*1014*1024;
 
-scoped_ptr<std::string> ReadOnFileThread(const base::FilePath& path) {
+std::unique_ptr<std::string> ReadOnFileThread(const base::FilePath& path) {
   base::ThreadRestrictions::AssertIOAllowed();
-  scoped_ptr<std::string> result;
+  std::unique_ptr<std::string> result;
 
   base::File file(path, base::File::FLAG_OPEN | base::File::FLAG_READ);
   if (!file.IsValid())
-    return result.Pass();
+    return result;
 
   base::File::Info file_info;
   if (!file.GetInfo(&file_info) ||
       file_info.size > kMaxImageFileSize) {
-    return result.Pass();
+    return result;
   }
 
   result.reset(new std::string);
   result->resize(file_info.size);
-  if (file.Read(0, string_as_array(result.get()), file_info.size) !=
+  if (file.Read(0, base::string_as_array(result.get()), file_info.size) !=
       file_info.size) {
     result.reset();
   }
 
-  return result.Pass();
+  return result;
 }
 
 class ImageDecoderDelegateAdapter : public ImageDecoder::ImageRequest {
  public:
   ImageDecoderDelegateAdapter(
-      scoped_ptr<std::string> data,
+      std::unique_ptr<std::string> data,
       const storage::CopyOrMoveFileValidator::ResultCallback& callback)
-      : data_(data.Pass()),
-        callback_(callback) {
+      : data_(std::move(data)), callback_(callback) {
     DCHECK(data_);
   }
 
@@ -73,7 +75,7 @@ class ImageDecoderDelegateAdapter : public ImageDecoder::ImageRequest {
   }
 
  private:
-  scoped_ptr<std::string> data_;
+  std::unique_ptr<std::string> data_;
   storage::CopyOrMoveFileValidator::ResultCallback callback_;
 
   DISALLOW_COPY_AND_ASSIGN(ImageDecoderDelegateAdapter);
@@ -117,7 +119,8 @@ SupportedImageTypeValidator::SupportedImageTypeValidator(
       weak_factory_(this) {
 }
 
-void SupportedImageTypeValidator::OnFileOpen(scoped_ptr<std::string> data) {
+void SupportedImageTypeValidator::OnFileOpen(
+    std::unique_ptr<std::string> data) {
   DCHECK_CURRENTLY_ON(BrowserThread::IO);
   if (!data.get()) {
     callback_.Run(base::File::FILE_ERROR_SECURITY);
@@ -126,6 +129,6 @@ void SupportedImageTypeValidator::OnFileOpen(scoped_ptr<std::string> data) {
 
   // |adapter| will delete itself after a completion message is received.
   ImageDecoderDelegateAdapter* adapter =
-      new ImageDecoderDelegateAdapter(data.Pass(), callback_);
+      new ImageDecoderDelegateAdapter(std::move(data), callback_);
   ImageDecoder::Start(adapter, adapter->data());
 }

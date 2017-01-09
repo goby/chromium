@@ -4,7 +4,10 @@
 
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 
+#include "content/public/browser/navigation_data.h"
+#include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/stream_info.h"
+#include "net/ssl/client_cert_store.h"
 
 namespace content {
 
@@ -27,13 +30,10 @@ void ResourceDispatcherHostDelegate::RequestBeginning(
 void ResourceDispatcherHostDelegate::DownloadStarting(
     net::URLRequest* request,
     ResourceContext* resource_context,
-    int child_id,
-    int route_id,
-    int request_id,
     bool is_content_initiated,
     bool must_download,
-    ScopedVector<ResourceThrottle>* throttles) {
-}
+    bool is_new_request,
+    ScopedVector<ResourceThrottle>* throttles) {}
 
 ResourceDispatcherHostLoginDelegate*
     ResourceDispatcherHostDelegate::CreateLoginDelegate(
@@ -44,11 +44,7 @@ ResourceDispatcherHostLoginDelegate*
 
 bool ResourceDispatcherHostDelegate::HandleExternalProtocol(
     const GURL& url,
-    int child_id,
-    int route_id,
-    bool is_main_frame,
-    ui::PageTransition page_transition,
-    bool has_user_gesture) {
+    ResourceRequestInfo* info) {
   return true;
 }
 
@@ -69,15 +65,12 @@ bool ResourceDispatcherHostDelegate::ShouldInterceptResourceAsStream(
 
 void ResourceDispatcherHostDelegate::OnStreamCreated(
     net::URLRequest* request,
-    scoped_ptr<content::StreamInfo> stream) {
-}
+    std::unique_ptr<content::StreamInfo> stream) {}
 
 void ResourceDispatcherHostDelegate::OnResponseStarted(
     net::URLRequest* request,
     ResourceContext* resource_context,
-    ResourceResponse* response,
-    IPC::Sender* sender) {
-}
+    ResourceResponse* response) {}
 
 void ResourceDispatcherHostDelegate::OnRequestRedirected(
     const GURL& redirect_url,
@@ -87,8 +80,12 @@ void ResourceDispatcherHostDelegate::OnRequestRedirected(
 }
 
 void ResourceDispatcherHostDelegate::RequestComplete(
-    net::URLRequest* url_request) {
-}
+    net::URLRequest* url_request,
+    int net_error) {}
+
+// Deprecated.
+void ResourceDispatcherHostDelegate::RequestComplete(
+    net::URLRequest* url_request) {}
 
 bool ResourceDispatcherHostDelegate::ShouldEnableLoFiMode(
     const net::URLRequest& url_request,
@@ -96,7 +93,20 @@ bool ResourceDispatcherHostDelegate::ShouldEnableLoFiMode(
   return false;
 }
 
-ResourceDispatcherHostDelegate::ResourceDispatcherHostDelegate() {
+NavigationData* ResourceDispatcherHostDelegate::GetNavigationData(
+    net::URLRequest* request) const {
+  return nullptr;
+}
+
+std::unique_ptr<net::ClientCertStore>
+ResourceDispatcherHostDelegate::CreateClientCertStore(
+    ResourceContext* resource_context) {
+  return std::unique_ptr<net::ClientCertStore>();
+}
+
+void ResourceDispatcherHostDelegate::OnAbortedFrameLoad(
+    const GURL& url,
+    base::TimeDelta request_loading_time) {
 }
 
 ResourceDispatcherHostDelegate::~ResourceDispatcherHostDelegate() {

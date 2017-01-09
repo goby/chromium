@@ -38,6 +38,7 @@ PolymerTest.prototype = {
    */
   extraLibraries: [
     'ui/webui/resources/js/cr.js',
+    'ui/webui/resources/js/promise_resolver.js',
     'third_party/mocha/mocha.js',
     'chrome/test/data/webui/mocha_adapter.js',
   ],
@@ -60,6 +61,7 @@ PolymerTest.prototype = {
 
     // List of imported URLs for debugging purposes.
     PolymerTest.importUrls_ = [];
+    PolymerTest.scriptUrls_ = [];
 
     // Importing a URL like "chrome://md-settings/foo" redirects to the base
     // ("chrome://md-settings") page, which due to how browsePreload works can
@@ -78,6 +80,8 @@ PolymerTest.prototype = {
             'sure the following URLs are correct and unique:\n';
         for (var i = 0; i < PolymerTest.importUrls_.length; i++)
           msg += '  ' + PolymerTest.importUrls_[i] + '\n';
+        for (var i = 0; i < PolymerTest.scriptUrls_.length; i++)
+          msg += '  ' + PolymerTest.scriptUrls_[i] + '\n';
         console.error(msg);
 
         // Mocha will handle the error.
@@ -88,16 +92,17 @@ PolymerTest.prototype = {
     // Import Polymer and iron-test-helpers before running tests.
     suiteSetup(function() {
       var promises = [];
-      if (typeof Polymer != 'function') {
+      if (!window.Polymer) {
         promises.push(
-            PolymerTest.importHtml(
-                'chrome://resources/polymer/v1_0/polymer/polymer.html'));
+            PolymerTest.importHtml('chrome://resources/html/polymer.html'));
       }
-      if (typeof TestHelpers != 'object') {
+      if (typeof MockInteractions != 'object') {
+        // Avoid importing the HTML file because iron-test-helpers assumes it is
+        // not being imported separately alongside a vulcanized Polymer.
         promises.push(
-            PolymerTest.importHtml(
+            PolymerTest.loadScript(
                 'chrome://resources/polymer/v1_0/iron-test-helpers/' +
-                'iron-test-helpers.html'));
+                'mock-interactions.js'));
       }
       return Promise.all(promises);
     });
@@ -111,6 +116,10 @@ PolymerTest.prototype = {
 
   /** @override */
   tearDown: function() {
+    // Note: We do this in tearDown() so that we have a chance to stamp all the
+    // dom-if templates, add elements through interaction, etc.
+    PolymerTest.testIronIcons(document.body);
+
     var endTime = window.performance.now();
     var delta = this.runTime - this.preloadTime;
     console.log('Page load time: ' + delta.toFixed(0) + " ms");
@@ -123,9 +132,30 @@ PolymerTest.prototype = {
 };
 
 /**
+ * Tests that any iron-icon child of an HTML element has a corresponding
+ * non-empty svg element.
+ * @param {!HTMLElement} e The element to check the iron icons in.
+ */
+PolymerTest.testIronIcons = function(e) {
+  e.querySelectorAll('* /deep/ iron-icon').forEach(function(icon) {
+    // If the icon isn't set (or is set to ''), then don't test this. Having no
+    // set icon is valid for cases when we don't want to display anything.
+    if (!icon.icon) {
+      var rect = icon.getBoundingClientRect();
+      expectFalse(rect.width * rect.height > 0,
+                  'iron-icon with undefined "icon" is visible in the DOM.');
+      return;
+    }
+    var svg = icon.$$('svg');
+    expectTrue(!!svg && svg.innerHTML != '',
+               'icon "' + icon.icon + '" is not present');
+  });
+};
+
+/**
  * Imports the HTML file.
  * @param {string} src The URL to load.
- * @return {Promise} A promise that is resolved/rejected on success/failure.
+ * @return {!Promise} A promise that is resolved/rejected on success/failure.
  */
 PolymerTest.importHtml = function(src) {
   PolymerTest.importUrls_.push(src);
@@ -137,6 +167,23 @@ PolymerTest.importHtml = function(src) {
   });
   link.href = src;
   document.head.appendChild(link);
+  return promise;
+};
+
+/**
+ * Loads the script file.
+ * @param {string} src The URL to load.
+ * @return {!Promise} A promise that is resolved/rejected on success/failure.
+ */
+PolymerTest.loadScript = function(src) {
+  PolymerTest.scriptUrls_.push(src);
+  var script = document.createElement('script');
+  var promise = new Promise(function(resolve, reject) {
+    script.onload = resolve;
+    script.onerror = reject;
+  });
+  script.src = src;
+  document.head.appendChild(script);
   return promise;
 };
 
@@ -157,5 +204,18 @@ PolymerTest.getLibraries = function(basePath) {
 
   return PolymerTest.prototype.extraLibraries.map(function(library) {
     return basePath + library;
+  });
+};
+
+/*
+ * Waits for queued up tasks to finish before proceeding. Inspired by:
+ * https://github.com/Polymer/web-component-tester/blob/master/browser/environment/helpers.js#L97
+ */
+PolymerTest.flushTasks = function() {
+  Polymer.dom.flush();
+  // Promises have microtask timing, so we use setTimeout to explicity force a
+  // new task.
+  return new Promise(function(resolve, reject) {
+    window.setTimeout(resolve, 0);
   });
 };

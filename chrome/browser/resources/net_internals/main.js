@@ -155,9 +155,7 @@ var MainView = (function() {
       this.tabIdToHash_ = {};
       this.hashToTabId_ = {};
 
-      this.tabSwitcher_ = new TabSwitcherView(
-          $(TopBarView.TAB_DROPDOWN_MENU_ID),
-          this.onTabSwitched_.bind(this));
+      this.tabSwitcher_ = new TabSwitcherView(this.onTabSwitched_.bind(this));
 
       // Helper function to add a tab given the class for a view singleton.
       var addTab = function(viewClass) {
@@ -174,7 +172,7 @@ var MainView = (function() {
           throw Error('Tab hashes must start with a #');
         }
 
-        this.tabSwitcher_.addTab(tabId, view, tabName);
+        this.tabSwitcher_.addTab(tabId, view, tabName, tabHash);
         this.tabIdToHash_[tabId] = tabHash;
         this.hashToTabId_[tabHash] = tabId;
       }.bind(this);
@@ -187,10 +185,10 @@ var MainView = (function() {
       addTab(ImportView);
       addTab(ProxyView);
       addTab(EventsView);
-      addTab(WaterfallView);
       addTab(TimelineView);
       addTab(DnsView);
       addTab(SocketsView);
+      addTab(AltSvcView);
       addTab(SpdyView);
       addTab(QuicView);
       addTab(SdchView);
@@ -201,7 +199,7 @@ var MainView = (function() {
       addTab(PrerenderView);
       addTab(CrosView);
 
-      this.tabSwitcher_.showMenuItem(CrosView.TAB_ID, cr.isChromeOS);
+      this.tabSwitcher_.showTabLink(CrosView.TAB_ID, cr.isChromeOS);
     },
 
     /**

@@ -5,12 +5,15 @@
 #ifndef CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_FAKE_PROVIDED_FILE_SYSTEM_H_
 #define CHROME_BROWSER_CHROMEOS_FILE_SYSTEM_PROVIDER_FAKE_PROVIDED_FILE_SYSTEM_H_
 
+#include <stdint.h>
+
 #include <map>
 #include <string>
 #include <vector>
 
 #include "base/callback.h"
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "base/memory/linked_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
@@ -46,10 +49,11 @@ extern const base::FilePath::CharType kFakeFilePath[];
 // Represents a file or a directory on a fake file system.
 struct FakeEntry {
   FakeEntry();
-  FakeEntry(scoped_ptr<EntryMetadata> metadata, const std::string& contents);
+  FakeEntry(std::unique_ptr<EntryMetadata> metadata,
+            const std::string& contents);
   ~FakeEntry();
 
-  scoped_ptr<EntryMetadata> metadata;
+  std::unique_ptr<EntryMetadata> metadata;
   std::string contents;
 
  private:
@@ -68,7 +72,7 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
   void AddEntry(const base::FilePath& entry_path,
                 bool is_directory,
                 const std::string& name,
-                int64 size,
+                int64_t size,
                 base::Time modification_time,
                 std::string mime_type,
                 std::string contents);
@@ -103,7 +107,7 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback ReadFile(int file_handle,
                          net::IOBuffer* buffer,
-                         int64 offset,
+                         int64_t offset,
                          int length,
                          const ReadChunkReceivedCallback& callback) override;
   AbortCallback CreateDirectory(
@@ -127,12 +131,12 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback Truncate(
       const base::FilePath& file_path,
-      int64 length,
+      int64_t length,
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback WriteFile(
       int file_handle,
       net::IOBuffer* buffer,
-      int64 offset,
+      int64_t offset,
       int length,
       const storage::AsyncFileUtil::StatusCallback& callback) override;
   AbortCallback AddWatcher(
@@ -157,7 +161,7 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
   void Notify(const base::FilePath& entry_path,
               bool recursive,
               storage::WatcherManager::ChangeType change_type,
-              scoped_ptr<ProvidedFileSystemObserver::Changes> changes,
+              std::unique_ptr<ProvidedFileSystemObserver::Changes> changes,
               const std::string& tag,
               const storage::AsyncFileUtil::StatusCallback& callback) override;
   void Configure(
@@ -166,7 +170,7 @@ class FakeProvidedFileSystem : public ProvidedFileSystemInterface {
 
   // Factory callback, to be used in Service::SetFileSystemFactory(). The
   // |event_router| argument can be NULL.
-  static ProvidedFileSystemInterface* Create(
+  static std::unique_ptr<ProvidedFileSystemInterface> Create(
       Profile* profile,
       const ProvidedFileSystemInfo& file_system_info);
 

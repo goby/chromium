@@ -4,11 +4,17 @@
 
 #include "net/url_request/url_request_context_builder.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "build/build_config.h"
 #include "net/base/request_priority.h"
+#include "net/http/http_auth_challenge_tokenizer.h"
 #include "net/http/http_auth_handler.h"
 #include "net/http/http_auth_handler_factory.h"
+#include "net/log/net_log_with_source.h"
+#include "net/ssl/ssl_info.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_test_util.h"
@@ -26,23 +32,28 @@ namespace {
 
 class MockHttpAuthHandlerFactory : public HttpAuthHandlerFactory {
  public:
-  explicit MockHttpAuthHandlerFactory(int return_code) :
-      return_code_(return_code) {}
+  MockHttpAuthHandlerFactory(std::string supported_scheme, int return_code)
+      : return_code_(return_code), supported_scheme_(supported_scheme) {}
   ~MockHttpAuthHandlerFactory() override {}
 
   int CreateAuthHandler(HttpAuthChallengeTokenizer* challenge,
                         HttpAuth::Target target,
+                        const SSLInfo& ssl_info,
                         const GURL& origin,
                         CreateReason reason,
                         int nonce_count,
-                        const BoundNetLog& net_log,
-                        scoped_ptr<HttpAuthHandler>* handler) override {
+                        const NetLogWithSource& net_log,
+                        std::unique_ptr<HttpAuthHandler>* handler) override {
     handler->reset();
-    return return_code_;
+
+    return challenge->scheme() == supported_scheme_
+               ? return_code_
+               : ERR_UNSUPPORTED_AUTH_SCHEME;
   }
 
  private:
   int return_code_;
+  std::string supported_scheme_;
 };
 
 class URLRequestContextBuilderTest : public PlatformTest {
@@ -51,8 +62,8 @@ class URLRequestContextBuilderTest : public PlatformTest {
     test_server_.AddDefaultHandlers(
         base::FilePath(FILE_PATH_LITERAL("net/data/url_request_unittest")));
 #if defined(OS_LINUX) || defined(OS_ANDROID)
-    builder_.set_proxy_config_service(make_scoped_ptr(
-        new ProxyConfigServiceFixed(ProxyConfig::CreateDirect())));
+    builder_.set_proxy_config_service(
+        base::MakeUnique<ProxyConfigServiceFixed>(ProxyConfig::CreateDirect()));
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
   }
 
@@ -63,14 +74,14 @@ class URLRequestContextBuilderTest : public PlatformTest {
 TEST_F(URLRequestContextBuilderTest, DefaultSettings) {
   ASSERT_TRUE(test_server_.Start());
 
-  scoped_ptr<URLRequestContext> context(builder_.Build());
+  std::unique_ptr<URLRequestContext> context(builder_.Build());
   TestDelegate delegate;
-  scoped_ptr<URLRequest> request(context->CreateRequest(
+  std::unique_ptr<URLRequest> request(context->CreateRequest(
       test_server_.GetURL("/echoheader?Foo"), DEFAULT_PRIORITY, &delegate));
   request->set_method("GET");
   request->SetExtraRequestHeaderByName("Foo", "Bar", false);
   request->Start();
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_EQ("Bar", delegate.data_received());
 }
 
@@ -78,37 +89,56 @@ TEST_F(URLRequestContextBuilderTest, UserAgent) {
   ASSERT_TRUE(test_server_.Start());
 
   builder_.set_user_agent("Bar");
-  scoped_ptr<URLRequestContext> context(builder_.Build());
+  std::unique_ptr<URLRequestContext> context(builder_.Build());
   TestDelegate delegate;
-  scoped_ptr<URLRequest> request(
+  std::unique_ptr<URLRequest> request(
       context->CreateRequest(test_server_.GetURL("/echoheader?User-Agent"),
                              DEFAULT_PRIORITY, &delegate));
   request->set_method("GET");
   request->Start();
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   EXPECT_EQ("Bar", delegate.data_received());
 }
 
-TEST_F(URLRequestContextBuilderTest, ExtraHttpAuthHandlerFactory) {
+TEST_F(URLRequestContextBuilderTest, DefaultHttpAuthHandlerFactory) {
+  GURL gurl("www.google.com");
+  std::unique_ptr<HttpAuthHandler> handler;
+  std::unique_ptr<URLRequestContext> context(builder_.Build());
+  SSLInfo null_ssl_info;
+
+  // Verify that the default basic handler is present
+  EXPECT_EQ(OK,
+            context->http_auth_handler_factory()->CreateAuthHandlerFromString(
+                "basic", HttpAuth::AUTH_SERVER, null_ssl_info, gurl,
+                NetLogWithSource(), &handler));
+}
+
+TEST_F(URLRequestContextBuilderTest, CustomHttpAuthHandlerFactory) {
   GURL gurl("www.google.com");
   const int kBasicReturnCode = OK;
-  MockHttpAuthHandlerFactory* mock_factory_basic =
-      new MockHttpAuthHandlerFactory(kBasicReturnCode);
-  scoped_ptr<HttpAuthHandler> handler;
-  builder_.add_http_auth_handler_factory("ExtraScheme", mock_factory_basic);
-  scoped_ptr<URLRequestContext> context(builder_.Build());
-  // Verify that a handler is returned for and added scheme.
+  std::unique_ptr<HttpAuthHandler> handler;
+  builder_.SetHttpAuthHandlerFactory(
+      base::MakeUnique<MockHttpAuthHandlerFactory>("ExtraScheme",
+                                                   kBasicReturnCode));
+  std::unique_ptr<URLRequestContext> context(builder_.Build());
+  SSLInfo null_ssl_info;
+  // Verify that a handler is returned for a custom scheme.
   EXPECT_EQ(kBasicReturnCode,
             context->http_auth_handler_factory()->CreateAuthHandlerFromString(
-                "ExtraScheme",
-                HttpAuth::AUTH_SERVER,
-                gurl,
-                BoundNetLog(),
-                &handler));
+                "ExtraScheme", HttpAuth::AUTH_SERVER, null_ssl_info, gurl,
+                NetLogWithSource(), &handler));
+
+  // Verify that the default basic handler isn't present
+  EXPECT_EQ(ERR_UNSUPPORTED_AUTH_SCHEME,
+            context->http_auth_handler_factory()->CreateAuthHandlerFromString(
+                "basic", HttpAuth::AUTH_SERVER, null_ssl_info, gurl,
+                NetLogWithSource(), &handler));
+
   // Verify that a handler isn't returned for a bogus scheme.
   EXPECT_EQ(ERR_UNSUPPORTED_AUTH_SCHEME,
             context->http_auth_handler_factory()->CreateAuthHandlerFromString(
-                "Bogus", HttpAuth::AUTH_SERVER, gurl, BoundNetLog(), &handler));
+                "Bogus", HttpAuth::AUTH_SERVER, null_ssl_info, gurl,
+                NetLogWithSource(), &handler));
 }
 
 }  // namespace

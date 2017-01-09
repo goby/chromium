@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "extensions/browser/api/web_request/form_data_parser.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -14,12 +16,13 @@ namespace {
 
 // Attempts to create a parser corresponding to the |content_type_header|.
 // On success, returns the parser.
-scoped_ptr<FormDataParser> InitParser(const std::string& content_type_header) {
-  scoped_ptr<FormDataParser> parser(
+std::unique_ptr<FormDataParser> InitParser(
+    const std::string& content_type_header) {
+  std::unique_ptr<FormDataParser> parser(
       FormDataParser::CreateFromContentTypeHeader(&content_type_header));
   if (parser.get() == NULL)
-    return scoped_ptr<FormDataParser>();
-  return parser.Pass();
+    return std::unique_ptr<FormDataParser>();
+  return parser;
 }
 
 // Attempts to run the parser corresponding to the |content_type_header|
@@ -31,7 +34,7 @@ bool RunParser(const std::string& content_type_header,
                std::vector<std::string>* output) {
   DCHECK(output);
   output->clear();
-  scoped_ptr<FormDataParser> parser(InitParser(content_type_header));
+  std::unique_ptr<FormDataParser> parser(InitParser(content_type_header));
   if (!parser.get())
     return false;
   FormDataParser::Result result;
@@ -52,7 +55,7 @@ bool RunParser(const std::string& content_type_header,
 bool CheckParserFails(const std::string& content_type_header,
                       const std::vector<const base::StringPiece*>& bytes) {
   std::vector<std::string> output;
-  scoped_ptr<FormDataParser> parser(InitParser(content_type_header));
+  std::unique_ptr<FormDataParser> parser(InitParser(content_type_header));
   if (!parser.get())
     return false;
   FormDataParser::Result result;

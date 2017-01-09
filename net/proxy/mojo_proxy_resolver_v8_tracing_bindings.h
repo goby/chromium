@@ -5,10 +5,13 @@
 #ifndef NET_PROXY_MOJO_PROXY_RESOLVER_V8_TRACING_BINDINGS_H_
 #define NET_PROXY_MOJO_PROXY_RESOLVER_V8_TRACING_BINDINGS_H_
 
+#include <utility>
+
+#include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_checker.h"
-#include "mojo/common/common_type_converters.h"
 #include "net/dns/host_resolver_mojo.h"
 #include "net/interfaces/proxy_resolver_service.mojom.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_resolver_v8_tracing.h"
 
 namespace net {
@@ -16,7 +19,8 @@ namespace net {
 // An implementation of ProxyResolverV8Tracing::Bindings that forwards requests
 // onto a Client mojo interface. Alert() and OnError() may be called from any
 // thread; when they are called from another thread, the calls are proxied to
-// the origin task runner. GetHostResolver() and GetBoundNetLog() may only be
+// the origin task runner. GetHostResolver() and GetNetLogWithSource() may only
+// be
 // called from the origin task runner.
 template <typename Client>
 class MojoProxyResolverV8TracingBindings
@@ -31,12 +35,12 @@ class MojoProxyResolverV8TracingBindings
   // ProxyResolverV8Tracing::Bindings overrides.
   void Alert(const base::string16& message) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    client_->Alert(mojo::String::From(message));
+    client_->Alert(base::UTF16ToUTF8(message));
   }
 
   void OnError(int line_number, const base::string16& message) override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    client_->OnError(line_number, mojo::String::From(message));
+    client_->OnError(line_number, base::UTF16ToUTF8(message));
   }
 
   HostResolver* GetHostResolver() override {
@@ -44,17 +48,17 @@ class MojoProxyResolverV8TracingBindings
     return &host_resolver_;
   }
 
-  BoundNetLog GetBoundNetLog() override {
+  NetLogWithSource GetNetLogWithSource() override {
     DCHECK(thread_checker_.CalledOnValidThread());
-    return BoundNetLog();
+    return NetLogWithSource();
   }
 
  private:
   // HostResolverMojo::Impl override.
-  void ResolveDns(interfaces::HostResolverRequestInfoPtr request_info,
+  void ResolveDns(std::unique_ptr<HostResolver::RequestInfo> request_info,
                   interfaces::HostResolverRequestClientPtr client) {
     DCHECK(thread_checker_.CalledOnValidThread());
-    client_->ResolveDns(request_info.Pass(), client.Pass());
+    client_->ResolveDns(std::move(request_info), std::move(client));
   }
 
   base::ThreadChecker thread_checker_;

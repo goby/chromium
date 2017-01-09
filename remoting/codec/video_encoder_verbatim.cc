@@ -4,6 +4,9 @@
 
 #include "remoting/codec/video_encoder_verbatim.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/stl_util.h"
 #include "remoting/base/util.h"
@@ -16,13 +19,14 @@ namespace remoting {
 
 static uint8_t* GetPacketOutputBuffer(VideoPacket* packet, size_t size) {
   packet->mutable_data()->resize(size);
-  return reinterpret_cast<uint8_t*>(string_as_array(packet->mutable_data()));
+  return reinterpret_cast<uint8_t*>(
+      base::string_as_array(packet->mutable_data()));
 }
 
 VideoEncoderVerbatim::VideoEncoderVerbatim() {}
 VideoEncoderVerbatim::~VideoEncoderVerbatim() {}
 
-scoped_ptr<VideoPacket> VideoEncoderVerbatim::Encode(
+std::unique_ptr<VideoPacket> VideoEncoderVerbatim::Encode(
     const webrtc::DesktopFrame& frame) {
   DCHECK(frame.data());
 
@@ -32,7 +36,7 @@ scoped_ptr<VideoPacket> VideoEncoderVerbatim::Encode(
     return nullptr;
 
   // Create a VideoPacket with common fields (e.g. DPI, rects, shape) set.
-  scoped_ptr<VideoPacket> packet(helper_.CreateVideoPacket(frame));
+  std::unique_ptr<VideoPacket> packet(helper_.CreateVideoPacket(frame));
   packet->mutable_format()->set_encoding(VideoPacketFormat::ENCODING_VERBATIM);
 
   // Calculate output size.
@@ -61,7 +65,7 @@ scoped_ptr<VideoPacket> VideoEncoderVerbatim::Encode(
     }
   }
 
-  return packet.Pass();
+  return packet;
 }
 
 }  // namespace remoting

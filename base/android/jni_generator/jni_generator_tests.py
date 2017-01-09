@@ -37,14 +37,11 @@ class TestOptions(object):
     self.namespace = None
     self.script_name = SCRIPT_NAME
     self.includes = INCLUDES
-    self.pure_native_methods = False
     self.ptr_type = 'long'
-    self.jni_init_native_name = None
-    self.eager_called_by_natives = False
     self.cpp = 'cpp'
     self.javap = 'javap'
-    self.native_exports = False
-    self.native_exports_optional = False
+    self.native_exports_optional = True
+    self.enable_profiling = False
 
 class TestGenerator(unittest.TestCase):
   def assertObjEquals(self, first, second):
@@ -406,6 +403,10 @@ class TestGenerator(unittest.TestCase):
           return
       }
     }
+    @CalledByNative
+    public static @Status int updateStatus(@Status int status) {
+        return getAndUpdateStatus(status);
+    }
     @CalledByNativeUnchecked
     private void uncheckedCall(int iParam);
 
@@ -526,6 +527,17 @@ class TestGenerator(unittest.TestCase):
                    ],
             env_call=('Void', ''),
             unchecked=False,
+        ),
+        CalledByNative(
+          return_type='int',
+          system_class=False,
+          static=True,
+          name='updateStatus',
+          method_id_var_name='updateStatus',
+          java_class_name='',
+          params=[Param(datatype='int', name='status')],
+          env_call=('Integer', ''),
+          unchecked=False,
         ),
         CalledByNative(
             return_type='void',
@@ -822,7 +834,7 @@ public class java.util.HashSet {
     content = file(os.path.join(script_dir,
         'java/src/org/chromium/example/jni_generator/SampleForTests.java')
         ).read()
-    golden_file = os.path.join(script_dir, 'golden_sample_for_tests_jni.h')
+    golden_file = os.path.join(script_dir, 'SampleForTests_jni.golden')
     golden_content = file(golden_file).read()
     jni_from_java = jni_generator.JNIFromJavaSource(
         content, 'org/chromium/example/jni_generator/SampleForTests',
@@ -852,33 +864,6 @@ public class java.util.HashSet {
                   jni_lines)[0]
     self.assertTrue(len(line) > 80,
                     ('Expected #ifndef line to be > 80 chars: ', line))
-
-  def testJarJarRemapping(self):
-    test_data = """
-    package org.chromium.example.jni_generator;
-
-    import org.chromium.example2.Test;
-
-    import org.chromium.example3.PrefixFoo;
-    import org.chromium.example3.Prefix;
-    import org.chromium.example3.Bar$Inner;
-
-    class Example {
-      private static native void nativeTest(Test t);
-      private static native void nativeTest2(PrefixFoo t);
-      private static native void nativeTest3(Prefix t);
-      private static native void nativeTest4(Bar$Inner t);
-    }
-    """
-    jni_generator.JniParams.SetJarJarMappings(
-        """rule org.chromium.example.** com.test.@1
-        rule org.chromium.example2.** org.test2.@1
-        rule org.chromium.example3.Prefix org.test3.Test
-        rule org.chromium.example3.Bar$** org.test3.TestBar$@1""")
-    jni_from_java = jni_generator.JNIFromJavaSource(
-        test_data, 'org/chromium/example/jni_generator/Example', TestOptions())
-    jni_generator.JniParams.SetJarJarMappings('')
-    self.assertGoldenTextEquals(jni_from_java.GetContent())
 
   def testImports(self):
     import_header = """
@@ -965,7 +950,7 @@ class Foo {
                                              natives, [], [], test_options)
     self.assertGoldenTextEquals(h.GetContent())
 
-  def testPureNativeMethodsOption(self):
+  def testNativeExportsOnlyOption(self):
     test_data = """
     package org.chromium.example.jni_generator;
 
@@ -973,69 +958,6 @@ class Foo {
     long nativeTest;
 
     class Test {
-        private static native long nativeMethod(long nativeTest, int arg1);
-    }
-    """
-    options = TestOptions()
-    options.pure_native_methods = True
-    jni_from_java = jni_generator.JNIFromJavaSource(
-        test_data, 'org/chromium/example/jni_generator/Test', options)
-    self.assertGoldenTextEquals(jni_from_java.GetContent())
-
-  def testJNIInitNativeNameOption(self):
-    test_data = """
-    package org.chromium.example.jni_generator;
-
-    /** The pointer to the native Test. */
-    long nativeTest;
-
-    class Test {
-        private static native boolean nativeInitNativeClass();
-        private static native int nativeMethod(long nativeTest, int arg1);
-    }
-    """
-    options = TestOptions()
-    options.jni_init_native_name = 'nativeInitNativeClass'
-    jni_from_java = jni_generator.JNIFromJavaSource(
-        test_data, 'org/chromium/example/jni_generator/Test', options)
-    self.assertGoldenTextEquals(jni_from_java.GetContent())
-
-  def testEagerCalledByNativesOption(self):
-    test_data = """
-    package org.chromium.example.jni_generator;
-
-    /** The pointer to the native Test. */
-    long nativeTest;
-
-    class Test {
-        private static native boolean nativeInitNativeClass();
-        private static native int nativeMethod(long nativeTest, int arg1);
-        @CalledByNative
-        private void testMethodWithParam(int iParam);
-        @CalledByNative
-        private static int testStaticMethodWithParam(int iParam);
-        @CalledByNative
-        private static double testMethodWithNoParam();
-        @CalledByNative
-        private static String testStaticMethodWithNoParam();
-    }
-    """
-    options = TestOptions()
-    options.jni_init_native_name = 'nativeInitNativeClass'
-    options.eager_called_by_natives = True
-    jni_from_java = jni_generator.JNIFromJavaSource(
-        test_data, 'org/chromium/example/jni_generator/Test', options)
-    self.assertGoldenTextEquals(jni_from_java.GetContent())
-
-  def runNativeExportsOption(self, optional):
-    test_data = """
-    package org.chromium.example.jni_generator;
-
-    /** The pointer to the native Test. */
-    long nativeTest;
-
-    class Test {
-        private static native boolean nativeInitNativeClass();
         private static native int nativeStaticMethod(long nativeTest, int arg1);
         private native int nativeMethod(long nativeTest, int arg1);
         @CalledByNative
@@ -1060,20 +982,10 @@ class Foo {
     }
     """
     options = TestOptions()
-    options.jni_init_native_name = 'nativeInitNativeClass'
-    options.native_exports = True
-    options.native_exports_optional = optional
+    options.native_exports_optional = False
     jni_from_java = jni_generator.JNIFromJavaSource(
         test_data, 'org/chromium/example/jni_generator/SampleForTests', options)
-    return jni_from_java.GetContent()
-
-  def testNativeExportsOption(self):
-    content = self.runNativeExportsOption(False)
-    self.assertGoldenTextEquals(content)
-
-  def testNativeExportsOptionalOption(self):
-    content = self.runNativeExportsOption(True)
-    self.assertGoldenTextEquals(content)
+    self.assertGoldenTextEquals(jni_from_java.GetContent())
 
   def testOuterInnerRaises(self):
     test_data = """
@@ -1135,7 +1047,7 @@ class Foo {
 def TouchStamp(stamp_path):
   dir_name = os.path.dirname(stamp_path)
   if not os.path.isdir(dir_name):
-    os.makedirs()
+    os.makedirs(dir_name)
 
   with open(stamp_path, 'a'):
     os.utime(stamp_path, None)

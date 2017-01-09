@@ -5,9 +5,11 @@
 #include "base/win/registry.h"
 
 #include <shlwapi.h>
+#include <stddef.h>
 #include <algorithm>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/win/windows_version.h"
@@ -37,7 +39,7 @@ const REGSAM kWow64AccessMask = KEY_WOW64_32KEY | KEY_WOW64_64KEY;
 // Watches for modifications to a key.
 class RegKey::Watcher : public ObjectWatcher::Delegate {
  public:
-  explicit Watcher(RegKey* owner) : owner_(owner) {}
+  Watcher() {}
   ~Watcher() override {}
 
   bool StartWatching(HKEY key, const ChangeCallback& callback);
@@ -51,7 +53,6 @@ class RegKey::Watcher : public ObjectWatcher::Delegate {
   }
 
  private:
-  RegKey* owner_;
   ScopedHandle watch_event_;
   ObjectWatcher object_watcher_;
   ChangeCallback callback_;
@@ -301,10 +302,10 @@ LONG RegKey::ReadValueDW(const wchar_t* name, DWORD* out_value) const {
   return result;
 }
 
-LONG RegKey::ReadInt64(const wchar_t* name, int64* out_value) const {
+LONG RegKey::ReadInt64(const wchar_t* name, int64_t* out_value) const {
   DCHECK(out_value);
   DWORD type = REG_QWORD;
-  int64 local_value = 0;
+  int64_t local_value = 0;
   DWORD size = sizeof(local_value);
   LONG result = ReadValue(name, &local_value, &size, &type);
   if (result == ERROR_SUCCESS) {
@@ -411,9 +412,9 @@ LONG RegKey::WriteValue(const wchar_t* name,
 
 bool RegKey::StartWatching(const ChangeCallback& callback) {
   if (!key_watcher_)
-    key_watcher_.reset(new Watcher(this));
+    key_watcher_.reset(new Watcher());
 
-  if (!key_watcher_.get()->StartWatching(key_, callback))
+  if (!key_watcher_->StartWatching(key_, callback))
     return false;
 
   return true;

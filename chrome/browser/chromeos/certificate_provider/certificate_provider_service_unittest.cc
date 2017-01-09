@@ -4,17 +4,20 @@
 
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service.h"
 
+#include <stdint.h>
 #include <set>
+#include <utility>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider.h"
 #include "net/base/net_errors.h"
-#include "net/base/test_data_directory.h"
 #include "net/ssl/client_key_store.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -49,8 +52,7 @@ certificate_provider::CertificateInfo CreateCertInfo(
   certificate_provider::CertificateInfo cert_info;
   cert_info.certificate =
       net::ImportCertFromFile(net::GetTestCertsDirectory(), cert_filename);
-  EXPECT_NE(nullptr, cert_info.certificate) << "Could not load "
-                                            << cert_filename;
+  EXPECT_TRUE(cert_info.certificate) << "Could not load " << cert_filename;
   cert_info.type = net::SSLPrivateKey::Type::RSA;
   cert_info.supported_hashes.push_back(net::SSLPrivateKey::Hash::SHA256);
   cert_info.max_signature_length_in_bytes = 123;
@@ -134,9 +136,9 @@ class CertificateProviderServiceTest : public testing::Test {
         service_(new CertificateProviderService()),
         cert_info1_(CreateCertInfo("client_1.pem")),
         cert_info2_(CreateCertInfo("client_2.pem")) {
-    scoped_ptr<TestDelegate> test_delegate(new TestDelegate);
+    std::unique_ptr<TestDelegate> test_delegate(new TestDelegate);
     test_delegate_ = test_delegate.get();
-    service_->SetDelegate(test_delegate.Pass());
+    service_->SetDelegate(std::move(test_delegate));
 
     certificate_provider_ = service_->CreateCertificateProvider();
     EXPECT_TRUE(certificate_provider_);
@@ -207,8 +209,8 @@ class CertificateProviderServiceTest : public testing::Test {
   base::ThreadTaskRunnerHandle task_runner_handle_;
   TestDelegate* test_delegate_ = nullptr;
   net::ClientKeyStore* const client_key_store_;
-  scoped_ptr<CertificateProvider> certificate_provider_;
-  scoped_ptr<CertificateProviderService> service_;
+  std::unique_ptr<CertificateProvider> certificate_provider_;
+  std::unique_ptr<CertificateProviderService> service_;
   const certificate_provider::CertificateInfo cert_info1_;
   const certificate_provider::CertificateInfo cert_info2_;
 

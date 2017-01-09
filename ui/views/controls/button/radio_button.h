@@ -5,6 +5,7 @@
 #ifndef UI_VIEWS_CONTROLS_BUTTON_RADIO_BUTTON_H_
 #define UI_VIEWS_CONTROLS_BUTTON_RADIO_BUTTON_H_
 
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/views/controls/button/checkbox.h"
 
@@ -22,7 +23,7 @@ class VIEWS_EXPORT RadioButton : public Checkbox {
 
   // Overridden from View:
   const char* GetClassName() const override;
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
   View* GetSelectedViewForGroup(int group) override;
   bool IsGroupFocusTraversable() const override;
   void OnFocus() override;
@@ -35,6 +36,8 @@ class VIEWS_EXPORT RadioButton : public Checkbox {
 
   // Overridden from Checkbox:
   void SetChecked(bool checked) override;
+  void PaintFocusRing(gfx::Canvas* canvas, const SkPaint& paint) override;
+  gfx::VectorIconId GetVectorIconId() const override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(RadioButton);

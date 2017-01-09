@@ -4,6 +4,8 @@
 
 #include "chrome/test/base/test_browser_window.h"
 
+#include "base/memory/ptr_util.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_list_observer.h"
 #include "ui/gfx/geometry/rect.h"
@@ -13,12 +15,12 @@
 
 namespace chrome {
 
-scoped_ptr<Browser> CreateBrowserWithTestWindowForParams(
+std::unique_ptr<Browser> CreateBrowserWithTestWindowForParams(
     Browser::CreateParams* params) {
   TestBrowserWindow* window = new TestBrowserWindow;
   new TestBrowserWindowOwner(window);
   params->window = window;
-  return make_scoped_ptr(new Browser(*params));
+  return base::MakeUnique<Browser>(*params);
 }
 
 }  // namespace chrome
@@ -32,7 +34,7 @@ GURL TestBrowserWindow::TestLocationBar::GetDestinationURL() const {
 
 WindowOpenDisposition
     TestBrowserWindow::TestLocationBar::GetWindowOpenDisposition() const {
-  return CURRENT_TAB;
+  return WindowOpenDisposition::CURRENT_TAB;
 }
 
 ui::PageTransition
@@ -93,6 +95,10 @@ gfx::Rect TestBrowserWindow::GetBounds() const {
   return gfx::Rect();
 }
 
+gfx::Size TestBrowserWindow::GetContentsSize() const {
+  return gfx::Size();
+}
+
 bool TestBrowserWindow::IsMaximized() const {
   return false;
 }
@@ -112,29 +118,6 @@ bool TestBrowserWindow::IsFullscreen() const {
 bool TestBrowserWindow::IsFullscreenBubbleVisible() const {
   return false;
 }
-
-bool TestBrowserWindow::SupportsFullscreenWithToolbar() const {
-  return false;
-}
-
-void TestBrowserWindow::UpdateFullscreenWithToolbar(bool with_toolbar) {
-}
-
-void TestBrowserWindow::ToggleFullscreenToolbar() {}
-
-bool TestBrowserWindow::IsFullscreenWithToolbar() const {
-  return false;
-}
-
-bool TestBrowserWindow::ShouldHideFullscreenToolbar() const {
-  return false;
-}
-
-#if defined(OS_WIN)
-bool TestBrowserWindow::IsInMetroSnapMode() const {
-  return false;
-}
-#endif
 
 LocationBar* TestBrowserWindow::GetLocationBar() const {
   return const_cast<TestLocationBar*>(&location_bar_);
@@ -166,8 +149,12 @@ bool TestBrowserWindow::IsToolbarVisible() const {
   return false;
 }
 
-gfx::Rect TestBrowserWindow::GetRootWindowResizerRect() const {
-  return gfx::Rect();
+ShowTranslateBubbleResult TestBrowserWindow::ShowTranslateBubble(
+    content::WebContents* contents,
+    translate::TranslateStep step,
+    translate::TranslateErrors::Type error_type,
+    bool is_user_gesture) {
+  return ShowTranslateBubbleResult::SUCCESS;
 }
 
 autofill::SaveCardBubbleView* TestBrowserWindow::ShowSaveCreditCardBubble(
@@ -187,7 +174,7 @@ DownloadShelf* TestBrowserWindow::GetDownloadShelf() {
 
 WindowOpenDisposition TestBrowserWindow::GetDispositionForPopupBounds(
     const gfx::Rect& bounds) {
-  return NEW_POPUP;
+  return WindowOpenDisposition::NEW_POPUP;
 }
 
 FindBar* TestBrowserWindow::CreateFindBar() {
@@ -209,6 +196,14 @@ void TestBrowserWindow::ExecuteExtensionCommand(
 
 ExclusiveAccessContext* TestBrowserWindow::GetExclusiveAccessContext() {
   return nullptr;
+}
+
+std::string TestBrowserWindow::GetWorkspace() const {
+  return std::string();
+}
+
+bool TestBrowserWindow::IsVisibleOnAllWorkspaces() const {
+  return false;
 }
 
 // TestBrowserWindowOwner -----------------------------------------------------

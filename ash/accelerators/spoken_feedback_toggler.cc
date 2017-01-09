@@ -4,9 +4,12 @@
 
 #include "ash/accelerators/spoken_feedback_toggler.h"
 
+#include <utility>
+
 #include "ash/accelerators/key_hold_detector.h"
-#include "ash/accessibility_delegate.h"
-#include "ash/shell.h"
+#include "ash/common/accessibility_delegate.h"
+#include "ash/common/accessibility_types.h"
+#include "ash/common/wm_shell.h"
 #include "ui/events/event.h"
 
 namespace ash {
@@ -25,9 +28,11 @@ void SpokenFeedbackToggler::SetEnabled(bool enabled) {
 }
 
 // static
-scoped_ptr<ui::EventHandler> SpokenFeedbackToggler::CreateHandler() {
-  scoped_ptr<KeyHoldDetector::Delegate> delegate(new SpokenFeedbackToggler());
-  return scoped_ptr<ui::EventHandler>(new KeyHoldDetector(delegate.Pass()));
+std::unique_ptr<ui::EventHandler> SpokenFeedbackToggler::CreateHandler() {
+  std::unique_ptr<KeyHoldDetector::Delegate> delegate(
+      new SpokenFeedbackToggler());
+  return std::unique_ptr<ui::EventHandler>(
+      new KeyHoldDetector(std::move(delegate)));
 }
 
 bool SpokenFeedbackToggler::ShouldProcessEvent(
@@ -37,7 +42,7 @@ bool SpokenFeedbackToggler::ShouldProcessEvent(
 
 bool SpokenFeedbackToggler::IsStartEvent(const ui::KeyEvent* event) const {
   return event->type() == ui::ET_KEY_PRESSED &&
-      event->flags() & ui::EF_SHIFT_DOWN;
+         event->flags() & ui::EF_SHIFT_DOWN;
 }
 
 bool SpokenFeedbackToggler::ShouldStopEventPropagation() const {
@@ -48,8 +53,8 @@ bool SpokenFeedbackToggler::ShouldStopEventPropagation() const {
 void SpokenFeedbackToggler::OnKeyHold(const ui::KeyEvent* event) {
   if (!toggled_) {
     toggled_ = true;
-    Shell::GetInstance()->accessibility_delegate()->
-        ToggleSpokenFeedback(ui::A11Y_NOTIFICATION_SHOW);
+    WmShell::Get()->accessibility_delegate()->ToggleSpokenFeedback(
+        A11Y_NOTIFICATION_SHOW);
   }
 }
 

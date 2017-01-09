@@ -6,10 +6,10 @@
 
 #include <windows.h>
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/observer_list.h"
 #include "ui/gfx/color_utils.h"
@@ -21,16 +21,16 @@ bool g_is_inverted_color_scheme = false;
 bool g_is_inverted_color_scheme_initialized = false;
 
 void UpdateInvertedColorScheme() {
-  int foreground_luminance = color_utils::GetLuminanceForColor(
-      color_utils::GetSysSkColor(COLOR_WINDOWTEXT));
-  int background_luminance = color_utils::GetLuminanceForColor(
-      color_utils::GetSysSkColor(COLOR_WINDOW));
+  const uint8_t foreground_luma =
+      color_utils::GetLuma(color_utils::GetSysSkColor(COLOR_WINDOWTEXT));
+  const uint8_t background_luma =
+      color_utils::GetLuma(color_utils::GetSysSkColor(COLOR_WINDOW));
   HIGHCONTRAST high_contrast = {0};
   high_contrast.cbSize = sizeof(HIGHCONTRAST);
   g_is_inverted_color_scheme =
       SystemParametersInfo(SPI_GETHIGHCONTRAST, 0, &high_contrast, 0) &&
       ((high_contrast.dwFlags & HCF_HIGHCONTRASTON) != 0) &&
-      foreground_luminance > background_luminance;
+      foreground_luma > background_luma;
   g_is_inverted_color_scheme_initialized = true;
 }
 
@@ -64,7 +64,7 @@ class SysColorChangeObserver {
   void OnWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam);
 
   base::ObserverList<SysColorChangeListener> listeners_;
-  scoped_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
+  std::unique_ptr<gfx::SingletonHwndObserver> singleton_hwnd_observer_;
 };
 
 // static
@@ -94,7 +94,8 @@ void SysColorChangeObserver::OnWndProc(HWND hwnd,
   if (message == WM_SYSCOLORCHANGE ||
       (message == WM_SETTINGCHANGE && wparam == SPI_SETHIGHCONTRAST)) {
     UpdateInvertedColorScheme();
-    FOR_EACH_OBSERVER(SysColorChangeListener, listeners_, OnSysColorChange());
+    for (SysColorChangeListener& observer : listeners_)
+      observer.OnSysColorChange();
   }
 }
 

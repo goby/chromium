@@ -2,10 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/message_loop/message_loop.h"
 #include "components/wallpaper/wallpaper_resizer.h"
+
+#include <stdint.h>
+
+#include <memory>
+
+#include "base/macros.h"
+#include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
+#include "base/threading/thread.h"
 #include "components/wallpaper/wallpaper_resizer_observer.h"
-#include "content/public/test/test_browser_thread.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/image/image_skia_rep.h"
 
@@ -55,16 +62,19 @@ namespace wallpaper {
 class WallpaperResizerTest : public testing::Test,
                              public WallpaperResizerObserver {
  public:
-  WallpaperResizerTest()
-      : ui_thread_(content::BrowserThread::UI, &message_loop_) {}
+  WallpaperResizerTest() : worker_thread_("WallpaperResizerTest") {}
   ~WallpaperResizerTest() override {}
+
+  void SetUp() override {
+    ASSERT_TRUE(worker_thread_.Start());
+  }
 
   gfx::ImageSkia Resize(const gfx::ImageSkia& image,
                         const gfx::Size& target_size,
                         WallpaperLayout layout) {
-    scoped_ptr<WallpaperResizer> resizer;
-    resizer.reset(new WallpaperResizer(
-        image, target_size, layout, content::BrowserThread::GetBlockingPool()));
+    std::unique_ptr<WallpaperResizer> resizer;
+    resizer.reset(
+        new WallpaperResizer(image, target_size, layout, task_runner()));
     resizer->AddObserver(this);
     resizer->StartResize();
     WaitForResize();
@@ -72,13 +82,17 @@ class WallpaperResizerTest : public testing::Test,
     return resizer->image();
   }
 
-  void WaitForResize() { message_loop_.Run(); }
+  scoped_refptr<base::TaskRunner> task_runner() {
+    return worker_thread_.task_runner();
+  }
+
+  void WaitForResize() { base::RunLoop().Run(); }
 
   void OnWallpaperResized() override { message_loop_.QuitWhenIdle(); }
 
  private:
   base::MessageLoop message_loop_;
-  content::TestBrowserThread ui_thread_;
+  base::Thread worker_thread_;
 
   DISALLOW_COPY_AND_ASSIGN(WallpaperResizerTest);
 };
@@ -139,7 +153,7 @@ TEST_F(WallpaperResizerTest, ImageId) {
   // Create a WallpaperResizer and check that it reports an original image ID
   // both pre- and post-resize that matches the ID returned by GetImageId().
   WallpaperResizer resizer(image, gfx::Size(10, 20), WALLPAPER_LAYOUT_STRETCH,
-                           content::BrowserThread::GetBlockingPool());
+                           task_runner());
   EXPECT_EQ(WallpaperResizer::GetImageId(image), resizer.original_image_id());
   resizer.AddObserver(this);
   resizer.StartResize();

@@ -5,15 +5,17 @@
 #include "chrome/browser/safe_browsing/incident_reporting/binary_integrity_analyzer.h"
 
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/files/file_util.h"
-#include "base/metrics/histogram.h"
+#include "base/memory/ptr_util.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/safe_browsing/incident_reporting/binary_integrity_incident.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
@@ -38,11 +40,11 @@ void RecordSignatureVerificationTime(size_t file_index,
 
 void ClearBinaryIntegrityForFile(IncidentReceiver* incident_receiver,
                                  const std::string& basename) {
-  scoped_ptr<ClientIncidentReport_IncidentData_BinaryIntegrityIncident>
+  std::unique_ptr<ClientIncidentReport_IncidentData_BinaryIntegrityIncident>
       incident(new ClientIncidentReport_IncidentData_BinaryIntegrityIncident());
   incident->set_file_basename(basename);
   incident_receiver->ClearIncidentForProcess(
-      make_scoped_ptr(new BinaryIntegrityIncident(incident.Pass())));
+      base::MakeUnique<BinaryIntegrityIncident>(std::move(incident)));
 }
 
 void RegisterBinaryIntegrityAnalysis() {

@@ -19,12 +19,15 @@ class BlockedWindowParams {
  public:
   BlockedWindowParams(const GURL& target_url,
                       const content::Referrer& referrer,
+                      const std::string& frame_name_,
                       WindowOpenDisposition disposition,
                       const blink::WebWindowFeatures& features,
                       bool user_gesture,
                       bool opener_suppressed,
                       int render_process_id,
                       int opener_render_frame_id);
+  BlockedWindowParams(const BlockedWindowParams& other);
+  ~BlockedWindowParams();
 
   chrome::NavigateParams CreateNavigateParams(
       content::WebContents* web_contents) const;
@@ -48,6 +51,7 @@ class BlockedWindowParams {
  private:
   GURL target_url_;
   content::Referrer referrer_;
+  std::string frame_name_;
   WindowOpenDisposition disposition_;
   blink::WebWindowFeatures features_;
   bool user_gesture_;

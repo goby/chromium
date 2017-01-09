@@ -7,6 +7,7 @@
 
 #import <Foundation/Foundation.h>
 #include <Security/Authorization.h>
+#include <stdint.h>
 
 // Declarations of the Keystone registration bits needed here. From
 // KSRegistration.h.
@@ -42,6 +43,8 @@ extern NSString* KSRegistrationPromotionDidCompleteNotification;
 extern NSString* KSRegistrationCheckForUpdateNotification;
 extern NSString* KSRegistrationStatusKey;
 extern NSString* KSRegistrationUpdateCheckErrorKey;
+extern NSString* KSRegistrationUpdateCheckRawResultsKey;
+extern NSString* KSRegistrationUpdateCheckRawErrorMessagesKey;
 
 extern NSString* KSRegistrationStartUpdateNotification;
 extern NSString* KSUpdateCheckSuccessfulKey;

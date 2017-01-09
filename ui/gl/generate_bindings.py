@@ -63,7 +63,9 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_EXT_occlusion_query_boolean'] }],
   'arguments': 'GLenum target, GLuint id', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glBeginTransformFeedback' }],
+  'versions': [{ 'name': 'glBeginTransformFeedback' },
+               { 'name': 'glBeginTransformFeedbackEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'GLenum primitiveMode', },
 { 'return_type': 'void',
   'names': ['glBindAttribLocation'],
@@ -72,10 +74,14 @@ GL_FUNCTIONS = [
   'names': ['glBindBuffer'],
   'arguments': 'GLenum target, GLuint buffer', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glBindBufferBase' }],
+  'versions': [{ 'name': 'glBindBufferBase' },
+               { 'name': 'glBindBufferBaseEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'GLenum target, GLuint index, GLuint buffer', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glBindBufferRange' }],
+  'versions': [{ 'name': 'glBindBufferRange' },
+               { 'name': 'glBindBufferRangeEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'GLenum target, GLuint index, GLuint buffer, GLintptr offset, '
                'GLsizeiptr size', },
 { 'return_type': 'void',
@@ -96,17 +102,31 @@ GL_FUNCTIONS = [
   'names': ['glBindFramebufferEXT', 'glBindFramebuffer'],
   'arguments': 'GLenum target, GLuint framebuffer', },
 { 'return_type': 'void',
+  'known_as': 'glBindImageTextureEXT',
+  'versions': [{ 'name': 'glBindImageTexture',
+                 'extensions': ['GL_ARB_shader_image_load_store'] },
+               { 'name': 'glBindImageTextureEXT',
+                 'extensions': ['GL_EXT_shader_image_load_store'] }],
+  'arguments': 'GLuint index, GLuint texture, GLint level, GLboolean layered,'
+               'GLint layer, GLenum access, GLint format', },
+{ 'return_type': 'void',
   'names': ['glBindRenderbufferEXT', 'glBindRenderbuffer'],
   'arguments': 'GLenum target, GLuint renderbuffer', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glBindSampler' }],
+  'versions': [{ 'name': 'glBindSampler',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint unit, GLuint sampler', },
 { 'return_type': 'void',
   'names': ['glBindTexture'],
   'arguments': 'GLenum target, GLuint texture', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glBindTransformFeedback' }],
+  'versions': [{ 'name': 'glBindTransformFeedback',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'GLenum target, GLuint id', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glBindUniformLocationCHROMIUM',
+                 'extensions': ['GL_CHROMIUM_bind_uniform_location'] }],
+  'arguments': 'GLuint program, GLint location, const char* name' },
 { 'return_type': 'void',
   'known_as': 'glBindVertexArrayOES',
   'versions': [{ 'name': 'glBindVertexArray',
@@ -209,6 +229,10 @@ GL_FUNCTIONS = [
   'names': ['glCompileShader'],
   'arguments': 'GLuint shader', },
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glCompressedCopyTextureCHROMIUM',
+                 'extensions': ['GL_CHROMIUM_copy_compressed_texture'], }],
+  'arguments': 'GLuint sourceId, GLuint destId', },
+{ 'return_type': 'void',
   'names': ['glCompressedTexImage2D'],
   'arguments':
       'GLenum target, GLint level, GLenum internalformat, GLsizei width, '
@@ -237,6 +261,14 @@ GL_FUNCTIONS = [
       'GLenum readTarget, GLenum writeTarget, GLintptr readOffset, '
       'GLintptr writeOffset, GLsizeiptr size', },
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glCopySubTextureCHROMIUM',
+                 'extensions': ['GL_CHROMIUM_copy_texture'], }],
+  'arguments':
+      'GLuint sourceId, GLuint destId, GLint xoffset, GLint yoffset, '
+      'GLint x, GLint y, GLsizei width, GLsizei height, '
+      'GLboolean unpackFlipY, GLboolean unpackPremultiplyAlpha, '
+      'GLboolean unpackUnmultiplyAlpha', },
+{ 'return_type': 'void',
   'names': ['glCopyTexImage2D'],
   'arguments':
       'GLenum target, GLint level, GLenum internalformat, GLint x, GLint y, '
@@ -251,6 +283,16 @@ GL_FUNCTIONS = [
   'arguments':
       'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
       'GLint zoffset, GLint x, GLint y, GLsizei width, GLsizei height', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glCopyTextureCHROMIUM',
+                 'extensions': ['GL_CHROMIUM_copy_texture'], }],
+  'arguments':
+      'GLuint sourceId, GLuint destId, GLint internalFormat, '
+      'GLenum destType, GLboolean unpackFlipY, '
+      'GLboolean unpackPremultiplyAlpha, GLboolean unpackUnmultiplyAlpha', },
+{ 'return_type': 'void',
+  'names': ['glCoverageModulationNV'],
+  'arguments': 'GLenum components'},
 { 'return_type': 'void',
   'names': ['glCoverFillPathInstancedNV'],
   'arguments': 'GLsizei numPaths, GLenum pathNameType, const void* paths, '
@@ -276,6 +318,25 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'names': ['glCullFace'],
   'arguments': 'GLenum mode', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glDebugMessageCallback' },
+               { 'name': 'glDebugMessageCallbackKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments': 'GLDEBUGPROC callback, const void* userParam', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glDebugMessageControl' },
+               { 'name': 'glDebugMessageControlKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLenum source, GLenum type, GLenum severity, GLsizei count, '
+    'const GLuint* ids, GLboolean enabled', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glDebugMessageInsert' },
+               { 'name': 'glDebugMessageInsertKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLenum source, GLenum type, GLuint id, GLenum severity, '
+    'GLsizei length, const char* buf', },
 { 'return_type': 'void',
   'names': ['glDeleteBuffers'],
   'known_as': 'glDeleteBuffersARB',
@@ -307,7 +368,8 @@ GL_FUNCTIONS = [
   'names': ['glDeleteRenderbuffersEXT', 'glDeleteRenderbuffers'],
   'arguments': 'GLsizei n, const GLuint* renderbuffers', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glDeleteSamplers' }],
+  'versions': [{ 'name': 'glDeleteSamplers',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLsizei n, const GLuint* samplers', },
 { 'return_type': 'void',
   'names': ['glDeleteShader'],
@@ -320,7 +382,8 @@ GL_FUNCTIONS = [
   'names': ['glDeleteTextures'],
   'arguments': 'GLsizei n, const GLuint* textures', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glDeleteTransformFeedbacks' }],
+  'versions': [{ 'name': 'glDeleteTransformFeedbacks',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'GLsizei n, const GLuint* ids', },
 { 'return_type': 'void',
   'known_as': 'glDeleteVertexArraysOES',
@@ -405,7 +468,9 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_EXT_occlusion_query_boolean'] }],
   'arguments': 'GLenum target', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glEndTransformFeedback' }],
+  'versions': [{ 'name': 'glEndTransformFeedback' },
+               { 'name': 'glEndTransformFeedbackEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'void', },
 { 'return_type': 'GLsync',
   'versions': [{ 'name': 'glFenceSync',
@@ -486,13 +551,15 @@ GL_FUNCTIONS = [
   'names': ['glGenRenderbuffersEXT', 'glGenRenderbuffers'],
   'arguments': 'GLsizei n, GLuint* renderbuffers', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGenSamplers' }],
+  'versions': [{ 'name': 'glGenSamplers',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLsizei n, GLuint* samplers', },
 { 'return_type': 'void',
   'names': ['glGenTextures'],
   'arguments': 'GLsizei n, GLuint* textures', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGenTransformFeedbacks' }],
+  'versions': [{ 'name': 'glGenTransformFeedbacks',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'GLsizei n, GLuint* ids', },
 { 'return_type': 'void',
   'known_as': 'glGenVertexArraysOES',
@@ -517,6 +584,12 @@ GL_FUNCTIONS = [
   'arguments': 'GLuint program, GLuint uniformBlockIndex, GLenum pname, '
                'GLint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetActiveUniformBlockivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLuint uniformBlockIndex, GLenum pname, '
+      'GLsizei bufSize, GLsizei* length, GLint* params', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glGetActiveUniformBlockName' }],
   'arguments': 'GLuint program, GLuint uniformBlockIndex, GLsizei bufSize, '
                'GLsizei* length, char* uniformBlockName', },
@@ -532,11 +605,47 @@ GL_FUNCTIONS = [
   'names': ['glGetAttribLocation'],
   'arguments': 'GLuint program, const char* name', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetBooleani_vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLuint index, GLsizei bufSize, GLsizei* length, '
+      'GLboolean* data', },
+{ 'return_type': 'void',
   'names': ['glGetBooleanv'],
   'arguments': 'GLenum pname, GLboolean* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetBooleanvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLsizei bufSize, GLsizei* length, GLboolean* data', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetBufferParameteri64vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint64* params', },
+{ 'return_type': 'void',
   'names': ['glGetBufferParameteriv'],
   'arguments': 'GLenum target, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetBufferParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetBufferPointervRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'void** params', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetDebugMessageLog' },
+               { 'name': 'glGetDebugMessageLogKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLuint count, GLsizei bufSize, GLenum* sources, GLenum* types, '
+    'GLuint* ids, GLenum* severities, GLsizei* lengths, char* messageLog', },
 { 'return_type': 'GLenum',
   'names': ['glGetError'],
   'arguments': 'void',
@@ -549,6 +658,11 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'names': ['glGetFloatv'],
   'arguments': 'GLenum pname, GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetFloatvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLsizei bufSize, GLsizei* length, GLfloat* data', },
 { 'return_type': 'GLint',
   'versions': [{'name': 'glGetFragDataIndex',
                 'extensions': ['GL_ARB_blend_func_extended']},
@@ -563,6 +677,18 @@ GL_FUNCTIONS = [
             'glGetFramebufferAttachmentParameteriv'],
   'arguments': 'GLenum target, '
                'GLenum attachment, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetFramebufferAttachmentParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum attachment, GLenum pname, GLsizei bufSize, '
+      'GLsizei* length, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetFramebufferParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
 { 'return_type': 'GLenum',
   'names': ['glGetGraphicsResetStatusARB',
             'glGetGraphicsResetStatusKHR',
@@ -573,18 +699,92 @@ GL_FUNCTIONS = [
   'versions': [{ 'name': 'glGetInteger64i_v' }],
   'arguments': 'GLenum target, GLuint index, GLint64* data', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetInteger64i_vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLuint index, GLsizei bufSize, GLsizei* length, '
+      'GLint64* data', },
+{ 'return_type': 'void',
   'names': ['glGetInteger64v'],
   'arguments': 'GLenum pname, GLint64* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetInteger64vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLsizei bufSize, GLsizei* length, GLint64* data', },
 { 'return_type': 'void',
   'versions': [{ 'name': 'glGetIntegeri_v' }],
   'arguments': 'GLenum target, GLuint index, GLint* data', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetIntegeri_vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLuint index, GLsizei bufSize, GLsizei* length, '
+      'GLint* data', },
+{ 'return_type': 'void',
   'names': ['glGetIntegerv'],
   'arguments': 'GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetIntegervRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLsizei bufSize, GLsizei* length, GLint* data', },
 { 'return_type': 'void',
   'versions': [{ 'name': 'glGetInternalformativ' }],
   'arguments': 'GLenum target, GLenum internalformat, GLenum pname, '
                'GLsizei bufSize, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetInternalformativRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum internalformat, GLenum pname, GLsizei bufSize, '
+      'GLsizei* length, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetMultisamplefvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLuint index, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* val', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetnUniformfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetnUniformivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetnUniformuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetObjectLabel' },
+               { 'name': 'glGetObjectLabelKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLenum identifier, GLuint name, GLsizei bufSize, GLsizei* length, '
+    'char* label', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetObjectPtrLabel' },
+               { 'name': 'glGetObjectPtrLabelKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments': 'void* ptr, GLsizei bufSize, GLsizei* length, char* label', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetPointerv' },
+               { 'name': 'glGetPointervKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments': 'GLenum pname, void** params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetPointervRobustANGLERobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum pname, GLsizei bufSize, GLsizei* length, void** params', },
 { 'return_type': 'void',
   'known_as': 'glGetProgramBinary',
   'versions': [{ 'name': 'glGetProgramBinaryOES' },
@@ -602,8 +802,20 @@ GL_FUNCTIONS = [
   'arguments': 'GLuint program, GLenum programInterface, GLenum pname, '
   'GLint* params'},
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetProgramInterfaceivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLenum programInterface, GLenum pname, '
+      'GLsizei bufSize, GLsizei* length, GLint* params', },
+{ 'return_type': 'void',
   'names': ['glGetProgramiv'],
   'arguments': 'GLuint program, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetProgramivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
 { 'return_type': 'void',
   'versions': [{'name': 'glGetProgramResourceiv',
                 'extensions': ['GL_ARB_program_interface_query']}],
@@ -625,20 +837,44 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_EXT_occlusion_query_boolean'] }],
   'arguments': 'GLenum target, GLenum pname, GLint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetQueryivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glGetQueryObjecti64v',
                  'extensions': ['GL_ARB_timer_query'] },
                { 'name': 'glGetQueryObjecti64vEXT' }],
   'arguments': 'GLuint id, GLenum pname, GLint64* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetQueryObjecti64vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint id, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint64* params', },
 { 'return_type': 'void',
   'versions': [{ 'name': 'glGetQueryObjectiv' },
                { 'name': 'glGetQueryObjectivARB' },
                { 'name': 'glGetQueryObjectivEXT' }],
   'arguments': 'GLuint id, GLenum pname, GLint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetQueryObjectivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint id, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glGetQueryObjectui64v',
                  'extensions': ['GL_ARB_timer_query'] },
                { 'name': 'glGetQueryObjectui64vEXT' }],
   'arguments': 'GLuint id, GLenum pname, GLuint64* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetQueryObjectui64vRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint id, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLuint64* params', },
 { 'return_type': 'void',
   'versions': [{ 'name': 'glGetQueryObjectuiv' },
                { 'name': 'glGetQueryObjectuivARB' },
@@ -646,14 +882,52 @@ GL_FUNCTIONS = [
                  'extensions': ['GL_EXT_occlusion_query_boolean'] }],
   'arguments': 'GLuint id, GLenum pname, GLuint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetQueryObjectuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint id, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
+{ 'return_type': 'void',
   'names': ['glGetRenderbufferParameterivEXT', 'glGetRenderbufferParameteriv'],
   'arguments': 'GLenum target, GLenum pname, GLint* params', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGetSamplerParameterfv' }],
+  'versions': [{'name': 'glGetRenderbufferParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetSamplerParameterfv',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, GLfloat* params', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGetSamplerParameteriv' }],
+  'versions': [{'name': 'glGetSamplerParameterfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetSamplerParameterIivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetSamplerParameterIuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetSamplerParameteriv',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetSamplerParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
 { 'return_type': 'void',
   'names': ['glGetShaderInfoLog'],
   'arguments':
@@ -661,6 +935,12 @@ GL_FUNCTIONS = [
 { 'return_type': 'void',
   'names': ['glGetShaderiv'],
   'arguments': 'GLuint shader, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetShaderivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint shader, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
 { 'return_type': 'void',
   'names': ['glGetShaderPrecisionFormat'],
   'arguments': 'GLenum shadertype, GLenum precisiontype, '
@@ -688,16 +968,54 @@ GL_FUNCTIONS = [
   'names': ['glGetTexLevelParameterfv'],
   'arguments': 'GLenum target, GLint level, GLenum pname, GLfloat* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetTexLevelParameterfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLenum pname, GLsizei bufSize, '
+      'GLsizei* length, GLfloat* params', },
+{ 'return_type': 'void',
   'names': ['glGetTexLevelParameteriv'],
   'arguments': 'GLenum target, GLint level, GLenum pname, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetTexLevelParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLenum pname, GLsizei bufSize, '
+      'GLsizei* length, GLint* params', },
 { 'return_type': 'void',
   'names': ['glGetTexParameterfv'],
   'arguments': 'GLenum target, GLenum pname, GLfloat* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetTexParameterfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetTexParameterIivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetTexParameterIuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
+{ 'return_type': 'void',
   'names': ['glGetTexParameteriv'],
   'arguments': 'GLenum target, GLenum pname, GLint* params', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glGetTransformFeedbackVarying' }],
+  'versions': [{'name': 'glGetTexParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glGetTransformFeedbackVarying' },
+               { 'name': 'glGetTransformFeedbackVaryingEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'GLuint program, GLuint index, GLsizei bufSize, '
                'GLsizei* length, GLsizei* size, GLenum* type, char* name', },
 { 'return_type': 'void',
@@ -711,12 +1029,24 @@ GL_FUNCTIONS = [
   'names': ['glGetUniformfv'],
   'arguments': 'GLuint program, GLint location, GLfloat* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetUniformfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* params', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glGetUniformIndices' }],
   'arguments': 'GLuint program, GLsizei uniformCount, '
                'const char* const* uniformNames, GLuint* uniformIndices', },
 { 'return_type': 'void',
   'names': ['glGetUniformiv'],
   'arguments': 'GLuint program, GLint location, GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetUniformivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
 { 'return_type': 'GLint',
   'names': ['glGetUniformLocation'],
   'arguments': 'GLuint program, const char* name', },
@@ -724,14 +1054,50 @@ GL_FUNCTIONS = [
   'names': ['glGetUniformuiv'],
   'arguments': 'GLuint program, GLint location, GLuint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetUniformuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint program, GLint location, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
+{ 'return_type': 'void',
   'names': ['glGetVertexAttribfv'],
   'arguments': 'GLuint index, GLenum pname, GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetVertexAttribfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint index, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLfloat* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetVertexAttribIivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint index, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetVertexAttribIuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint index, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLuint* params', },
 { 'return_type': 'void',
   'names': ['glGetVertexAttribiv'],
   'arguments': 'GLuint index, GLenum pname, GLint* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glGetVertexAttribivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint index, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'GLint* params', },
+{ 'return_type': 'void',
   'names': ['glGetVertexAttribPointerv'],
   'arguments': 'GLuint index, GLenum pname, void** pointer', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glGetVertexAttribPointervRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint index, GLenum pname, GLsizei bufSize, GLsizei* length, '
+      'void** pointer', },
 { 'return_type': 'void',
   'names': ['glHint'],
   'arguments': 'GLenum target, GLenum mode', },
@@ -780,7 +1146,8 @@ GL_FUNCTIONS = [
   'names': ['glIsRenderbufferEXT', 'glIsRenderbuffer'],
   'arguments': 'GLuint renderbuffer', },
 { 'return_type': 'GLboolean',
-  'versions': [{ 'name': 'glIsSampler' }],
+  'versions': [{ 'name': 'glIsSampler',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler', },
 { 'return_type': 'GLboolean',
   'names': ['glIsShader'],
@@ -793,7 +1160,8 @@ GL_FUNCTIONS = [
   'names': ['glIsTexture'],
   'arguments': 'GLuint texture', },
 { 'return_type': 'GLboolean',
-  'versions': [{ 'name': 'glIsTransformFeedback' }],
+  'versions': [{ 'name': 'glIsTransformFeedback',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'GLuint id', },
 { 'return_type': 'GLboolean',
   'known_as': 'glIsVertexArrayOES',
@@ -834,6 +1202,24 @@ GL_FUNCTIONS = [
                                 'GL_NV_path_rendering'] },],
   'arguments': 'GLenum matrixMode' },
 { 'return_type': 'void',
+  'known_as': 'glMemoryBarrierEXT',
+  'versions': [{ 'name': 'glMemoryBarrier',
+                 'extensions': ['GL_ARB_shader_image_load_store'] },
+               { 'name': 'glMemoryBarrierEXT',
+                 'extensions': ['GL_EXT_shader_image_load_store'] }],
+  'arguments': 'GLbitfield barriers', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glObjectLabel' },
+               { 'name': 'glObjectLabelKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLenum identifier, GLuint name, GLsizei length, const char* label', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glObjectPtrLabel' },
+               { 'name': 'glObjectPtrLabelKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments': 'void* ptr, GLsizei length, const char* label', },
+{ 'return_type': 'void',
   'names': ['glPathCommandsNV'],
   'arguments': 'GLuint path, GLsizei numCommands, const GLubyte* commands, '
   'GLsizei numCoords, GLenum coordType, const GLvoid* coords' },
@@ -847,7 +1233,8 @@ GL_FUNCTIONS = [
   'names': ['glPathStencilFuncNV'],
   'arguments': 'GLenum func, GLint ref, GLuint mask' },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glPauseTransformFeedback' }],
+  'versions': [{ 'name': 'glPauseTransformFeedback',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'void', },
 { 'return_type': 'void',
   'names': ['glPixelStorei'],
@@ -859,8 +1246,16 @@ GL_FUNCTIONS = [
   'names': ['glPolygonOffset'],
   'arguments': 'GLfloat factor, GLfloat units', },
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glPopDebugGroup' },
+               { 'name': 'glPopDebugGroupKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments': '', },
+{ 'return_type': 'void',
   'names': ['glPopGroupMarkerEXT'],
   'arguments': 'void', },
+{ 'return_type': 'void',
+  'names': ['glPrimitiveRestartIndex'],
+  'arguments': 'GLuint index', },
 { 'return_type': 'void',
   'known_as': 'glProgramBinary',
   'versions': [{ 'name': 'glProgramBinaryOES' },
@@ -878,6 +1273,12 @@ GL_FUNCTIONS = [
   'GLint components, const GLfloat* coeffs',
   'is_optional': True, },
 { 'return_type': 'void',
+  'versions': [{ 'name': 'glPushDebugGroup' },
+               { 'name': 'glPushDebugGroupKHR',
+                 'extensions': ['GL_KHR_debug'] }],
+  'arguments':
+    'GLenum source, GLuint id, GLsizei length, const char* message', },
+{ 'return_type': 'void',
   'names': ['glPushGroupMarkerEXT'],
   'arguments': 'GLsizei length, const char* marker', },
 { 'return_type': 'void',
@@ -889,10 +1290,22 @@ GL_FUNCTIONS = [
   'names': ['glReadBuffer'],
   'arguments': 'GLenum src', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glReadnPixelsRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, '
+      'GLenum type, GLsizei bufSize, GLsizei* length, void* data', },
+{ 'return_type': 'void',
   'names': ['glReadPixels'],
   'arguments':
     'GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, '
     'GLenum type, void* pixels', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glReadPixelsRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLint x, GLint y, GLsizei width, GLsizei height, GLenum format, '
+      'GLenum type, GLsizei bufSize, GLsizei* length, void* pixels', },
 { 'return_type': 'void',
   'names': ['glReleaseShaderCompiler'],
   'arguments': 'void', },
@@ -917,23 +1330,48 @@ GL_FUNCTIONS = [
   'arguments': 'GLenum target, GLsizei samples, GLenum internalformat, '
                'GLsizei width, GLsizei height', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glResumeTransformFeedback' }],
+  'versions': [{ 'name': 'glResumeTransformFeedback',
+                 'extensions': ['GL_ARB_transform_feedback2'] }],
   'arguments': 'void', },
 { 'return_type': 'void',
   'names': ['glSampleCoverage'],
   'arguments': 'GLclampf value, GLboolean invert', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glSamplerParameterf' }],
+  'versions': [{ 'name': 'glSamplerParameterf',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, GLfloat param', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glSamplerParameterfv' }],
+  'versions': [{ 'name': 'glSamplerParameterfv',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, const GLfloat* params', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glSamplerParameteri' }],
+  'versions': [{'name': 'glSamplerParameterfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, const GLfloat* param', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glSamplerParameteri',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, GLint param', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glSamplerParameteriv' }],
+  'versions': [{'name': 'glSamplerParameterIivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, const GLint* param', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glSamplerParameterIuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, const GLuint* param', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glSamplerParameteriv',
+                 'extensions': ['GL_ARB_sampler_objects'] }],
   'arguments': 'GLuint sampler, GLenum pname, const GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glSamplerParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLuint sampler, GLenum pname, GLsizei bufSize, const GLint* param', },
 { 'return_type': 'void',
   'names': ['glScissor'],
   'arguments': 'GLint x, GLint y, GLsizei width, GLsizei height', },
@@ -1038,11 +1476,25 @@ GL_FUNCTIONS = [
       'GLsizei height, GLint border, GLenum format, GLenum type, '
       'const void* pixels', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glTexImage2DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint internalformat, GLsizei width, '
+      'GLsizei height, GLint border, GLenum format, GLenum type, '
+      'GLsizei bufSize, const void* pixels', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glTexImage3D' }],
   'arguments':
       'GLenum target, GLint level, GLint internalformat, GLsizei width, '
       'GLsizei height, GLsizei depth, GLint border, GLenum format, '
       'GLenum type, const void* pixels', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glTexImage3DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint internalformat, GLsizei width, '
+      'GLsizei height, GLsizei depth, GLint border, GLenum format, '
+      'GLenum type, GLsizei bufSize, const void* pixels', },
 { 'return_type': 'void',
   'names': ['glTexParameterf'],
   'arguments': 'GLenum target, GLenum pname, GLfloat param', },
@@ -1050,11 +1502,31 @@ GL_FUNCTIONS = [
   'names': ['glTexParameterfv'],
   'arguments': 'GLenum target, GLenum pname, const GLfloat* params', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glTexParameterfvRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, const GLfloat* params', },
+{ 'return_type': 'void',
   'names': ['glTexParameteri'],
   'arguments': 'GLenum target, GLenum pname, GLint param', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glTexParameterIivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, const GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glTexParameterIuivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, const GLuint* params', },
+{ 'return_type': 'void',
   'names': ['glTexParameteriv'],
   'arguments': 'GLenum target, GLenum pname, const GLint* params', },
+{ 'return_type': 'void',
+  'versions': [{'name': 'glTexParameterivRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLenum pname, GLsizei bufSize, const GLint* params', },
 { 'return_type': 'void',
   'known_as': 'glTexStorage2DEXT',
   'versions': [{ 'name': 'glTexStorage2D',
@@ -1064,7 +1536,8 @@ GL_FUNCTIONS = [
   'arguments': 'GLenum target, GLsizei levels, GLenum internalformat, '
                'GLsizei width, GLsizei height', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glTexStorage3D' }],
+  'versions': [{ 'name': 'glTexStorage3D',
+                 'extensions': ['GL_ARB_texture_storage'] }],
   'arguments': 'GLenum target, GLsizei levels, GLenum internalformat, '
                'GLsizei width, GLsizei height, GLsizei depth', },
 { 'return_type': 'void',
@@ -1074,13 +1547,29 @@ GL_FUNCTIONS = [
      'GLsizei width, GLsizei height, GLenum format, GLenum type, '
      'const void* pixels', },
 { 'return_type': 'void',
+  'versions': [{'name': 'glTexSubImage2DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
+      'GLsizei width, GLsizei height, GLenum format, GLenum type, '
+      'GLsizei bufSize, const void* pixels', },
+{ 'return_type': 'void',
   'versions': [{ 'name': 'glTexSubImage3D' }],
   'arguments':
       'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
       'GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, '
       'GLenum format, GLenum type, const void* pixels', },
 { 'return_type': 'void',
-  'versions': [{ 'name': 'glTransformFeedbackVaryings' }],
+  'versions': [{'name': 'glTexSubImage3DRobustANGLE',
+                'extensions': ['GL_ANGLE_robust_client_memory']}],
+  'arguments':
+      'GLenum target, GLint level, GLint xoffset, GLint yoffset, '
+      'GLint zoffset, GLsizei width, GLsizei height, GLsizei depth, '
+      'GLenum format, GLenum type, GLsizei bufSize, const void* pixels', },
+{ 'return_type': 'void',
+  'versions': [{ 'name': 'glTransformFeedbackVaryings' },
+               { 'name': 'glTransformFeedbackVaryingsEXT',
+                 'extension': ['GL_EXT_transform_feedback'] }],
   'arguments': 'GLuint program, GLsizei count, const char* const* varyings, '
                'GLenum bufferMode', },
 { 'return_type': 'void',
@@ -1353,6 +1842,16 @@ EGL_FUNCTIONS = [
   'names': ['eglCreatePixmapSurface'],
   'arguments': 'EGLDisplay dpy, EGLConfig config, EGLNativePixmapType pixmap, '
                'const EGLint* attrib_list', },
+{ 'return_type': 'EGLStreamKHR',
+  'versions': [{ 'name': 'eglCreateStreamKHR',
+                 'extensions': ['EGL_KHR_stream'] }],
+  'arguments': 'EGLDisplay dpy, const EGLint* attrib_list' },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{'name': 'eglCreateStreamProducerD3DTextureNV12ANGLE',
+                  'extensions':
+                      ['EGL_ANGLE_stream_producer_d3d_texture_nv12']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, EGLAttrib* attrib_list', },
 { 'return_type': 'EGLSyncKHR',
   'versions': [{ 'name': 'eglCreateSyncKHR',
                  'extensions': [
@@ -1371,6 +1870,10 @@ EGL_FUNCTIONS = [
   'versions': [{ 'name' : 'eglDestroyImageKHR',
                  'extensions': ['EGL_KHR_image_base'] }],
   'arguments': 'EGLDisplay dpy, EGLImageKHR image' },
+{ 'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglDestroyStreamKHR',
+                 'extensions': ['EGL_KHR_stream'] }],
+  'arguments': 'EGLDisplay dpy, EGLStreamKHR stream' },
 { 'return_type': 'EGLBoolean',
   'names': ['eglDestroySurface'],
   'arguments': 'EGLDisplay dpy, EGLSurface surface', },
@@ -1428,6 +1931,11 @@ EGL_FUNCTIONS = [
       'EGLuint64CHROMIUM* ust, EGLuint64CHROMIUM* msc, '
       'EGLuint64CHROMIUM* sbc', },
 { 'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglImageFlushExternalEXT',
+                 'extensions': ['EGL_EXT_image_flush_external'] }],
+  'arguments':
+      'EGLDisplay dpy, EGLImageKHR image, const EGLAttrib* attrib_list' },
+{ 'return_type': 'EGLBoolean',
   'names': ['eglInitialize'],
   'arguments': 'EGLDisplay dpy, EGLint* major, EGLint* minor', },
 { 'return_type': 'EGLBoolean',
@@ -1445,6 +1953,18 @@ EGL_FUNCTIONS = [
   'names': ['eglQueryContext'],
   'arguments':
       'EGLDisplay dpy, EGLContext ctx, EGLint attribute, EGLint* value', },
+{ 'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryStreamKHR',
+                 'extensions': ['EGL_KHR_stream'] }],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, EGLenum attribute, '
+      'EGLint* value' },
+{ 'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglQueryStreamu64KHR',
+                 'extensions': ['EGL_KHR_stream'] }],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, EGLenum attribute, '
+      'EGLuint64KHR* value' },
 { 'return_type': 'const char*',
   'names': ['eglQueryString'],
   'arguments': 'EGLDisplay dpy, EGLint name', },
@@ -1463,12 +1983,48 @@ EGL_FUNCTIONS = [
   'names': ['eglReleaseThread'],
   'arguments': 'void', },
 { 'return_type': 'EGLBoolean',
+  'versions': [{ 'name': 'eglStreamAttribKHR',
+                 'extensions': ['EGL_KHR_stream'] }],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, EGLenum attribute, EGLint value' },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{ 'name': 'eglStreamConsumerAcquireKHR',
+                   'extensions': ['EGL_KHR_stream_consumer_gltexture']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream', },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{ 'name': 'eglStreamConsumerGLTextureExternalAttribsNV',
+                   'extensions': ['EGL_NV_stream_consumer_gltexture_yuv']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, EGLAttrib* attrib_list', },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{ 'name': 'eglStreamConsumerGLTextureExternalKHR',
+                   'extensions': ['EGL_KHR_stream_consumer_gltexture']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream', },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{ 'name': 'eglStreamConsumerReleaseKHR',
+                   'extensions': ['EGL_KHR_stream_consumer_gltexture']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream', },
+{ 'return_type': 'EGLBoolean',
+    'versions': [{ 'name': 'eglStreamPostD3DTextureNV12ANGLE',
+                   'extensions':
+                       ['EGL_ANGLE_stream_producer_d3d_texture_nv12']}],
+  'arguments':
+      'EGLDisplay dpy, EGLStreamKHR stream, void* texture, '
+      'const EGLAttrib* attrib_list', },
+{ 'return_type': 'EGLBoolean',
   'names': ['eglSurfaceAttrib'],
   'arguments':
       'EGLDisplay dpy, EGLSurface surface, EGLint attribute, EGLint value', },
 { 'return_type': 'EGLBoolean',
   'names': ['eglSwapBuffers'],
   'arguments': 'EGLDisplay dpy, EGLSurface surface', },
+{ 'return_type': 'EGLBoolean',
+  'names': ['eglSwapBuffersWithDamageKHR'],
+  'arguments':
+      'EGLDisplay dpy, EGLSurface surface, EGLint* rects, EGLint n_rects', },
 { 'return_type': 'EGLBoolean',
   'names': ['eglSwapInterval'],
   'arguments': 'EGLDisplay dpy, EGLint interval', },
@@ -1502,6 +2058,9 @@ WGL_FUNCTIONS = [
 { 'return_type': 'HGLRC',
   'names': ['wglCreateContext'],
   'arguments': 'HDC hdc', },
+{ 'return_type': 'HGLRC',
+  'names': ['wglCreateContextAttribsARB'],
+  'arguments': 'HDC hDC, HGLRC hShareContext, const int* attribList', },
 { 'return_type': 'HGLRC',
   'names': ['wglCreateLayerContext'],
   'arguments': 'HDC hdc, int iLayerPlane', },
@@ -1642,16 +2201,16 @@ GLX_FUNCTIONS = [
 { 'return_type': 'bool',
   'names': ['glXGetMscRateOML'],
   'arguments':
-      'Display* dpy, GLXDrawable drawable, int32* numerator, '
-      'int32* denominator' },
+      'Display* dpy, GLXDrawable drawable, int32_t* numerator, '
+      'int32_t* denominator' },
 { 'return_type': 'void',
   'names': ['glXGetSelectedEvent'],
   'arguments': 'Display* dpy, GLXDrawable drawable, unsigned long* mask', },
 { 'return_type': 'bool',
   'names': ['glXGetSyncValuesOML'],
   'arguments':
-      'Display* dpy, GLXDrawable drawable, int64* ust, int64* msc, '
-      'int64* sbc' },
+      'Display* dpy, GLXDrawable drawable, int64_t* ust, int64_t* msc, '
+      'int64_t* sbc' },
 { 'return_type': 'XVisualInfo*',
   'names': ['glXGetVisualFromFBConfig'],
   'arguments': 'Display* dpy, GLXFBConfig config', },
@@ -1720,11 +2279,15 @@ FUNCTION_SETS = [
       'GLES2/gl2ext.h',
       'GLES3/gl3.h',
       'GLES3/gl31.h',
+      'GLES3/gl32.h',
       # Files below are Chromium-specific and shipped with Chromium sources.
       'GL/glextchromium.h',
       'GLES2/gl2chromium.h',
       'GLES2/gl2extchromium.h'
-  ], []],
+    ], [
+      "GL_EXT_unpack_subimage",
+    ]
+  ],
   [OSMESA_FUNCTIONS, 'osmesa', [], []],
   [EGL_FUNCTIONS, 'egl', [
       'EGL/eglext.h',
@@ -1751,7 +2314,7 @@ GLES2_HEADERS_WITH_ENUMS = [
 SELF_LOCATION = os.path.dirname(os.path.abspath(__file__))
 
 LICENSE_AND_HEADER = """\
-// Copyright 2014 The Chromium Authors. All rights reserved.
+// Copyright 2016 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 //
@@ -1818,10 +2381,10 @@ def GenerateHeader(file, functions, set_name,
   file.write(LICENSE_AND_HEADER +
 """
 
-#ifndef UI_GFX_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
-#define UI_GFX_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
+#ifndef UI_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
+#define UI_GL_GL_BINDINGS_AUTOGEN_%(name)s_H_
 
-namespace gfx {
+namespace gl {
 
 class GLContext;
 
@@ -1865,17 +2428,17 @@ class GLContext;
   file.write('};\n')
   file.write('\n')
 
-  file.write( '}  // namespace gfx\n')
+  file.write( '}  // namespace gl\n')
 
   # Write macros to invoke function pointers. Always use the GL name for the
   # macro.
   file.write('\n')
   for func in functions:
-    file.write('#define %s ::gfx::g_current_%s_context->%sFn\n' %
+    file.write('#define %s ::gl::g_current_%s_context->%sFn\n' %
         (func['known_as'], set_name.lower(), func['known_as']))
 
   file.write('\n')
-  file.write('#endif  //  UI_GFX_GL_GL_BINDINGS_AUTOGEN_%s_H_\n' %
+  file.write('#endif  //  UI_GL_GL_BINDINGS_AUTOGEN_%s_H_\n' %
       set_name.upper())
 
 
@@ -1919,6 +2482,51 @@ def GenerateMockHeader(file, functions, set_name):
 
   file.write('\n')
 
+def GenerateStubHeader(file, functions):
+  """Generates gl_stub_autogen_gl.h"""
+
+  # Write file header.
+  file.write(LICENSE_AND_HEADER)
+
+  # Write API declaration.
+  for func in functions:
+    args = func['arguments']
+    if args == 'void':
+      args = ''
+    return_type = func['return_type'];
+    file.write('  %s gl%sFn(%s) override' % (return_type, func['known_as'][2:],
+                                             args))
+    if return_type == 'void':
+      file.write(' {}\n');
+    else:
+      file.write(';\n');
+
+  file.write('\n')
+
+def GenerateStubSource(file, functions):
+  """Generates gl_stub_autogen_gl.cc"""
+
+  # Write file header.
+  file.write(LICENSE_AND_HEADER)
+  file.write('\n#include "ui/gl/gl_stub_api_base.h"\n\n')
+  file.write('namespace gl {\n\n')
+
+  # Write API declaration.
+  for func in functions:
+    return_type = func['return_type'];
+    if return_type == 'void':
+      continue
+    args = func['arguments']
+    if args == 'void':
+      args = ''
+    file.write('%s GLStubApiBase::gl%sFn(%s) {\n' % (return_type,
+                                                     func['known_as'][2:],
+                                                     args))
+    file.write('  return 0;\n');
+    file.write('}\n\n');
+
+  file.write('\n}  // namespace gl\n')
+
 
 def GenerateSource(file, functions, set_name, used_extensions,
                    used_client_extensions, options):
@@ -1944,7 +2552,7 @@ def GenerateSource(file, functions, set_name, used_extensions,
 
 %s
 
-namespace gfx {
+namespace gl {
 """ % includes_string)
 
   file.write('\n')
@@ -2052,7 +2660,7 @@ void DriverGL::InitializeDynamicBindings(
 """)
   elif set_name == 'egl':
     file.write("""\
-void DriverEGL::InitializeExtensionBindings() {
+void DriverEGL::InitializeClientExtensionBindings() {
   std::string client_extensions(GetClientExtensions());
   client_extensions += " ";
   ALLOW_UNUSED_LOCAL(client_extensions);
@@ -2087,6 +2695,9 @@ void Driver%s::InitializeExtensionBindings() {
 
   if set_name == 'egl':
     file.write("""\
+}
+
+void DriverEGL::InitializeExtensionBindings() {
   std::string extensions(GetPlatformExtensions());
   extensions += " ";
   ALLOW_UNUSED_LOCAL(extensions);
@@ -2153,6 +2764,8 @@ void Driver%s::InitializeExtensionBindings() {
     if return_type == 'void':
       file.write('  GL_SERVICE_LOG("%s" << "(" %s << ")");\n' %
           (function_name, log_argument_names))
+      file.write('  DCHECK(g_driver_%s.debug_fn.%sFn != nullptr);\n' %
+          (set_name.lower(), function_name))
       file.write('  g_driver_%s.debug_fn.%sFn(%s);\n' %
           (set_name.lower(), function_name, argument_names))
       if 'logging_code' in func:
@@ -2165,6 +2778,8 @@ void Driver%s::InitializeExtensionBindings() {
     else:
       file.write('  GL_SERVICE_LOG("%s" << "(" %s << ")");\n' %
           (function_name, log_argument_names))
+      file.write('  DCHECK(g_driver_%s.debug_fn.%sFn != nullptr);\n' %
+          (set_name.lower(), function_name))
       file.write('  %s result = g_driver_%s.debug_fn.%sFn(%s);\n' %
           (return_type, set_name.lower(), function_name, argument_names))
       if 'logging_code' in func:
@@ -2269,7 +2884,8 @@ void Driver%s::InitializeExtensionBindings() {
                         'GLsizei': '0',
                         'GLfloat': '0.0f',
                         'GLdouble': '0.0',
-                        'GLsync': 'NULL'}
+                        'GLsync': 'NULL',
+                        'GLDEBUGPROC': 'NULL'}
       if return_type.endswith('*'):
         file.write('  return NULL;\n')
       elif return_type != 'void':
@@ -2277,7 +2893,7 @@ void Driver%s::InitializeExtensionBindings() {
       file.write('}\n')
 
   file.write('\n')
-  file.write('}  // namespace gfx\n')
+  file.write('}  // namespace gl\n')
 
 
 def GetUniquelyNamedFunctions(functions):
@@ -2317,7 +2933,7 @@ def GenerateMockBindingsSource(file, functions):
 
 #include "ui/gl/gl_mock.h"
 
-namespace gfx {
+namespace gl {
 
 // This is called mainly to prevent the compiler combining the code of mock
 // functions with identical contents, so that their function pointers will be
@@ -2371,7 +2987,7 @@ void MakeFunctionUnique(const char *func_name) {
   file.write('}\n')
 
   file.write('\n')
-  file.write('}  // namespace gfx\n')
+  file.write('}  // namespace gl\n')
 
 def GenerateEnumUtils(out_file, input_filenames):
   enum_re = re.compile(r'\#define\s+(GL_[a-zA-Z0-9_]+)\s+([0-9A-Fa-fx]+)')
@@ -2395,7 +3011,7 @@ def GenerateEnumUtils(out_file, input_filenames):
   out_file.write(LICENSE_AND_HEADER)
   out_file.write("static const GLEnums::EnumToString "
                  "enum_to_string_table[] = {\n")
-  for value in dict:
+  for value in sorted(dict):
     out_file.write('  { %s, "%s", },\n' % (value, dict[value]))
   out_file.write("""};
 
@@ -2754,6 +3370,18 @@ def main(argv):
                                     'gl_enums_implementation_autogen.h'),
                        'wb')
     GenerateEnumUtils(header_file, enum_header_filenames)
+    header_file.close()
+    ClangFormat(header_file.name)
+
+    header_file = open(
+        os.path.join(directory, 'gl_stub_autogen_gl.h'), 'wb')
+    GenerateStubHeader(header_file, GL_FUNCTIONS)
+    header_file.close()
+    ClangFormat(header_file.name)
+
+    header_file = open(
+        os.path.join(directory, 'gl_stub_autogen_gl.cc'), 'wb')
+    GenerateStubSource(header_file, GL_FUNCTIONS)
     header_file.close()
     ClangFormat(header_file.name)
   return 0

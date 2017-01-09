@@ -16,8 +16,13 @@ MockUsbDevice::MockUsbDevice(uint16_t vendor_id,
                              const std::string& manufacturer_string,
                              const std::string& product_string,
                              const std::string& serial_number)
-    : UsbDevice(vendor_id,
+    : UsbDevice(0x0200,  // usb_version
+                0xff,    // device_class
+                0xff,    // device_subclass
+                0xff,    // device_protocol
+                vendor_id,
                 product_id,
+                0x0100,  // device_version
                 base::UTF8ToUTF16(manufacturer_string),
                 base::UTF8ToUTF16(product_string),
                 base::UTF8ToUTF16(serial_number)) {}
@@ -28,8 +33,13 @@ MockUsbDevice::MockUsbDevice(uint16_t vendor_id,
                              const std::string& product_string,
                              const std::string& serial_number,
                              const GURL& webusb_landing_page)
-    : UsbDevice(vendor_id,
+    : UsbDevice(0x0200,  // usb_version
+                0xff,    // device_class
+                0xff,    // device_subclass
+                0xff,    // device_protocol
+                vendor_id,
                 product_id,
+                0x0100,  // device_version
                 base::UTF8ToUTF16(manufacturer_string),
                 base::UTF8ToUTF16(product_string),
                 base::UTF8ToUTF16(serial_number)) {
@@ -41,6 +51,24 @@ MockUsbDevice::MockUsbDevice(uint16_t vendor_id,
                              const UsbConfigDescriptor& configuration)
     : MockUsbDevice(vendor_id, product_id) {
   configurations_.push_back(configuration);
+}
+
+MockUsbDevice::MockUsbDevice(
+    uint16_t vendor_id,
+    uint16_t product_id,
+    uint8_t device_class,
+    const std::vector<UsbConfigDescriptor>& configurations)
+    : UsbDevice(0x0200,  // usb_version
+                device_class,
+                0xff,  // device_subclass
+                0xff,  // device_protocol
+                vendor_id,
+                product_id,
+                0x0100,  // device_version
+                base::string16(),
+                base::string16(),
+                base::string16()) {
+  configurations_ = configurations;
 }
 
 MockUsbDevice::MockUsbDevice(
@@ -59,6 +87,18 @@ MockUsbDevice::MockUsbDevice(
 }
 
 MockUsbDevice::~MockUsbDevice() {
+}
+
+void MockUsbDevice::AddMockConfig(const UsbConfigDescriptor& config) {
+  configurations_.push_back(config);
+}
+
+void MockUsbDevice::ActiveConfigurationChanged(int configuration_value) {
+  UsbDevice::ActiveConfigurationChanged(configuration_value);
+}
+
+void MockUsbDevice::NotifyDeviceRemoved() {
+  UsbDevice::NotifyDeviceRemoved();
 }
 
 }  // namespace device

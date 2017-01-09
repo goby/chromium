@@ -4,6 +4,8 @@
 
 #include "content/public/test/sandbox_file_system_test_helper.h"
 
+#include <memory>
+
 #include "base/files/file_util.h"
 #include "base/run_loop.h"
 #include "content/public/test/mock_special_storage_policy.h"
@@ -75,7 +77,7 @@ base::FilePath SandboxFileSystemTestHelper::GetLocalPath(
     const base::FilePath& path) {
   DCHECK(file_util_);
   base::FilePath local_path;
-  scoped_ptr<FileSystemOperationContext> context(NewOperationContext());
+  std::unique_ptr<FileSystemOperationContext> context(NewOperationContext());
   file_util_->GetLocalFilePath(context.get(), CreateURL(path), &local_path);
   return local_path;
 }
@@ -95,22 +97,21 @@ FileSystemURL SandboxFileSystemTestHelper::CreateURL(
   return file_system_context_->CreateCrackedFileSystemURL(origin_, type_, path);
 }
 
-int64 SandboxFileSystemTestHelper::GetCachedOriginUsage() const {
+int64_t SandboxFileSystemTestHelper::GetCachedOriginUsage() const {
   return file_system_context_->GetQuotaUtil(type_)
       ->GetOriginUsageOnFileTaskRunner(
           file_system_context_.get(), origin_, type_);
 }
 
-int64 SandboxFileSystemTestHelper::ComputeCurrentOriginUsage() {
+int64_t SandboxFileSystemTestHelper::ComputeCurrentOriginUsage() {
   usage_cache()->CloseCacheFiles();
-  int64 size = base::ComputeDirectorySize(GetOriginRootPath());
+  int64_t size = base::ComputeDirectorySize(GetOriginRootPath());
   if (base::PathExists(GetUsageCachePath()))
     size -= storage::FileSystemUsageCache::kUsageFileSize;
   return size;
 }
 
-int64
-SandboxFileSystemTestHelper::ComputeCurrentDirectoryDatabaseUsage() {
+int64_t SandboxFileSystemTestHelper::ComputeCurrentDirectoryDatabaseUsage() {
   return base::ComputeDirectorySize(
       GetOriginRootPath().AppendASCII("Paths"));
 }

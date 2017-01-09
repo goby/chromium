@@ -4,7 +4,7 @@
 
 #include "chrome/browser/password_manager/generated_password_saved_infobar_delegate_android.h"
 
-#include <cstddef>
+#include <stddef.h>
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/android/chrome_application.h"
@@ -13,9 +13,10 @@
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/grit/theme_resources.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -24,11 +25,11 @@ GeneratedPasswordSavedInfoBarDelegateAndroid::
 
 void GeneratedPasswordSavedInfoBarDelegateAndroid::OnInlineLinkClicked() {
   if (smart_lock_branding_enabled_) {
-    InfoBarService::WebContentsFromInfoBar(infobar())
-        ->OpenURL(content::OpenURLParams(
+    InfoBarService::WebContentsFromInfoBar(infobar())->OpenURL(
+        content::OpenURLParams(
             GURL(password_manager::kPasswordManagerAccountDashboardURL),
-            content::Referrer(), NEW_FOREGROUND_TAB, ui::PAGE_TRANSITION_LINK,
-            false));
+            content::Referrer(), WindowOpenDisposition::NEW_FOREGROUND_TAB,
+            ui::PAGE_TRANSITION_LINK, false));
   } else {
     chrome::android::ChromeApplication::ShowPasswordSettings();
   }
@@ -63,6 +64,11 @@ GeneratedPasswordSavedInfoBarDelegateAndroid::
 infobars::InfoBarDelegate::Type
 GeneratedPasswordSavedInfoBarDelegateAndroid::GetInfoBarType() const {
   return PAGE_ACTION_TYPE;
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+GeneratedPasswordSavedInfoBarDelegateAndroid::GetIdentifier() const {
+  return GENERATED_PASSWORD_SAVED_INFOBAR_DELEGATE_ANDROID;
 }
 
 int GeneratedPasswordSavedInfoBarDelegateAndroid::GetIconId() const {

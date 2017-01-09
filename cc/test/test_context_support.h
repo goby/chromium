@@ -5,8 +5,12 @@
 #ifndef CC_TEST_TEST_CONTEXT_SUPPORT_H_
 #define CC_TEST_TEST_CONTEXT_SUPPORT_H_
 
+#include <stdint.h>
+
+#include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "gpu/command_buffer/client/context_support.h"
 
@@ -23,23 +27,23 @@ class TestContextSupport : public gpu::ContextSupport {
   ~TestContextSupport() override;
 
   // gpu::ContextSupport implementation.
-  void SignalSyncPoint(uint32 sync_point,
-                       const base::Closure& callback) override;
   void SignalSyncToken(const gpu::SyncToken& sync_token,
                        const base::Closure& callback) override;
-  void SignalQuery(uint32 query, const base::Closure& callback) override;
+  bool IsFenceSyncReleased(uint64_t release) override;
+  void SignalQuery(uint32_t query, const base::Closure& callback) override;
   void SetAggressivelyFreeResources(bool aggressively_free_resources) override;
   void Swap() override;
+  void SwapWithDamage(const gfx::Rect& damage) override;
   void PartialSwapBuffers(const gfx::Rect& sub_buffer) override;
   void CommitOverlayPlanes() override;
-  uint32 InsertFutureSyncPointCHROMIUM() override;
-  void RetireSyncPointCHROMIUM(uint32 sync_point) override;
   void ScheduleOverlayPlane(int plane_z_order,
                             gfx::OverlayTransform plane_transform,
                             unsigned overlay_texture_id,
                             const gfx::Rect& display_bounds,
                             const gfx::RectF& uv_rect) override;
   uint64_t ShareGroupTracingGUID() const override;
+  void SetErrorMessageCallback(
+      const base::Callback<void(const char*, int32_t)>& callback) override;
 
   void CallAllSyncPointCallbacks();
 

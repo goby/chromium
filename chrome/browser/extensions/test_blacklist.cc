@@ -9,7 +9,7 @@
 #include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/blacklist.h"
 #include "chrome/browser/extensions/blacklist_state_fetcher.h"
 #include "chrome/browser/extensions/fake_safe_browsing_database_manager.h"
@@ -33,7 +33,7 @@ void BlacklistStateFetcherMock::Request(const std::string& id,
   ++request_count_;
 
   BlacklistState result = NOT_BLACKLISTED;
-  if (ContainsKey(states_, id))
+  if (base::ContainsKey(states_, id))
     result = states_[id];
 
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,

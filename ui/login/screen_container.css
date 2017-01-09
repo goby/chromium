@@ -21,6 +21,19 @@
   -webkit-perspective: 600px;
 }
 
+.pin-container.pin-enabled {
+  opacity: 1;
+  transition: opacity 200ms ease-in-out 180ms;
+  visibility: visible;
+}
+
+.pin-container.pin-disabled {
+  opacity: 0; /* Opacity is set to 1 after the pin element is loaded. */
+  transition: none;
+  visibility: hidden; /* Needed because pin-keyboard's offsetHeight is
+                         checked to determine if loaded. */
+}
+
 #scroll-container {
   bottom: 0;        /* Allows content overlap with control bar. */
   left: 0;
@@ -37,7 +50,6 @@
 
 #inner-container {
   border-radius: 2px;
-  padding: 0;
   position: relative;
 }
 
@@ -50,14 +62,19 @@
   pointer-events: none;
 }
 
+
+#oobe[md-mode] #progress-dots {
+  display: none;
+}
+
 /* Screens that have a border and background. */
 #oobe.auto-enrollment-check #inner-container,
 #oobe.autolaunch #inner-container,
 #oobe.confirm-password #inner-container,
-#oobe.connect #inner-container,
+#oobe:not([md-mode]).connect #inner-container,
 #oobe.debugging #inner-container,
 #oobe.enrollment #inner-container,
-#oobe.eula #inner-container,
+#oobe:not([md-mode]).eula #inner-container,
 #oobe.fatal-error #inner-container,
 #oobe.gaia-signin #inner-container,
 #oobe.hid-detection #inner-container,
@@ -68,9 +85,11 @@
 #oobe.supervised-user-creation #inner-container,
 #oobe.supervised-user-creation-dialog #inner-container,
 #oobe.terms-of-service #inner-container,
+#oobe.arc-tos #inner-container,
 #oobe.update #inner-container,
 #oobe.user-image #inner-container,
-#oobe.wrong-hwid #inner-container {
+#oobe.wrong-hwid #inner-container,
+#oobe.unrecoverable-cryptohome-error #inner-container {
   background: white;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3),
               0 4px 23px 5px rgba(0, 0, 0, 0.2),
@@ -87,18 +106,22 @@
 
 /* Only play this animation when 'down' class is removed. */
 .oobe-display #inner-container:not(.down) {
-  -webkit-transition: -webkit-transform 200ms ease-in-out;
+  -webkit-transition: transform 200ms ease-in-out;
 }
 
 .oobe-display #inner-container.down {
-  -webkit-transform: translateY(50px) rotateX(-2.5deg);
+  transform: translateY(50px) rotateX(-2.5deg);
 }
 
-#step-logo {
+#oobe:not([md-mode]) #step-logo {
   -webkit-margin-start: 17px;
   display: -webkit-box;
   position: absolute;
   top: 15px;
+}
+
+#oobe[md-mode] #step-logo {
+  display: none;
 }
 
 #progress-dots {
@@ -107,6 +130,10 @@
                       visibility 200ms ease-in-out;
   display: -webkit-box;
   margin-top: 15px;
+}
+
+#oobe[md-mode] #progress-dots {
+  display: none;
 }
 
 /* Hidden for the duration of initial transition. */
@@ -146,8 +173,10 @@
 #supervised-user-creation-dialog-dot,
 #supervised-user-creation-dot,
 #terms-of-service-dot,
+#arc-tos-dot,
 #tpm-error-message-dot,
-#wrong-hwid-dot {
+#wrong-hwid-dot,
+#unrecoverable-cryptohome-error-dot {
   display: none;
 }
 

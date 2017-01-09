@@ -4,115 +4,104 @@
 
 #include "blimp/net/blimp_connection.h"
 
+#include <utility>
+
 #include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "blimp/common/create_blimp_message.h"
+#include "blimp/common/logging.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/net/blimp_message_processor.h"
 #include "blimp/net/blimp_message_pump.h"
 #include "blimp/net/common.h"
 #include "blimp/net/connection_error_observer.h"
-#include "blimp/net/packet_reader.h"
+#include "blimp/net/message_port.h"
 #include "blimp/net/packet_writer.h"
 #include "net/base/completion_callback.h"
 
 namespace blimp {
-namespace {
 
-// Forwards incoming blimp messages to PacketWriter.
-class BlimpMessageSender : public BlimpMessageProcessor {
+// MessageProcessor filter used to route EndConnection messages through to
+// OnConnectionError notifications on the owning BlimpConnection.
+class BlimpConnection::EndConnectionFilter : public BlimpMessageProcessor {
  public:
-  explicit BlimpMessageSender(PacketWriter* writer);
-  ~BlimpMessageSender() override;
+  explicit EndConnectionFilter(BlimpConnection* connection);
 
-  void set_error_observer(ConnectionErrorObserver* observer) {
-    error_observer_ = observer;
+  void set_message_handler(BlimpMessageProcessor* message_handler) {
+    message_handler_ = message_handler;
   }
 
   // BlimpMessageProcessor implementation.
-  void ProcessMessage(scoped_ptr<BlimpMessage> message,
+  void ProcessMessage(std::unique_ptr<BlimpMessage> message,
                       const net::CompletionCallback& callback) override;
 
  private:
-  void OnWritePacketComplete(int result);
+  // Owning BlimpConnection, on which to call OnConnectionError.
+  BlimpConnection* connection_;
 
-  PacketWriter* writer_;
-  ConnectionErrorObserver* error_observer_;
-  scoped_refptr<net::DrainableIOBuffer> buffer_;
-  net::CompletionCallback pending_process_msg_callback_;
+  // Caller-provided message handler to forward non-EndConnection messages to.
+  BlimpMessageProcessor* message_handler_;
 
-  DISALLOW_COPY_AND_ASSIGN(BlimpMessageSender);
+  DISALLOW_COPY_AND_ASSIGN(EndConnectionFilter);
 };
 
-BlimpMessageSender::BlimpMessageSender(PacketWriter* writer)
-    : writer_(writer),
-      buffer_(new net::DrainableIOBuffer(
-          new net::IOBuffer(kMaxPacketPayloadSizeBytes),
-          kMaxPacketPayloadSizeBytes)) {
-  DCHECK(writer_);
-}
+BlimpConnection::EndConnectionFilter::EndConnectionFilter(
+    BlimpConnection* connection)
+    : connection_(connection), message_handler_(nullptr) {}
 
-BlimpMessageSender::~BlimpMessageSender() {}
-
-void BlimpMessageSender::ProcessMessage(
-    scoped_ptr<BlimpMessage> message,
+void BlimpConnection::EndConnectionFilter::ProcessMessage(
+    std::unique_ptr<BlimpMessage> message,
     const net::CompletionCallback& callback) {
-  if (message->ByteSize() > static_cast<int>(kMaxPacketPayloadSizeBytes)) {
-    DLOG(ERROR) << "Message is too big, size=" << message->ByteSize();
-    callback.Run(net::ERR_MSG_TOO_BIG);
+  if (message->has_protocol_control() &&
+      message->protocol_control().has_end_connection()) {
+    // Report the EndConnection reason to connection error observers.
+    connection_->OnConnectionError(
+        message->protocol_control().end_connection().reason());
+
+    // Caller must ensure |callback| safe to call after OnConnectionError.
+    callback.Run(message->protocol_control().end_connection().reason());
     return;
   }
 
-  buffer_->SetOffset(0);
-  if (!message->SerializeToArray(buffer_->data(), message->ByteSize())) {
-    DLOG(ERROR) << "Failed to serialize message.";
-    callback.Run(net::ERR_INVALID_ARGUMENT);
-    return;
-  }
-
-  pending_process_msg_callback_ = callback;
-  writer_->WritePacket(buffer_,
-                       base::Bind(&BlimpMessageSender::OnWritePacketComplete,
-                                  base::Unretained(this)));
+  message_handler_->ProcessMessage(std::move(message), callback);
 }
 
-void BlimpMessageSender::OnWritePacketComplete(int result) {
-  DCHECK_NE(net::ERR_IO_PENDING, result);
-  base::ResetAndReturn(&pending_process_msg_callback_).Run(result);
-  if (result != net::OK) {
-    error_observer_->OnConnectionError(result);
-  }
+BlimpConnection::BlimpConnection()
+    : end_connection_filter_(new EndConnectionFilter(this)) {}
+
+BlimpConnection::~BlimpConnection() {
+  VLOG(1) << "BlimpConnection destroyed.";
 }
 
-}  // namespace
-
-BlimpConnection::BlimpConnection(scoped_ptr<PacketReader> reader,
-                                 scoped_ptr<PacketWriter> writer)
-    : reader_(std::move(reader)),
-      message_pump_(new BlimpMessagePump(reader_.get())),
-      writer_(std::move(writer)),
-      outgoing_msg_processor_(new BlimpMessageSender(writer_.get())) {
-  DCHECK(writer_);
-}
-
-BlimpConnection::~BlimpConnection() {}
-
-void BlimpConnection::SetConnectionErrorObserver(
+void BlimpConnection::AddConnectionErrorObserver(
     ConnectionErrorObserver* observer) {
-  message_pump_->set_error_observer(observer);
-  BlimpMessageSender* sender =
-      static_cast<BlimpMessageSender*>(outgoing_msg_processor_.get());
-  sender->set_error_observer(observer);
+  error_observers_.AddObserver(observer);
 }
 
-void BlimpConnection::SetIncomingMessageProcessor(
+void BlimpConnection::RemoveConnectionErrorObserver(
+    ConnectionErrorObserver* observer) {
+  error_observers_.RemoveObserver(observer);
+}
+
+void BlimpConnection::AddEndConnectionProcessor(
     BlimpMessageProcessor* processor) {
-  message_pump_->SetMessageProcessor(processor);
+  end_connection_filter_->set_message_handler(processor);
 }
 
-BlimpMessageProcessor* BlimpConnection::GetOutgoingMessageProcessor() const {
-  return outgoing_msg_processor_.get();
+BlimpMessageProcessor* BlimpConnection::GetEndConnectionProcessor() const {
+  return end_connection_filter_.get();
+}
+
+void BlimpConnection::OnConnectionError(int error) {
+  VLOG(1) << "OnConnectionError, error=" << error;
+
+  // Propagate the error to all observers.
+  for (auto& observer : error_observers_) {
+    observer.OnConnectionError(error);
+  }
 }
 
 }  // namespace blimp

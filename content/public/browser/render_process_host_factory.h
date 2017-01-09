@@ -5,12 +5,10 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RENDER_PROCESS_HOST_FACTORY_H_
 #define CONTENT_PUBLIC_BROWSER_RENDER_PROCESS_HOST_FACTORY_H_
 
-#include "base/basictypes.h"
 #include "content/common/content_export.h"
 
 namespace content {
 class BrowserContext;
-class ContentBrowserClient;
 class RenderProcessHost;
 class SiteInstance;
 

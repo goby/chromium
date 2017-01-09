@@ -5,6 +5,7 @@
 #include "ui/events/ozone/evdev/input_injector_evdev.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -31,9 +32,9 @@ class EventObserver {
   void OnEvent(Event* event) {
     if (event->IsMouseEvent()) {
       if (event->type() == ET_MOUSEWHEEL) {
-        OnMouseWheelEvent(static_cast<MouseWheelEvent*>(event));
+        OnMouseWheelEvent(event->AsMouseWheelEvent());
       } else {
-        OnMouseEvent(static_cast<MouseEvent*>(event));
+        OnMouseEvent(event->AsMouseEvent());
       }
     }
   }
@@ -65,7 +66,7 @@ class MockCursorEvdev : public CursorDelegateEvdev {
     return gfx::Rect();
   }
   gfx::PointF GetLocation() override { return cursor_location_; }
-
+  void InitializeOnEvdev() override {}
  private:
   // The location of the mock cursor.
   gfx::PointF cursor_location_;
@@ -111,8 +112,8 @@ class InputInjectorEvdevTest : public testing::Test {
   EventDispatchCallback dispatch_callback_;
   MockCursorEvdev cursor_;
 
-  scoped_ptr<DeviceManager> device_manager_;
-  scoped_ptr<EventFactoryEvdev> event_factory_;
+  std::unique_ptr<DeviceManager> device_manager_;
+  std::unique_ptr<EventFactoryEvdev> event_factory_;
 
   InputInjectorEvdev injector_;
 

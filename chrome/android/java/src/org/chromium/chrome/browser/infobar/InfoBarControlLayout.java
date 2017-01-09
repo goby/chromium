@@ -6,12 +6,14 @@ package org.chromium.chrome.browser.infobar;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.graphics.Paint;
 import android.support.v7.widget.SwitchCompat;
 import android.text.method.LinkMovementMethod;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewGroup.LayoutParams;
+import android.widget.ArrayAdapter;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.RatingBar;
@@ -21,6 +23,7 @@ import android.widget.TextView;
 import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.widget.DualControlLayout;
 
 /**
  * Lays out a group of controls (e.g. switches, spinners, or additional text) for InfoBars that need
@@ -35,9 +38,93 @@ import org.chromium.chrome.R;
  * InfoBar, convince Chrome for Android's UX team to amend the master spec and then change the
  * layout algorithm to match.
  *
- * TODO(dfalcantara): Standardize all the possible control types.
+ * TODO(dfalcantara): The line spacing multiplier is applied to all lines in JB & KK, even if the
+ *                    TextView has only one line.  This throws off vertical alignment.  Find a
+ *                    solution that hopefully doesn't involve subclassing the TextView.
  */
 public final class InfoBarControlLayout extends ViewGroup {
+    /**
+     * ArrayAdapter that automatically determines what size make its Views to accommodate all of
+     * its potential values.
+     */
+    public static final class InfoBarArrayAdapter<T> extends ArrayAdapter<T> {
+        private final String mLabel;
+        private int mMinWidthRequiredForValues;
+
+        public InfoBarArrayAdapter(Context context, String label) {
+            super(context, R.layout.infobar_control_spinner_drop_down);
+            mLabel = label;
+        }
+
+        public InfoBarArrayAdapter(Context context, T[] objects) {
+            super(context, R.layout.infobar_control_spinner_drop_down, objects);
+            mLabel = null;
+        }
+
+        @Override
+        public View getDropDownView(int position, View convertView, ViewGroup parent) {
+            TextView view;
+            if (convertView instanceof TextView) {
+                view = (TextView) convertView;
+            } else {
+                view = (TextView) LayoutInflater.from(getContext())
+                        .inflate(R.layout.infobar_control_spinner_drop_down, parent, false);
+            }
+
+            view.setText(getItem(position).toString());
+            return view;
+        }
+
+        @Override
+        public DualControlLayout getView(int position, View convertView, ViewGroup parent) {
+            DualControlLayout view;
+            if (convertView instanceof DualControlLayout) {
+                view = (DualControlLayout) convertView;
+            } else {
+                view = (DualControlLayout) LayoutInflater.from(getContext())
+                        .inflate(R.layout.infobar_control_spinner_view, parent, false);
+            }
+
+            // Set up the spinner label.  The text it displays won't change.
+            TextView labelView = (TextView) view.getChildAt(0);
+            labelView.setText(mLabel);
+
+            // Because the values can be of different widths, the TextView may expand or shrink.
+            // Enforcing a minimum width prevents the layout from doing so as the user swaps values,
+            // preventing unwanted layout passes.
+            TextView valueView = (TextView) view.getChildAt(1);
+            valueView.setText(getItem(position).toString());
+            valueView.setMinimumWidth(mMinWidthRequiredForValues);
+
+            return view;
+        }
+
+        /**
+         * Computes and records the minimum width required to display any of the values without
+         * causing another layout pass when switching values.
+         */
+        int computeMinWidthRequiredForValues() {
+            DualControlLayout layout = getView(0, null, null);
+            TextView container = (TextView) layout.getChildAt(1);
+
+            Paint textPaint = container.getPaint();
+            float longestLanguageWidth = 0;
+            for (int i = 0; i < getCount(); i++) {
+                float width = textPaint.measureText(getItem(i).toString());
+                longestLanguageWidth = Math.max(longestLanguageWidth, width);
+            }
+
+            mMinWidthRequiredForValues = (int) Math.ceil(longestLanguageWidth);
+            return mMinWidthRequiredForValues;
+        }
+
+        /**
+         * Explicitly sets the minimum width required to display all of the values.
+         */
+        void setMinWidthRequiredForValues(int requiredWidth) {
+            mMinWidthRequiredForValues = requiredWidth;
+        }
+    }
 
     /**
      * Extends the regular LayoutParams by determining where a control should be located.
@@ -60,7 +147,6 @@ public final class InfoBarControlLayout extends ViewGroup {
         }
     }
 
-    private final int mMaxInfoBarWidth;
     private final int mMarginBetweenRows;
     private final int mMarginBetweenColumns;
 
@@ -71,7 +157,6 @@ public final class InfoBarControlLayout extends ViewGroup {
         super(context);
 
         Resources resources = context.getResources();
-        mMaxInfoBarWidth = resources.getDimensionPixelSize(R.dimen.infobar_max_width);
         mMarginBetweenRows =
                 resources.getDimensionPixelSize(R.dimen.infobar_control_margin_between_rows);
         mMarginBetweenColumns =
@@ -84,7 +169,7 @@ public final class InfoBarControlLayout extends ViewGroup {
                 : "Height of this layout cannot be constrained.";
 
         int fullWidth = MeasureSpec.getMode(widthMeasureSpec) == MeasureSpec.UNSPECIFIED
-                ? mMaxInfoBarWidth : MeasureSpec.getSize(widthMeasureSpec);
+                ? Integer.MAX_VALUE : MeasureSpec.getSize(widthMeasureSpec);
         int columnWidth = Math.max(0, (fullWidth - mMarginBetweenColumns) / 2);
 
         int atMostFullWidthSpec = MeasureSpec.makeMeasureSpec(fullWidth, MeasureSpec.AT_MOST);
@@ -92,22 +177,46 @@ public final class InfoBarControlLayout extends ViewGroup {
         int exactlyColumnWidthSpec = MeasureSpec.makeMeasureSpec(columnWidth, MeasureSpec.EXACTLY);
         int unspecifiedSpec = MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED);
 
-        // Measure all children, assuming they all have to fit within the width of the layout.
-        // Height is unconstrained.
+        // Figure out how many columns each child requires.
         for (int i = 0; i < getChildCount(); i++) {
             View child = getChildAt(i);
             measureChild(child, atMostFullWidthSpec, unspecifiedSpec);
 
             if (child.getMeasuredWidth() <= columnWidth
                     && !getControlLayoutParams(child).mMustBeFullWidth) {
-                // Stretch out the control to take up a column width.
                 getControlLayoutParams(child).columnsRequired = 1;
-                measureChild(child, exactlyColumnWidthSpec, unspecifiedSpec);
             } else {
-                // Stretch out the control to take up the full width.
                 getControlLayoutParams(child).columnsRequired = 2;
-                measureChild(child, exactlyFullWidthSpec, unspecifiedSpec);
             }
+        }
+
+        // Pack all the children as tightly into rows as possible without changing their ordering.
+        // Stretch out column-width controls if either it is the last control or the next one is
+        // a full-width control.
+        for (int i = 0; i < getChildCount(); i++) {
+            ControlLayoutParams lp = getControlLayoutParams(getChildAt(i));
+
+            if (i == getChildCount() - 1) {
+                lp.columnsRequired = 2;
+            } else {
+                ControlLayoutParams nextLp = getControlLayoutParams(getChildAt(i + 1));
+                if (lp.columnsRequired + nextLp.columnsRequired > 2) {
+                    // This control is too big to place with the next child.
+                    lp.columnsRequired = 2;
+                } else {
+                    // This and the next control fit on the same line.  Skip placing the next child.
+                    i++;
+                }
+            }
+        }
+
+        // Measure all children, assuming they all have to fit within the width of the layout.
+        // Height is unconstrained.
+        for (int i = 0; i < getChildCount(); i++) {
+            View child = getChildAt(i);
+            ControlLayoutParams lp = getControlLayoutParams(child);
+            int spec = lp.columnsRequired == 1 ? exactlyColumnWidthSpec : exactlyFullWidthSpec;
+            measureChild(child, spec, unspecifiedSpec);
         }
 
         // Pack all the children as tightly into rows as possible without changing their ordering.
@@ -161,6 +270,47 @@ public final class InfoBarControlLayout extends ViewGroup {
     }
 
     /**
+     * Adds an icon with a descriptive message to the layout.
+     *
+     * -----------------------------------------------------
+     * | ICON | PRIMARY MESSAGE SECONDARY MESSAGE          |
+     * -----------------------------------------------------
+     * If an icon is not provided, the ImageView that would normally show it is hidden.
+     *
+     * @param iconResourceId   ID of the drawable to use for the icon.
+     * @param iconColorId      ID of the tint color for the icon, or 0 for default.
+     * @param primaryMessage   Message to display for the toggle.
+     * @param secondaryMessage Additional descriptive text for the toggle.  May be null.
+     */
+    public View addIcon(int iconResourceId, int iconColorId, CharSequence primaryMessage,
+            CharSequence secondaryMessage) {
+        LinearLayout layout = (LinearLayout) LayoutInflater.from(getContext()).inflate(
+                R.layout.infobar_control_icon_with_description, this, false);
+        addView(layout, new ControlLayoutParams());
+
+        ImageView iconView = (ImageView) layout.findViewById(R.id.control_icon);
+        iconView.setImageResource(iconResourceId);
+        if (iconColorId != 0) {
+            iconView.setColorFilter(ApiCompatibilityUtils.getColor(getResources(), iconColorId));
+        }
+
+        // The primary message text is always displayed.
+        TextView primaryView = (TextView) layout.findViewById(R.id.control_message);
+        primaryView.setText(primaryMessage);
+
+        // The secondary message text is optional.
+        TextView secondaryView =
+                (TextView) layout.findViewById(R.id.control_secondary_message);
+        if (secondaryMessage == null) {
+            layout.removeView(secondaryView);
+        } else {
+            secondaryView.setText(secondaryMessage);
+        }
+
+        return layout;
+    }
+
+    /**
      * Creates a standard toggle switch and adds it to the layout.
      *
      * -------------------------------------------------
@@ -169,24 +319,29 @@ public final class InfoBarControlLayout extends ViewGroup {
      * If an icon is not provided, the ImageView that would normally show it is hidden.
      *
      * @param iconResourceId ID of the drawable to use for the icon, or 0 to hide the ImageView.
+     * @param iconColorId    ID of the tint color for the icon, or 0 for default.
      * @param toggleMessage  Message to display for the toggle.
      * @param toggleId       ID to use for the toggle.
      * @param isChecked      Whether the toggle should start off checked.
      */
-    public View addSwitch(
-            int iconResourceId, CharSequence toggleMessage, int toggleId, boolean isChecked) {
+    public View addSwitch(int iconResourceId, int iconColorId, CharSequence toggleMessage,
+            int toggleId, boolean isChecked) {
         LinearLayout switchLayout = (LinearLayout) LayoutInflater.from(getContext()).inflate(
                 R.layout.infobar_control_toggle, this, false);
         addView(switchLayout, new ControlLayoutParams());
 
-        ImageView iconView = (ImageView) switchLayout.findViewById(R.id.control_toggle_icon);
+        ImageView iconView = (ImageView) switchLayout.findViewById(R.id.control_icon);
         if (iconResourceId == 0) {
             switchLayout.removeView(iconView);
         } else {
             iconView.setImageResource(iconResourceId);
+            if (iconColorId != 0) {
+                iconView.setColorFilter(
+                        ApiCompatibilityUtils.getColor(getResources(), iconColorId));
+            }
         }
 
-        TextView messageView = (TextView) switchLayout.findViewById(R.id.control_toggle_message);
+        TextView messageView = (TextView) switchLayout.findViewById(R.id.control_message);
         messageView.setText(toggleMessage);
 
         SwitchCompat switchView =
@@ -199,16 +354,11 @@ public final class InfoBarControlLayout extends ViewGroup {
 
     /**
      * Creates a standard spinner and adds it to the layout.
-     *
-     * The layout currently consists of just the Spinner control, but this may change as the spec
-     * is updated.
-     *
-     * TODO(dfalcantara): Standardize the spinner text colors and spacings by standardizing the
-     *                    ArrayAdapter that gets attached to the spinner.  https://crbug.com/543205
      */
-    public View addSpinner(int spinnerId) {
+    public <T> Spinner addSpinner(int spinnerId, ArrayAdapter<T> arrayAdapter) {
         Spinner spinner = (Spinner) LayoutInflater.from(getContext()).inflate(
                 R.layout.infobar_control_spinner, this, false);
+        spinner.setAdapter(arrayAdapter);
         addView(spinner, new ControlLayoutParams());
         spinner.setId(spinnerId);
         return spinner;

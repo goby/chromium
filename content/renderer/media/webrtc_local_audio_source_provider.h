@@ -5,9 +5,12 @@
 #ifndef CONTENT_RENDERER_MEDIA_WEBRTC_LOCAL_AUDIO_SOURCE_PROVIDER_H_
 #define CONTENT_RENDERER_MEDIA_WEBRTC_LOCAL_AUDIO_SOURCE_PROVIDER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
@@ -31,11 +34,15 @@ class WebAudioSourceProviderClient;
 
 namespace content {
 
-// WebRtcLocalAudioSourceProvider provides a bridge between classes:
-//     WebRtcLocalAudioTrack ---> blink::WebAudioSourceProvider
+// TODO(miu): This implementation should be renamed to WebAudioMediaStreamSink,
+// as it should work as a provider for WebAudio from ANY MediaStreamAudioTrack.
+// http://crbug.com/577874
 //
-// WebRtcLocalAudioSourceProvider works as a sink to the WebRtcLocalAudioTrack
-// and store the capture data to a FIFO. When the media stream is connected to
+// WebRtcLocalAudioSourceProvider provides a bridge between classes:
+//     MediaStreamAudioTrack ---> blink::WebAudioSourceProvider
+//
+// WebRtcLocalAudioSourceProvider works as a sink to the MediaStreamAudioTrack
+// and stores the capture data to a FIFO. When the media stream is connected to
 // WebAudio MediaStreamAudioSourceNode as a source provider,
 // MediaStreamAudioSourceNode will periodically call provideInput() to get the
 // data from the FIFO.
@@ -68,7 +75,7 @@ class CONTENT_EXPORT WebRtcLocalAudioSourceProvider
   // This function is triggered by provideInput()on the WebAudio audio thread,
   // so it has been under the protection of |lock_|.
   double ProvideInput(media::AudioBus* audio_bus,
-                      base::TimeDelta buffer_delay) override;
+                      uint32_t frames_delayed) override;
 
   // Method to allow the unittests to inject its own sink parameters to avoid
   // query the hardware.
@@ -83,9 +90,9 @@ class CONTENT_EXPORT WebRtcLocalAudioSourceProvider
   // Used to DCHECK that some methods are called on the capture audio thread.
   base::ThreadChecker capture_thread_checker_;
 
-  scoped_ptr<media::AudioConverter> audio_converter_;
-  scoped_ptr<media::AudioFifo> fifo_;
-  scoped_ptr<media::AudioBus> output_wrapper_;
+  std::unique_ptr<media::AudioConverter> audio_converter_;
+  std::unique_ptr<media::AudioFifo> fifo_;
+  std::unique_ptr<media::AudioBus> output_wrapper_;
   bool is_enabled_;
   media::AudioParameters source_params_;
   media::AudioParameters sink_params_;

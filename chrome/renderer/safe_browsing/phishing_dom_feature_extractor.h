@@ -10,11 +10,11 @@
 #ifndef CHROME_RENDERER_SAFE_BROWSING_PHISHING_DOM_FEATURE_EXTRACTOR_H_
 #define CHROME_RENDERER_SAFE_BROWSING_PHISHING_DOM_FEATURE_EXTRACTOR_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 
@@ -110,7 +110,12 @@ class PhishingDOMFeatureExtractor {
   // Given a URL, checks whether the domain is different from the domain of
   // the current frame's URL.  If so, stores the domain in |domain| and returns
   // true, otherwise returns false.
-  bool IsExternalDomain(const GURL& url, std::string* domain) const;
+  virtual bool IsExternalDomain(const GURL& url, std::string* domain) const;
+
+  // Given a partial URL, extend it to a full url based on the current frame's
+  // URL.
+  virtual blink::WebURL CompleteURL(const blink::WebElement& element,
+                                    const blink::WebString& partial_url);
 
   // Called once all frames have been processed to compute features from the
   // PageFeatureState and add them to |features_|.  See features.h for a
@@ -131,11 +136,11 @@ class PhishingDOMFeatureExtractor {
 
   // Stores extra state for |cur_document_| that will be persisted until we
   // advance to the next frame.
-  scoped_ptr<FrameData> cur_frame_data_;
+  std::unique_ptr<FrameData> cur_frame_data_;
 
   // Stores the intermediate data used to create features.  This data is
   // accumulated across all frames in the RenderView.
-  scoped_ptr<PageFeatureState> page_feature_state_;
+  std::unique_ptr<PageFeatureState> page_feature_state_;
 
   // Used in scheduling ExtractFeaturesWithTimeout tasks.
   // These pointers are invalidated if extraction is cancelled.

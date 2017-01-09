@@ -5,10 +5,13 @@
 #ifndef NET_BASE_IO_BUFFER_H_
 #define NET_BASE_IO_BUFFER_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 
+#include "base/memory/free_deleter.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pickle.h"
 #include "net/base/net_export.h"
 
@@ -78,7 +81,7 @@ class NET_EXPORT IOBuffer : public base::RefCountedThreadSafe<IOBuffer> {
   explicit IOBuffer(int buffer_size);
   explicit IOBuffer(size_t buffer_size);
 
-  char* data() { return data_; }
+  char* data() const { return data_; }
 
  protected:
   friend class base::RefCountedThreadSafe<IOBuffer>;
@@ -122,7 +125,7 @@ class NET_EXPORT IOBufferWithSize : public IOBuffer {
 class NET_EXPORT StringIOBuffer : public IOBuffer {
  public:
   explicit StringIOBuffer(const std::string& s);
-  explicit StringIOBuffer(scoped_ptr<std::string> s);
+  explicit StringIOBuffer(std::unique_ptr<std::string> s);
 
   int size() const { return static_cast<int>(string_data_.size()); }
 
@@ -214,7 +217,7 @@ class NET_EXPORT GrowableIOBuffer : public IOBuffer {
  private:
   ~GrowableIOBuffer() override;
 
-  scoped_ptr<char, base::FreeDeleter> real_data_;
+  std::unique_ptr<char, base::FreeDeleter> real_data_;
   int capacity_;
   int offset_;
 };

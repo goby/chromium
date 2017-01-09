@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include "base/format_macros.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
@@ -34,6 +36,7 @@ static const struct TestOsWithFamily {
   { { "MAVERICKS", GPUTestConfig::kOsMacMavericks }, kOsFamilyMac },
   { { "YOSEMITE", GPUTestConfig::kOsMacYosemite }, kOsFamilyMac },
   { { "ELCAPITAN", GPUTestConfig::kOsMacElCapitan }, kOsFamilyMac },
+  { { "SIERRA", GPUTestConfig::kOsMacSierra }, kOsFamilyMac },
   { { "LINUX", GPUTestConfig::kOsLinux },
     { "LINUX", GPUTestConfig::kOsLinux } },
   { { "CHROMEOS", GPUTestConfig::kOsChromeOS },
@@ -78,7 +81,7 @@ class GPUTestExpectationsParserTest : public testing::Test {
 
   void TearDown() override {}
 
-  void set_os(int32 os) {
+  void set_os(int32_t os) {
     bot_config_.set_os(os);
     ASSERT_TRUE(bot_config_.IsValid());
   }

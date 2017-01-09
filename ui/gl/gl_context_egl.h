@@ -8,24 +8,26 @@
 #include <string>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/gl/gl_context.h"
+#include "ui/gl/gl_export.h"
 
 typedef void* EGLContext;
 typedef void* EGLDisplay;
 typedef void* EGLConfig;
 
-namespace gfx {
+namespace gl {
 
 class GLSurface;
 
 // Encapsulates an EGL OpenGL ES context.
-class GLContextEGL : public GLContextReal {
+class GL_EXPORT GLContextEGL : public GLContextReal {
  public:
   explicit GLContextEGL(GLShareGroup* share_group);
 
   // Implement GLContext.
   bool Initialize(GLSurface* compatible_surface,
-                  GpuPreference gpu_preference) override;
+                  const GLContextAttribs& attribs) override;
   bool MakeCurrent(GLSurface* surface) override;
   void ReleaseCurrent(GLSurface* surface) override;
   bool IsCurrent(GLSurface* surface) override;
@@ -50,6 +52,6 @@ class GLContextEGL : public GLContextReal {
   DISALLOW_COPY_AND_ASSIGN(GLContextEGL);
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_CONTEXT_EGL_H_

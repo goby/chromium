@@ -2,10 +2,10 @@ include_rules = [
   "+components/bookmarks/browser",
   "+components/favicon/core",
   "+components/history/core/browser",
+  "+components/prefs",
   "+components/sessions",
-  "+components/sync_driver",
+  "+components/sync",
   "+components/variations",
-  "+sync",
   "+ui/base/page_transition_types.h",
   "+ui/gfx",
 ]

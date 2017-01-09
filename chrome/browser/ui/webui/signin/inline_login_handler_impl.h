@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_SIGNIN_INLINE_LOGIN_HANDLER_IMPL_H_
 #define CHROME_BROWSER_UI_WEBUI_SIGNIN_INLINE_LOGIN_HANDLER_IMPL_H_
 
+#include <memory>
 #include <string>
 
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/ui/sync/one_click_signin_sync_starter.h"
 #include "chrome/browser/ui/webui/signin/inline_login_handler.h"
+#include "chrome/browser/ui/webui/signin/signin_email_confirmation_dialog.h"
 #include "google_apis/gaia/gaia_auth_consumer.h"
 
 // Implementation for the inline login WebUI handler on desktop Chrome. Once
@@ -35,7 +37,8 @@ class InlineLoginHandlerImpl : public InlineLoginHandler,
   // Closes the current tab and shows the account management view of the avatar
   // bubble if |show_account_management| is true.
   void CloseTab(bool show_account_management);
-  void HandleLoginError(const std::string& error_msg);
+  void HandleLoginError(const std::string& error_msg,
+                        const base::string16& email);
 
  private:
   friend class InlineLoginUIBrowserTest;
@@ -78,6 +81,7 @@ class InlineLoginHandlerImpl : public InlineLoginHandler,
                               const std::string& session_index,
                               const std::string& auth_code,
                               bool choose_what_to_sync);
+    FinishCompleteLoginParams(const FinishCompleteLoginParams& other);
     ~FinishCompleteLoginParams();
 
     // Pointer to WebUI handler.  May be nullptr.
@@ -86,8 +90,8 @@ class InlineLoginHandlerImpl : public InlineLoginHandler,
     content::StoragePartition* partition;
     // URL of sign in containing parameters such as email, source, etc.
     GURL url;
-    // Path to profile being signed in.  Non empty only when signing
-    // in to the profile from the user manager.
+    // Path to profile being signed in. Non empty only when unlocking a profile
+    // from the user manager.
     base::FilePath profile_path;
     // When true, an extra prompt will be shown to the user before sign in
     // completes.
@@ -135,32 +139,19 @@ class InlineLoginHandlerImpl : public InlineLoginHandler,
 // InlineLoginHandlerImpl is destryed once the UI is closed.
 class InlineSigninHelper : public GaiaAuthConsumer {
  public:
-  // Actions that can be taken when the user is asked to confirm their account.
-  enum Action {
-    // The user chose not to sign in to the current profile and wants chrome
-    // to create a new profile instead.
-    CREATE_NEW_USER,
-
-    // The user chose to sign in and enable sync in the current profile.
-    START_SYNC,
-
-    // The user chose abort sign in.
-    CLOSE
-  };
-
-  InlineSigninHelper(
-      base::WeakPtr<InlineLoginHandlerImpl> handler,
-      net::URLRequestContextGetter* getter,
-      Profile* profile,
-      const GURL& current_url,
-      const std::string& email,
-      const std::string& gaia_id,
-      const std::string& password,
-      const std::string& session_index,
-      const std::string& auth_code,
-      const std::string& signin_scoped_device_id,
-      bool choose_what_to_sync,
-      bool confirm_untrusted_signin);
+  InlineSigninHelper(base::WeakPtr<InlineLoginHandlerImpl> handler,
+                     net::URLRequestContextGetter* getter,
+                     Profile* profile,
+                     Profile::CreateStatus create_status,
+                     const GURL& current_url,
+                     const std::string& email,
+                     const std::string& gaia_id,
+                     const std::string& password,
+                     const std::string& session_index,
+                     const std::string& auth_code,
+                     const std::string& signin_scoped_device_id,
+                     bool choose_what_to_sync,
+                     bool confirm_untrusted_signin);
   ~InlineSigninHelper() override;
 
  private:
@@ -170,7 +161,6 @@ class InlineSigninHelper : public GaiaAuthConsumer {
   // cross account error, and false otherwise.
   bool HandleCrossAccountError(
       const std::string& refresh_token,
-      signin_metrics::Source source,
       OneClickSigninSyncStarter::ConfirmationRequired confirmation_required,
       OneClickSigninSyncStarter::StartSyncMode start_mode);
 
@@ -178,22 +168,26 @@ class InlineSigninHelper : public GaiaAuthConsumer {
   void ConfirmEmailAction(
       content::WebContents* web_contents,
       const std::string& refresh_token,
-      signin_metrics::Source source,
       OneClickSigninSyncStarter::ConfirmationRequired confirmation_required,
       OneClickSigninSyncStarter::StartSyncMode start_mode,
-      Action action);
+      SigninEmailConfirmationDialog::Action action);
 
   // Overridden from GaiaAuthConsumer.
   void OnClientOAuthSuccess(const ClientOAuthResult& result) override;
   void OnClientOAuthFailure(const GoogleServiceAuthError& error)
       override;
 
+  void OnClientOAuthSuccessAndBrowserOpened(const ClientOAuthResult& result,
+                                            Profile* profile,
+                                            Profile::CreateStatus status);
+
   // Creates the sync starter.  Virtual for tests. Call to exchange oauth code
   // for tokens.
   virtual void CreateSyncStarter(
       Browser* browser,
       content::WebContents* contents,
-      const GURL& url,
+      const GURL& current_url,
+      const GURL& continue_url,
       const std::string& refresh_token,
       OneClickSigninSyncStarter::StartSyncMode start_mode,
       OneClickSigninSyncStarter::ConfirmationRequired confirmation_required);
@@ -201,6 +195,7 @@ class InlineSigninHelper : public GaiaAuthConsumer {
   GaiaAuthFetcher gaia_auth_fetcher_;
   base::WeakPtr<InlineLoginHandlerImpl> handler_;
   Profile* profile_;
+  Profile::CreateStatus create_status_;
   GURL current_url_;
   std::string email_;
   std::string gaia_id_;

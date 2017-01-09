@@ -32,21 +32,20 @@
 #ifndef WebPluginContainerImpl_h
 #define WebPluginContainerImpl_h
 
-#include "core/frame/LocalFrameLifecycleObserver.h"
+#include "core/frame/DOMWindowProperty.h"
 #include "core/plugins/PluginView.h"
 #include "platform/Widget.h"
 #include "public/web/WebPluginContainer.h"
-
-#include "wtf/OwnPtr.h"
+#include "web/WebExport.h"
+#include "wtf/Compiler.h"
 #include "wtf/PassRefPtr.h"
 #include "wtf/Vector.h"
 #include "wtf/text/WTFString.h"
 
-struct NPObject;
-
 namespace blink {
 
 class GestureEvent;
+class HTMLFrameOwnerElement;
 class HTMLPlugInElement;
 class IntRect;
 class KeyboardEvent;
@@ -60,164 +59,180 @@ class Widget;
 struct WebPrintParams;
 struct WebPrintPresetOptions;
 
-class WebPluginContainerImpl final : public PluginView, public WebPluginContainer, public LocalFrameLifecycleObserver {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
-public:
-    static PassRefPtrWillBeRawPtr<WebPluginContainerImpl> create(HTMLPlugInElement* element, WebPlugin* webPlugin)
-    {
-        return adoptRefWillBeNoop(new WebPluginContainerImpl(element, webPlugin));
-    }
+class WEB_EXPORT WebPluginContainerImpl final
+    : public PluginView,
+      NON_EXPORTED_BASE(public WebPluginContainer),
+      public DOMWindowProperty {
+  USING_GARBAGE_COLLECTED_MIXIN(WebPluginContainerImpl);
+  USING_PRE_FINALIZER(WebPluginContainerImpl, dispose);
 
-    // PluginView methods
-    WebLayer* platformLayer() const override;
-    v8::Local<v8::Object> scriptableObject(v8::Isolate*) override;
-    bool getFormValue(String&) override;
-    bool supportsKeyboardFocus() const override;
-    bool supportsInputMethod() const override;
-    bool canProcessDrag() const override;
-    bool wantsWheelEvents() override;
-    void layoutIfNeeded() override;
-    void invalidatePaintIfNeeded() override { issuePaintInvalidations(); }
+ public:
+  static WebPluginContainerImpl* create(HTMLPlugInElement* element,
+                                        WebPlugin* webPlugin) {
+    return new WebPluginContainerImpl(element, webPlugin);
+  }
 
-    // Widget methods
-    void setFrameRect(const IntRect&) override;
-    void paint(GraphicsContext*, const CullRect&) const override;
-    void invalidateRect(const IntRect&) override;
-    void setFocus(bool, WebFocusType) override;
-    void show() override;
-    void hide() override;
-    void handleEvent(Event*) override;
-    void frameRectsChanged() override;
-    void setParentVisible(bool) override;
-    void setParent(Widget*) override;
-    void widgetPositionsUpdated() override;
-    bool isPluginContainer() const override { return true; }
-    void eventListenersRemoved() override;
+  // PluginView methods
+  WebLayer* platformLayer() const override;
+  v8::Local<v8::Object> scriptableObject(v8::Isolate*) override;
+  bool supportsKeyboardFocus() const override;
+  bool supportsInputMethod() const override;
+  bool canProcessDrag() const override;
+  bool wantsWheelEvents() override;
+  void updateAllLifecyclePhases() override;
+  void invalidatePaintIfNeeded() override { issuePaintInvalidations(); }
 
-    // WebPluginContainer methods
-    WebElement element() override;
-    void dispatchProgressEvent(const WebString& type, bool lengthComputable, unsigned long long loaded, unsigned long long total, const WebString& url) override;
-    void invalidate() override;
-    void invalidateRect(const WebRect&) override;
-    void scrollRect(const WebRect&) override;
-    void setNeedsLayout() override;
-    void reportGeometry() override;
-    void allowScriptObjects() override;
-    void clearScriptObjects() override;
-    NPObject* scriptableObjectForElement() override;
-    v8::Local<v8::Object> v8ObjectForElement() override;
-    WebString executeScriptURL(const WebURL&, bool popupsAllowed) override;
-    void loadFrameRequest(const WebURLRequest&, const WebString& target) override;
-    bool isRectTopmost(const WebRect&) override;
-    void requestTouchEventType(TouchEventRequestType) override;
-    void setWantsWheelEvents(bool) override;
-    WebPoint rootFrameToLocalPoint(const WebPoint&) override;
-    WebPoint localToRootFramePoint(const WebPoint&) override;
+  // Widget methods
+  void setFrameRect(const IntRect&) override;
+  void paint(GraphicsContext&, const CullRect&) const override;
+  void invalidateRect(const IntRect&) override;
+  void setFocused(bool, WebFocusType) override;
+  void show() override;
+  void hide() override;
+  void handleEvent(Event*) override;
+  void frameRectsChanged() override;
+  void setParentVisible(bool) override;
+  void widgetGeometryMayHaveChanged() override;
+  bool isPluginContainer() const override { return true; }
+  void eventListenersRemoved() override;
 
-    // Non-Oilpan, this cannot be null. With Oilpan, it will be
-    // null when in a disposed state, pending finalization during the next GC.
-    WebPlugin* plugin() override { return m_webPlugin; }
-    void setPlugin(WebPlugin*) override;
+  // WebPluginContainer methods
+  WebElement element() override;
+  WebDocument document() override;
+  void dispatchProgressEvent(const WebString& type,
+                             bool lengthComputable,
+                             unsigned long long loaded,
+                             unsigned long long total,
+                             const WebString& url) override;
+  void enqueueMessageEvent(const WebDOMMessageEvent&) override;
+  void invalidate() override;
+  void invalidateRect(const WebRect&) override;
+  void scrollRect(const WebRect&) override;
+  void scheduleAnimation() override;
+  void reportGeometry() override;
+  v8::Local<v8::Object> v8ObjectForElement() override;
+  WebString executeScriptURL(const WebURL&, bool popupsAllowed) override;
+  void loadFrameRequest(const WebURLRequest&, const WebString& target) override;
+  bool isRectTopmost(const WebRect&) override;
+  void requestTouchEventType(TouchEventRequestType) override;
+  void setWantsWheelEvents(bool) override;
+  WebPoint rootFrameToLocalPoint(const WebPoint&) override;
+  WebPoint localToRootFramePoint(const WebPoint&) override;
 
-    float deviceScaleFactor() override;
-    float pageScaleFactor() override;
-    float pageZoomFactor() override;
+  // Non-Oilpan, this cannot be null. With Oilpan, it will be
+  // null when in a disposed state, pending finalization during the next GC.
+  WebPlugin* plugin() override { return m_webPlugin; }
+  void setPlugin(WebPlugin*) override;
 
-    virtual void setWebLayer(WebLayer*);
+  float deviceScaleFactor() override;
+  float pageScaleFactor() override;
+  float pageZoomFactor() override;
 
-    // Printing interface. The plugin can support custom printing
-    // (which means it controls the layout, number of pages etc).
-    // Whether the plugin supports its own paginated print. The other print
-    // interface methods are called only if this method returns true.
-    bool supportsPaginatedPrint() const;
-    // If the plugin content should not be scaled to the printable area of
-    // the page, then this method should return true.
-    bool isPrintScalingDisabled() const;
-    // Returns true on success and sets the out parameter to the print preset options for the document.
-    bool getPrintPresetOptionsFromDocument(WebPrintPresetOptions*) const;
-    // Sets up printing at the specified WebPrintParams. Returns the number of pages to be printed at these settings.
-    int printBegin(const WebPrintParams&) const;
-    // Prints the page specified by pageNumber (0-based index) into the supplied canvas.
-    void printPage(int pageNumber, GraphicsContext*, const IntRect& paintRect);
-    // Ends the print operation.
-    void printEnd();
+  void setWebLayer(WebLayer*) override;
 
-    // Copy the selected text.
-    void copy();
+  void requestFullscreen() override;
+  bool isFullscreenElement() const override;
+  void cancelFullscreen() override;
 
-    // Pass the edit command to the plugin.
-    bool executeEditCommand(const WebString& name);
-    bool executeEditCommand(const WebString& name, const WebString& value);
+  // Printing interface. The plugin can support custom printing
+  // (which means it controls the layout, number of pages etc).
+  // Whether the plugin supports its own paginated print. The other print
+  // interface methods are called only if this method returns true.
+  bool supportsPaginatedPrint() const;
+  // If the plugin content should not be scaled to the printable area of
+  // the page, then this method should return true.
+  bool isPrintScalingDisabled() const;
+  // Returns true on success and sets the out parameter to the print preset
+  // options for the document.
+  bool getPrintPresetOptionsFromDocument(WebPrintPresetOptions*) const;
+  // Sets up printing at the specified WebPrintParams. Returns the number of
+  // pages to be printed at these settings.
+  int printBegin(const WebPrintParams&) const;
+  // Prints the page specified by pageNumber (0-based index) into the supplied
+  // canvas.
+  void printPage(int pageNumber, GraphicsContext&, const IntRect& paintRect);
+  // Ends the print operation.
+  void printEnd();
 
-    // Resource load events for the plugin's source data:
-    void didReceiveResponse(const ResourceResponse&) override;
-    void didReceiveData(const char *data, int dataLength) override;
-    void didFinishLoading();
-    void didFailLoading(const ResourceError&);
+  // Copy the selected text.
+  void copy();
 
-    DECLARE_VIRTUAL_TRACE();
-    void dispose() override;
+  // Pass the edit command to the plugin.
+  bool executeEditCommand(const WebString& name);
+  bool executeEditCommand(const WebString& name, const WebString& value);
 
-#if ENABLE(OILPAN)
-    LocalFrame* pluginFrame() const override { return frame(); }
-    void shouldDisposePlugin() override;
-#endif
+  // Resource load events for the plugin's source data:
+  void didReceiveResponse(const ResourceResponse&) override;
+  void didReceiveData(const char* data, int dataLength) override;
+  void didFinishLoading();
+  void didFailLoading(const ResourceError&);
 
-private:
-    // Sets |windowRect| to the content rect of the plugin in screen space.
-    // Sets |clippedAbsoluteRect| to the visible rect for the plugin, clipped to the visible screen of the root frame, in local space of the plugin.
-    // Sets |unclippedAbsoluteRect| to the visible rect for the plugin (but without also clipping to the screen), in local space of the plugin.
-    void computeClipRectsForPlugin(
-        const HTMLFrameOwnerElement* pluginOwnerElement, IntRect& windowRect, IntRect& clippedLocalRect, IntRect& unclippedIntLocalRect) const;
+  DECLARE_VIRTUAL_TRACE();
+  void dispose() override;
 
-    WebPluginContainerImpl(HTMLPlugInElement*, WebPlugin*);
-    ~WebPluginContainerImpl() override;
+ private:
+  // Sets |windowRect| to the content rect of the plugin in screen space.
+  // Sets |clippedAbsoluteRect| to the visible rect for the plugin, clipped to
+  // the visible screen of the root frame, in local space of the plugin.
+  // Sets |unclippedAbsoluteRect| to the visible rect for the plugin (but
+  // without also clipping to the screen), in local space of the plugin.
+  void computeClipRectsForPlugin(
+      const HTMLFrameOwnerElement* pluginOwnerElement,
+      IntRect& windowRect,
+      IntRect& clippedLocalRect,
+      IntRect& unclippedIntLocalRect) const;
 
-    void handleMouseEvent(MouseEvent*);
-    void handleDragEvent(MouseEvent*);
-    void handleWheelEvent(WheelEvent*);
-    void handleKeyboardEvent(KeyboardEvent*);
-    void handleTouchEvent(TouchEvent*);
-    void handleGestureEvent(GestureEvent*);
+  WebPluginContainerImpl(HTMLPlugInElement*, WebPlugin*);
+  ~WebPluginContainerImpl() override;
 
-    void synthesizeMouseEventIfPossible(TouchEvent*);
+  void handleMouseEvent(MouseEvent*);
+  void handleDragEvent(MouseEvent*);
+  void handleWheelEvent(WheelEvent*);
+  void handleKeyboardEvent(KeyboardEvent*);
+  void handleTouchEvent(TouchEvent*);
+  void handleGestureEvent(GestureEvent*);
 
-    void focusPlugin();
+  void synthesizeMouseEventIfPossible(TouchEvent*);
 
-    void issuePaintInvalidations();
+  void focusPlugin();
 
-    void calculateGeometry(
-        IntRect& windowRect,
-        IntRect& clipRect,
-        IntRect& unobscuredRect,
-        Vector<IntRect>& cutOutRects);
-    void windowCutOutRects(
-        const IntRect& frameRect,
-        Vector<IntRect>& cutOutRects);
+  void issuePaintInvalidations();
 
-    RawPtrWillBeMember<HTMLPlugInElement> m_element;
-    WebPlugin* m_webPlugin;
+  void calculateGeometry(IntRect& windowRect,
+                         IntRect& clipRect,
+                         IntRect& unobscuredRect,
+                         Vector<IntRect>& cutOutRects);
+  void windowCutOutRects(const IntRect& frameRect,
+                         Vector<IntRect>& cutOutRects);
 
-    WebLayer* m_webLayer;
+  friend class WebPluginContainerTest;
 
-    IntRect m_pendingInvalidationRect;
+  Member<HTMLPlugInElement> m_element;
+  WebPlugin* m_webPlugin;
 
-    TouchEventRequestType m_touchEventRequestType;
-    bool m_wantsWheelEvents;
+  WebLayer* m_webLayer;
 
-    bool m_inDispose;
-#if ENABLE(OILPAN)
-    // Oilpan: if true, the plugin container must dispose
-    // of its plugin when being finalized.
-    bool m_shouldDisposePlugin;
-#endif
+  IntRect m_pendingInvalidationRect;
+
+  TouchEventRequestType m_touchEventRequestType;
+  bool m_wantsWheelEvents;
+
+  bool m_isDisposed;
 };
 
-DEFINE_TYPE_CASTS(WebPluginContainerImpl, Widget, widget, widget->isPluginContainer(), widget.isPluginContainer());
+DEFINE_TYPE_CASTS(WebPluginContainerImpl,
+                  Widget,
+                  widget,
+                  widget->isPluginContainer(),
+                  widget.isPluginContainer());
 // Unlike Widget, we need not worry about object type for container.
 // WebPluginContainerImpl is the only subclass of WebPluginContainer.
-DEFINE_TYPE_CASTS(WebPluginContainerImpl, WebPluginContainer, container, true, true);
+DEFINE_TYPE_CASTS(WebPluginContainerImpl,
+                  WebPluginContainer,
+                  container,
+                  true,
+                  true);
 
-} // namespace blink
+}  // namespace blink
 
 #endif

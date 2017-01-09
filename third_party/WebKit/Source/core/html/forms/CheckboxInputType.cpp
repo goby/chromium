@@ -29,79 +29,72 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/CheckboxInputType.h"
 
 #include "core/InputTypeNames.h"
 #include "core/events/KeyboardEvent.h"
 #include "core/html/HTMLInputElement.h"
 #include "platform/text/PlatformLocale.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> CheckboxInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new CheckboxInputType(element));
+InputType* CheckboxInputType::create(HTMLInputElement& element) {
+  return new CheckboxInputType(element);
 }
 
-const AtomicString& CheckboxInputType::formControlType() const
-{
-    return InputTypeNames::checkbox;
+const AtomicString& CheckboxInputType::formControlType() const {
+  return InputTypeNames::checkbox;
 }
 
-bool CheckboxInputType::valueMissing(const String&) const
-{
-    return element().isRequired() && !element().checked();
+bool CheckboxInputType::valueMissing(const String&) const {
+  return element().isRequired() && !element().checked();
 }
 
-String CheckboxInputType::valueMissingText() const
-{
-    return locale().queryString(WebLocalizedString::ValidationValueMissingForCheckbox);
+String CheckboxInputType::valueMissingText() const {
+  return locale().queryString(
+      WebLocalizedString::ValidationValueMissingForCheckbox);
 }
 
-void CheckboxInputType::handleKeyupEvent(KeyboardEvent* event)
-{
-    const String& key = event->keyIdentifier();
-    if (key != "U+0020")
-        return;
-    dispatchSimulatedClickIfActive(event);
+void CheckboxInputType::handleKeyupEvent(KeyboardEvent* event) {
+  const String& key = event->key();
+  if (key != " ")
+    return;
+  dispatchSimulatedClickIfActive(event);
 }
 
-PassOwnPtrWillBeRawPtr<ClickHandlingState> CheckboxInputType::willDispatchClick()
-{
-    // An event handler can use preventDefault or "return false" to reverse the checking we do here.
-    // The ClickHandlingState object contains what we need to undo what we did here in didDispatchClick.
+ClickHandlingState* CheckboxInputType::willDispatchClick() {
+  // An event handler can use preventDefault or "return false" to reverse the
+  // checking we do here.  The ClickHandlingState object contains what we need
+  // to undo what we did here in didDispatchClick.
 
-    OwnPtrWillBeRawPtr<ClickHandlingState> state = adoptPtrWillBeNoop(new ClickHandlingState);
+  ClickHandlingState* state = new ClickHandlingState;
 
-    state->checked = element().checked();
-    state->indeterminate = element().indeterminate();
+  state->checked = element().checked();
+  state->indeterminate = element().indeterminate();
 
-    if (state->indeterminate)
-        element().setIndeterminate(false);
+  if (state->indeterminate)
+    element().setIndeterminate(false);
 
-    element().setChecked(!state->checked, DispatchChangeEvent);
-    m_isInClickHandler = true;
-    return state.release();
+  element().setChecked(!state->checked, DispatchChangeEvent);
+  m_isInClickHandler = true;
+  return state;
 }
 
-void CheckboxInputType::didDispatchClick(Event* event, const ClickHandlingState& state)
-{
-    if (event->defaultPrevented() || event->defaultHandled()) {
-        element().setIndeterminate(state.indeterminate);
-        element().setChecked(state.checked);
-    } else {
-        element().dispatchChangeEventIfNeeded();
-    }
-    m_isInClickHandler = false;
-    // The work we did in willDispatchClick was default handling.
-    event->setDefaultHandled();
+void CheckboxInputType::didDispatchClick(Event* event,
+                                         const ClickHandlingState& state) {
+  if (event->defaultPrevented() || event->defaultHandled()) {
+    element().setIndeterminate(state.indeterminate);
+    element().setChecked(state.checked);
+  } else {
+    element().dispatchChangeEventIfNeeded();
+  }
+  m_isInClickHandler = false;
+  // The work we did in willDispatchClick was default handling.
+  event->setDefaultHandled();
 }
 
-bool CheckboxInputType::shouldAppearIndeterminate() const
-{
-    return element().indeterminate();
+bool CheckboxInputType::shouldAppearIndeterminate() const {
+  return element().indeterminate();
 }
 
-} // namespace blink
+}  // namespace blink

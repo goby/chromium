@@ -2,13 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/location.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -23,6 +29,8 @@
 #include "ui/views/controls/textfield/textfield_test_api.h"
 #include "ui/views/focus/focus_manager.h"
 #include "ui/views/test/focus_manager_test.h"
+#include "ui/views/test/native_widget_factory.h"
+#include "ui/views/test/views_interactive_ui_test_base.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/touchui/touch_selection_controller_impl.h"
 #include "ui/views/widget/widget.h"
@@ -49,7 +57,7 @@ class ExitLoopOnRelease : public View {
   ~ExitLoopOnRelease() override {}
 
  private:
-  // Overridden from View:
+  // View:
   void OnMouseReleased(const ui::MouseEvent& event) override {
     GetWidget()->Close();
     base::MessageLoop::current()->QuitNow();
@@ -65,7 +73,7 @@ class GestureCaptureView : public View {
   ~GestureCaptureView() override {}
 
  private:
-  // Overridden from View:
+  // View:
   void OnGestureEvent(ui::GestureEvent* event) override {
     if (event->type() == ui::ET_GESTURE_TAP_DOWN) {
       GetWidget()->SetCapture(this);
@@ -129,7 +137,7 @@ class NestedLoopCaptureView : public View {
   ~NestedLoopCaptureView() override {}
 
  private:
-  // Overridden from View:
+  // View:
   bool OnMousePressed(const ui::MouseEvent& event) override {
     // Start a nested loop.
     widget_->Show();
@@ -147,49 +155,6 @@ class NestedLoopCaptureView : public View {
   Widget* widget_;
 
   DISALLOW_COPY_AND_ASSIGN(NestedLoopCaptureView);
-};
-
-// Spins a run loop until a Widget's active state matches a desired state.
-class WidgetActivationWaiter : public WidgetObserver {
- public:
-  WidgetActivationWaiter(Widget* widget, bool active) : observed_(false) {
-#if defined(OS_WIN)
-    // On Windows, a HWND can receive a WM_ACTIVATE message without the value
-    // of ::GetActiveWindow() updating to reflect that change. This can cause
-    // the active window reported by IsActive() to get out of sync. Usually this
-    // happens after a call to HWNDMessageHandler::Deactivate() which works by
-    // activating some other window, which might be in another application.
-    // Doing this can trigger the native OS activation-blocker, causing the
-    // taskbar icon to flash instead. But since activation of native widgets on
-    // Windows is synchronous, we never have to wait anyway, so it's safe to
-    // return here.
-    if (active == widget->IsActive()) {
-      observed_ = true;
-      return;
-    }
-#endif
-    // Always expect a change for tests using this.
-    EXPECT_NE(active, widget->IsActive());
-    widget->AddObserver(this);
-  }
-
-  void Wait() {
-    if (!observed_)
-      run_loop_.Run();
-  }
-
-  void OnWidgetActivationChanged(Widget* widget, bool active) override {
-    observed_ = true;
-    widget->RemoveObserver(this);
-    if (run_loop_.running())
-      run_loop_.Quit();
-  }
-
- private:
-  base::RunLoop run_loop_;
-  bool observed_;
-
-  DISALLOW_COPY_AND_ASSIGN(WidgetActivationWaiter);
 };
 
 ui::WindowShowState GetWidgetShowState(const Widget* widget) {
@@ -218,7 +183,7 @@ void RunPendingMessagesForActiveStatusChange() {
 // this is just an activation. For other widgets, it means activating and then
 // spinning the run loop until the OS has activated the window.
 void ActivateSync(Widget* widget) {
-  WidgetActivationWaiter waiter(widget, true);
+  views::test::WidgetActivationWaiter waiter(widget, true);
   widget->Activate();
   waiter.Wait();
 }
@@ -226,7 +191,7 @@ void ActivateSync(Widget* widget) {
 // Like for ActivateSync(), wait for a widget to become active, but Show() the
 // widget rather than calling Activate().
 void ShowSync(Widget* widget) {
-  WidgetActivationWaiter waiter(widget, true);
+  views::test::WidgetActivationWaiter waiter(widget, true);
   widget->Show();
   waiter.Wait();
 }
@@ -245,7 +210,7 @@ void DeactivateSync(Widget* widget) {
   stealer->CloseNow();
   widget->widget_delegate()->set_can_activate(true);
 #else
-  WidgetActivationWaiter waiter(widget, false);
+  views::test::WidgetActivationWaiter waiter(widget, false);
   widget->Deactivate();
   waiter.Wait();
 #endif
@@ -274,11 +239,15 @@ class WidgetTestInteractive : public WidgetTest {
   ~WidgetTestInteractive() override {}
 
   void SetUp() override {
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
-    ui::RegisterPathProvider();
-    base::FilePath ui_test_pak_path;
-    ASSERT_TRUE(PathService::Get(ui::UI_TEST_PAK, &ui_test_pak_path));
-    ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
+    // On mus these tests run as part of views::ViewsTestSuite which already
+    // does this initialization.
+    if (!IsMus()) {
+      gl::GLSurfaceTestSupport::InitializeOneOff();
+      ui::RegisterPathProvider();
+      base::FilePath ui_test_pak_path;
+      ASSERT_TRUE(PathService::Get(ui::UI_TEST_PAK, &ui_test_pak_path));
+      ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
+    }
     WidgetTest::SetUp();
   }
 
@@ -314,7 +283,7 @@ class WidgetTestInteractive : public WidgetTest {
 TEST_F(WidgetTestInteractive, DesktopNativeWidgetAuraActivationAndFocusTest) {
   // Create widget 1 and expect the active window to be its window.
   View* focusable_view1 = new View;
-  focusable_view1->SetFocusable(true);
+  focusable_view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   Widget* widget1 = CreateWidget();
   widget1->GetContentsView()->AddChildView(focusable_view1);
   widget1->Show();
@@ -403,15 +372,9 @@ TEST_F(WidgetTestInteractive, ResetCaptureOnGestureEnd) {
   toplevel->Show();
 
   // Start a gesture on |gesture|.
-  ui::GestureEvent tap_down(15,
-                            15,
-                            0,
-                            base::TimeDelta(),
+  ui::GestureEvent tap_down(15, 15, 0, base::TimeTicks(),
                             ui::GestureEventDetails(ui::ET_GESTURE_TAP_DOWN));
-  ui::GestureEvent end(15,
-                       15,
-                       0,
-                       base::TimeDelta(),
+  ui::GestureEvent end(15, 15, 0, base::TimeTicks(),
                        ui::GestureEventDetails(ui::ET_GESTURE_END));
   toplevel->OnGestureEvent(&tap_down);
 
@@ -469,7 +432,7 @@ TEST_F(WidgetTestInteractive, DisableCaptureWidgetFromMousePress) {
   first->Show();
 
   gfx::Point location(20, 20);
-  base::MessageLoop::current()->PostTask(
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
       FROM_HERE, base::Bind(&Widget::OnMouseEvent, base::Unretained(second),
                             base::Owned(new ui::MouseEvent(
                                 ui::ET_MOUSE_RELEASED, location, location,
@@ -598,14 +561,14 @@ TEST_F(WidgetTestInteractive, CheckResizeControllerEvents) {
 TEST_F(WidgetTestInteractive, ViewFocusOnWidgetActivationChanges) {
   Widget* widget1 = CreateTopLevelPlatformWidget();
   View* view1 = new View;
-  view1->SetFocusable(true);
+  view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   widget1->GetContentsView()->AddChildView(view1);
 
   Widget* widget2 = CreateTopLevelPlatformWidget();
   View* view2a = new View;
   View* view2b = new View;
-  view2a->SetFocusable(true);
-  view2b->SetFocusable(true);
+  view2a->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  view2b->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   widget2->GetContentsView()->AddChildView(view2a);
   widget2->GetContentsView()->AddChildView(view2b);
 
@@ -645,12 +608,14 @@ TEST_F(WidgetTestInteractive, ViewFocusOnWidgetActivationChanges) {
 TEST_F(WidgetTestInteractive, ViewFocusOnHWNDEnabledChanges) {
   Widget* widget = CreateTopLevelFramelessPlatformWidget();
   widget->SetContentsView(new View);
-  for (size_t i = 0; i < 2; ++i) {
+  for (int i = 0; i < 2; ++i) {
     widget->GetContentsView()->AddChildView(new View);
-    widget->GetContentsView()->child_at(i)->SetFocusable(true);
+    widget->GetContentsView()->child_at(i)->SetFocusBehavior(
+        View::FocusBehavior::ALWAYS);
   }
 
   widget->Show();
+  widget->GetNativeWindow()->GetHost()->Show();
   const HWND hwnd = HWNDForWidget(widget);
   EXPECT_TRUE(::IsWindow(hwnd));
   EXPECT_TRUE(::IsWindowEnabled(hwnd));
@@ -737,6 +702,119 @@ TEST_F(WidgetTestInteractive, WidgetNotActivatedOnFakeActivationMessages) {
   EXPECT_EQ(true, widget1.active());
   EXPECT_EQ(false, widget2.active());
 }
+
+// On Windows if we create a fullscreen window on a thread, then it affects the
+// way other windows on the thread interact with the taskbar. To workaround
+// this we reduce the bounds of a fullscreen window by 1px when it loses
+// activation. This test verifies the same.
+TEST_F(WidgetTestInteractive, FullscreenBoundsReducedOnActivationLoss) {
+  Widget widget1;
+  Widget::InitParams params =
+      CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget = new DesktopNativeWidgetAura(&widget1);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget1.Init(params);
+  widget1.SetBounds(gfx::Rect(0, 0, 200, 200));
+  widget1.Show();
+
+  widget1.Activate();
+  RunPendingMessages();
+  EXPECT_EQ(::GetActiveWindow(),
+            widget1.GetNativeWindow()->GetHost()->GetAcceleratedWidget());
+
+  widget1.SetFullscreen(true);
+  EXPECT_TRUE(widget1.IsFullscreen());
+  // Ensure that the StopIgnoringPosChanges task in HWNDMessageHandler runs.
+  // This task is queued when a widget becomes fullscreen.
+  RunPendingMessages();
+  EXPECT_EQ(::GetActiveWindow(),
+            widget1.GetNativeWindow()->GetHost()->GetAcceleratedWidget());
+  gfx::Rect fullscreen_bounds = widget1.GetWindowBoundsInScreen();
+
+  Widget widget2;
+  params.native_widget = new DesktopNativeWidgetAura(&widget2);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget2.Init(params);
+  widget2.SetBounds(gfx::Rect(0, 0, 200, 200));
+  widget2.Show();
+
+  widget2.Activate();
+  RunPendingMessages();
+  EXPECT_EQ(::GetActiveWindow(),
+            widget2.GetNativeWindow()->GetHost()->GetAcceleratedWidget());
+
+  gfx::Rect fullscreen_bounds_after_activation_loss =
+      widget1.GetWindowBoundsInScreen();
+
+  // After deactivation loss the bounds of the fullscreen widget should be
+  // reduced by 1px.
+  EXPECT_EQ(fullscreen_bounds.height() -
+            fullscreen_bounds_after_activation_loss.height(), 1);
+
+  widget1.Activate();
+  RunPendingMessages();
+  EXPECT_EQ(::GetActiveWindow(),
+            widget1.GetNativeWindow()->GetHost()->GetAcceleratedWidget());
+
+  gfx::Rect fullscreen_bounds_after_activate =
+      widget1.GetWindowBoundsInScreen();
+
+  // After activation the bounds of the fullscreen widget should be restored.
+  EXPECT_EQ(fullscreen_bounds, fullscreen_bounds_after_activate);
+
+  widget1.CloseNow();
+  widget2.CloseNow();
+}
+
+// Ensure the window rect and client rects are correct with a window that was
+// maximized.
+TEST_F(WidgetTestInteractive, FullscreenMaximizedWindowBounds) {
+  Widget widget;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget = new DesktopNativeWidgetAura(&widget);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget.set_frame_type(Widget::FRAME_TYPE_FORCE_CUSTOM);
+  widget.Init(params);
+  widget.SetBounds(gfx::Rect(0, 0, 200, 200));
+  widget.Show();
+
+  widget.Maximize();
+  EXPECT_TRUE(widget.IsMaximized());
+
+  widget.SetFullscreen(true);
+  EXPECT_TRUE(widget.IsFullscreen());
+  EXPECT_FALSE(widget.IsMaximized());
+  // Ensure that the StopIgnoringPosChanges task in HWNDMessageHandler runs.
+  // This task is queued when a widget becomes fullscreen.
+  RunPendingMessages();
+
+  aura::WindowTreeHost* host = widget.GetNativeWindow()->GetHost();
+  HWND hwnd = host->GetAcceleratedWidget();
+
+  HMONITOR monitor = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+  ASSERT_TRUE(!!monitor);
+  MONITORINFO monitor_info;
+  monitor_info.cbSize = sizeof(monitor_info);
+  ASSERT_TRUE(::GetMonitorInfo(monitor, &monitor_info));
+
+  gfx::Rect monitor_bounds(monitor_info.rcMonitor);
+  gfx::Rect window_bounds = widget.GetWindowBoundsInScreen();
+  gfx::Rect client_area_bounds = host->GetBoundsInPixels();
+
+  EXPECT_EQ(window_bounds, monitor_bounds);
+  EXPECT_EQ(monitor_bounds, client_area_bounds);
+
+  // Setting not fullscreen should return it to maximized.
+  widget.SetFullscreen(false);
+  EXPECT_FALSE(widget.IsFullscreen());
+  EXPECT_TRUE(widget.IsMaximized());
+
+  client_area_bounds = host->GetBoundsInPixels();
+  EXPECT_TRUE(monitor_bounds.Contains(client_area_bounds));
+  EXPECT_NE(monitor_bounds, client_area_bounds);
+
+  widget.CloseNow();
+}
 #endif  // defined(OS_WIN)
 
 #if !defined(OS_CHROMEOS)
@@ -758,6 +836,10 @@ class ModalDialogDelegate : public DialogDelegateView {
 // Tests whether the focused window is set correctly when a modal window is
 // created and destroyed. When it is destroyed it should focus the owner window.
 TEST_F(WidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
+  // Fails on mus due to focus issues. http://crbug.com/611601
+  if (IsMus())
+    return;
+
   TestWidgetFocusChangeListener focus_listener;
   WidgetFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
   const std::vector<gfx::NativeView>& focus_changes =
@@ -771,8 +853,8 @@ TEST_F(WidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
   gfx::Rect initial_bounds(0, 0, 500, 500);
   init_params.bounds = initial_bounds;
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  init_params.native_widget =
-      new PlatformDesktopNativeWidget(&top_level_widget);
+  init_params.native_widget = CreatePlatformDesktopNativeWidgetImpl(
+      init_params, &top_level_widget, nullptr);
   top_level_widget.Init(init_params);
   ShowSync(&top_level_widget);
 
@@ -795,21 +877,21 @@ TEST_F(WidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
   modal_dialog_widget->Show();
 
   gfx::NativeView modal_native_view = modal_dialog_widget->GetNativeView();
-  EXPECT_EQ(3u, focus_changes.size());
+  ASSERT_EQ(3u, focus_changes.size());
   EXPECT_EQ(nullptr, focus_changes[1]);
   EXPECT_EQ(modal_native_view, focus_changes[2]);
 
 #if defined(OS_MACOSX)
   // Window modal dialogs on Mac are "sheets", which animate to close before
   // activating their parent widget.
-  WidgetActivationWaiter waiter(&top_level_widget, true);
+  views::test::WidgetActivationWaiter waiter(&top_level_widget, true);
   modal_dialog_widget->Close();
   waiter.Wait();
 #else
   modal_dialog_widget->CloseNow();
 #endif
 
-  EXPECT_EQ(5u, focus_changes.size());
+  ASSERT_EQ(5u, focus_changes.size());
   EXPECT_EQ(nullptr, focus_changes[3]);
   EXPECT_EQ(top_level_native_view, focus_changes[4]);
 
@@ -829,6 +911,10 @@ TEST_F(WidgetTestInteractive, WindowModalWindowDestroyedActivationTest) {
 
 // Test that when opening a system-modal window, capture is released.
 TEST_F(WidgetTestInteractive, MAYBE_SystemModalWindowReleasesCapture) {
+  // Crashes on mus due to capture issue. http://crbug.com/611764
+  if (IsMus())
+    return;
+
   TestWidgetFocusChangeListener focus_listener;
   WidgetFocusManager::GetInstance()->AddFocusChangeListener(&focus_listener);
 
@@ -840,14 +926,14 @@ TEST_F(WidgetTestInteractive, MAYBE_SystemModalWindowReleasesCapture) {
   gfx::Rect initial_bounds(0, 0, 500, 500);
   init_params.bounds = initial_bounds;
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-  init_params.native_widget =
-      new PlatformDesktopNativeWidget(&top_level_widget);
+  init_params.native_widget = CreatePlatformDesktopNativeWidgetImpl(
+      init_params, &top_level_widget, nullptr);
   top_level_widget.Init(init_params);
   ShowSync(&top_level_widget);
 
   ASSERT_FALSE(focus_listener.focus_changes().empty());
   EXPECT_EQ(top_level_widget.GetNativeView(),
-            focus_listener.focus_changes().back());;
+            focus_listener.focus_changes().back());
 
   EXPECT_FALSE(top_level_widget.HasCapture());
   top_level_widget.SetCapture(NULL);
@@ -878,9 +964,8 @@ TEST_F(WidgetTestInteractive, CanActivateFlagIsHonored) {
   init_params.bounds = gfx::Rect(0, 0, 200, 200);
   init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   init_params.activatable = Widget::InitParams::ACTIVATABLE_NO;
-#if !defined(OS_CHROMEOS)
-  init_params.native_widget = new PlatformDesktopNativeWidget(&widget);
-#endif  // !defined(OS_CHROMEOS)
+  init_params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(init_params, &widget, nullptr);
   widget.Init(init_params);
 
   widget.Show();
@@ -921,6 +1006,10 @@ TEST_F(WidgetTestInteractive, TouchSelectionQuickMenuIsNotActivated) {
 #endif  // defined(USE_AURA)
 
 TEST_F(WidgetTestInteractive, DisableViewDoesNotActivateWidget) {
+  // Times out on mus. See http://crbug.com/612193
+  if (IsMus())
+    return;
+
 #if defined(OS_WIN)
   views_delegate()->set_use_desktop_native_widgets(true);
 #endif  // !defined(OS_WIN)
@@ -933,7 +1022,7 @@ TEST_F(WidgetTestInteractive, DisableViewDoesNotActivateWidget) {
   widget1.Init(params1);
 
   View* view1 = new View();
-  view1->SetFocusable(true);
+  view1->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   widget1.GetRootView()->AddChildView(view1);
 
   ActivateSync(&widget1);
@@ -951,7 +1040,7 @@ TEST_F(WidgetTestInteractive, DisableViewDoesNotActivateWidget) {
   widget2.Init(params2);
 
   View* view2 = new View();
-  view2->SetFocusable(true);
+  view2->SetFocusBehavior(View::FocusBehavior::ALWAYS);
   widget2.GetRootView()->AddChildView(view2);
 
   ActivateSync(&widget2);
@@ -1045,7 +1134,8 @@ TEST_F(WidgetTestInteractive, InactiveWidgetDoesNotGrabActivation) {
 
   Widget widget2;
   Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_POPUP);
-  params.native_widget = new PlatformDesktopNativeWidget(&widget2);
+  params.native_widget =
+      CreatePlatformDesktopNativeWidgetImpl(params, &widget2, nullptr);
   params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   widget2.Init(params);
   widget2.Show();
@@ -1104,13 +1194,44 @@ TEST_F(WidgetTestInteractive, MAYBE_ExitFullscreenRestoreState) {
   RunPendingMessages();
 }
 
+// Testing initial focus is assigned properly for normal top-level widgets,
+// and subclasses that specify a initially focused child view.
+TEST_F(WidgetTestInteractive, InitialFocus) {
+  // TODO: test uses GetContext(), which is not applicable to aura-mus.
+  // http://crbug.com/663809.
+  if (IsAuraMusClient())
+    return;
+
+  // By default, there is no initially focused view (even if there is a
+  // focusable subview).
+  Widget* toplevel(CreateTopLevelPlatformWidget());
+  View* view = new View;
+  view->SetFocusBehavior(View::FocusBehavior::ALWAYS);
+  toplevel->GetContentsView()->AddChildView(view);
+
+  ShowSync(toplevel);
+  toplevel->Show();
+  EXPECT_FALSE(view->HasFocus());
+  EXPECT_FALSE(toplevel->GetFocusManager()->GetStoredFocusView());
+  toplevel->CloseNow();
+
+  // Testing a widget which specifies a initially focused view.
+  TestInitialFocusWidgetDelegate delegate(GetContext());
+
+  Widget* widget = delegate.GetWidget();
+  ShowSync(widget);
+  widget->Show();
+  EXPECT_TRUE(delegate.view()->HasFocus());
+  EXPECT_EQ(delegate.view(), widget->GetFocusManager()->GetStoredFocusView());
+}
+
 namespace {
 
-// Used to veirfy OnMouseCaptureLost() has been invoked.
-class CaptureLostTrackingWidget : public Widget {
+// Helper class for CaptureLostTrackingWidget to store whether
+// OnMouseCaptureLost has been invoked for a widget.
+class CaptureLostState {
  public:
-  CaptureLostTrackingWidget() : got_capture_lost_(false) {}
-  ~CaptureLostTrackingWidget() override {}
+  CaptureLostState() : got_capture_lost_(false) {}
 
   bool GetAndClearGotCaptureLost() {
     bool value = got_capture_lost_;
@@ -1118,21 +1239,36 @@ class CaptureLostTrackingWidget : public Widget {
     return value;
   }
 
+  void OnMouseCaptureLost() { got_capture_lost_ = true; }
+
+ private:
+  bool got_capture_lost_;
+
+  DISALLOW_COPY_AND_ASSIGN(CaptureLostState);
+};
+
+// Used to verify OnMouseCaptureLost() has been invoked.
+class CaptureLostTrackingWidget : public Widget {
+ public:
+  explicit CaptureLostTrackingWidget(CaptureLostState* capture_lost_state)
+      : capture_lost_state_(capture_lost_state) {}
+
   // Widget:
   void OnMouseCaptureLost() override {
-    got_capture_lost_ = true;
+    capture_lost_state_->OnMouseCaptureLost();
     Widget::OnMouseCaptureLost();
   }
 
  private:
-  bool got_capture_lost_;
+  // Weak. Stores whether OnMouseCaptureLost has been invoked for this widget.
+  CaptureLostState* capture_lost_state_;
 
   DISALLOW_COPY_AND_ASSIGN(CaptureLostTrackingWidget);
 };
 
 }  // namespace
 
-class WidgetCaptureTest : public ViewsTestBase {
+class WidgetCaptureTest : public ViewsInteractiveUITestBase {
  public:
   WidgetCaptureTest() {
   }
@@ -1140,32 +1276,34 @@ class WidgetCaptureTest : public ViewsTestBase {
   ~WidgetCaptureTest() override {}
 
   void SetUp() override {
-    gfx::GLSurfaceTestSupport::InitializeOneOff();
-    ui::RegisterPathProvider();
-    base::FilePath ui_test_pak_path;
-    ASSERT_TRUE(PathService::Get(ui::UI_TEST_PAK, &ui_test_pak_path));
-    ui::ResourceBundle::InitSharedInstanceWithPakPath(ui_test_pak_path);
-    ViewsTestBase::SetUp();
+    // On mus these tests run as part of views::ViewsTestSuite which already
+    // does this initialization.
+    if (!IsMus())
+      ViewsInteractiveUITestBase::SetUp();
+    else
+      ViewsTestBase::SetUp();
   }
 
   // Verifies Widget::SetCapture() results in updating native capture along with
   // invoking the right Widget function.
   void TestCapture(bool use_desktop_native_widget) {
-    CaptureLostTrackingWidget widget1;
+    CaptureLostState capture_state1;
+    CaptureLostTrackingWidget widget1(&capture_state1);
     Widget::InitParams params1 =
         CreateParams(views::Widget::InitParams::TYPE_WINDOW);
-    params1.native_widget = CreateNativeWidget(use_desktop_native_widget,
-                                               &widget1);
+    params1.native_widget =
+        CreateNativeWidget(params1, use_desktop_native_widget, &widget1);
     params1.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
     widget1.Init(params1);
     widget1.Show();
 
-    CaptureLostTrackingWidget widget2;
+    CaptureLostState capture_state2;
+    CaptureLostTrackingWidget widget2(&capture_state2);
     Widget::InitParams params2 =
         CreateParams(views::Widget::InitParams::TYPE_WINDOW);
     params2.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
-    params2.native_widget = CreateNativeWidget(use_desktop_native_widget,
-                                               &widget2);
+    params2.native_widget =
+        CreateNativeWidget(params2, use_desktop_native_widget, &widget2);
     widget2.Init(params2);
     widget2.Show();
 
@@ -1173,31 +1311,30 @@ class WidgetCaptureTest : public ViewsTestBase {
     widget2.SetCapture(widget2.GetRootView());
     EXPECT_FALSE(widget1.HasCapture());
     EXPECT_TRUE(widget2.HasCapture());
-    EXPECT_FALSE(widget1.GetAndClearGotCaptureLost());
-    EXPECT_FALSE(widget2.GetAndClearGotCaptureLost());
+    EXPECT_FALSE(capture_state1.GetAndClearGotCaptureLost());
+    EXPECT_FALSE(capture_state2.GetAndClearGotCaptureLost());
 
     // Set capture to widget1 and verify it gets it.
     widget1.SetCapture(widget1.GetRootView());
     EXPECT_TRUE(widget1.HasCapture());
     EXPECT_FALSE(widget2.HasCapture());
-    EXPECT_FALSE(widget1.GetAndClearGotCaptureLost());
-    EXPECT_TRUE(widget2.GetAndClearGotCaptureLost());
+    EXPECT_FALSE(capture_state1.GetAndClearGotCaptureLost());
+    EXPECT_TRUE(capture_state2.GetAndClearGotCaptureLost());
 
     // Release and verify no one has it.
     widget1.ReleaseCapture();
     EXPECT_FALSE(widget1.HasCapture());
     EXPECT_FALSE(widget2.HasCapture());
-    EXPECT_TRUE(widget1.GetAndClearGotCaptureLost());
-    EXPECT_FALSE(widget2.GetAndClearGotCaptureLost());
+    EXPECT_TRUE(capture_state1.GetAndClearGotCaptureLost());
+    EXPECT_FALSE(capture_state2.GetAndClearGotCaptureLost());
   }
 
-  NativeWidget* CreateNativeWidget(bool create_desktop_native_widget,
+  NativeWidget* CreateNativeWidget(const Widget::InitParams& params,
+                                   bool create_desktop_native_widget,
                                    Widget* widget) {
-#if !defined(OS_CHROMEOS)
     if (create_desktop_native_widget)
-      return new PlatformDesktopNativeWidget(widget);
-#endif
-    return NULL;
+      return CreatePlatformDesktopNativeWidgetImpl(params, widget, nullptr);
+    return CreatePlatformNativeWidgetImpl(params, widget, kDefault, nullptr);
   }
 
  private:
@@ -1209,15 +1346,78 @@ TEST_F(WidgetCaptureTest, Capture) {
   TestCapture(false);
 }
 
+// Tests to ensure capture is correctly released from a Widget with capture when
+// it is destroyed. Test for crbug.com/622201.
+TEST_F(WidgetCaptureTest, DestroyWithCapture_CloseNow) {
+  CaptureLostState capture_state;
+  CaptureLostTrackingWidget* widget =
+      new CaptureLostTrackingWidget(&capture_state);
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget = CreateNativeWidget(params, true, widget);
+  widget->Init(params);
+  widget->Show();
+
+  widget->SetCapture(widget->GetRootView());
+  EXPECT_TRUE(widget->HasCapture());
+  EXPECT_FALSE(capture_state.GetAndClearGotCaptureLost());
+  widget->CloseNow();
+
+  // Fails on mus. http://crbug.com/611764
+  if (IsMus())
+    EXPECT_FALSE(capture_state.GetAndClearGotCaptureLost());
+  else
+    EXPECT_TRUE(capture_state.GetAndClearGotCaptureLost());
+}
+
+TEST_F(WidgetCaptureTest, DestroyWithCapture_Close) {
+  CaptureLostState capture_state;
+  CaptureLostTrackingWidget* widget =
+      new CaptureLostTrackingWidget(&capture_state);
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget = CreateNativeWidget(params, true, widget);
+  widget->Init(params);
+  widget->Show();
+
+  widget->SetCapture(widget->GetRootView());
+  EXPECT_TRUE(widget->HasCapture());
+  EXPECT_FALSE(capture_state.GetAndClearGotCaptureLost());
+  widget->Close();
+  EXPECT_TRUE(capture_state.GetAndClearGotCaptureLost());
+}
+
+TEST_F(WidgetCaptureTest, DestroyWithCapture_WidgetOwnsNativeWidget) {
+  Widget widget;
+  Widget::InitParams params = CreateParams(Widget::InitParams::TYPE_WINDOW);
+  params.native_widget = CreateNativeWidget(params, true, &widget);
+  params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
+  widget.Init(params);
+  widget.Show();
+
+  widget.SetCapture(widget.GetRootView());
+  EXPECT_TRUE(widget.HasCapture());
+}
+
 #if !defined(OS_CHROMEOS)
 // See description in TestCapture(). Creates DesktopNativeWidget.
 TEST_F(WidgetCaptureTest, CaptureDesktopNativeWidget) {
+  // Fails on mus. http://crbug.com/611764
+  if (IsMus())
+    return;
+
   TestCapture(true);
 }
 #endif
 
 // Test that no state is set if capture fails.
 TEST_F(WidgetCaptureTest, FailedCaptureRequestIsNoop) {
+  // Fails on mus. http://crbug.com/611764
+  if (IsMus())
+    return;
+  // TODO: test uses GetContext(), which is not applicable to aura-mus.
+  // http://crbug.com/663809.
+  if (IsAuraMusClient())
+    return;
+
   Widget widget;
   Widget::InitParams params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
@@ -1260,10 +1460,14 @@ TEST_F(WidgetCaptureTest, FailedCaptureRequestIsNoop) {
 // Test that a synthetic mouse exit is sent to the widget which was handling
 // mouse events when a different widget grabs capture.
 TEST_F(WidgetCaptureTest, MAYBE_MouseExitOnCaptureGrab) {
+  // Fails on mus. http://crbug.com/611764
+  if (IsMus())
+    return;
+
   Widget widget1;
   Widget::InitParams params1 =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params1.native_widget = CreateNativeWidget(true, &widget1);
+  params1.native_widget = CreateNativeWidget(params1, true, &widget1);
   params1.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   widget1.Init(params1);
   MouseView* mouse_view1 = new MouseView;
@@ -1274,7 +1478,7 @@ TEST_F(WidgetCaptureTest, MAYBE_MouseExitOnCaptureGrab) {
   Widget widget2;
   Widget::InitParams params2 =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  params2.native_widget = CreateNativeWidget(true, &widget2);
+  params2.native_widget = CreateNativeWidget(params2, true, &widget2);
   params2.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   widget2.Init(params2);
   widget2.Show();
@@ -1326,7 +1530,8 @@ TEST_F(WidgetCaptureTest, SetCaptureToNonToplevel) {
   Widget toplevel;
   Widget::InitParams toplevel_params =
       CreateParams(Widget::InitParams::TYPE_WINDOW_FRAMELESS);
-  toplevel_params.native_widget = CreateNativeWidget(true, &toplevel);
+  toplevel_params.native_widget = CreateNativeWidget(toplevel_params, true,
+                                                     &toplevel);
   toplevel_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   toplevel.Init(toplevel_params);
   toplevel.Show();
@@ -1514,6 +1719,10 @@ TEST_F(WidgetInputMethodInteractiveTest, OneWindow) {
 // Test input method focus changes affected by focus changes cross 2 windows
 // which shares the same top window.
 TEST_F(WidgetInputMethodInteractiveTest, TwoWindows) {
+  // Fails on mus. http://crbug.com/611766
+  if (IsMus())
+    return;
+
   Widget* parent = CreateWidget();
   parent->SetBounds(gfx::Rect(100, 100, 100, 100));
 
@@ -1587,6 +1796,34 @@ TEST_F(WidgetInputMethodInteractiveTest, TextField) {
   textfield->SetReadOnly(true);
   EXPECT_EQ(ui::TEXT_INPUT_TYPE_NONE,
             widget->GetInputMethod()->GetTextInputType());
+  widget->CloseNow();
+}
+
+// Test input method should not work for accelerator.
+TEST_F(WidgetInputMethodInteractiveTest, AcceleratorInTextfield) {
+  Widget* widget = CreateWidget();
+  Textfield* textfield = new Textfield;
+  widget->GetRootView()->AddChildView(textfield);
+  ShowSync(widget);
+  textfield->SetTextInputType(ui::TEXT_INPUT_TYPE_TEXT);
+  textfield->RequestFocus();
+
+  ui::KeyEvent key_event(ui::ET_KEY_PRESSED,
+                         ui::VKEY_F, ui::EF_ALT_DOWN);
+  ui::Accelerator accelerator(key_event);
+  widget->GetFocusManager()->RegisterAccelerator(
+      accelerator, ui::AcceleratorManager::kNormalPriority,
+      textfield);
+
+  widget->OnKeyEvent(&key_event);
+  EXPECT_TRUE(key_event.stopped_propagation());
+
+  widget->GetFocusManager()->UnregisterAccelerators(textfield);
+
+  ui::KeyEvent key_event2(key_event);
+  widget->OnKeyEvent(&key_event2);
+  EXPECT_FALSE(key_event2.stopped_propagation());
+
   widget->CloseNow();
 }
 

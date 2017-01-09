@@ -9,7 +9,9 @@
 
 #include <windows.h>
 #include <msi.h>
-#include <shlobj.h>
+#include <shellapi.h>
+
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
@@ -17,9 +19,9 @@
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/registry.h"
-#include "base/win/scoped_comptr.h"
 #include "base/win/windows_version.h"
 #include "chrome/common/chrome_icon_resources_win.h"
+#include "chrome/common/chrome_paths_internal.h"
 #include "chrome/installer/util/app_registration_data.h"
 #include "chrome/installer/util/channel_info.h"
 #include "chrome/installer/util/google_update_constants.h"
@@ -32,6 +34,8 @@
 #include "chrome/installer/util/updating_app_registration_data.h"
 #include "chrome/installer/util/util_constants.h"
 #include "chrome/installer/util/wmi.h"
+#include "third_party/crashpad/crashpad/client/crash_report_database.h"
+#include "third_party/crashpad/crashpad/client/settings.h"
 
 namespace {
 
@@ -41,8 +45,6 @@ const wchar_t kBrowserProgIdPrefix[] = L"ChromeHTML";
 const wchar_t kBrowserProgIdDesc[] = L"Chrome HTML Document";
 const wchar_t kCommandExecuteImplUuid[] =
     L"{5C65F4B0-3651-4514-B207-D10CB699B14B}";
-const wchar_t kEdgeAppId[] =
-    L"Microsoft.MicrosoftEdge_8wekyb3d8bbwe!MicrosoftEdge";
 
 // Substitute the locale parameter in uninstall URL with whatever
 // Google Update tells us is the locale. In case we fail to find
@@ -61,12 +63,16 @@ base::string16 GetUninstallSurveyUrl() {
 }
 
 bool NavigateToUrlWithEdge(const base::string16& url) {
-  base::win::ScopedComPtr<IApplicationActivationManager> activator;
-  DWORD pid = 0;
-  return SUCCEEDED(
-             activator.CreateInstance(CLSID_ApplicationActivationManager)) &&
-         SUCCEEDED(activator->ActivateApplication(kEdgeAppId, url.c_str(),
-                                                  AO_NOERRORUI, &pid));
+  base::string16 protocol_url = L"microsoft-edge:" + url;
+  SHELLEXECUTEINFO info = { sizeof(info) };
+  info.fMask = SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI;
+  info.lpVerb = L"open";
+  info.lpFile = protocol_url.c_str();
+  info.nShow = SW_SHOWNORMAL;
+  if (::ShellExecuteEx(&info))
+    return true;
+  PLOG(ERROR) << "Failed to launch Edge for uninstall survey";
+  return false;
 }
 
 void NavigateToUrlWithIExplore(const base::string16& url) {
@@ -91,17 +97,15 @@ void NavigateToUrlWithIExplore(const base::string16& url) {
 
 GoogleChromeDistribution::GoogleChromeDistribution()
     : BrowserDistribution(CHROME_BROWSER,
-                          scoped_ptr<AppRegistrationData>(
-                              new UpdatingAppRegistrationData(kChromeGuid))) {
-}
+                          std::unique_ptr<AppRegistrationData>(
+                              new UpdatingAppRegistrationData(kChromeGuid))) {}
 
 GoogleChromeDistribution::GoogleChromeDistribution(
-    scoped_ptr<AppRegistrationData> app_reg_data)
-    : BrowserDistribution(CHROME_BROWSER, app_reg_data.Pass()) {
-}
+    std::unique_ptr<AppRegistrationData> app_reg_data)
+    : BrowserDistribution(CHROME_BROWSER, std::move(app_reg_data)) {}
 
 void GoogleChromeDistribution::DoPostUninstallOperations(
-    const Version& version,
+    const base::Version& version,
     const base::FilePath& local_data_path,
     const base::string16& distribution_data) {
   // Send the Chrome version and OS version as params to the form.
@@ -154,28 +158,11 @@ base::string16 GoogleChromeDistribution::GetBaseAppName() {
   return L"Google Chrome";
 }
 
-base::string16 GoogleChromeDistribution::GetShortcutName(
-    ShortcutType shortcut_type) {
-  int string_id = IDS_PRODUCT_NAME_BASE;
-  switch (shortcut_type) {
-    case SHORTCUT_CHROME_ALTERNATE:
-      string_id = IDS_OEM_MAIN_SHORTCUT_NAME_BASE;
-      break;
-    case SHORTCUT_APP_LAUNCHER:
-      string_id = IDS_APP_LIST_SHORTCUT_NAME_BASE;
-      break;
-    default:
-      DCHECK_EQ(shortcut_type, SHORTCUT_CHROME);
-      break;
-  }
-  return installer::GetLocalizedString(string_id);
+base::string16 GoogleChromeDistribution::GetShortcutName() {
+  return installer::GetLocalizedString(IDS_PRODUCT_NAME_BASE);
 }
 
-int GoogleChromeDistribution::GetIconIndex(ShortcutType shortcut_type) {
-  if (shortcut_type == SHORTCUT_APP_LAUNCHER)
-    return icon_resources::kAppLauncherIndex;
-  DCHECK(shortcut_type == SHORTCUT_CHROME ||
-         shortcut_type == SHORTCUT_CHROME_ALTERNATE) << shortcut_type;
+int GoogleChromeDistribution::GetIconIndex() {
   return icon_resources::kApplicationIndex;
 }
 
@@ -247,6 +234,25 @@ base::string16 GoogleChromeDistribution::GetDistributionData(HKEY root_key) {
   result.append(google_update::kRegApField);
   result.append(L"=");
   result.append(ap_value);
+
+  // Crash client id.
+  // While it would be convenient to use the path service to get
+  // chrome::DIR_CRASH_DUMPS, that points to the dump location for the installer
+  // rather than for the browser. For per-user installs they are the same, yet
+  // for system-level installs the installer uses the system temp directory (see
+  // setup/installer_crash_reporting.cc's ConfigureCrashReporting).
+  // TODO(grt): use install_static::GetDefaultCrashDumpLocation (with an option
+  // to suppress creating the directory) once setup.exe uses
+  // install_static::InstallDetails.
+  base::FilePath crash_dir;
+  if (chrome::GetDefaultUserDataDirectory(&crash_dir)) {
+    crash_dir = crash_dir.Append(FILE_PATH_LITERAL("Crashpad"));
+    crashpad::UUID client_id;
+    std::unique_ptr<crashpad::CrashReportDatabase> database(
+        crashpad::CrashReportDatabase::InitializeWithoutCreating(crash_dir));
+    if (database && database->GetSettings()->GetClientID(&client_id))
+      result.append(L"&crash_client_id=").append(client_id.ToString16());
+  }
 
   return result;
 }

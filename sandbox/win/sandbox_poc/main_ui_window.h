@@ -5,9 +5,11 @@
 #ifndef SANDBOX_SANDBOX_POC_MAIN_UI_WINDOW_H__
 #define SANDBOX_SANDBOX_POC_MAIN_UI_WINDOW_H__
 
+#include <windows.h>
+
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 
 namespace sandbox {
@@ -17,7 +19,7 @@ enum ResultCode;
 
 // Header file for the MainUIWindow, a simple window with a menu bar that
 // can pop up a dialog (accessible through the menu bar), to specify a path and
-// filename of any DLL to load and choose an entry point of his/her choice
+// filename of any DLL to load and choose an entry point of their choice
 // (note: only entry points with no parameters are expected to work).
 //
 // The purpose of this is to be able to spawn an EXE inside a SandBox, have it

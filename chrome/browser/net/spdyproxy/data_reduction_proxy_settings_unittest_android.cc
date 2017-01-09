@@ -4,13 +4,15 @@
 
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_settings_android.h"
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/scoped_java_ref.h"
 #include "base/base64.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_service.h"
 #include "base/test/test_simple_task_runner.h"
 #include "base/time/time.h"
 #include "chrome/browser/net/spdyproxy/data_reduction_proxy_chrome_settings.h"
@@ -22,11 +24,16 @@
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_params_test_utils.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "components/proxy_config/proxy_prefs.h"
 #include "net/proxy/proxy_server.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
+
+namespace base {
+class Clock;
+}
 
 using testing::_;
 using testing::AnyNumber;
@@ -54,6 +61,7 @@ class TestDataReductionProxySettingsAndroid
 
 template <class C>
 void data_reduction_proxy::DataReductionProxySettingsTestBase::ResetSettings(
+    std::unique_ptr<base::Clock> clock,
     bool allowed,
     bool fallback_allowed,
     bool promo_allowed,
@@ -85,10 +93,11 @@ void data_reduction_proxy::DataReductionProxySettingsTestBase::ResetSettings(
 
 template void
 data_reduction_proxy::DataReductionProxySettingsTestBase::ResetSettings<
-    DataReductionProxyChromeSettings>(bool allowed,
-                                       bool fallback_allowed,
-                                       bool promo_allowed,
-                                       bool holdback);
+    DataReductionProxyChromeSettings>(std::unique_ptr<base::Clock> clock,
+                                      bool allowed,
+                                      bool fallback_allowed,
+                                      bool promo_allowed,
+                                      bool holdback);
 
 class DataReductionProxySettingsAndroidTest
     : public data_reduction_proxy::ConcreteDataReductionProxySettingsTest<
@@ -115,7 +124,7 @@ class DataReductionProxySettingsAndroidTest
     return settings_android_.get();
   }
 
-  scoped_ptr<DataReductionProxySettingsAndroid> settings_android_;
+  std::unique_ptr<DataReductionProxySettingsAndroid> settings_android_;
   JNIEnv* env_;
 };
 

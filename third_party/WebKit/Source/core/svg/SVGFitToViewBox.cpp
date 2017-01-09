@@ -19,87 +19,72 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "core/svg/SVGFitToViewBox.h"
 
-#include "core/dom/Attribute.h"
-#include "core/svg/SVGDocumentExtensions.h"
 #include "core/svg/SVGElement.h"
-#include "core/svg/SVGParserUtilities.h"
+#include "core/svg/SVGParsingError.h"
 #include "platform/geometry/FloatRect.h"
 #include "platform/transforms/AffineTransform.h"
-#include "wtf/text/StringImpl.h"
 
 namespace blink {
 
 class SVGAnimatedViewBoxRect : public SVGAnimatedRect {
-public:
-    static PassRefPtrWillBeRawPtr<SVGAnimatedRect> create(SVGElement* contextElement)
-    {
-        return adoptRefWillBeNoop(new SVGAnimatedViewBoxRect(contextElement));
-    }
+ public:
+  static SVGAnimatedRect* create(SVGElement* contextElement) {
+    return new SVGAnimatedViewBoxRect(contextElement);
+  }
 
-    void setBaseValueAsString(const String&, SVGParsingError&) override;
+  SVGParsingError setBaseValueAsString(const String&) override;
 
-protected:
-    SVGAnimatedViewBoxRect(SVGElement* contextElement)
-        : SVGAnimatedRect(contextElement, SVGNames::viewBoxAttr)
-    {
-    }
+ protected:
+  SVGAnimatedViewBoxRect(SVGElement* contextElement)
+      : SVGAnimatedRect(contextElement, SVGNames::viewBoxAttr) {}
 };
 
-void SVGAnimatedViewBoxRect::setBaseValueAsString(const String& value, SVGParsingError& parseError)
-{
-    TrackExceptionState es;
+SVGParsingError SVGAnimatedViewBoxRect::setBaseValueAsString(
+    const String& value) {
+  SVGParsingError parseStatus = SVGAnimatedRect::setBaseValueAsString(value);
 
-    baseValue()->setValueAsString(value, es);
-
-    if (es.hadException()) {
-        parseError = ParsingAttributeFailedError;
-        return;
-    }
-
-    if (baseValue()->width() < 0 || baseValue()->height() < 0) {
-        parseError = NegativeValueForbiddenError;
-        baseValue()->setInvalid();
-    }
+  if (parseStatus == SVGParseStatus::NoError &&
+      (baseValue()->width() < 0 || baseValue()->height() < 0)) {
+    parseStatus = SVGParseStatus::NegativeValue;
+    baseValue()->setInvalid();
+  }
+  return parseStatus;
 }
 
-SVGFitToViewBox::SVGFitToViewBox(SVGElement* element, PropertyMapPolicy propertyMapPolicy)
-    : m_viewBox(SVGAnimatedViewBoxRect::create(element))
-    , m_preserveAspectRatio(SVGAnimatedPreserveAspectRatio::create(element, SVGNames::preserveAspectRatioAttr, SVGPreserveAspectRatio::create()))
-{
-    ASSERT(element);
-    if (propertyMapPolicy == PropertyMapPolicyAdd) {
-        element->addToPropertyMap(m_viewBox);
-        element->addToPropertyMap(m_preserveAspectRatio);
-    }
+SVGFitToViewBox::SVGFitToViewBox(SVGElement* element)
+    : m_viewBox(SVGAnimatedViewBoxRect::create(element)),
+      m_preserveAspectRatio(SVGAnimatedPreserveAspectRatio::create(
+          element,
+          SVGNames::preserveAspectRatioAttr)) {
+  DCHECK(element);
+  element->addToPropertyMap(m_viewBox);
+  element->addToPropertyMap(m_preserveAspectRatio);
 }
 
-DEFINE_TRACE(SVGFitToViewBox)
-{
-    visitor->trace(m_viewBox);
-    visitor->trace(m_preserveAspectRatio);
+DEFINE_TRACE(SVGFitToViewBox) {
+  visitor->trace(m_viewBox);
+  visitor->trace(m_preserveAspectRatio);
 }
 
-AffineTransform SVGFitToViewBox::viewBoxToViewTransform(const FloatRect& viewBoxRect, PassRefPtrWillBeRawPtr<SVGPreserveAspectRatio> preserveAspectRatio, float viewWidth, float viewHeight)
-{
-    if (!viewBoxRect.width() || !viewBoxRect.height() || !viewWidth || !viewHeight)
-        return AffineTransform();
+AffineTransform SVGFitToViewBox::viewBoxToViewTransform(
+    const FloatRect& viewBoxRect,
+    SVGPreserveAspectRatio* preserveAspectRatio,
+    float viewWidth,
+    float viewHeight) {
+  if (!viewBoxRect.width() || !viewBoxRect.height() || !viewWidth ||
+      !viewHeight)
+    return AffineTransform();
 
-    return preserveAspectRatio->getCTM(viewBoxRect.x(), viewBoxRect.y(), viewBoxRect.width(), viewBoxRect.height(), viewWidth, viewHeight);
+  return preserveAspectRatio->getCTM(viewBoxRect.x(), viewBoxRect.y(),
+                                     viewBoxRect.width(), viewBoxRect.height(),
+                                     viewWidth, viewHeight);
 }
 
-bool SVGFitToViewBox::isKnownAttribute(const QualifiedName& attrName)
-{
-    return attrName == SVGNames::viewBoxAttr || attrName == SVGNames::preserveAspectRatioAttr;
+bool SVGFitToViewBox::isKnownAttribute(const QualifiedName& attrName) {
+  return attrName == SVGNames::viewBoxAttr ||
+         attrName == SVGNames::preserveAspectRatioAttr;
 }
 
-void SVGFitToViewBox::updateViewBox(const FloatRect& rect)
-{
-    ASSERT(m_viewBox);
-    m_viewBox->baseValue()->setValue(rect);
-}
-
-}
+}  // namespace blink

@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_UI_COCOA_INFOBARS_INFOBAR_COCOA_H_
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "components/infobars/core/infobar.h"
 
@@ -15,7 +16,7 @@
 // actually in InfoBarController.
 class InfoBarCocoa : public infobars::InfoBar {
  public:
-  explicit InfoBarCocoa(scoped_ptr<infobars::InfoBarDelegate> delegate);
+  explicit InfoBarCocoa(std::unique_ptr<infobars::InfoBarDelegate> delegate);
 
   ~InfoBarCocoa() override;
 

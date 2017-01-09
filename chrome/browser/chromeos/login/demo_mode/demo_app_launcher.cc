@@ -7,8 +7,8 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/ui/login_display_host.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
 #include "chrome/browser/extensions/component_loader.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -18,11 +18,11 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/extensions/extension_constants.h"
 #include "chrome/grit/browser_resources.h"
-#include "chromeos/login/user_names.h"
 #include "chromeos/network/network_handler.h"
 #include "chromeos/network/network_state_handler.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/signin/core/account_id/account_id.h"
-#include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_names.h"
 #include "extensions/browser/extension_system.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
@@ -49,14 +49,14 @@ DemoAppLauncher::~DemoAppLauncher() {
 void DemoAppLauncher::StartDemoAppLaunch() {
   DVLOG(1) << "Launching demo app...";
   // user_id = DemoAppUserId, force_emphemeral = true, delegate = this.
-  kiosk_profile_loader_.reset(new KioskProfileLoader(
-      login::DemoAccountId().GetUserEmail(), true, this));
+  kiosk_profile_loader_.reset(
+      new KioskProfileLoader(user_manager::DemoAccountId(), true, this));
   kiosk_profile_loader_->Start();
 }
 
 // static
-bool DemoAppLauncher::IsDemoAppSession(const std::string& user_id) {
-  return user_id == login::DemoAccountId().GetUserEmail();
+bool DemoAppLauncher::IsDemoAppSession(const AccountId& account_id) {
+  return account_id == user_manager::DemoAccountId();
 }
 
 // static
@@ -94,14 +94,15 @@ void DemoAppLauncher::OnProfileLoaded(Profile* profile) {
                                 false,
                                 chromeos::network_handler::ErrorCallback());
 
-  OpenApplication(
-      AppLaunchParams(profile, extension, extensions::LAUNCH_CONTAINER_WINDOW,
-                      NEW_WINDOW, extensions::SOURCE_CHROME_INTERNAL));
+  OpenApplication(AppLaunchParams(profile, extension,
+                                  extensions::LAUNCH_CONTAINER_WINDOW,
+                                  WindowOpenDisposition::NEW_WINDOW,
+                                  extensions::SOURCE_CHROME_INTERNAL, true));
   KioskAppManager::Get()->InitSession(profile, extension_id);
 
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->SessionStarted();
 
-  LoginDisplayHostImpl::default_host()->Finalize();
+  LoginDisplayHost::default_host()->Finalize();
 }
 
 void DemoAppLauncher::OnProfileLoadFailed(KioskAppLaunchError::Error error) {

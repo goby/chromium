@@ -4,6 +4,8 @@
 
 #include "components/password_manager/sync/browser/password_sync_util.h"
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/sync/browser/sync_username_test_base.h"
@@ -21,7 +23,7 @@ TEST_F(PasswordSyncUtilTest, GetSyncUsernameIfSyncingPasswords) {
     enum { SYNCING_PASSWORDS, NOT_SYNCING_PASSWORDS } password_sync;
     std::string fake_sync_username;
     std::string expected_result;
-    const sync_driver::SyncService* sync_service;
+    const syncer::SyncService* sync_service;
     const SigninManagerBase* signin_manager;
   } kTestCases[] = {
       {TestCase::NOT_SYNCING_PASSWORDS, "a@example.org", std::string(),
@@ -64,6 +66,8 @@ TEST_F(PasswordSyncUtilTest, IsSyncAccountCredential) {
        false},
       {SimpleNonGaiaForm("sync_user@example.org"), "sync_user@example.org",
        false},
+      {SimpleGaiaForm(""), "sync_user@example.org", true},
+      {SimpleNonGaiaForm(""), "sync_user@example.org", false},
   };
 
   for (size_t i = 0; i < arraysize(kTestCases); ++i) {

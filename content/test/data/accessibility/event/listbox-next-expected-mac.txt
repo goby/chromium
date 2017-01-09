@@ -1,2 +1,3 @@
+AXValueChanged on AXStaticText AXValue="Orange"
 AXSelectedChildrenChanged on AXList
-AXFocusedUIElementChanged on AXList
+AXValueChanged on AXStaticText AXValue="Apple"

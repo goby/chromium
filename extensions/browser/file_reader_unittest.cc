@@ -8,6 +8,7 @@
 #include "base/files/file_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/path_service.h"
+#include "base/run_loop.h"
 #include "components/crx_file/id_util.h"
 #include "content/public/test/test_browser_thread.h"
 #include "extensions/browser/file_reader.h"
@@ -34,22 +35,22 @@ class Receiver {
   Receiver() : succeeded_(false) {
   }
 
-  FileReader::Callback NewCallback() {
+  FileReader::DoneCallback NewCallback() {
     return base::Bind(&Receiver::DidReadFile, base::Unretained(this));
   }
 
   bool succeeded() const { return succeeded_; }
-  const std::string& data() const { return data_; }
+  const std::string& data() const { return *data_; }
 
  private:
-  void DidReadFile(bool success, const std::string& data) {
+  void DidReadFile(bool success, std::unique_ptr<std::string> data) {
     succeeded_ = success;
-    data_ = data;
+    data_ = std::move(data);
     base::MessageLoop::current()->QuitWhenIdle();
   }
 
   bool succeeded_;
-  std::string data_;
+  std::unique_ptr<std::string> data_;
 };
 
 void RunBasicTest(const char* filename) {
@@ -66,10 +67,11 @@ void RunBasicTest(const char* filename) {
   Receiver receiver;
 
   scoped_refptr<FileReader> file_reader(
-      new FileReader(resource, receiver.NewCallback()));
+      new FileReader(resource, FileReader::OptionalFileThreadTaskCallback(),
+                     receiver.NewCallback()));
   file_reader->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_TRUE(receiver.succeeded());
   EXPECT_EQ(file_contents, receiver.data());
@@ -94,10 +96,11 @@ TEST_F(FileReaderTest, NonExistantFile) {
   Receiver receiver;
 
   scoped_refptr<FileReader> file_reader(
-      new FileReader(resource, receiver.NewCallback()));
+      new FileReader(resource, FileReader::OptionalFileThreadTaskCallback(),
+                     receiver.NewCallback()));
   file_reader->Start();
 
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   EXPECT_FALSE(receiver.succeeded());
 }

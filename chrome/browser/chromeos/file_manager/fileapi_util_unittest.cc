@@ -8,8 +8,8 @@
 #include "chrome/test/base/testing_browser_process.h"
 #include "chrome/test/base/testing_profile.h"
 #include "chrome/test/base/testing_profile_manager.h"
-#include "components/drive/drive_test_util.h"
-#include "components/drive/fake_file_system.h"
+#include "components/drive/chromeos/drive_test_util.h"
+#include "components/drive/chromeos/fake_file_system.h"
 #include "components/drive/service/fake_drive_service.h"
 #include "components/drive/service/test_util.h"
 #include "content/public/browser/storage_partition.h"
@@ -55,7 +55,7 @@ TEST(FileManagerFileAPIUtilTest,
   base::ScopedTempDir drive_cache_dir;
   ASSERT_TRUE(drive_cache_dir.CreateUniqueTempDir());
   drive::DriveIntegrationServiceFactory::FactoryCallback factory_callback(
-      base::Bind(&CreateDriveIntegrationService, drive_cache_dir.path()));
+      base::Bind(&CreateDriveIntegrationService, drive_cache_dir.GetPath()));
   drive::DriveIntegrationServiceFactory::ScopedFactoryForTest
       integration_service_factory_scope(&factory_callback);
 

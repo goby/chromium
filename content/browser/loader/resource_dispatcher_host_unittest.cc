@@ -2,14 +2,17 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
-#include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/shared_memory.h"
 #include "base/pickle.h"
@@ -17,40 +20,56 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/test/scoped_feature_list.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browser_thread_impl.h"
 #include "content/browser/child_process_security_policy_impl.h"
-#include "content/browser/loader/cross_site_resource_handler.h"
+#include "content/browser/download/download_manager_impl.h"
+#include "content/browser/download/download_resource_handler.h"
+#include "content/browser/frame_host/navigation_request_info.h"
 #include "content/browser/loader/detachable_resource_handler.h"
+#include "content/browser/loader/downloaded_temp_file_impl.h"
+#include "content/browser/loader/navigation_resource_throttle.h"
+#include "content/browser/loader/navigation_url_loader.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
 #include "content/browser/loader/resource_loader.h"
 #include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/resource_request_info_impl.h"
+#include "content/browser/loader_delegate_impl.h"
 #include "content/common/appcache_interfaces.h"
 #include "content/common/child_process_host_impl.h"
+#include "content/common/navigation_params.h"
 #include "content/common/resource_messages.h"
+#include "content/common/resource_request.h"
 #include "content/common/view_messages.h"
 #include "content/public/browser/global_request_id.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/resource_context.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/resource_throttle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/common/child_process_host.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/content_features.h"
 #include "content/public/common/process_type.h"
 #include "content/public/common/resource_response.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/test/test_content_browser_client.h"
+#include "content/test/test_navigation_url_loader_delegate.h"
+#include "net/base/chunked_upload_data_stream.h"
 #include "net/base/elements_upload_data_stream.h"
+#include "net/base/load_flags.h"
 #include "net/base/net_errors.h"
 #include "net/base/request_priority.h"
 #include "net/base/upload_bytes_element_reader.h"
 #include "net/http/http_util.h"
+#include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "net/test/url_request/url_request_failed_job.h"
 #include "net/url_request/url_request.h"
 #include "net/url_request/url_request_context.h"
@@ -85,11 +104,10 @@ void GetResponseHead(const std::vector<IPC::Message>& messages,
   ASSERT_TRUE(IPC::ReadParam(&messages[0], &iter, response_head));
 }
 
-void GenerateIPCMessage(
-    scoped_refptr<ResourceMessageFilter> filter,
-    scoped_ptr<IPC::Message> message) {
-  ResourceDispatcherHostImpl::Get()->OnMessageReceived(
-      *message, filter.get());
+void GenerateIPCMessage(scoped_refptr<ResourceRequesterInfo> requester_info,
+                        std::unique_ptr<IPC::Message> message) {
+  ResourceDispatcherHostImpl::Get()->OnMessageReceived(*message,
+                                                       requester_info.get());
 }
 
 // On Windows, ResourceMsg_SetDataBuffer supplies a HANDLE which is not
@@ -125,6 +143,7 @@ static int RequestIDForMessage(const IPC::Message& msg) {
     case ResourceMsg_ReceivedRedirect::ID:
     case ResourceMsg_SetDataBuffer::ID:
     case ResourceMsg_DataReceived::ID:
+    case ResourceMsg_InlinedDataChunkReceived::ID:
     case ResourceMsg_DataDownloaded::ID:
     case ResourceMsg_RequestComplete::ID: {
       bool result = base::PickleIterator(msg).ReadInt(&request_id);
@@ -135,13 +154,14 @@ static int RequestIDForMessage(const IPC::Message& msg) {
   return request_id;
 }
 
-static ResourceHostMsg_Request CreateResourceRequest(const char* method,
-                                                     ResourceType type,
-                                                     const GURL& url) {
-  ResourceHostMsg_Request request;
+static ResourceRequest CreateResourceRequest(const char* method,
+                                             ResourceType type,
+                                             const GURL& url) {
+  ResourceRequest request;
   request.method = std::string(method);
   request.url = url;
   request.first_party_for_cookies = url;  // bypass third-party cookie blocking
+  request.request_initiator = url::Origin(url);  // ensure initiator is set
   request.referrer_policy = blink::WebReferrerPolicyDefault;
   request.load_flags = 0;
   request.origin_pid = 0;
@@ -152,7 +172,6 @@ static ResourceHostMsg_Request CreateResourceRequest(const char* method,
   request.should_reset_appcache = false;
   request.is_main_frame = true;
   request.parent_is_main_frame = false;
-  request.parent_render_frame_id = -1;
   request.transition_type = ui::PAGE_TRANSITION_LINK;
   request.allow_download = true;
   return request;
@@ -160,7 +179,7 @@ static ResourceHostMsg_Request CreateResourceRequest(const char* method,
 
 // Spin up the message loop to kick off the request.
 static void KickOffRequest() {
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 // We may want to move this to a shared space if it is useful for something else
@@ -185,6 +204,9 @@ class ResourceIPCAccumulator {
   // TODO(mmenke):  This seems really fragile.  Consider reworking ownership.
   typedef std::vector< std::vector<IPC::Message> > ClassifiedMessages;
   void GetClassifiedMessages(ClassifiedMessages* msgs);
+
+  // Returns the reply of |msg|, which is a synchronous IPC message.
+  const IPC::Message* GetReply(const IPC::Message& msg);
 
  private:
   std::vector<IPC::Message> messages_;
@@ -215,6 +237,17 @@ void ResourceIPCAccumulator::GetClassifiedMessages(ClassifiedMessages* msgs) {
   }
 }
 
+const IPC::Message* ResourceIPCAccumulator::GetReply(const IPC::Message& msg) {
+  for (auto& reply : messages_) {
+    if (!reply.is_reply())
+      continue;
+    if (IPC::SyncMessage::GetMessageId(reply) ==
+        IPC::SyncMessage::GetMessageId(msg))
+      return &reply;
+  }
+  return nullptr;
+}
+
 // This is used to create a filter matching a specified child id.
 class TestFilterSpecifyingChild : public ResourceMessageFilter {
  public:
@@ -222,8 +255,6 @@ class TestFilterSpecifyingChild : public ResourceMessageFilter {
                                      int process_id)
       : ResourceMessageFilter(
             process_id,
-            PROCESS_TYPE_RENDERER,
-            NULL,
             NULL,
             NULL,
             NULL,
@@ -233,6 +264,7 @@ class TestFilterSpecifyingChild : public ResourceMessageFilter {
         resource_context_(resource_context),
         canceled_(false),
         received_after_canceled_(0) {
+    InitializeForTest();
     set_peer_process_for_testing(base::Process::Current());
   }
 
@@ -256,7 +288,6 @@ class TestFilterSpecifyingChild : public ResourceMessageFilter {
 
  private:
   void GetContexts(ResourceType resource_type,
-                   int origin_pid,
                    ResourceContext** resource_context,
                    net::URLRequestContext** request_context) {
     *resource_context = resource_context_;
@@ -305,31 +336,6 @@ class ForwardingFilter : public TestFilter {
   IPC::Sender* dest_;
 
   DISALLOW_COPY_AND_ASSIGN(ForwardingFilter);
-};
-
-// This class is a variation on URLRequestTestJob that will call
-// URLRequest::WillStartUsingNetwork before starting.
-class URLRequestTestDelayedNetworkJob : public net::URLRequestTestJob {
- public:
-  URLRequestTestDelayedNetworkJob(net::URLRequest* request,
-                                  net::NetworkDelegate* network_delegate)
-      : net::URLRequestTestJob(request, network_delegate) {}
-
-  // Only start if not deferred for network start.
-  void Start() override {
-    bool defer = false;
-    NotifyBeforeNetworkStart(&defer);
-    if (defer)
-      return;
-    net::URLRequestTestJob::Start();
-  }
-
-  void ResumeNetworkStart() override { net::URLRequestTestJob::StartAsync(); }
-
- private:
-  ~URLRequestTestDelayedNetworkJob() override {}
-
-  DISALLOW_COPY_AND_ASSIGN(URLRequestTestDelayedNetworkJob);
 };
 
 // This class is a variation on URLRequestTestJob in that it does
@@ -439,6 +445,27 @@ class URLRequestTestDelayedCompletionJob : public net::URLRequestTestJob {
   bool NextReadAsync() override { return true; }
 };
 
+// This class is a variation on URLRequestTestJob that ensures that no read is
+// asked of this job.
+class URLRequestMustNotReadTestJob : public net::URLRequestTestJob {
+ public:
+  URLRequestMustNotReadTestJob(net::URLRequest* request,
+                               net::NetworkDelegate* network_delegate,
+                               const std::string& response_headers,
+                               const std::string& response_data)
+      : net::URLRequestTestJob(request,
+                               network_delegate,
+                               response_headers,
+                               response_data,
+                               false) {}
+
+  int ReadRawData(net::IOBuffer* buf, int buf_size) override {
+    EXPECT_TRUE(false) << "The job should have been cancelled before trying to "
+                          "read the response body.";
+    return 0;
+  }
+};
+
 class URLRequestBigJob : public net::URLRequestSimpleJob {
  public:
   URLRequestBigJob(net::URLRequest* request,
@@ -493,18 +520,13 @@ class URLRequestLoadInfoJob : public net::URLRequestJob {
  public:
   URLRequestLoadInfoJob(net::URLRequest* request,
                         net::NetworkDelegate* network_delegate,
-                        const net::LoadState& load_state,
-                        const net::UploadProgress& upload_progress)
+                        const net::LoadState& load_state)
       : net::URLRequestJob(request, network_delegate),
-        load_state_(load_state),
-        upload_progress_(upload_progress) {}
+        load_state_(load_state) {}
 
   // net::URLRequestJob implementation:
   void Start() override {}
   net::LoadState GetLoadState() const override { return load_state_; }
-  net::UploadProgress GetUploadProgress() const override {
-    return upload_progress_;
-  }
 
  private:
   ~URLRequestLoadInfoJob() override {}
@@ -522,7 +544,6 @@ class URLRequestLoadInfoJob : public net::URLRequestJob {
   }
 
   const net::LoadState load_state_;
-  const net::UploadProgress upload_progress_;
 };
 
 class ResourceDispatcherHostTest;
@@ -534,9 +555,8 @@ class TestURLRequestJobFactory : public net::URLRequestJobFactory {
         hang_after_start_(false),
         delay_start_(false),
         delay_complete_(false),
-        network_start_notification_(false),
-        url_request_jobs_created_count_(0) {
-  }
+        must_not_read_(false),
+        url_request_jobs_created_count_(0) {}
 
   void HandleScheme(const std::string& scheme) {
     supported_schemes_.insert(scheme);
@@ -559,8 +579,8 @@ class TestURLRequestJobFactory : public net::URLRequestJobFactory {
     delay_complete_ = delay_job_complete;
   }
 
-  void SetNetworkStartNotificationJobGeneration(bool notification) {
-    network_start_notification_ = notification;
+  void SetMustNotReadJobGeneration(bool must_not_read) {
+    must_not_read_ = must_not_read;
   }
 
   net::URLRequestJob* MaybeCreateJobWithProtocolHandler(
@@ -594,7 +614,7 @@ class TestURLRequestJobFactory : public net::URLRequestJobFactory {
   bool hang_after_start_;
   bool delay_start_;
   bool delay_complete_;
-  bool network_start_notification_;
+  bool must_not_read_;
   mutable int url_request_jobs_created_count_;
   std::set<std::string> supported_schemes_;
 
@@ -614,22 +634,13 @@ class TestUserData : public base::SupportsUserData::Data {
   bool* was_deleted_;
 };
 
-class TransfersAllNavigationsContentBrowserClient
-    : public TestContentBrowserClient {
- public:
-  bool ShouldSwapProcessesForRedirect(ResourceContext* resource_context,
-                                      const GURL& current_url,
-                                      const GURL& new_url) override {
-    return true;
-  }
-};
-
 enum GenericResourceThrottleFlags {
-  NONE                      = 0,
-  DEFER_STARTING_REQUEST    = 1 << 0,
-  DEFER_PROCESSING_RESPONSE = 1 << 1,
-  CANCEL_BEFORE_START       = 1 << 2,
-  DEFER_NETWORK_START       = 1 << 3
+  NONE                       = 0,
+  DEFER_STARTING_REQUEST     = 1 << 0,
+  DEFER_PROCESSING_RESPONSE  = 1 << 1,
+  CANCEL_BEFORE_START        = 1 << 2,
+  CANCEL_PROCESSING_RESPONSE = 1 << 3,
+  MUST_NOT_CACHE_BODY        = 1 << 4,
 };
 
 // Throttle that tracks the current throttle blocking a request.  Only one
@@ -661,9 +672,9 @@ class GenericResourceThrottle : public ResourceThrottle {
 
     if (flags_ & CANCEL_BEFORE_START) {
       if (error_code_for_cancellation_ == USE_DEFAULT_CANCEL_ERROR_CODE) {
-        controller()->Cancel();
+        Cancel();
       } else {
-        controller()->CancelWithError(error_code_for_cancellation_);
+        CancelWithError(error_code_for_cancellation_);
       }
     }
   }
@@ -674,14 +685,13 @@ class GenericResourceThrottle : public ResourceThrottle {
       active_throttle_ = this;
       *defer = true;
     }
-  }
 
-  void WillStartUsingNetwork(bool* defer) override {
-    ASSERT_EQ(NULL, active_throttle_);
-
-    if (flags_ & DEFER_NETWORK_START) {
-      active_throttle_ = this;
-      *defer = true;
+    if (flags_ & CANCEL_PROCESSING_RESPONSE) {
+      if (error_code_for_cancellation_ == USE_DEFAULT_CANCEL_ERROR_CODE) {
+        Cancel();
+      } else {
+        CancelWithError(error_code_for_cancellation_);
+      }
     }
   }
 
@@ -689,14 +699,18 @@ class GenericResourceThrottle : public ResourceThrottle {
     return "GenericResourceThrottle";
   }
 
-  void Resume() {
+  void AssertAndResume() {
     ASSERT_TRUE(this == active_throttle_);
     active_throttle_ = NULL;
-    controller()->Resume();
+    ResourceThrottle::Resume();
   }
 
   static GenericResourceThrottle* active_throttle() {
     return active_throttle_;
+  }
+
+  bool MustProcessResponseBeforeReadingBody() override {
+    return flags_ & MUST_NOT_CACHE_BODY;
   }
 
  private:
@@ -760,13 +774,13 @@ class TestResourceDispatcherHostDelegate
   bool create_two_throttles_;
   int flags_;
   int error_code_for_cancellation_;
-  scoped_ptr<base::SupportsUserData::Data> user_data_;
+  std::unique_ptr<base::SupportsUserData::Data> user_data_;
 };
 
 // Waits for a ShareableFileReference to be released.
 class ShareableFileReleaseWaiter {
  public:
-  ShareableFileReleaseWaiter(const base::FilePath& path) {
+  explicit ShareableFileReleaseWaiter(const base::FilePath& path) {
     scoped_refptr<ShareableFileReference> file =
         ShareableFileReference::Get(path);
     file->AddFinalReleaseCallback(
@@ -792,13 +806,12 @@ class ShareableFileReleaseWaiter {
 // ResourceDispatcherHostImpl.
 class TestWebContentsObserver : public WebContentsObserver {
  public:
-  TestWebContentsObserver(WebContents* web_contents)
+  explicit TestWebContentsObserver(WebContents* web_contents)
       : WebContentsObserver(web_contents),
         resource_request_redirect_count_(0),
         resource_response_start_count_(0) {}
 
   void DidGetRedirectForResourceRequest(
-      RenderFrameHost* render_frame_host,
       const ResourceRedirectDetails& details) override {
     ++resource_request_redirect_count_;
   }
@@ -819,25 +832,39 @@ class TestWebContentsObserver : public WebContentsObserver {
   int resource_response_start_count_;
 };
 
-// Information used to create resource requests that use URLRequestLoadInfoJobs.
-// The child_id is just that of ResourceDispatcherHostTest::filter_.
-struct LoadInfoTestRequestInfo {
-  int route_id;
-  GURL url;
-  net::LoadState load_state;
-  net::UploadProgress upload_progress;
+enum class TestConfig {
+  kDefault,
+  kOptimizeIPCForSmallResourceEnabled,
 };
 
-class ResourceDispatcherHostTest : public testing::Test,
+void CheckRequestCompleteErrorCode(const IPC::Message& message,
+                                   int expected_error_code) {
+  // Verify the expected error code was received.
+  int request_id;
+  int error_code;
+
+  ASSERT_EQ(ResourceMsg_RequestComplete::ID, message.type());
+
+  base::PickleIterator iter(message);
+  ASSERT_TRUE(IPC::ReadParam(&message, &iter, &request_id));
+  ASSERT_TRUE(IPC::ReadParam(&message, &iter, &error_code));
+  ASSERT_EQ(expected_error_code, error_code);
+}
+
+class ResourceDispatcherHostTest : public testing::TestWithParam<TestConfig>,
                                    public IPC::Sender {
  public:
   typedef ResourceDispatcherHostImpl::LoadInfo LoadInfo;
+  typedef ResourceDispatcherHostImpl::LoadInfoList LoadInfoList;
   typedef ResourceDispatcherHostImpl::LoadInfoMap LoadInfoMap;
 
   ResourceDispatcherHostTest()
       : thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
-        old_factory_(NULL),
-        send_data_received_acks_(false) {
+        host_(base::Bind(&DownloadResourceHandler::Create)),
+        use_test_ssl_certificate_(false),
+        send_data_received_acks_(false),
+        auto_advance_(false) {
+    host_.SetLoaderDelegate(&loader_delegate_);
     browser_context_.reset(new TestBrowserContext());
     BrowserContext::EnsureResourceContextInitialized(browser_context_.get());
     base::RunLoop().RunUntilIdle();
@@ -848,6 +875,10 @@ class ResourceDispatcherHostTest : public testing::Test,
     job_factory_.reset(new TestURLRequestJobFactory(this));
     request_context->set_job_factory(job_factory_.get());
     request_context->set_network_delegate(&network_delegate_);
+  }
+
+  ~ResourceDispatcherHostTest() override {
+    filter_->OnChannelClosing();
   }
 
   // IPC::Sender implementation
@@ -869,19 +900,6 @@ class ResourceDispatcherHostTest : public testing::Test,
     return true;
   }
 
-  scoped_ptr<LoadInfoMap> RunLoadInfoTest(LoadInfoTestRequestInfo* request_info,
-                                          size_t num_requests) {
-    for (size_t i = 0; i < num_requests; ++i) {
-      loader_test_request_info_.reset(
-          new LoadInfoTestRequestInfo(request_info[i]));
-      wait_for_request_create_loop_.reset(new base::RunLoop());
-      MakeTestRequest(request_info[i].route_id, i + 1, request_info[i].url);
-      wait_for_request_create_loop_->Run();
-      wait_for_request_create_loop_.reset();
-    }
-    return ResourceDispatcherHostImpl::Get()->GetLoadInfoForAllRoutes();
-  }
-
  protected:
   friend class TestURLRequestJobFactory;
 
@@ -899,9 +917,22 @@ class ResourceDispatcherHostTest : public testing::Test,
         browser_context_->GetResourceContext(),
         web_contents_->GetRenderProcessHost()->GetID());
     child_ids_.insert(web_contents_->GetRenderProcessHost()->GetID());
+
+    switch (GetParam()) {
+      case TestConfig::kDefault:
+        break;
+      case TestConfig::kOptimizeIPCForSmallResourceEnabled: {
+        scoped_feature_list_.InitAndEnableFeature(
+            features::kOptimizeLoadingIPCForSmallResources);
+        ASSERT_TRUE(base::FeatureList::IsEnabled(
+            features::kOptimizeLoadingIPCForSmallResources));
+        break;
+      }
+    }
   }
 
   void TearDown() override {
+    web_contents_filter_->OnChannelClosing();
     web_contents_observer_.reset();
     web_contents_.reset();
 
@@ -941,6 +972,12 @@ class ResourceDispatcherHostTest : public testing::Test,
                        int request_id,
                        const GURL& url);
 
+  void MakeTestRequestWithRenderFrame(int render_view_id,
+                                      int render_frame_id,
+                                      int request_id,
+                                      const GURL& url,
+                                      ResourceType type);
+
   // Generates a request using the given filter and resource type.
   void MakeTestRequestWithResourceType(ResourceMessageFilter* filter,
                                        int render_view_id,
@@ -958,14 +995,17 @@ class ResourceDispatcherHostTest : public testing::Test,
                                    int request_id,
                                    net::RequestPriority priority);
 
+  void MakeTestRequestWithPriorityAndRenderFrame(int render_view_id,
+                                                 int render_frame_id,
+                                                 int request_id,
+                                                 net::RequestPriority priority);
+
   void MakeWebContentsAssociatedDownloadRequest(int request_id,
                                                 const GURL& url);
 
   void CancelRequest(int request_id);
   void RendererCancelRequest(int request_id) {
-    ResourceMessageFilter* old_filter = SetFilter(filter_.get());
-    host_.OnCancelRequest(request_id);
-    SetFilter(old_filter);
+    filter_->OnMessageReceived(ResourceHostMsg_CancelRequest(request_id));
   }
 
   void CompleteStartRequest(int request_id);
@@ -991,6 +1031,11 @@ class ResourceDispatcherHostTest : public testing::Test,
     SetResponse(headers, std::string());
   }
 
+  // If called, requests called from now on will be created as
+  // TestHTTPSURLRequestJobs: that is, a test certificate will be set on
+  // the |ssl_info| field of the response.
+  void SetTestSSLCertificate() { use_test_ssl_certificate_ = true; }
+
   void SendDataReceivedACKs(bool send_acks) {
     send_data_received_acks_ = send_acks;
   }
@@ -1007,20 +1052,14 @@ class ResourceDispatcherHostTest : public testing::Test,
     int request_id = -1;
     bool result = base::PickleIterator(msg).ReadInt(&request_id);
     DCHECK(result);
-    scoped_ptr<IPC::Message> ack(
+    std::unique_ptr<IPC::Message> ack(
         new ResourceHostMsg_DataReceived_ACK(request_id));
 
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&GenerateIPCMessage, filter_, base::Passed(&ack)));
-  }
-
-  // Setting filters for testing renderer messages.
-  // Returns the previous filter.
-  ResourceMessageFilter* SetFilter(ResourceMessageFilter* new_filter) {
-    ResourceMessageFilter* old_filter = host_.filter_;
-    host_.filter_ = new_filter;
-    return old_filter;
+        base::Bind(&GenerateIPCMessage, scoped_refptr<ResourceRequesterInfo>(
+                                            filter_->requester_info_for_test()),
+                   base::Passed(&ack)));
   }
 
   void WaitForRequestComplete() {
@@ -1030,27 +1069,90 @@ class ResourceDispatcherHostTest : public testing::Test,
     wait_for_request_complete_loop_.reset();
   }
 
-  scoped_ptr<LoadInfoTestRequestInfo> loader_test_request_info_;
-  scoped_ptr<base::RunLoop> wait_for_request_create_loop_;
+  void DeleteRenderFrame(const GlobalFrameRoutingId& global_routing_id) {
+    host_.OnRenderFrameDeleted(global_routing_id);
+  }
+
+  // Creates and drives a main resource request until completion. Then asserts
+  // that the expected_error_code has been emitted for the request.
+  void CompleteFailingMainResourceRequest(const GURL& url,
+                                          int expected_error_code) {
+    if (IsBrowserSideNavigationEnabled()) {
+      auto_advance_ = true;
+
+      // Make a navigation request.
+      TestNavigationURLLoaderDelegate delegate;
+      BeginNavigationParams begin_params(std::string(), net::LOAD_NORMAL, false,
+                                         REQUEST_CONTEXT_TYPE_LOCATION);
+      CommonNavigationParams common_params;
+      common_params.url = url;
+      std::unique_ptr<NavigationRequestInfo> request_info(
+          new NavigationRequestInfo(common_params, begin_params, url,
+                                    url::Origin(url), true, false, false, -1,
+                                    false, false));
+      std::unique_ptr<NavigationURLLoader> test_loader =
+          NavigationURLLoader::Create(browser_context_.get(),
+                                      std::move(request_info), nullptr, nullptr,
+                                      nullptr, &delegate);
+
+      // The navigation should fail with the expected error code.
+      delegate.WaitForRequestFailed();
+      ASSERT_EQ(expected_error_code, delegate.net_error());
+      return;
+    }
+
+    MakeTestRequestWithResourceType(filter_.get(), 0, 1, url,
+                                    RESOURCE_TYPE_MAIN_FRAME);
+
+    // Flush all pending requests.
+    while (net::URLRequestTestJob::ProcessOnePendingMessage()) {
+    }
+    base::RunLoop().RunUntilIdle();
+
+    // Sorts out all the messages we saw by request.
+    ResourceIPCAccumulator::ClassifiedMessages msgs;
+    accum_.GetClassifiedMessages(&msgs);
+
+    // We should have gotten one RequestComplete message.
+    ASSERT_EQ(1U, msgs.size());
+    ASSERT_EQ(1U, msgs[0].size());
+    EXPECT_EQ(ResourceMsg_RequestComplete::ID, msgs[0][0].type());
+
+    // The RequestComplete message should have had the expected error code.
+    CheckRequestCompleteErrorCode(msgs[0][0], expected_error_code);
+  }
+
+  void OnMessageReceived(const IPC::Message& message,
+                         ResourceMessageFilter* filter) {
+    host_.OnMessageReceived(message, filter->requester_info_for_test());
+  }
+
+  ResourceRequesterInfo* GetResourceRequesterInfo(
+      ResourceMessageFilter* filter) {
+    return filter->requester_info_for_test();
+  }
 
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestBrowserContext> browser_context_;
-  scoped_ptr<TestURLRequestJobFactory> job_factory_;
-  scoped_ptr<WebContents> web_contents_;
-  scoped_ptr<TestWebContentsObserver> web_contents_observer_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<TestURLRequestJobFactory> job_factory_;
+  std::unique_ptr<WebContents> web_contents_;
+  std::unique_ptr<TestWebContentsObserver> web_contents_observer_;
   scoped_refptr<ForwardingFilter> filter_;
   scoped_refptr<TestFilterSpecifyingChild> web_contents_filter_;
   net::TestNetworkDelegate network_delegate_;
+  LoaderDelegateImpl loader_delegate_;
   ResourceDispatcherHostImpl host_;
   ResourceIPCAccumulator accum_;
   std::string response_headers_;
   std::string response_data_;
+  bool use_test_ssl_certificate_;
   std::string scheme_;
-  net::URLRequest::ProtocolFactory* old_factory_;
   bool send_data_received_acks_;
   std::set<int> child_ids_;
-  scoped_ptr<base::RunLoop> wait_for_request_complete_loop_;
+  std::unique_ptr<base::RunLoop> wait_for_request_complete_loop_;
   RenderViewHostTestEnabler render_view_host_test_enabler_;
+  bool auto_advance_;
+  base::test::ScopedFeatureList scoped_feature_list_;
 };
 
 void ResourceDispatcherHostTest::MakeTestRequest(int render_view_id,
@@ -1060,16 +1162,28 @@ void ResourceDispatcherHostTest::MakeTestRequest(int render_view_id,
                                   url, RESOURCE_TYPE_SUB_RESOURCE);
 }
 
+void ResourceDispatcherHostTest::MakeTestRequestWithRenderFrame(
+    int render_view_id,
+    int render_frame_id,
+    int request_id,
+    const GURL& url,
+    ResourceType type) {
+  ResourceRequest request = CreateResourceRequest("GET", type, url);
+  request.render_frame_id = render_frame_id;
+  ResourceHostMsg_RequestResource msg(render_view_id, request_id, request);
+  OnMessageReceived(msg, filter_.get());
+  KickOffRequest();
+}
+
 void ResourceDispatcherHostTest::MakeTestRequestWithResourceType(
     ResourceMessageFilter* filter,
     int render_view_id,
     int request_id,
     const GURL& url,
     ResourceType type) {
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", type, url);
+  ResourceRequest request = CreateResourceRequest("GET", type, url);
   ResourceHostMsg_RequestResource msg(render_view_id, request_id, request);
-  host_.OnMessageReceived(msg, filter);
+  OnMessageReceived(msg, filter);
   KickOffRequest();
 }
 
@@ -1084,12 +1198,12 @@ void ResourceDispatcherHostTest::
     MakeWebContentsAssociatedTestRequestWithResourceType(int request_id,
                                                          const GURL& url,
                                                          ResourceType type) {
-  ResourceHostMsg_Request request = CreateResourceRequest("GET", type, url);
+  ResourceRequest request = CreateResourceRequest("GET", type, url);
   request.origin_pid = web_contents_->GetRenderProcessHost()->GetID();
   request.render_frame_id = web_contents_->GetMainFrame()->GetRoutingID();
-  ResourceHostMsg_RequestResource msg(web_contents_->GetRoutingID(), request_id,
-                                      request);
-  host_.OnMessageReceived(msg, web_contents_filter_.get());
+  ResourceHostMsg_RequestResource msg(
+      web_contents_->GetRenderViewHost()->GetRoutingID(), request_id, request);
+  OnMessageReceived(msg, web_contents_filter_.get());
   KickOffRequest();
 }
 
@@ -1097,35 +1211,36 @@ void ResourceDispatcherHostTest::MakeTestRequestWithPriority(
     int render_view_id,
     int request_id,
     net::RequestPriority priority) {
-  ResourceHostMsg_Request request = CreateResourceRequest(
+  MakeTestRequestWithPriorityAndRenderFrame(render_view_id, -1, request_id,
+                                            priority);
+}
+
+void ResourceDispatcherHostTest::MakeTestRequestWithPriorityAndRenderFrame(
+    int render_view_id,
+    int render_frame_id,
+    int request_id,
+    net::RequestPriority priority) {
+  ResourceRequest request = CreateResourceRequest(
       "GET", RESOURCE_TYPE_SUB_RESOURCE, GURL("http://example.com/priority"));
+  request.render_frame_id = render_frame_id;
   request.priority = priority;
   ResourceHostMsg_RequestResource msg(render_view_id, request_id, request);
-  host_.OnMessageReceived(msg, filter_.get());
+  OnMessageReceived(msg, filter_.get());
 }
 
 void ResourceDispatcherHostTest::MakeWebContentsAssociatedDownloadRequest(
     int request_id,
     const GURL& url) {
-  scoped_ptr<DownloadSaveInfo> save_info(new DownloadSaveInfo());
-  save_info->prompt_for_save_location = false;
   net::URLRequestContext* request_context =
       browser_context_->GetResourceContext()->GetRequestContext();
-  scoped_ptr<net::URLRequest> request(
+  std::unique_ptr<net::URLRequest> request(
       request_context->CreateRequest(url, net::DEFAULT_PRIORITY, NULL));
-  host_.BeginDownload(
-      request.Pass(),
-      Referrer(),
+  DownloadManagerImpl::BeginDownloadRequest(
+      std::move(request), Referrer(), browser_context_->GetResourceContext(),
       false,  // is_content_initiated
-      browser_context_->GetResourceContext(),
       web_contents_->GetRenderProcessHost()->GetID(),
-      web_contents_->GetRoutingID(),
-      web_contents_->GetMainFrame()->GetRoutingID(),
-      false,
-      false,
-      save_info.Pass(),
-      DownloadItem::kInvalidId,
-      ResourceDispatcherHostImpl::DownloadStartedCallback());
+      web_contents_->GetRenderViewHost()->GetRoutingID(),
+      web_contents_->GetMainFrame()->GetRoutingID(), false);
 }
 
 void ResourceDispatcherHostTest::CancelRequest(int request_id) {
@@ -1146,18 +1261,20 @@ void ResourceDispatcherHostTest::CompleteStartRequest(
     URLRequestTestDelayedStartJob::CompleteStart(req);
 }
 
-void CheckRequestCompleteErrorCode(const IPC::Message& message,
-                                   int expected_error_code) {
-  // Verify the expected error code was received.
-  int request_id;
-  int error_code;
-
-  ASSERT_EQ(ResourceMsg_RequestComplete::ID, message.type());
-
+testing::AssertionResult ExtractInlinedChunkData(
+    const IPC::Message& message,
+    std::string* leading_chunk_data) {
   base::PickleIterator iter(message);
-  ASSERT_TRUE(IPC::ReadParam(&message, &iter, &request_id));
-  ASSERT_TRUE(IPC::ReadParam(&message, &iter, &error_code));
-  ASSERT_EQ(expected_error_code, error_code);
+  int request_id;
+  if (!IPC::ReadParam(&message, &iter, &request_id))
+    return testing::AssertionFailure() << "Could not read request_id";
+
+  std::vector<char> data;
+  if (!IPC::ReadParam(&message, &iter, &data))
+    return testing::AssertionFailure() << "Could not read data";
+  leading_chunk_data->assign(data.begin(), data.end());
+
+  return testing::AssertionSuccess();
 }
 
 testing::AssertionResult ExtractDataOffsetAndLength(const IPC::Message& message,
@@ -1174,10 +1291,40 @@ testing::AssertionResult ExtractDataOffsetAndLength(const IPC::Message& message,
   return testing::AssertionSuccess();
 }
 
+void CheckSuccessfulRequestWithErrorCodeForInlinedCase(
+    const std::vector<IPC::Message>& messages,
+    const std::string& reference_data,
+    int expected_error) {
+  // A successful request on the inlined case will have received 3 messages:
+  //     ReceivedResponse         (indicates headers received)
+  //     InlinedDataChunkReceived (contains the content)
+  //     RequestComplete          (request is done)
+
+  ASSERT_EQ(3U, messages.size());
+
+  // The first messages should be received response
+  ASSERT_EQ(ResourceMsg_ReceivedResponse::ID, messages[0].type());
+  ASSERT_EQ(ResourceMsg_InlinedDataChunkReceived::ID, messages[1].type());
+
+  std::string leading_chunk_data;
+  ASSERT_TRUE(ExtractInlinedChunkData(messages[1], &leading_chunk_data));
+  ASSERT_EQ(reference_data, leading_chunk_data);
+  CheckRequestCompleteErrorCode(messages[2], expected_error);
+}
+
 void CheckSuccessfulRequestWithErrorCode(
     const std::vector<IPC::Message>& messages,
     const std::string& reference_data,
     int expected_error) {
+  ASSERT_LT(2U, messages.size());
+  if (base::FeatureList::IsEnabled(
+          features::kOptimizeLoadingIPCForSmallResources) &&
+      messages[1].type() == ResourceMsg_InlinedDataChunkReceived::ID) {
+    CheckSuccessfulRequestWithErrorCodeForInlinedCase(
+        messages, reference_data, expected_error);
+    return;
+  }
+
   // A successful request will have received 4 messages:
   //     ReceivedResponse    (indicates headers received)
   //     SetDataBuffer       (contains shared memory handle)
@@ -1253,7 +1400,7 @@ void CheckFailedRequest(const std::vector<IPC::Message>& messages,
 }
 
 // Tests whether many messages get dispatched properly.
-TEST_F(ResourceDispatcherHostTest, TestMany) {
+TEST_P(ResourceDispatcherHostTest, TestMany) {
   MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_1());
   MakeTestRequest(0, 2, net::URLRequestTestJob::test_url_2());
   MakeTestRequest(0, 3, net::URLRequestTestJob::test_url_3());
@@ -1264,8 +1411,8 @@ TEST_F(ResourceDispatcherHostTest, TestMany) {
 
   // Finish the redirection
   ResourceHostMsg_FollowRedirect redirect_msg(5);
-  host_.OnMessageReceived(redirect_msg, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(redirect_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   // flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
@@ -1286,7 +1433,7 @@ TEST_F(ResourceDispatcherHostTest, TestMany) {
 
 // Tests whether messages get canceled properly. We issue four requests,
 // cancel two of them, and make sure that each sent the proper notifications.
-TEST_F(ResourceDispatcherHostTest, Cancel) {
+TEST_P(ResourceDispatcherHostTest, Cancel) {
   MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_1());
   MakeTestRequest(0, 2, net::URLRequestTestJob::test_url_2());
   MakeTestRequest(0, 3, net::URLRequestTestJob::test_url_3());
@@ -1309,7 +1456,7 @@ TEST_F(ResourceDispatcherHostTest, Cancel) {
 
   // flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Everything should be out now.
   EXPECT_EQ(0, host_.pending_requests());
@@ -1339,9 +1486,55 @@ TEST_F(ResourceDispatcherHostTest, Cancel) {
   EXPECT_EQ(0, network_delegate()->error_count());
 }
 
+TEST_P(ResourceDispatcherHostTest, DownloadToNetworkCache) {
+  // Normal request.
+  MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_2());
+
+  // Cache-only request.
+  ResourceRequest request_to_cache = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_IMAGE, net::URLRequestTestJob::test_url_3());
+  request_to_cache.download_to_network_cache_only = true;
+  ResourceHostMsg_RequestResource msg_to_cache(0, 2, request_to_cache);
+  OnMessageReceived(msg_to_cache, filter_.get());
+
+  KickOffRequest();
+
+  // The handler for the cache-only request should have been detached now.
+  GlobalRequestID global_request_id(filter_->child_id(), 2);
+  ResourceRequestInfoImpl* info = ResourceRequestInfoImpl::ForRequest(
+      host_.GetURLRequest(global_request_id));
+  ASSERT_TRUE(info->detachable_handler()->is_detached());
+
+  // Flush all the pending requests.
+  while (net::URLRequestTestJob::ProcessOnePendingMessage()) {
+  }
+  base::RunLoop().RunUntilIdle();
+
+  // Everything should be out now.
+  EXPECT_EQ(0, host_.pending_requests());
+
+  ResourceIPCAccumulator::ClassifiedMessages msgs;
+  accum_.GetClassifiedMessages(&msgs);
+
+  // There are two requests, so we should have gotten them classified as such.
+  ASSERT_EQ(2U, msgs.size());
+
+  // The normal request succeeded.
+  CheckSuccessfulRequest(msgs[0], net::URLRequestTestJob::test_data_2());
+
+  // The cache-only request got canceled, as far as the renderer is concerned.
+  ASSERT_EQ(1U, msgs[1].size());
+  CheckRequestCompleteErrorCode(msgs[1][0], net::ERR_ABORTED);
+
+  // However, all requests should have actually gone to completion.
+  EXPECT_EQ(2, network_delegate()->completed_requests());
+  EXPECT_EQ(0, network_delegate()->canceled_requests());
+  EXPECT_EQ(0, network_delegate()->error_count());
+}
+
 // Shows that detachable requests will timeout if the request takes too long to
 // complete.
-TEST_F(ResourceDispatcherHostTest, DetachedResourceTimesOut) {
+TEST_P(ResourceDispatcherHostTest, DetachedResourceTimesOut) {
   MakeTestRequestWithResourceType(filter_.get(), 0, 1,
                                   net::URLRequestTestJob::test_url_2(),
                                   RESOURCE_TYPE_PREFETCH);  // detachable type
@@ -1351,7 +1544,7 @@ TEST_F(ResourceDispatcherHostTest, DetachedResourceTimesOut) {
   ASSERT_TRUE(info->detachable_handler());
   info->detachable_handler()->set_cancel_delay(
       base::TimeDelta::FromMilliseconds(200));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   RendererCancelRequest(1);
 
@@ -1372,7 +1565,7 @@ TEST_F(ResourceDispatcherHostTest, DetachedResourceTimesOut) {
   base::OneShotTimer timer;
   timer.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(210),
               base::MessageLoop::current(), &base::MessageLoop::QuitWhenIdle);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // The prefetch should be cancelled by now.
   EXPECT_EQ(0, host_.pending_requests());
@@ -1381,19 +1574,73 @@ TEST_F(ResourceDispatcherHostTest, DetachedResourceTimesOut) {
   EXPECT_EQ(0, network_delegate()->error_count());
 }
 
+TEST_P(ResourceDispatcherHostTest, SyncLoadSuccess) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_1());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  // Successful sync load.
+  std::tuple<SyncLoadResult> result;
+  ResourceHostMsg_SyncLoad sync_load_msg(0, 1, request, &std::get<0>(result));
+  OnMessageReceived(sync_load_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
+
+  const IPC::Message* reply = accum_.GetReply(sync_load_msg);
+  ASSERT_TRUE(reply);
+
+  ASSERT_TRUE(ResourceHostMsg_SyncLoad::ReadReplyParam(reply, &result));
+  EXPECT_EQ(net::OK, std::get<0>(result).error_code);
+}
+
+TEST_P(ResourceDispatcherHostTest, SyncLoadError) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_error());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  // Failued sync load.
+  std::tuple<SyncLoadResult> result;
+  ResourceHostMsg_SyncLoad sync_load_msg(0, 1, request, &std::get<0>(result));
+  OnMessageReceived(sync_load_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
+
+  const IPC::Message* reply = accum_.GetReply(sync_load_msg);
+  ASSERT_TRUE(reply);
+
+  ASSERT_TRUE(ResourceHostMsg_SyncLoad::ReadReplyParam(reply, &result));
+  EXPECT_EQ(net::ERR_INVALID_URL, std::get<0>(result).error_code);
+}
+
+TEST_P(ResourceDispatcherHostTest, SyncLoadCancel) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_1());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  // Cancelled sync load.
+  SyncLoadResult result;
+  ResourceHostMsg_SyncLoad sync_load_msg(0, 1, request, &result);
+
+  OnMessageReceived(sync_load_msg, filter_.get());
+  host_.CancelRequestsForProcess(filter_->child_id());
+  base::RunLoop().RunUntilIdle();
+
+  const IPC::Message* reply = accum_.GetReply(sync_load_msg);
+  ASSERT_TRUE(reply);
+  ASSERT_TRUE(reply->is_reply_error());
+}
+
 // If the filter has disappeared then detachable resources should continue to
 // load.
-TEST_F(ResourceDispatcherHostTest, DeletedFilterDetached) {
+TEST_P(ResourceDispatcherHostTest, DeletedFilterDetached) {
   // test_url_1's data is available synchronously, so use 2 and 3.
-  ResourceHostMsg_Request request_prefetch = CreateResourceRequest(
+  ResourceRequest request_prefetch = CreateResourceRequest(
       "GET", RESOURCE_TYPE_PREFETCH, net::URLRequestTestJob::test_url_2());
-  ResourceHostMsg_Request request_ping = CreateResourceRequest(
+  ResourceRequest request_ping = CreateResourceRequest(
       "GET", RESOURCE_TYPE_PING, net::URLRequestTestJob::test_url_3());
 
   ResourceHostMsg_RequestResource msg_prefetch(0, 1, request_prefetch);
-  host_.OnMessageReceived(msg_prefetch, filter_.get());
+  OnMessageReceived(msg_prefetch, filter_.get());
   ResourceHostMsg_RequestResource msg_ping(0, 2, request_ping);
-  host_.OnMessageReceived(msg_ping, filter_.get());
+  OnMessageReceived(msg_ping, filter_.get());
 
   // Remove the filter before processing the requests by simulating channel
   // closure.
@@ -1401,11 +1648,9 @@ TEST_F(ResourceDispatcherHostTest, DeletedFilterDetached) {
       host_.GetURLRequest(GlobalRequestID(filter_->child_id(), 1)));
   ResourceRequestInfoImpl* info_ping = ResourceRequestInfoImpl::ForRequest(
       host_.GetURLRequest(GlobalRequestID(filter_->child_id(), 2)));
-  DCHECK_EQ(filter_.get(), info_prefetch->filter());
-  DCHECK_EQ(filter_.get(), info_ping->filter());
+  DCHECK_EQ(filter_.get(), info_prefetch->requester_info()->filter());
+  DCHECK_EQ(filter_.get(), info_ping->requester_info()->filter());
   filter_->OnChannelClosing();
-  info_prefetch->filter_.reset();
-  info_ping->filter_.reset();
 
   // From the renderer's perspective, the requests were cancelled.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -1425,7 +1670,7 @@ TEST_F(ResourceDispatcherHostTest, DeletedFilterDetached) {
   EXPECT_EQ(2, host_.pending_requests());
 
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(0, host_.pending_requests());
   EXPECT_EQ(2, network_delegate()->completed_requests());
@@ -1435,21 +1680,20 @@ TEST_F(ResourceDispatcherHostTest, DeletedFilterDetached) {
 
 // If the filter has disappeared (original process dies) then detachable
 // resources should continue to load, even when redirected.
-TEST_F(ResourceDispatcherHostTest, DeletedFilterDetachedRedirect) {
-  ResourceHostMsg_Request request = CreateResourceRequest(
+TEST_P(ResourceDispatcherHostTest, DeletedFilterDetachedRedirect) {
+  ResourceRequest request = CreateResourceRequest(
       "GET", RESOURCE_TYPE_PREFETCH,
       net::URLRequestTestJob::test_url_redirect_to_url_2());
 
   ResourceHostMsg_RequestResource msg(0, 1, request);
-  host_.OnMessageReceived(msg, filter_.get());
+  OnMessageReceived(msg, filter_.get());
 
   // Remove the filter before processing the request by simulating channel
   // closure.
   GlobalRequestID global_request_id(filter_->child_id(), 1);
   ResourceRequestInfoImpl* info = ResourceRequestInfoImpl::ForRequest(
       host_.GetURLRequest(global_request_id));
-  info->filter_->OnChannelClosing();
-  info->filter_.reset();
+  info->requester_info()->filter()->OnChannelClosing();
 
   // From the renderer's perspective, the request was cancelled.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -1474,7 +1718,7 @@ TEST_F(ResourceDispatcherHostTest, DeletedFilterDetachedRedirect) {
 
   // Finish up the request.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(0, host_.pending_requests());
   EXPECT_EQ(1, network_delegate()->completed_requests());
@@ -1482,7 +1726,7 @@ TEST_F(ResourceDispatcherHostTest, DeletedFilterDetachedRedirect) {
   EXPECT_EQ(0, network_delegate()->error_count());
 }
 
-TEST_F(ResourceDispatcherHostTest, CancelWhileStartIsDeferred) {
+TEST_P(ResourceDispatcherHostTest, CancelWhileStartIsDeferred) {
   bool was_deleted = false;
 
   // Arrange to have requests deferred before starting.
@@ -1501,12 +1745,12 @@ TEST_F(ResourceDispatcherHostTest, CancelWhileStartIsDeferred) {
   // calling CancelRequest.
   EXPECT_FALSE(was_deleted);
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_TRUE(was_deleted);
 }
 
-TEST_F(ResourceDispatcherHostTest, DetachWhileStartIsDeferred) {
+TEST_P(ResourceDispatcherHostTest, DetachWhileStartIsDeferred) {
   bool was_deleted = false;
 
   // Arrange to have requests deferred before starting.
@@ -1528,18 +1772,18 @@ TEST_F(ResourceDispatcherHostTest, DetachWhileStartIsDeferred) {
   // However, it is still throttled because the defer happened above the
   // DetachableResourceHandler.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_FALSE(was_deleted);
 
   // Resume the request.
   GenericResourceThrottle* throttle =
       GenericResourceThrottle::active_throttle();
   ASSERT_TRUE(throttle);
-  throttle->Resume();
+  throttle->AssertAndResume();
 
   // Now, the request completes.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(was_deleted);
   EXPECT_EQ(1, network_delegate()->completed_requests());
   EXPECT_EQ(0, network_delegate()->canceled_requests());
@@ -1548,7 +1792,7 @@ TEST_F(ResourceDispatcherHostTest, DetachWhileStartIsDeferred) {
 
 // Tests if cancel is called in ResourceThrottle::WillStartRequest, then the
 // URLRequest will not be started.
-TEST_F(ResourceDispatcherHostTest, CancelInResourceThrottleWillStartRequest) {
+TEST_P(ResourceDispatcherHostTest, CancelInResourceThrottleWillStartRequest) {
   TestResourceDispatcherHostDelegate delegate;
   delegate.set_flags(CANCEL_BEFORE_START);
   host_.SetDelegate(&delegate);
@@ -1557,7 +1801,7 @@ TEST_F(ResourceDispatcherHostTest, CancelInResourceThrottleWillStartRequest) {
 
   // flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ResourceIPCAccumulator::ClassifiedMessages msgs;
   accum_.GetClassifiedMessages(&msgs);
@@ -1570,7 +1814,7 @@ TEST_F(ResourceDispatcherHostTest, CancelInResourceThrottleWillStartRequest) {
   EXPECT_EQ(0, job_factory_->url_request_jobs_created_count());
 }
 
-TEST_F(ResourceDispatcherHostTest, PausedStartError) {
+TEST_P(ResourceDispatcherHostTest, PausedStartError) {
   // Arrange to have requests deferred before processing response headers.
   TestResourceDispatcherHostDelegate delegate;
   delegate.set_flags(DEFER_PROCESSING_RESPONSE);
@@ -1582,39 +1826,12 @@ TEST_F(ResourceDispatcherHostTest, PausedStartError) {
 
   // flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(0, host_.pending_requests());
 }
 
-// Test the WillStartUsingNetwork throttle.
-TEST_F(ResourceDispatcherHostTest, ThrottleNetworkStart) {
-  // Arrange to have requests deferred before processing response headers.
-  TestResourceDispatcherHostDelegate delegate;
-  delegate.set_flags(DEFER_NETWORK_START);
-  host_.SetDelegate(&delegate);
-
-  job_factory_->SetNetworkStartNotificationJobGeneration(true);
-  MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_2());
-
-  // Should have deferred for network start.
-  GenericResourceThrottle* first_throttle =
-      GenericResourceThrottle::active_throttle();
-  ASSERT_TRUE(first_throttle);
-  EXPECT_EQ(0, network_delegate()->completed_requests());
-  EXPECT_EQ(1, host_.pending_requests());
-
-  first_throttle->Resume();
-
-  // Flush all the pending requests.
-  while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
-
-  EXPECT_EQ(1, network_delegate()->completed_requests());
-  EXPECT_EQ(0, host_.pending_requests());
-}
-
-TEST_F(ResourceDispatcherHostTest, ThrottleAndResumeTwice) {
+TEST_P(ResourceDispatcherHostTest, ThrottleAndResumeTwice) {
   // Arrange to have requests deferred before starting.
   TestResourceDispatcherHostDelegate delegate;
   delegate.set_flags(DEFER_STARTING_REQUEST);
@@ -1626,17 +1843,17 @@ TEST_F(ResourceDispatcherHostTest, ThrottleAndResumeTwice) {
   GenericResourceThrottle* first_throttle =
       GenericResourceThrottle::active_throttle();
   ASSERT_TRUE(first_throttle);
-  first_throttle->Resume();
+  first_throttle->AssertAndResume();
 
   // Make sure the second throttle blocked the request, and then resume.
   ASSERT_TRUE(GenericResourceThrottle::active_throttle());
   ASSERT_NE(first_throttle, GenericResourceThrottle::active_throttle());
-  GenericResourceThrottle::active_throttle()->Resume();
+  GenericResourceThrottle::active_throttle()->AssertAndResume();
 
   ASSERT_FALSE(GenericResourceThrottle::active_throttle());
 
   // The request is started asynchronously.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Flush all the pending requests.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
@@ -1652,7 +1869,7 @@ TEST_F(ResourceDispatcherHostTest, ThrottleAndResumeTwice) {
 
 
 // Tests that the delegate can cancel a request and provide a error code.
-TEST_F(ResourceDispatcherHostTest, CancelInDelegate) {
+TEST_P(ResourceDispatcherHostTest, CancelInDelegate) {
   TestResourceDispatcherHostDelegate delegate;
   delegate.set_flags(CANCEL_BEFORE_START);
   delegate.set_error_code_for_cancellation(net::ERR_ACCESS_DENIED);
@@ -1663,7 +1880,7 @@ TEST_F(ResourceDispatcherHostTest, CancelInDelegate) {
 
   // flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ResourceIPCAccumulator::ClassifiedMessages msgs;
   accum_.GetClassifiedMessages(&msgs);
@@ -1676,7 +1893,7 @@ TEST_F(ResourceDispatcherHostTest, CancelInDelegate) {
 }
 
 // Tests CancelRequestsForProcess
-TEST_F(ResourceDispatcherHostTest, TestProcessCancel) {
+TEST_P(ResourceDispatcherHostTest, TestProcessCancel) {
   scoped_refptr<TestFilter> test_filter = new TestFilter(
       browser_context_->GetResourceContext());
   child_ids_.insert(test_filter->child_id());
@@ -1702,13 +1919,13 @@ TEST_F(ResourceDispatcherHostTest, TestProcessCancel) {
 
   // Make sure all requests have finished stage one. test_url_1 will have
   // finished.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // TODO(mbelshe):
   // Now that the async IO path is in place, the IO always completes on the
   // initial call; so the requests have already completed.  This basically
   // breaks the whole test.
-  //EXPECT_EQ(3, host_.pending_requests());
+  // EXPECT_EQ(3, host_.pending_requests());
 
   // Process test_url_2 and test_url_3 for one level so one callback is called.
   // We'll cancel test_url_4 (detachable) before processing it to verify that it
@@ -1749,11 +1966,13 @@ TEST_F(ResourceDispatcherHostTest, TestProcessCancel) {
   EXPECT_EQ(4, network_delegate()->completed_requests());
   EXPECT_EQ(0, network_delegate()->canceled_requests());
   EXPECT_EQ(0, network_delegate()->error_count());
+
+  test_filter->OnChannelClosing();
 }
 
 // Tests whether the correct requests get canceled when a RenderViewHost is
 // deleted.
-TEST_F(ResourceDispatcherHostTest, CancelRequestsOnRenderViewHostDeleted) {
+TEST_P(ResourceDispatcherHostTest, CancelRequestsOnRenderFrameDeleted) {
   // Requests all hang once started.  This prevents requests from being
   // destroyed due to completion.
   job_factory_->SetHangAfterStartJobGeneration(true);
@@ -1761,33 +1980,36 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsOnRenderViewHostDeleted) {
 
   TestResourceDispatcherHostDelegate delegate;
   host_.SetDelegate(&delegate);
-  host_.OnRenderViewHostCreated(filter_->child_id(), 0, true, false);
+  host_.OnRenderViewHostCreated(filter_->child_id(), 0);
 
   // One RenderView issues a high priority request and a low priority one. Both
   // should be started.
-  MakeTestRequestWithPriority(0, 1, net::HIGHEST);
-  MakeTestRequestWithPriority(0, 2, net::LOWEST);
+  MakeTestRequestWithPriorityAndRenderFrame(0, 10, 1, net::HIGHEST);
+  MakeTestRequestWithPriorityAndRenderFrame(0, 11, 2, net::LOWEST);
   KickOffRequest();
   EXPECT_EQ(2, network_delegate_.created_requests());
   EXPECT_EQ(0, network_delegate_.canceled_requests());
 
   // The same RenderView issues two more low priority requests. The
   // ResourceScheduler shouldn't let them start immediately.
-  MakeTestRequestWithPriority(0, 3, net::LOWEST);
-  MakeTestRequestWithPriority(0, 4, net::LOWEST);
+  MakeTestRequestWithPriorityAndRenderFrame(0, 10, 3, net::LOWEST);
+  MakeTestRequestWithPriorityAndRenderFrame(0, 11, 4, net::LOWEST);
   KickOffRequest();
   EXPECT_EQ(2, network_delegate_.created_requests());
   EXPECT_EQ(0, network_delegate_.canceled_requests());
 
   // Another RenderView in the same process as the old one issues a request,
   // which is then started.
-  MakeTestRequestWithPriority(1, 5, net::LOWEST);
+  MakeTestRequestWithPriorityAndRenderFrame(1, 12, 5, net::LOWEST);
   KickOffRequest();
   EXPECT_EQ(3, network_delegate_.created_requests());
   EXPECT_EQ(0, network_delegate_.canceled_requests());
 
-  // The first RenderView is destroyed.  All 4 of its requests should be
-  // cancelled, and none of the two deferred requests should be started.
+  // The first two RenderFrameHosts are destroyed.  All 4 of their requests
+  // should be cancelled, and none of the two deferred requests should be
+  // started.
+  DeleteRenderFrame(GlobalFrameRoutingId(filter_->child_id(), 10));
+  DeleteRenderFrame(GlobalFrameRoutingId(filter_->child_id(), 11));
   host_.OnRenderViewHostDeleted(filter_->child_id(), 0);
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(3, network_delegate_.created_requests());
@@ -1800,7 +2022,7 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsOnRenderViewHostDeleted) {
   EXPECT_EQ(0U, msgs.size());
 }
 
-TEST_F(ResourceDispatcherHostTest, TestProcessCancelDetachedTimesOut) {
+TEST_P(ResourceDispatcherHostTest, TestProcessCancelDetachedTimesOut) {
   MakeTestRequestWithResourceType(filter_.get(), 0, 1,
                                   net::URLRequestTestJob::test_url_4(),
                                   RESOURCE_TYPE_PREFETCH);  // detachable type
@@ -1810,7 +2032,7 @@ TEST_F(ResourceDispatcherHostTest, TestProcessCancelDetachedTimesOut) {
   ASSERT_TRUE(info->detachable_handler());
   info->detachable_handler()->set_cancel_delay(
       base::TimeDelta::FromMilliseconds(200));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Cancel the requests to the test process.
   host_.CancelRequestsForProcess(filter_->child_id());
@@ -1821,14 +2043,14 @@ TEST_F(ResourceDispatcherHostTest, TestProcessCancelDetachedTimesOut) {
   base::OneShotTimer timer;
   timer.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(210),
               base::MessageLoop::current(), &base::MessageLoop::QuitWhenIdle);
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 
   // The prefetch should be cancelled by now.
   EXPECT_EQ(0, host_.pending_requests());
 
   // In case any messages are still to be processed.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   ResourceIPCAccumulator::ClassifiedMessages msgs;
   accum_.GetClassifiedMessages(&msgs);
@@ -1846,17 +2068,23 @@ TEST_F(ResourceDispatcherHostTest, TestProcessCancelDetachedTimesOut) {
 }
 
 // Tests blocking and resuming requests.
-TEST_F(ResourceDispatcherHostTest, TestBlockingResumingRequests) {
-  host_.BlockRequestsForRoute(filter_->child_id(), 1);
-  host_.BlockRequestsForRoute(filter_->child_id(), 2);
-  host_.BlockRequestsForRoute(filter_->child_id(), 3);
+TEST_P(ResourceDispatcherHostTest, TestBlockingResumingRequests) {
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 11));
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 12));
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 13));
 
-  MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_1());
-  MakeTestRequest(1, 2, net::URLRequestTestJob::test_url_2());
-  MakeTestRequest(0, 3, net::URLRequestTestJob::test_url_3());
-  MakeTestRequest(1, 4, net::URLRequestTestJob::test_url_1());
-  MakeTestRequest(2, 5, net::URLRequestTestJob::test_url_2());
-  MakeTestRequest(3, 6, net::URLRequestTestJob::test_url_3());
+  MakeTestRequestWithRenderFrame(0, 10, 1, net::URLRequestTestJob::test_url_1(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(1, 11, 2, net::URLRequestTestJob::test_url_2(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(0, 10, 3, net::URLRequestTestJob::test_url_3(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(1, 11, 4, net::URLRequestTestJob::test_url_1(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(2, 12, 5, net::URLRequestTestJob::test_url_2(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(3, 13, 6, net::URLRequestTestJob::test_url_3(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
 
   // Flush all the pending requests
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
@@ -1865,14 +2093,15 @@ TEST_F(ResourceDispatcherHostTest, TestBlockingResumingRequests) {
   ResourceIPCAccumulator::ClassifiedMessages msgs;
   accum_.GetClassifiedMessages(&msgs);
 
-  // All requests but the 2 for the RVH 0 should have been blocked.
+  // All requests but the 2 for the RFH 0 should have been blocked.
   ASSERT_EQ(2U, msgs.size());
 
   CheckSuccessfulRequest(msgs[0], net::URLRequestTestJob::test_data_1());
   CheckSuccessfulRequest(msgs[1], net::URLRequestTestJob::test_data_3());
 
-  // Resume requests for RVH 1 and flush pending requests.
-  host_.ResumeBlockedRequestsForRoute(filter_->child_id(), 1);
+  // Resume requests for RFH 11 and flush pending requests.
+  host_.ResumeBlockedRequestsForRoute(
+      GlobalFrameRoutingId(filter_->child_id(), 11));
   KickOffRequest();
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
 
@@ -1882,17 +2111,20 @@ TEST_F(ResourceDispatcherHostTest, TestBlockingResumingRequests) {
   CheckSuccessfulRequest(msgs[0], net::URLRequestTestJob::test_data_2());
   CheckSuccessfulRequest(msgs[1], net::URLRequestTestJob::test_data_1());
 
-  // Test that new requests are not blocked for RVH 1.
-  MakeTestRequest(1, 7, net::URLRequestTestJob::test_url_1());
+  // Test that new requests are not blocked for RFH 11.
+  MakeTestRequestWithRenderFrame(1, 11, 7, net::URLRequestTestJob::test_url_1(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
   msgs.clear();
   accum_.GetClassifiedMessages(&msgs);
   ASSERT_EQ(1U, msgs.size());
   CheckSuccessfulRequest(msgs[0], net::URLRequestTestJob::test_data_1());
 
-  // Now resumes requests for all RVH (2 and 3).
-  host_.ResumeBlockedRequestsForRoute(filter_->child_id(), 2);
-  host_.ResumeBlockedRequestsForRoute(filter_->child_id(), 3);
+  // Now resumes requests for all RFH (12 and 13).
+  host_.ResumeBlockedRequestsForRoute(
+      GlobalFrameRoutingId(filter_->child_id(), 12));
+  host_.ResumeBlockedRequestsForRoute(
+      GlobalFrameRoutingId(filter_->child_id(), 13));
   KickOffRequest();
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
 
@@ -1904,17 +2136,21 @@ TEST_F(ResourceDispatcherHostTest, TestBlockingResumingRequests) {
 }
 
 // Tests blocking and canceling requests.
-TEST_F(ResourceDispatcherHostTest, TestBlockingCancelingRequests) {
-  host_.BlockRequestsForRoute(filter_->child_id(), 1);
+TEST_P(ResourceDispatcherHostTest, TestBlockingCancelingRequests) {
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 11));
 
-  MakeTestRequest(0, 1, net::URLRequestTestJob::test_url_1());
-  MakeTestRequest(1, 2, net::URLRequestTestJob::test_url_2());
-  MakeTestRequest(0, 3, net::URLRequestTestJob::test_url_3());
-  MakeTestRequest(1, 4, net::URLRequestTestJob::test_url_1());
+  MakeTestRequestWithRenderFrame(0, 10, 1, net::URLRequestTestJob::test_url_1(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(1, 11, 2, net::URLRequestTestJob::test_url_2(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(0, 10, 3, net::URLRequestTestJob::test_url_3(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
+  MakeTestRequestWithRenderFrame(1, 11, 4, net::URLRequestTestJob::test_url_1(),
+                                 RESOURCE_TYPE_SUB_RESOURCE);
   // Blocked detachable resources should not delay cancellation.
-  MakeTestRequestWithResourceType(filter_.get(), 1, 5,
-                                  net::URLRequestTestJob::test_url_4(),
-                                  RESOURCE_TYPE_PREFETCH);  // detachable type
+  //
+  MakeTestRequestWithRenderFrame(1, 11, 5, net::URLRequestTestJob::test_url_4(),
+                                 RESOURCE_TYPE_PREFETCH);  // detachable type
 
   // Flush all the pending requests.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
@@ -1923,14 +2159,15 @@ TEST_F(ResourceDispatcherHostTest, TestBlockingCancelingRequests) {
   ResourceIPCAccumulator::ClassifiedMessages msgs;
   accum_.GetClassifiedMessages(&msgs);
 
-  // The 2 requests for the RVH 0 should have been processed.
+  // The 2 requests for the RFH 10 should have been processed.
   ASSERT_EQ(2U, msgs.size());
 
   CheckSuccessfulRequest(msgs[0], net::URLRequestTestJob::test_data_1());
   CheckSuccessfulRequest(msgs[1], net::URLRequestTestJob::test_data_3());
 
-  // Cancel requests for RVH 1.
-  host_.CancelBlockedRequestsForRoute(filter_->child_id(), 1);
+  // Cancel requests for RFH 11.
+  host_.CancelBlockedRequestsForRoute(
+      GlobalFrameRoutingId(filter_->child_id(), 11));
   KickOffRequest();
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
 
@@ -1940,11 +2177,12 @@ TEST_F(ResourceDispatcherHostTest, TestBlockingCancelingRequests) {
 }
 
 // Tests that blocked requests are canceled if their associated process dies.
-TEST_F(ResourceDispatcherHostTest, TestBlockedRequestsProcessDies) {
+TEST_P(ResourceDispatcherHostTest, TestBlockedRequestsProcessDies) {
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
 
-  host_.BlockRequestsForRoute(second_filter->child_id(), 0);
+  host_.BlockRequestsForRoute(
+      GlobalFrameRoutingId(second_filter->child_id(), 0));
 
   MakeTestRequestWithResourceType(filter_.get(), 0, 1,
                                   net::URLRequestTestJob::test_url_1(),
@@ -1980,19 +2218,21 @@ TEST_F(ResourceDispatcherHostTest, TestBlockedRequestsProcessDies) {
   CheckSuccessfulRequest(msgs[1], net::URLRequestTestJob::test_data_3());
 
   EXPECT_TRUE(host_.blocked_loaders_map_.empty());
+  second_filter->OnChannelClosing();
 }
 
 // Tests that blocked requests don't leak when the ResourceDispatcherHost goes
 // away.  Note that we rely on Purify for finding the leaks if any.
 // If this test turns the Purify bot red, check the ResourceDispatcherHost
 // destructor to make sure the blocked requests are deleted.
-TEST_F(ResourceDispatcherHostTest, TestBlockedRequestsDontLeak) {
+TEST_P(ResourceDispatcherHostTest, TestBlockedRequestsDontLeak) {
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
 
-  host_.BlockRequestsForRoute(filter_->child_id(), 1);
-  host_.BlockRequestsForRoute(filter_->child_id(), 2);
-  host_.BlockRequestsForRoute(second_filter->child_id(), 1);
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 1));
+  host_.BlockRequestsForRoute(GlobalFrameRoutingId(filter_->child_id(), 2));
+  host_.BlockRequestsForRoute(
+      GlobalFrameRoutingId(second_filter->child_id(), 1));
 
   MakeTestRequestWithResourceType(filter_.get(), 0, 1,
                                   net::URLRequestTestJob::test_url_1(),
@@ -2024,47 +2264,46 @@ TEST_F(ResourceDispatcherHostTest, TestBlockedRequestsDontLeak) {
 
   // Flush all the pending requests.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
+
+  second_filter->OnChannelClosing();
 }
 
 // Test the private helper method "CalculateApproximateMemoryCost()".
-TEST_F(ResourceDispatcherHostTest, CalculateApproximateMemoryCost) {
+TEST_P(ResourceDispatcherHostTest, CalculateApproximateMemoryCost) {
   net::URLRequestContext context;
-  scoped_ptr<net::URLRequest> req(context.CreateRequest(
+  std::unique_ptr<net::URLRequest> req(context.CreateRequest(
       GURL("http://www.google.com"), net::DEFAULT_PRIORITY, NULL));
-  EXPECT_EQ(
-      4427,
-      ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(req.get()));
+  EXPECT_EQ(4425, ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(
+                      req.get()));
 
   // Add 9 bytes of referrer.
   req->SetReferrer("123456789");
-  EXPECT_EQ(
-      4436,
-      ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(req.get()));
+  EXPECT_EQ(4434, ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(
+                      req.get()));
 
   // Add 33 bytes of upload content.
   std::string upload_content;
   upload_content.resize(33);
   std::fill(upload_content.begin(), upload_content.end(), 'x');
-  scoped_ptr<net::UploadElementReader> reader(new net::UploadBytesElementReader(
-      upload_content.data(), upload_content.size()));
+  std::unique_ptr<net::UploadElementReader> reader(
+      new net::UploadBytesElementReader(upload_content.data(),
+                                        upload_content.size()));
   req->set_upload(
-      net::ElementsUploadDataStream::CreateWithReader(reader.Pass(), 0));
+      net::ElementsUploadDataStream::CreateWithReader(std::move(reader), 0));
 
   // Since the upload throttling is disabled, this has no effect on the cost.
-  EXPECT_EQ(
-      4436,
-      ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(req.get()));
+  EXPECT_EQ(4434, ResourceDispatcherHostImpl::CalculateApproximateMemoryCost(
+                      req.get()));
 }
 
 // Test that too much memory for outstanding requests for a particular
 // render_process_host_id causes requests to fail.
-TEST_F(ResourceDispatcherHostTest, TooMuchOutstandingRequestsMemory) {
+TEST_P(ResourceDispatcherHostTest, TooMuchOutstandingRequestsMemory) {
   // Expected cost of each request as measured by
   // ResourceDispatcherHost::CalculateApproximateMemoryCost().
   int kMemoryCostOfTest2Req =
       ResourceDispatcherHostImpl::kAvgBytesPerOutstandingRequest +
-      std::string("GET").size() +
-      net::URLRequestTestJob::test_url_2().spec().size();
+      net::URLRequestTestJob::test_url_2().spec().size() + sizeof("GET") - 1;
 
   // Tighten the bound on the ResourceDispatcherHost, to speed things up.
   int kMaxCostPerProcess = 440000;
@@ -2103,7 +2342,7 @@ TEST_F(ResourceDispatcherHostTest, TooMuchOutstandingRequestsMemory) {
 
   // Flush all the pending requests.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Sorts out all the messages we saw by request.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2130,12 +2369,14 @@ TEST_F(ResourceDispatcherHostTest, TooMuchOutstandingRequestsMemory) {
                          net::URLRequestTestJob::test_data_2());
   CheckSuccessfulRequest(msgs[kMaxRequests + 3],
                          net::URLRequestTestJob::test_data_2());
+
+  second_filter->OnChannelClosing();
 }
 
 // Test that when too many requests are outstanding for a particular
 // render_process_host_id, any subsequent request from it fails. Also verify
 // that the global limit is honored.
-TEST_F(ResourceDispatcherHostTest, TooManyOutstandingRequests) {
+TEST_P(ResourceDispatcherHostTest, TooManyOutstandingRequests) {
   // Tighten the bound on the ResourceDispatcherHost, to speed things up.
   const size_t kMaxRequestsPerProcess = 2;
   host_.set_max_num_in_flight_requests_per_process(kMaxRequestsPerProcess);
@@ -2172,7 +2413,7 @@ TEST_F(ResourceDispatcherHostTest, TooManyOutstandingRequests) {
 
   // Flush all the pending requests.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Sorts out all the messages we saw by request.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2195,10 +2436,13 @@ TEST_F(ResourceDispatcherHostTest, TooManyOutstandingRequests) {
   CheckFailedRequest(msgs[kMaxRequestsPerProcess + 2],
                      net::URLRequestTestJob::test_data_2(),
                      net::ERR_INSUFFICIENT_RESOURCES);
+
+  second_filter->OnChannelClosing();
+  third_filter->OnChannelClosing();
 }
 
 // Tests that we sniff the mime type for a simple request.
-TEST_F(ResourceDispatcherHostTest, MimeSniffed) {
+TEST_P(ResourceDispatcherHostTest, MimeSniffed) {
   std::string raw_headers("HTTP/1.1 200 OK\n\n");
   std::string response_data("<html><title>Test One</title></html>");
   SetResponse(raw_headers, response_data);
@@ -2220,7 +2464,7 @@ TEST_F(ResourceDispatcherHostTest, MimeSniffed) {
 }
 
 // Tests that we don't sniff the mime type when the server provides one.
-TEST_F(ResourceDispatcherHostTest, MimeNotSniffed) {
+TEST_P(ResourceDispatcherHostTest, MimeNotSniffed) {
   std::string raw_headers("HTTP/1.1 200 OK\n"
                           "Content-type: image/jpeg\n\n");
   std::string response_data("<html><title>Test One</title></html>");
@@ -2243,7 +2487,7 @@ TEST_F(ResourceDispatcherHostTest, MimeNotSniffed) {
 }
 
 // Tests that we don't sniff the mime type when there is no message body.
-TEST_F(ResourceDispatcherHostTest, MimeNotSniffed2) {
+TEST_P(ResourceDispatcherHostTest, MimeNotSniffed2) {
   SetResponse("HTTP/1.1 304 Not Modified\n\n");
 
   HandleScheme("http");
@@ -2262,7 +2506,7 @@ TEST_F(ResourceDispatcherHostTest, MimeNotSniffed2) {
   ASSERT_EQ("", response_head.mime_type);
 }
 
-TEST_F(ResourceDispatcherHostTest, MimeSniff204) {
+TEST_P(ResourceDispatcherHostTest, MimeSniff204) {
   SetResponse("HTTP/1.1 204 No Content\n\n");
 
   HandleScheme("http");
@@ -2281,7 +2525,7 @@ TEST_F(ResourceDispatcherHostTest, MimeSniff204) {
   ASSERT_EQ("text/plain", response_head.mime_type);
 }
 
-TEST_F(ResourceDispatcherHostTest, MimeSniffEmpty) {
+TEST_P(ResourceDispatcherHostTest, MimeSniffEmpty) {
   SetResponse("HTTP/1.1 200 OK\n\n");
 
   HandleScheme("http");
@@ -2301,7 +2545,8 @@ TEST_F(ResourceDispatcherHostTest, MimeSniffEmpty) {
 }
 
 // Tests for crbug.com/31266 (Non-2xx + application/octet-stream).
-TEST_F(ResourceDispatcherHostTest, ForbiddenDownload) {
+TEST_P(ResourceDispatcherHostTest, ForbiddenDownload) {
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
   std::string raw_headers("HTTP/1.1 403 Forbidden\n"
                           "Content-disposition: attachment; filename=blah\n"
                           "Content-type: application/octet-stream\n\n");
@@ -2310,32 +2555,27 @@ TEST_F(ResourceDispatcherHostTest, ForbiddenDownload) {
 
   HandleScheme("http");
 
-  // Only MAIN_FRAMEs can trigger a download.
-  MakeTestRequestWithResourceType(filter_.get(), 0, 1, GURL("http:bla"),
-                                  RESOURCE_TYPE_MAIN_FRAME);
+  int expected_error_code = net::ERR_INVALID_RESPONSE;
+  GURL forbidden_download_url = GURL("http:bla");
 
-  // Flush all pending requests.
-  while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-  base::MessageLoop::current()->RunUntilIdle();
-
-  // Sorts out all the messages we saw by request.
-  ResourceIPCAccumulator::ClassifiedMessages msgs;
-  accum_.GetClassifiedMessages(&msgs);
-
-  // We should have gotten one RequestComplete message.
-  ASSERT_EQ(1U, msgs.size());
-  ASSERT_EQ(1U, msgs[0].size());
-  EXPECT_EQ(ResourceMsg_RequestComplete::ID, msgs[0][0].type());
-
-  // The RequestComplete message should have had the error code of
-  // ERR_INVALID_RESPONSE.
-  CheckRequestCompleteErrorCode(msgs[0][0], net::ERR_INVALID_RESPONSE);
+  CompleteFailingMainResourceRequest(forbidden_download_url,
+                                     expected_error_code);
 }
 
 // Test for http://crbug.com/76202 .  We don't want to destroy a
 // download request prematurely when processing a cancellation from
 // the renderer.
-TEST_F(ResourceDispatcherHostTest, IgnoreCancelForDownloads) {
+TEST_P(ResourceDispatcherHostTest, IgnoreCancelForDownloads) {
+  // PlzNavigate: A request that ends up being a download is a main resource
+  // request. Hence, it has been initiated by the browser and is not associated
+  // with a renderer. Therefore, it cannot be canceled by a renderer IPC.
+  if (IsBrowserSideNavigationEnabled()) {
+    SUCCEED() << "Not applicable with --enable-browser-side-navigation.";
+    return;
+  }
+
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
+
   EXPECT_EQ(0, host_.pending_requests());
 
   int render_view_id = 0;
@@ -2362,10 +2602,11 @@ TEST_F(ResourceDispatcherHostTest, IgnoreCancelForDownloads) {
   // Return some data so that the request is identified as a download
   // and the proper resource handlers are created.
   EXPECT_TRUE(net::URLRequestTestJob::ProcessOnePendingMessage());
+  base::RunLoop().RunUntilIdle();
 
   // And now simulate a cancellation coming from the renderer.
   ResourceHostMsg_CancelRequest msg(request_id);
-  host_.OnMessageReceived(msg, filter_.get());
+  OnMessageReceived(msg, filter_.get());
 
   // Since the request had already started processing as a download,
   // the cancellation above should have been ignored and the request
@@ -2373,10 +2614,12 @@ TEST_F(ResourceDispatcherHostTest, IgnoreCancelForDownloads) {
   EXPECT_EQ(1, host_.pending_requests());
 
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
+  base::RunLoop().RunUntilIdle();
 }
 
-TEST_F(ResourceDispatcherHostTest, CancelRequestsForContext) {
+TEST_P(ResourceDispatcherHostTest, CancelRequestsForContext) {
   EXPECT_EQ(0, host_.pending_requests());
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
 
   int render_view_id = 0;
   int request_id = 1;
@@ -2391,32 +2634,76 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsForContext) {
   job_factory_->SetDelayedCompleteJobGeneration(true);
   HandleScheme("http");
 
-  MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
-                                  GURL("http://example.com/blah"),
-                                  RESOURCE_TYPE_MAIN_FRAME);
-  // Return some data so that the request is identified as a download
-  // and the proper resource handlers are created.
-  EXPECT_TRUE(net::URLRequestTestJob::ProcessOnePendingMessage());
+  const GURL download_url = GURL("http://example.com/blah");
 
-  // And now simulate a cancellation coming from the renderer.
-  ResourceHostMsg_CancelRequest msg(request_id);
-  host_.OnMessageReceived(msg, filter_.get());
+  if (IsBrowserSideNavigationEnabled()) {
+    // Create a NavigationRequest.
+    TestNavigationURLLoaderDelegate delegate;
+    BeginNavigationParams begin_params(std::string(), net::LOAD_NORMAL, false,
+                                       REQUEST_CONTEXT_TYPE_LOCATION);
+    CommonNavigationParams common_params;
+    common_params.url = download_url;
+    std::unique_ptr<NavigationRequestInfo> request_info(
+        new NavigationRequestInfo(common_params, begin_params, download_url,
+                                  url::Origin(download_url), true, false, false,
+                                  -1, false, false));
+    std::unique_ptr<NavigationURLLoader> loader = NavigationURLLoader::Create(
+        browser_context_.get(), std::move(request_info), nullptr, nullptr,
+        nullptr, &delegate);
 
-  // Since the request had already started processing as a download,
-  // the cancellation above should have been ignored and the request
-  // should still be alive.
-  EXPECT_EQ(1, host_.pending_requests());
+    // Wait until a response has been received and proceed with the response.
+    KickOffRequest();
 
-  // Cancelling by other methods shouldn't work either.
-  host_.CancelRequestsForProcess(render_view_id);
-  EXPECT_EQ(1, host_.pending_requests());
+    // Return some data so that the request is identified as a download
+    // and the proper resource handlers are created.
+    EXPECT_TRUE(net::URLRequestTestJob::ProcessOnePendingMessage());
+    base::RunLoop().RunUntilIdle();
 
-  // Cancelling by context should work.
-  host_.CancelRequestsForContext(filter_->resource_context());
-  EXPECT_EQ(0, host_.pending_requests());
+    // The UI thread will be informed that the navigation failed with an error
+    // code of ERR_ABORTED because the navigation turns out to be a download.
+    // The navigation is aborted, but the request goes on as a download.
+    EXPECT_EQ(delegate.net_error(), net::ERR_ABORTED);
+    EXPECT_EQ(1, host_.pending_requests());
+
+    // In PlzNavigate, the renderer cannot cancel the request directly.
+    // However, cancelling by context should work.
+    host_.CancelRequestsForContext(browser_context_->GetResourceContext());
+    EXPECT_EQ(0, host_.pending_requests());
+
+    base::RunLoop().RunUntilIdle();
+  } else {
+    MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
+                                    download_url, RESOURCE_TYPE_MAIN_FRAME);
+
+    // Return some data so that the request is identified as a download
+    // and the proper resource handlers are created.
+    EXPECT_TRUE(net::URLRequestTestJob::ProcessOnePendingMessage());
+    base::RunLoop().RunUntilIdle();
+
+    // And now simulate a cancellation coming from the renderer.
+    ResourceHostMsg_CancelRequest msg(request_id);
+    OnMessageReceived(msg, filter_.get());
+
+    // Since the request had already started processing as a download,
+    // the cancellation above should have been ignored and the request
+    // should still be alive.
+    EXPECT_EQ(1, host_.pending_requests());
+
+    // Cancelling by other methods shouldn't work either.
+    host_.CancelRequestsForProcess(render_view_id);
+    EXPECT_EQ(1, host_.pending_requests());
+
+    // Cancelling by context should work.
+    host_.CancelRequestsForContext(filter_->resource_context());
+    EXPECT_EQ(0, host_.pending_requests());
+
+    while (net::URLRequestTestJob::ProcessOnePendingMessage()) {
+    }
+    base::RunLoop().RunUntilIdle();
+  }
 }
 
-TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextDetached) {
+TEST_P(ResourceDispatcherHostTest, CancelRequestsForContextDetached) {
   EXPECT_EQ(0, host_.pending_requests());
 
   int render_view_id = 0;
@@ -2445,7 +2732,13 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextDetached) {
 
 // Test the cancelling of requests that are being transferred to a new renderer
 // due to a redirection.
-TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextTransferred) {
+TEST_P(ResourceDispatcherHostTest, CancelRequestsForContextTransferred) {
+  // PlzNavigate: there are no transferred requests in PlzNavigate.
+  if (IsBrowserSideNavigationEnabled())
+    return;
+
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
+
   EXPECT_EQ(0, host_.pending_requests());
 
   int request_id = 1;
@@ -2462,11 +2755,11 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextTransferred) {
 
   GlobalRequestID global_request_id(web_contents_filter_->child_id(),
                                     request_id);
-  host_.MarkAsTransferredNavigation(global_request_id);
+  host_.MarkAsTransferredNavigation(global_request_id, base::Closure());
 
   // And now simulate a cancellation coming from the renderer.
   ResourceHostMsg_CancelRequest msg(request_id);
-  host_.OnMessageReceived(msg, web_contents_filter_.get());
+  OnMessageReceived(msg, web_contents_filter_.get());
 
   // Since the request is marked as being transferred,
   // the cancellation above should have been ignored and the request
@@ -2474,7 +2767,8 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextTransferred) {
   EXPECT_EQ(1, host_.pending_requests());
 
   // Cancelling by other methods shouldn't work either.
-  host_.CancelRequestsForProcess(web_contents_->GetRoutingID());
+  host_.CancelRequestsForProcess(
+      web_contents_->GetRenderViewHost()->GetRoutingID());
   EXPECT_EQ(1, host_.pending_requests());
 
   // Cancelling by context should work.
@@ -2484,17 +2778,16 @@ TEST_F(ResourceDispatcherHostTest, CancelRequestsForContextTransferred) {
 
 // Test transferred navigations with text/html, which doesn't trigger any
 // content sniffing.
-TEST_F(ResourceDispatcherHostTest, TransferNavigationHtml) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+TEST_P(ResourceDispatcherHostTest, TransferNavigationHtml) {
+  if (IsBrowserSideNavigationEnabled()) {
     SUCCEED() << "Test is not applicable with browser side navigation enabled";
     return;
   }
-  // This test expects the cross site request to be leaked, so it can transfer
-  // the request directly.
-  CrossSiteResourceHandler::SetLeakRequestsForTesting(true);
 
   EXPECT_EQ(0, host_.pending_requests());
+
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
+  NavigationResourceThrottle::set_force_transfer_for_testing(true);
 
   int render_view_id = 0;
   int request_id = 1;
@@ -2504,11 +2797,6 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationHtml) {
               "Location: http://other.com/blech\n\n");
 
   HandleScheme("http");
-
-  // Temporarily replace ContentBrowserClient with one that will trigger the
-  // transfer navigation code paths.
-  TransfersAllNavigationsContentBrowserClient new_client;
-  ContentBrowserClient* old_client = SetBrowserClientForTesting(&new_client);
 
   MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
                                   GURL("http://example.com/blah"),
@@ -2521,15 +2809,12 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationHtml) {
               "Content-Type: text/html\n\n",
               kResponseBody);
   ResourceHostMsg_FollowRedirect redirect_msg(request_id);
-  host_.OnMessageReceived(redirect_msg, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(redirect_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   // Flush all the pending requests to get the response through the
   // MimeTypeResourceHandler.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-
-  // Restore, now that we've set up a transfer.
-  SetBrowserClientForTesting(old_client);
 
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
@@ -2537,16 +2822,15 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationHtml) {
   int new_render_view_id = 1;
   int new_request_id = 2;
 
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://other.com/blech"));
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://other.com/blech"));
   request.transferred_request_child_id = filter_->child_id();
   request.transferred_request_request_id = request_id;
 
   ResourceHostMsg_RequestResource transfer_request_msg(
       new_render_view_id, new_request_id, request);
-  host_.OnMessageReceived(transfer_request_msg, second_filter.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(transfer_request_msg, second_filter.get());
+  base::RunLoop().RunUntilIdle();
 
   // Check generated messages.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2555,19 +2839,20 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationHtml) {
   ASSERT_EQ(2U, msgs.size());
   EXPECT_EQ(ResourceMsg_ReceivedRedirect::ID, msgs[0][0].type());
   CheckSuccessfulRequest(msgs[1], kResponseBody);
+
+  second_filter->OnChannelClosing();
 }
 
 // Test transferring two navigations with text/html, to ensure the resource
 // accounting works.
-TEST_F(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+TEST_P(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
+  if (IsBrowserSideNavigationEnabled()) {
     SUCCEED() << "Test is not applicable with browser side navigation enabled";
     return;
   }
-  // This test expects the cross site request to be leaked, so it can transfer
-  // the request directly.
-  CrossSiteResourceHandler::SetLeakRequestsForTesting(true);
+
+  NavigationResourceThrottle::set_force_transfer_for_testing(true);
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
 
   EXPECT_EQ(0, host_.pending_requests());
 
@@ -2581,11 +2866,6 @@ TEST_F(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
               kResponseBody);
 
   HandleScheme("http");
-
-  // Temporarily replace ContentBrowserClient with one that will trigger the
-  // transfer navigation code paths.
-  TransfersAllNavigationsContentBrowserClient new_client;
-  ContentBrowserClient* old_client = SetBrowserClientForTesting(&new_client);
 
   // Make the first request.
   MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
@@ -2603,8 +2883,7 @@ TEST_F(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
   // MimeTypeResourceHandler.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
 
-  // Restore, now that we've set up a transfer.
-  SetBrowserClientForTesting(old_client);
+  NavigationResourceThrottle::set_force_transfer_for_testing(false);
 
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
@@ -2612,29 +2891,27 @@ TEST_F(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
   // Transfer the first request.
   int new_render_view_id = 1;
   int new_request_id = 5;
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://example.com/blah"));
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://example.com/blah"));
   request.transferred_request_child_id = filter_->child_id();
   request.transferred_request_request_id = request_id;
 
   ResourceHostMsg_RequestResource transfer_request_msg(
       new_render_view_id, new_request_id, request);
-  host_.OnMessageReceived(transfer_request_msg, second_filter.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(transfer_request_msg, second_filter.get());
+  base::RunLoop().RunUntilIdle();
 
   // Transfer the second request.
   int new_second_request_id = 6;
-  ResourceHostMsg_Request second_request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://example.com/foo"));
+  ResourceRequest second_request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://example.com/foo"));
   request.transferred_request_child_id = filter_->child_id();
   request.transferred_request_request_id = second_request_id;
 
   ResourceHostMsg_RequestResource second_transfer_request_msg(
       new_render_view_id, new_second_request_id, second_request);
-  host_.OnMessageReceived(second_transfer_request_msg, second_filter.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(second_transfer_request_msg, second_filter.get());
+  base::RunLoop().RunUntilIdle();
 
   // Check generated messages.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2642,20 +2919,21 @@ TEST_F(ResourceDispatcherHostTest, TransferTwoNavigationsHtml) {
 
   ASSERT_EQ(2U, msgs.size());
   CheckSuccessfulRequest(msgs[0], kResponseBody);
+
+  second_filter->OnChannelClosing();
 }
 
 // Test transferred navigations with text/plain, which causes
 // MimeTypeResourceHandler to buffer the response to sniff the content before
 // the transfer occurs.
-TEST_F(ResourceDispatcherHostTest, TransferNavigationText) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+TEST_P(ResourceDispatcherHostTest, TransferNavigationText) {
+  if (IsBrowserSideNavigationEnabled()) {
     SUCCEED() << "Test is not applicable with browser side navigation enabled";
     return;
   }
-  // This test expects the cross site request to be leaked, so it can transfer
-  // the request directly.
-  CrossSiteResourceHandler::SetLeakRequestsForTesting(true);
+
+  NavigationResourceThrottle::set_force_transfer_for_testing(true);
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
 
   EXPECT_EQ(0, host_.pending_requests());
 
@@ -2667,11 +2945,6 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationText) {
               "Location: http://other.com/blech\n\n");
 
   HandleScheme("http");
-
-  // Temporarily replace ContentBrowserClient with one that will trigger the
-  // transfer navigation code paths.
-  TransfersAllNavigationsContentBrowserClient new_client;
-  ContentBrowserClient* old_client = SetBrowserClientForTesting(&new_client);
 
   MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
                                   GURL("http://example.com/blah"),
@@ -2686,15 +2959,13 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationText) {
               "Content-Type: text/plain\n\n",
               kResponseBody);
   ResourceHostMsg_FollowRedirect redirect_msg(request_id);
-  host_.OnMessageReceived(redirect_msg, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(redirect_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   // Flush all the pending requests to get the response through the
   // MimeTypeResourceHandler.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-
-  // Restore, now that we've set up a transfer.
-  SetBrowserClientForTesting(old_client);
+  base::RunLoop().RunUntilIdle();
 
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
@@ -2702,16 +2973,15 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationText) {
   int new_render_view_id = 1;
   int new_request_id = 2;
 
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://other.com/blech"));
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://other.com/blech"));
   request.transferred_request_child_id = filter_->child_id();
   request.transferred_request_request_id = request_id;
 
   ResourceHostMsg_RequestResource transfer_request_msg(
       new_render_view_id, new_request_id, request);
-  host_.OnMessageReceived(transfer_request_msg, second_filter.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(transfer_request_msg, second_filter.get());
+  base::RunLoop().RunUntilIdle();
 
   // Check generated messages.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2720,17 +2990,18 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationText) {
   ASSERT_EQ(2U, msgs.size());
   EXPECT_EQ(ResourceMsg_ReceivedRedirect::ID, msgs[0][0].type());
   CheckSuccessfulRequest(msgs[1], kResponseBody);
+
+  second_filter->OnChannelClosing();
 }
 
-TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+TEST_P(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
+  if (IsBrowserSideNavigationEnabled()) {
     SUCCEED() << "Test is not applicable with browser side navigation enabled";
     return;
   }
-  // This test expects the cross site request to be leaked, so it can transfer
-  // the request directly.
-  CrossSiteResourceHandler::SetLeakRequestsForTesting(true);
+
+  NavigationResourceThrottle::set_force_transfer_for_testing(true);
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
 
   EXPECT_EQ(0, host_.pending_requests());
 
@@ -2745,24 +3016,18 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
 
   HandleScheme("http");
 
-  // Temporarily replace ContentBrowserClient with one that will trigger the
-  // transfer navigation code paths.
-  TransfersAllNavigationsContentBrowserClient new_client;
-  ContentBrowserClient* old_client = SetBrowserClientForTesting(&new_client);
-
   // Create a first filter that can be deleted before the second one starts.
   {
     scoped_refptr<ForwardingFilter> first_filter = MakeForwardingFilter();
     first_child_id = first_filter->child_id();
 
-    ResourceHostMsg_Request first_request =
-        CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                              GURL("http://example.com/blah"));
+    ResourceRequest first_request = CreateResourceRequest(
+        "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://example.com/blah"));
 
     ResourceHostMsg_RequestResource first_request_msg(
         render_view_id, request_id, first_request);
-    host_.OnMessageReceived(first_request_msg, first_filter.get());
-    base::MessageLoop::current()->RunUntilIdle();
+    OnMessageReceived(first_request_msg, first_filter.get());
+    base::RunLoop().RunUntilIdle();
 
     // Now that we're blocked on the redirect, update the response and unblock
     // by telling the AsyncResourceHandler to follow the redirect.
@@ -2770,17 +3035,16 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
                 "Content-Type: text/html\n\n",
                 kResponseBody);
     ResourceHostMsg_FollowRedirect redirect_msg(request_id);
-    host_.OnMessageReceived(redirect_msg, first_filter.get());
-    base::MessageLoop::current()->RunUntilIdle();
+    OnMessageReceived(redirect_msg, first_filter.get());
+    base::RunLoop().RunUntilIdle();
 
     // Flush all the pending requests to get the response through the
     // MimeTypeResourceHandler.
     while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
+
+    first_filter->OnChannelClosing();
   }
   // The first filter is now deleted, as if the child process died.
-
-  // Restore.
-  SetBrowserClientForTesting(old_client);
 
   // Make sure we don't hold onto the ResourceMessageFilter after it is deleted.
   GlobalRequestID first_global_request_id(first_child_id, request_id);
@@ -2791,9 +3055,8 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
   int new_render_view_id = 1;
   int new_request_id = 2;
 
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://other.com/blech"));
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://other.com/blech"));
   request.transferred_request_child_id = first_child_id;
   request.transferred_request_request_id = request_id;
 
@@ -2801,8 +3064,8 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
   child_ids_.insert(second_filter->child_id());
   ResourceHostMsg_RequestResource transfer_request_msg(
       new_render_view_id, new_request_id, request);
-  host_.OnMessageReceived(transfer_request_msg, second_filter.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(transfer_request_msg, second_filter.get());
+  base::RunLoop().RunUntilIdle();
 
   // Check generated messages.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2811,17 +3074,18 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithProcessCrash) {
   ASSERT_EQ(2U, msgs.size());
   EXPECT_EQ(ResourceMsg_ReceivedRedirect::ID, msgs[0][0].type());
   CheckSuccessfulRequest(msgs[1], kResponseBody);
+
+  second_filter->OnChannelClosing();
 }
 
-TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableBrowserSideNavigation)) {
+TEST_P(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
+  if (IsBrowserSideNavigationEnabled()) {
     SUCCEED() << "Test is not applicable with browser side navigation enabled";
     return;
   }
-  // This test expects the cross site request to be leaked, so it can transfer
-  // the request directly.
-  CrossSiteResourceHandler::SetLeakRequestsForTesting(true);
+
+  NavigationResourceThrottle::set_force_transfer_for_testing(true);
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
 
   EXPECT_EQ(0, host_.pending_requests());
 
@@ -2834,11 +3098,6 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
 
   HandleScheme("http");
 
-  // Temporarily replace ContentBrowserClient with one that will trigger the
-  // transfer navigation code paths.
-  TransfersAllNavigationsContentBrowserClient new_client;
-  ContentBrowserClient* old_client = SetBrowserClientForTesting(&new_client);
-
   MakeTestRequestWithResourceType(filter_.get(), render_view_id, request_id,
                                   GURL("http://example.com/blah"),
                                   RESOURCE_TYPE_MAIN_FRAME);
@@ -2847,8 +3106,8 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
   SetResponse("HTTP/1.1 302 Found\n"
               "Location: http://other.com/blerg\n\n");
   ResourceHostMsg_FollowRedirect redirect_msg(request_id);
-  host_.OnMessageReceived(redirect_msg, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(redirect_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   // Now that we're blocked on the second redirect, update the response and
   // unblock by telling the AsyncResourceHandler to follow the redirect.
@@ -2859,15 +3118,13 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
               "Content-Type: text/plain\n\n",
               kResponseBody);
   ResourceHostMsg_FollowRedirect redirect_msg2(request_id);
-  host_.OnMessageReceived(redirect_msg2, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(redirect_msg2, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   // Flush all the pending requests to get the response through the
   // MimeTypeResourceHandler.
   while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-
-  // Restore.
-  SetBrowserClientForTesting(old_client);
+  base::RunLoop().RunUntilIdle();
 
   // This second filter is used to emulate a second process.
   scoped_refptr<ForwardingFilter> second_filter = MakeForwardingFilter();
@@ -2875,9 +3132,8 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
   int new_render_view_id = 1;
   int new_request_id = 2;
 
-  ResourceHostMsg_Request request =
-      CreateResourceRequest("GET", RESOURCE_TYPE_MAIN_FRAME,
-                            GURL("http://other.com/blech"));
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_MAIN_FRAME, GURL("http://other.com/blech"));
   request.transferred_request_child_id = filter_->child_id();
   request.transferred_request_request_id = request_id;
 
@@ -2885,19 +3141,19 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
   child_ids_.insert(second_filter->child_id());
   ResourceHostMsg_RequestResource transfer_request_msg(
       new_render_view_id, new_request_id, request);
-  host_.OnMessageReceived(transfer_request_msg, second_filter.get());
+  OnMessageReceived(transfer_request_msg, second_filter.get());
 
   // Verify that we update the ResourceRequestInfo.
   GlobalRequestID global_request_id(second_filter->child_id(), new_request_id);
-  const ResourceRequestInfoImpl* info = ResourceRequestInfoImpl::ForRequest(
+  ResourceRequestInfoImpl* info = ResourceRequestInfoImpl::ForRequest(
       host_.GetURLRequest(global_request_id));
   EXPECT_EQ(second_filter->child_id(), info->GetChildID());
   EXPECT_EQ(new_render_view_id, info->GetRouteID());
   EXPECT_EQ(new_request_id, info->GetRequestID());
-  EXPECT_EQ(second_filter.get(), info->filter());
+  EXPECT_EQ(second_filter.get(), info->requester_info()->filter());
 
   // Let request complete.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Check generated messages.
   ResourceIPCAccumulator::ClassifiedMessages msgs;
@@ -2906,33 +3162,23 @@ TEST_F(ResourceDispatcherHostTest, TransferNavigationWithTwoRedirects) {
   ASSERT_EQ(2U, msgs.size());
   EXPECT_EQ(ResourceMsg_ReceivedRedirect::ID, msgs[0][0].type());
   CheckSuccessfulRequest(msgs[1], kResponseBody);
+
+  second_filter->OnChannelClosing();
 }
 
-TEST_F(ResourceDispatcherHostTest, UnknownURLScheme) {
+TEST_P(ResourceDispatcherHostTest, UnknownURLScheme) {
+  NavigationResourceThrottle::set_ui_checks_always_succeed_for_testing(true);
   EXPECT_EQ(0, host_.pending_requests());
 
   HandleScheme("http");
 
-  MakeTestRequestWithResourceType(filter_.get(), 0, 1, GURL("foo://bar"),
-                                  RESOURCE_TYPE_MAIN_FRAME);
+  const GURL invalid_sheme_url = GURL("foo://bar");
+  const int expected_error_code = net::ERR_UNKNOWN_URL_SCHEME;
 
-  // Flush all pending requests.
-  while (net::URLRequestTestJob::ProcessOnePendingMessage()) {}
-
-  // Sort all the messages we saw by request.
-  ResourceIPCAccumulator::ClassifiedMessages msgs;
-  accum_.GetClassifiedMessages(&msgs);
-
-  // We should have gotten one RequestComplete message.
-  ASSERT_EQ(1U, msgs[0].size());
-  EXPECT_EQ(ResourceMsg_RequestComplete::ID, msgs[0][0].type());
-
-  // The RequestComplete message should have the error code of
-  // ERR_UNKNOWN_URL_SCHEME.
-  CheckRequestCompleteErrorCode(msgs[0][0], net::ERR_UNKNOWN_URL_SCHEME);
+  CompleteFailingMainResourceRequest(invalid_sheme_url, expected_error_code);
 }
 
-TEST_F(ResourceDispatcherHostTest, DataReceivedACKs) {
+TEST_P(ResourceDispatcherHostTest, DataReceivedACKs) {
   EXPECT_EQ(0, host_.pending_requests());
 
   SendDataReceivedACKs(true);
@@ -2957,7 +3203,7 @@ TEST_F(ResourceDispatcherHostTest, DataReceivedACKs) {
 
 // Request a very large detachable resource and cancel part way. Some of the
 // data should have been sent to the renderer, but not all.
-TEST_F(ResourceDispatcherHostTest, DataSentBeforeDetach) {
+TEST_P(ResourceDispatcherHostTest, DataSentBeforeDetach) {
   EXPECT_EQ(0, host_.pending_requests());
 
   int render_view_id = 0;
@@ -2985,7 +3231,7 @@ TEST_F(ResourceDispatcherHostTest, DataSentBeforeDetach) {
 
   // Simulate a cancellation coming from the renderer.
   ResourceHostMsg_CancelRequest msg(request_id);
-  host_.OnMessageReceived(msg, filter_.get());
+  OnMessageReceived(msg, filter_.get());
 
   EXPECT_EQ(1, host_.pending_requests());
 
@@ -3013,7 +3259,7 @@ TEST_F(ResourceDispatcherHostTest, DataSentBeforeDetach) {
       net::ERR_ABORTED);
 }
 
-TEST_F(ResourceDispatcherHostTest, DelayedDataReceivedACKs) {
+TEST_P(ResourceDispatcherHostTest, DelayedDataReceivedACKs) {
   EXPECT_EQ(0, host_.pending_requests());
 
   HandleScheme("big-job");
@@ -3050,10 +3296,10 @@ TEST_F(ResourceDispatcherHostTest, DelayedDataReceivedACKs) {
       EXPECT_EQ(ResourceMsg_DataReceived::ID, msgs[0][i].type());
 
       ResourceHostMsg_DataReceived_ACK msg(1);
-      host_.OnMessageReceived(msg, filter_.get());
+      OnMessageReceived(msg, filter_.get());
     }
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     msgs.clear();
     accum_.GetClassifiedMessages(&msgs);
@@ -3062,7 +3308,7 @@ TEST_F(ResourceDispatcherHostTest, DelayedDataReceivedACKs) {
 
 // Flakyness of this test might indicate memory corruption issues with
 // for example the ResourceBuffer of AsyncResourceHandler.
-TEST_F(ResourceDispatcherHostTest, DataReceivedUnexpectedACKs) {
+TEST_P(ResourceDispatcherHostTest, DataReceivedUnexpectedACKs) {
   EXPECT_EQ(0, host_.pending_requests());
 
   HandleScheme("big-job");
@@ -3086,7 +3332,7 @@ TEST_F(ResourceDispatcherHostTest, DataReceivedUnexpectedACKs) {
   // Send some unexpected ACKs.
   for (size_t i = 0; i < 128; ++i) {
     ResourceHostMsg_DataReceived_ACK msg(1);
-    host_.OnMessageReceived(msg, filter_.get());
+    OnMessageReceived(msg, filter_.get());
   }
 
   msgs[0].erase(msgs[0].begin());
@@ -3104,10 +3350,10 @@ TEST_F(ResourceDispatcherHostTest, DataReceivedUnexpectedACKs) {
       EXPECT_EQ(ResourceMsg_DataReceived::ID, msgs[0][i].type());
 
       ResourceHostMsg_DataReceived_ACK msg(1);
-      host_.OnMessageReceived(msg, filter_.get());
+      OnMessageReceived(msg, filter_.get());
     }
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     msgs.clear();
     accum_.GetClassifiedMessages(&msgs);
@@ -3115,18 +3361,17 @@ TEST_F(ResourceDispatcherHostTest, DataReceivedUnexpectedACKs) {
 }
 
 // Tests the dispatcher host's temporary file management.
-TEST_F(ResourceDispatcherHostTest, RegisterDownloadedTempFile) {
+TEST_P(ResourceDispatcherHostTest, RegisterDownloadedTempFile) {
   const int kRequestID = 1;
 
   // Create a temporary file.
   base::FilePath file_path;
   ASSERT_TRUE(base::CreateTemporaryFile(&file_path));
+  EXPECT_TRUE(base::PathExists(file_path));
   scoped_refptr<ShareableFileReference> deletable_file =
       ShareableFileReference::GetOrCreate(
-          file_path,
-          ShareableFileReference::DELETE_ON_FINAL_RELEASE,
-          BrowserThread::GetMessageLoopProxyForThread(
-              BrowserThread::FILE).get());
+          file_path, ShareableFileReference::DELETE_ON_FINAL_RELEASE,
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get());
 
   // Not readable.
   EXPECT_FALSE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
@@ -3141,7 +3386,7 @@ TEST_F(ResourceDispatcherHostTest, RegisterDownloadedTempFile) {
 
   // The child releases from the request.
   ResourceHostMsg_ReleaseDownloadedFile release_msg(kRequestID);
-  host_.OnMessageReceived(release_msg, filter_.get());
+  OnMessageReceived(release_msg, filter_.get());
 
   // Still readable because there is another reference to the file. (The child
   // may take additional blob references.)
@@ -3151,7 +3396,57 @@ TEST_F(ResourceDispatcherHostTest, RegisterDownloadedTempFile) {
   // Release extra references and wait for the file to be deleted. (This relies
   // on the delete happening on the FILE thread which is mapped to main thread
   // in this test.)
-  deletable_file = NULL;
+  deletable_file = nullptr;
+  base::RunLoop().RunUntilIdle();
+
+  // The file is no longer readable to the child and has been deleted.
+  EXPECT_FALSE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
+      filter_->child_id(), file_path));
+  EXPECT_FALSE(base::PathExists(file_path));
+}
+
+// Tests the dispatcher host's temporary file management in the mojo-enabled
+// loading.
+TEST_P(ResourceDispatcherHostTest, RegisterDownloadedTempFileWithMojo) {
+  const int kRequestID = 1;
+
+  // Create a temporary file.
+  base::FilePath file_path;
+  ASSERT_TRUE(base::CreateTemporaryFile(&file_path));
+  EXPECT_TRUE(base::PathExists(file_path));
+  scoped_refptr<ShareableFileReference> deletable_file =
+      ShareableFileReference::GetOrCreate(
+          file_path, ShareableFileReference::DELETE_ON_FINAL_RELEASE,
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get());
+
+  // Not readable.
+  EXPECT_FALSE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
+      filter_->child_id(), file_path));
+
+  // Register it for a resource request.
+  auto downloaded_file =
+      DownloadedTempFileImpl::Create(filter_->child_id(), kRequestID);
+  mojom::DownloadedTempFilePtr downloaded_file_ptr =
+      DownloadedTempFileImpl::Create(filter_->child_id(), kRequestID);
+  host_.RegisterDownloadedTempFile(filter_->child_id(), kRequestID, file_path);
+
+  // Should be readable now.
+  EXPECT_TRUE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
+      filter_->child_id(), file_path));
+
+  // The child releases from the request.
+  downloaded_file_ptr = nullptr;
+  base::RunLoop().RunUntilIdle();
+
+  // Still readable because there is another reference to the file. (The child
+  // may take additional blob references.)
+  EXPECT_TRUE(ChildProcessSecurityPolicyImpl::GetInstance()->CanReadFile(
+      filter_->child_id(), file_path));
+
+  // Release extra references and wait for the file to be deleted. (This relies
+  // on the delete happening on the FILE thread which is mapped to main thread
+  // in this test.)
+  deletable_file = nullptr;
   base::RunLoop().RunUntilIdle();
 
   // The file is no longer readable to the child and has been deleted.
@@ -3162,7 +3457,7 @@ TEST_F(ResourceDispatcherHostTest, RegisterDownloadedTempFile) {
 
 // Tests that temporary files held on behalf of child processes are released
 // when the child process dies.
-TEST_F(ResourceDispatcherHostTest, ReleaseTemporiesOnProcessExit) {
+TEST_P(ResourceDispatcherHostTest, ReleaseTemporiesOnProcessExit) {
   const int kRequestID = 1;
 
   // Create a temporary file.
@@ -3170,10 +3465,8 @@ TEST_F(ResourceDispatcherHostTest, ReleaseTemporiesOnProcessExit) {
   ASSERT_TRUE(base::CreateTemporaryFile(&file_path));
   scoped_refptr<ShareableFileReference> deletable_file =
       ShareableFileReference::GetOrCreate(
-          file_path,
-          ShareableFileReference::DELETE_ON_FINAL_RELEASE,
-          BrowserThread::GetMessageLoopProxyForThread(
-              BrowserThread::FILE).get());
+          file_path, ShareableFileReference::DELETE_ON_FINAL_RELEASE,
+          BrowserThread::GetTaskRunnerForThread(BrowserThread::FILE).get());
 
   // Register it for a resource request.
   host_.RegisterDownloadedTempFile(filter_->child_id(), kRequestID, file_path);
@@ -3193,13 +3486,13 @@ TEST_F(ResourceDispatcherHostTest, ReleaseTemporiesOnProcessExit) {
   EXPECT_FALSE(base::PathExists(file_path));
 }
 
-TEST_F(ResourceDispatcherHostTest, DownloadToFile) {
+TEST_P(ResourceDispatcherHostTest, DownloadToFile) {
   // Make a request which downloads to file.
-  ResourceHostMsg_Request request = CreateResourceRequest(
+  ResourceRequest request = CreateResourceRequest(
       "GET", RESOURCE_TYPE_SUB_RESOURCE, net::URLRequestTestJob::test_url_1());
   request.download_to_file = true;
   ResourceHostMsg_RequestResource request_msg(0, 1, request);
-  host_.OnMessageReceived(request_msg, filter_.get());
+  OnMessageReceived(request_msg, filter_.get());
 
   // Running the message loop until idle does not work because
   // RedirectToFileResourceHandler posts things to base::WorkerPool. Instead,
@@ -3254,7 +3547,7 @@ TEST_F(ResourceDispatcherHostTest, DownloadToFile) {
   // RunUntilIdle doesn't work because base::WorkerPool is involved.
   ShareableFileReleaseWaiter waiter(response_head.download_file_path);
   ResourceHostMsg_ReleaseDownloadedFile release_msg(1);
-  host_.OnMessageReceived(release_msg, filter_.get());
+  OnMessageReceived(release_msg, filter_.get());
   waiter.Wait();
   // The release callback runs before the delete is scheduled, so pump the
   // message loop for the delete itself. (This relies on the delete happening on
@@ -3266,151 +3559,176 @@ TEST_F(ResourceDispatcherHostTest, DownloadToFile) {
       filter_->child_id(), response_head.download_file_path));
 }
 
-// Tests GetLoadInfoForAllRoutes when there are no pending requests.
-TEST_F(ResourceDispatcherHostTest, LoadInfoNoRequests) {
-  scoped_ptr<LoadInfoMap> load_info_map = RunLoadInfoTest(nullptr, 0);
-  EXPECT_EQ(0u, load_info_map->size());
-}
+WebContents* WebContentsBinder(WebContents* rv) { return rv; }
 
 // Tests GetLoadInfoForAllRoutes when there are 3 requests from the same
 // RenderView.  The second one is farthest along.
-TEST_F(ResourceDispatcherHostTest, LoadInfo) {
-  const GlobalRoutingID kId(filter_->child_id(), 0);
-  LoadInfoTestRequestInfo request_info[] = {
-      {kId.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_SENDING_REQUEST,
-       net::UploadProgress(0, 0)},
-      {kId.route_id,
-       GURL("test://2/"),
-       net::LOAD_STATE_READING_RESPONSE,
-       net::UploadProgress(0, 0)},
-      {kId.route_id,
-       GURL("test://3/"),
-       net::LOAD_STATE_SENDING_REQUEST,
-       net::UploadProgress(0, 0)},
-  };
-  scoped_ptr<LoadInfoMap> load_info_map =
-      RunLoadInfoTest(request_info, arraysize(request_info));
+TEST_P(ResourceDispatcherHostTest, LoadInfo) {
+  std::unique_ptr<LoadInfoList> infos(new LoadInfoList);
+  LoadInfo info;
+  WebContents* wc1 = reinterpret_cast<WebContents*>(0x1);
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc1);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_SENDING_REQUEST,
+                                            base::string16());
+  info.url = GURL("test://1/");
+  info.upload_position = 0;
+  info.upload_size = 0;
+  infos->push_back(info);
+
+  info.url = GURL("test://2/");
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_READING_RESPONSE,
+                                            base::string16());
+  infos->push_back(info);
+
+  info.url = GURL("test://3/");
+
+  std::unique_ptr<LoadInfoMap> load_info_map =
+      ResourceDispatcherHostImpl::PickMoreInterestingLoadInfos(
+          std::move(infos));
   ASSERT_EQ(1u, load_info_map->size());
-  ASSERT_TRUE(load_info_map->find(kId) != load_info_map->end());
-  EXPECT_EQ(GURL("test://2/"), (*load_info_map)[kId].url);
+  ASSERT_TRUE(load_info_map->find(wc1) != load_info_map->end());
+  EXPECT_EQ(GURL("test://2/"), (*load_info_map)[wc1].url);
   EXPECT_EQ(net::LOAD_STATE_READING_RESPONSE,
-            (*load_info_map)[kId].load_state.state);
-  EXPECT_EQ(0u, (*load_info_map)[kId].upload_position);
-  EXPECT_EQ(0u, (*load_info_map)[kId].upload_size);
+            (*load_info_map)[wc1].load_state.state);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_position);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_size);
 }
 
 // Tests GetLoadInfoForAllRoutes when there are 2 requests with the same
 // priority.  The first one (Which will have the lowest ID) should be returned.
-TEST_F(ResourceDispatcherHostTest, LoadInfoSamePriority) {
-  const GlobalRoutingID kId(filter_->child_id(), 0);
-  LoadInfoTestRequestInfo request_info[] = {
-      {kId.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_IDLE,
-       net::UploadProgress(0, 0)},
-      {kId.route_id,
-       GURL("test://2/"),
-       net::LOAD_STATE_IDLE,
-       net::UploadProgress(0, 0)},
-  };
-  scoped_ptr<LoadInfoMap> load_info_map =
-      RunLoadInfoTest(request_info, arraysize(request_info));
+TEST_P(ResourceDispatcherHostTest, LoadInfoSamePriority) {
+  std::unique_ptr<LoadInfoList> infos(new LoadInfoList);
+  LoadInfo info;
+  WebContents* wc1 = reinterpret_cast<WebContents*>(0x1);
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc1);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_IDLE,
+                                            base::string16());
+  info.url = GURL("test://1/");
+  info.upload_position = 0;
+  info.upload_size = 0;
+  infos->push_back(info);
+
+  info.url = GURL("test://2/");
+  infos->push_back(info);
+
+  std::unique_ptr<LoadInfoMap> load_info_map =
+      ResourceDispatcherHostImpl::PickMoreInterestingLoadInfos(
+          std::move(infos));
   ASSERT_EQ(1u, load_info_map->size());
-  ASSERT_TRUE(load_info_map->find(kId) != load_info_map->end());
-  EXPECT_EQ(GURL("test://1/"), (*load_info_map)[kId].url);
-  EXPECT_EQ(net::LOAD_STATE_IDLE, (*load_info_map)[kId].load_state.state);
-  EXPECT_EQ(0u, (*load_info_map)[kId].upload_position);
-  EXPECT_EQ(0u, (*load_info_map)[kId].upload_size);
+  ASSERT_TRUE(load_info_map->find(wc1) != load_info_map->end());
+  EXPECT_EQ(GURL("test://1/"), (*load_info_map)[wc1].url);
+  EXPECT_EQ(net::LOAD_STATE_IDLE, (*load_info_map)[wc1].load_state.state);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_position);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_size);
 }
 
 // Tests GetLoadInfoForAllRoutes when a request is uploading a body.
-TEST_F(ResourceDispatcherHostTest, LoadInfoUploadProgress) {
-  const GlobalRoutingID kId(filter_->child_id(), 0);
-  LoadInfoTestRequestInfo request_info[] = {
-      {kId.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_READING_RESPONSE,
-       net::UploadProgress(0, 0)},
-      {kId.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_READING_RESPONSE,
-       net::UploadProgress(1000, 1000)},
-      {kId.route_id,
-       GURL("test://2/"),
-       net::LOAD_STATE_SENDING_REQUEST,
-       net::UploadProgress(50, 100)},
-      {kId.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_READING_RESPONSE,
-       net::UploadProgress(1000, 1000)},
-      {kId.route_id,
-       GURL("test://3/"),
-       net::LOAD_STATE_READING_RESPONSE,
-       net::UploadProgress(0, 0)},
-  };
-  scoped_ptr<LoadInfoMap> load_info_map =
-      RunLoadInfoTest(request_info, arraysize(request_info));
+TEST_P(ResourceDispatcherHostTest, LoadInfoUploadProgress) {
+  std::unique_ptr<LoadInfoList> infos(new LoadInfoList);
+  LoadInfo info;
+  WebContents* wc1 = reinterpret_cast<WebContents*>(0x1);
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc1);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_READING_RESPONSE,
+                                            base::string16());
+  info.url = GURL("test://1/");
+  info.upload_position = 0;
+  info.upload_size = 0;
+  infos->push_back(info);
+
+  info.upload_position = 1000;
+  info.upload_size = 1000;
+  infos->push_back(info);
+
+  info.url = GURL("test://2/");
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_SENDING_REQUEST,
+                                            base::string16());
+  info.upload_position = 50;
+  info.upload_size = 100;
+  infos->push_back(info);
+
+  info.url = GURL("test://1/");
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_READING_RESPONSE,
+                                            base::string16());
+  info.upload_position = 1000;
+  info.upload_size = 1000;
+  infos->push_back(info);
+
+  info.url = GURL("test://3/");
+  info.upload_position = 0;
+  info.upload_size = 0;
+  infos->push_back(info);
+
+  std::unique_ptr<LoadInfoMap> load_info_map =
+      ResourceDispatcherHostImpl::PickMoreInterestingLoadInfos(
+          std::move(infos));
   ASSERT_EQ(1u, load_info_map->size());
-  ASSERT_TRUE(load_info_map->find(kId) != load_info_map->end());
-  EXPECT_EQ(GURL("test://2/"), (*load_info_map)[kId].url);
+  ASSERT_TRUE(load_info_map->find(wc1) != load_info_map->end());
+  EXPECT_EQ(GURL("test://2/"), (*load_info_map)[wc1].url);
   EXPECT_EQ(net::LOAD_STATE_SENDING_REQUEST,
-            (*load_info_map)[kId].load_state.state);
-  EXPECT_EQ(50u, (*load_info_map)[kId].upload_position);
-  EXPECT_EQ(100u, (*load_info_map)[kId].upload_size);
+            (*load_info_map)[wc1].load_state.state);
+  EXPECT_EQ(50u, (*load_info_map)[wc1].upload_position);
+  EXPECT_EQ(100u, (*load_info_map)[wc1].upload_size);
 }
 
 // Tests GetLoadInfoForAllRoutes when there are 4 requests from 2 different
 // RenderViews.  Also tests the case where the first / last requests are the
 // most interesting ones.
-TEST_F(ResourceDispatcherHostTest, LoadInfoTwoRenderViews) {
-  const GlobalRoutingID kId1(filter_->child_id(), 0);
-  const GlobalRoutingID kId2(filter_->child_id(), 1);
-  LoadInfoTestRequestInfo request_info[] = {
-      {kId1.route_id,
-       GURL("test://1/"),
-       net::LOAD_STATE_CONNECTING,
-       net::UploadProgress(0, 0)},
-      {kId2.route_id,
-       GURL("test://2/"),
-       net::LOAD_STATE_IDLE,
-       net::UploadProgress(0, 0)},
-      {kId1.route_id,
-       GURL("test://3/"),
-       net::LOAD_STATE_IDLE,
-       net::UploadProgress(0, 0)},
-      {kId2.route_id,
-       GURL("test://4/"),
-       net::LOAD_STATE_CONNECTING,
-       net::UploadProgress(0, 0)},
-  };
-  scoped_ptr<LoadInfoMap> load_info_map =
-      RunLoadInfoTest(request_info, arraysize(request_info));
+TEST_P(ResourceDispatcherHostTest, LoadInfoTwoRenderViews) {
+  std::unique_ptr<LoadInfoList> infos(new LoadInfoList);
+  LoadInfo info;
+  WebContents* wc1 = reinterpret_cast<WebContents*>(0x1);
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc1);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_CONNECTING,
+                                            base::string16());
+  info.url = GURL("test://1/");
+  info.upload_position = 0;
+  info.upload_size = 0;
+  infos->push_back(info);
+
+  WebContents* wc2 = reinterpret_cast<WebContents*>(0x2);
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc2);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_IDLE,
+                                            base::string16());
+  info.url = GURL("test://2/");
+  infos->push_back(info);
+
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc1);
+  info.url = GURL("test://3/");
+  infos->push_back(info);
+
+  info.web_contents_getter = base::Bind(WebContentsBinder, wc2);
+  info.load_state = net::LoadStateWithParam(net::LOAD_STATE_CONNECTING,
+                                            base::string16());
+  info.url = GURL("test://4/");
+  infos->push_back(info);
+
+  std::unique_ptr<LoadInfoMap> load_info_map =
+      ResourceDispatcherHostImpl::PickMoreInterestingLoadInfos(
+          std::move(infos));
   ASSERT_EQ(2u, load_info_map->size());
 
-  ASSERT_TRUE(load_info_map->find(kId1) != load_info_map->end());
-  EXPECT_EQ(GURL("test://1/"), (*load_info_map)[kId1].url);
+  ASSERT_TRUE(load_info_map->find(wc1) != load_info_map->end());
+  EXPECT_EQ(GURL("test://1/"), (*load_info_map)[wc1].url);
   EXPECT_EQ(net::LOAD_STATE_CONNECTING,
-            (*load_info_map)[kId1].load_state.state);
-  EXPECT_EQ(0u, (*load_info_map)[kId1].upload_position);
-  EXPECT_EQ(0u, (*load_info_map)[kId1].upload_size);
+            (*load_info_map)[wc1].load_state.state);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_position);
+  EXPECT_EQ(0u, (*load_info_map)[wc1].upload_size);
 
-  ASSERT_TRUE(load_info_map->find(kId2) != load_info_map->end());
-  EXPECT_EQ(GURL("test://4/"), (*load_info_map)[kId2].url);
+  ASSERT_TRUE(load_info_map->find(wc2) != load_info_map->end());
+  EXPECT_EQ(GURL("test://4/"), (*load_info_map)[wc2].url);
   EXPECT_EQ(net::LOAD_STATE_CONNECTING,
-            (*load_info_map)[kId2].load_state.state);
-  EXPECT_EQ(0u, (*load_info_map)[kId2].upload_position);
-  EXPECT_EQ(0u, (*load_info_map)[kId2].upload_size);
+            (*load_info_map)[wc2].load_state.state);
+  EXPECT_EQ(0u, (*load_info_map)[wc2].upload_position);
+  EXPECT_EQ(0u, (*load_info_map)[wc2].upload_size);
 }
 
 // Confirm that resource response started notifications are correctly
 // transmitted to the WebContents.
-TEST_F(ResourceDispatcherHostTest, TransferResponseStarted) {
+TEST_P(ResourceDispatcherHostTest, TransferResponseStarted) {
   int initial_count = web_contents_observer_->resource_response_start_count();
 
   MakeWebContentsAssociatedTestRequest(1, net::URLRequestTestJob::test_url_1());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(initial_count + 1,
             web_contents_observer_->resource_response_start_count());
@@ -3418,27 +3736,25 @@ TEST_F(ResourceDispatcherHostTest, TransferResponseStarted) {
 
 // Confirm that request redirected notifications are correctly
 // transmitted to the WebContents.
-TEST_F(ResourceDispatcherHostTest, TransferRequestRedirected) {
+TEST_P(ResourceDispatcherHostTest, TransferRequestRedirected) {
   int initial_count = web_contents_observer_->resource_request_redirect_count();
 
   MakeWebContentsAssociatedTestRequest(
       1, net::URLRequestTestJob::test_url_redirect_to_url_2());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(initial_count + 1,
             web_contents_observer_->resource_request_redirect_count());
 }
 
 // Confirm that DidChangePriority messages are respected.
-TEST_F(ResourceDispatcherHostTest, DidChangePriority) {
+TEST_P(ResourceDispatcherHostTest, DidChangePriority) {
   // ResourceScheduler only throttles http and https requests.
   HandleScheme("http");
 
   // Needed to enable scheduling for this child.
   host_.OnRenderViewHostCreated(filter_->child_id(),  // child_id
-                                0,                    // route_id
-                                true,                 // is_visible
-                                false);               // is_audible
+                                0);                   // route_id
 
   // Prevent any of these requests from completing.
   job_factory_->SetDelayedCompleteJobGeneration(true);
@@ -3457,8 +3773,8 @@ TEST_F(ResourceDispatcherHostTest, DidChangePriority) {
   // Increase the priority of the second idle priority request. It was
   // scheduled later, so it is not currently running.
   ResourceHostMsg_DidChangePriority priority_msg(3, net::MAXIMUM_PRIORITY, 0);
-  host_.OnMessageReceived(priority_msg, filter_.get());
-  base::MessageLoop::current()->RunUntilIdle();
+  OnMessageReceived(priority_msg, filter_.get());
+  base::RunLoop().RunUntilIdle();
 
   EXPECT_EQ(3, job_factory_->url_request_jobs_created_count());
 
@@ -3469,42 +3785,153 @@ TEST_F(ResourceDispatcherHostTest, DidChangePriority) {
 
 // Confirm that resource response started notifications for downloads are not
 // transmitted to the WebContents.
-TEST_F(ResourceDispatcherHostTest, TransferResponseStartedDownload) {
+TEST_P(ResourceDispatcherHostTest, TransferResponseStartedDownload) {
   int initial_count(web_contents_observer_->resource_response_start_count());
 
   MakeWebContentsAssociatedDownloadRequest(
       1, net::URLRequestTestJob::test_url_1());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(initial_count,
             web_contents_observer_->resource_response_start_count());
 }
 
 // Confirm that request redirected notifications for downloads are not
 // transmitted to the WebContents.
-TEST_F(ResourceDispatcherHostTest, TransferRequestRedirectedDownload) {
+TEST_P(ResourceDispatcherHostTest, TransferRequestRedirectedDownload) {
   int initial_count(web_contents_observer_->resource_request_redirect_count());
 
   MakeWebContentsAssociatedDownloadRequest(
       1, net::URLRequestTestJob::test_url_redirect_to_url_2());
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(initial_count,
             web_contents_observer_->resource_request_redirect_count());
 }
+
+// Tests that a ResourceThrottle that needs to process the response before any
+// part of the body is read can do so.
+TEST_P(ResourceDispatcherHostTest, ThrottleMustProcessResponseBeforeRead) {
+  // Ensure all jobs will check that no read operation is called.
+  job_factory_->SetMustNotReadJobGeneration(true);
+  HandleScheme("http");
+
+  // Create a ResourceThrottle that must process the response before any part of
+  // the body is read. This throttle will also cancel the request in
+  // WillProcessResponse.
+  TestResourceDispatcherHostDelegate delegate;
+  int throttle_flags = CANCEL_PROCESSING_RESPONSE | MUST_NOT_CACHE_BODY;
+  delegate.set_flags(throttle_flags);
+  host_.SetDelegate(&delegate);
+
+  // This response should normally result in the MIME type being sniffed, which
+  // requires reading the body.
+  std::string raw_headers(
+      "HTTP/1.1 200 OK\n"
+      "Content-Type: text/plain; charset=utf-8\n\n");
+  std::string response_data("p { text-align: center; }");
+  SetResponse(raw_headers, response_data);
+
+  MakeTestRequestWithResourceType(filter_.get(), filter_->child_id(), 1,
+                                  GURL("http://example.com/blah"),
+                                  RESOURCE_TYPE_STYLESHEET);
+
+  while (net::URLRequestTestJob::ProcessOnePendingMessage()) {
+  }
+  base::RunLoop().RunUntilIdle();
+}
+
+namespace {
+
+void StoreSyncLoadResult(bool* called,
+                         bool* was_null,
+                         SyncLoadResult* result_out,
+                         const SyncLoadResult* result) {
+  *called = true;
+  *was_null = !result;
+
+  if (result)
+    *result_out = *result;
+}
+
+} // namespace
+
+TEST_P(ResourceDispatcherHostTest, SyncLoadWithMojoSuccess) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_1());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  bool called = false;
+  bool was_null = false;
+  SyncLoadResult result;
+  host_.OnSyncLoadWithMojo(
+      GetResourceRequesterInfo(filter_.get()), 0, 1, request,
+      base::Bind(&StoreSyncLoadResult, &called, &was_null, &result));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(was_null);
+  EXPECT_EQ(net::OK, result.error_code);
+}
+
+TEST_P(ResourceDispatcherHostTest, SyncLoadWithMojoError) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_error());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  bool called = false;
+  bool was_null = false;
+  SyncLoadResult result;
+  host_.OnSyncLoadWithMojo(
+      GetResourceRequesterInfo(filter_.get()), 0, 1, request,
+      base::Bind(&StoreSyncLoadResult, &called, &was_null, &result));
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(called);
+  EXPECT_FALSE(was_null);
+  EXPECT_EQ(net::ERR_INVALID_URL, result.error_code);
+}
+
+TEST_P(ResourceDispatcherHostTest, SyncLoadWithMojoCancel) {
+  ResourceRequest request = CreateResourceRequest(
+      "GET", RESOURCE_TYPE_XHR, net::URLRequestTestJob::test_url_error());
+  request.priority = net::MAXIMUM_PRIORITY;
+
+  bool called = false;
+  bool was_null = false;
+  SyncLoadResult result;
+  host_.OnSyncLoadWithMojo(
+      GetResourceRequesterInfo(filter_.get()), 0, 1, request,
+      base::Bind(&StoreSyncLoadResult, &called, &was_null, &result));
+  host_.CancelRequestsForProcess(filter_->child_id());
+  base::RunLoop().RunUntilIdle();
+  EXPECT_TRUE(called);
+  EXPECT_TRUE(was_null);
+}
+
+// A URLRequestTestJob that sets a test certificate on the |ssl_info|
+// field of the response.
+class TestHTTPSURLRequestJob : public net::URLRequestTestJob {
+ public:
+  TestHTTPSURLRequestJob(net::URLRequest* request,
+                         net::NetworkDelegate* network_delegate,
+                         const std::string& response_headers,
+                         const std::string& response_data,
+                         bool auto_advance)
+      : net::URLRequestTestJob(request,
+                               network_delegate,
+                               response_headers,
+                               response_data,
+                               auto_advance) {}
+
+  void GetResponseInfo(net::HttpResponseInfo* info) override {
+    net::URLRequestTestJob::GetResponseInfo(info);
+    info->ssl_info.cert =
+        net::ImportCertFromFile(net::GetTestCertsDirectory(), "ok_cert.pem");
+  }
+};
 
 net::URLRequestJob* TestURLRequestJobFactory::MaybeCreateJobWithProtocolHandler(
       const std::string& scheme,
       net::URLRequest* request,
       net::NetworkDelegate* network_delegate) const {
   url_request_jobs_created_count_++;
-  if (test_fixture_->wait_for_request_create_loop_)
-    test_fixture_->wait_for_request_create_loop_->Quit();
-  if (test_fixture_->loader_test_request_info_) {
-    DCHECK_EQ(test_fixture_->loader_test_request_info_->url, request->url());
-    scoped_ptr<LoadInfoTestRequestInfo> info =
-        test_fixture_->loader_test_request_info_.Pass();
-    return new URLRequestLoadInfoJob(request, network_delegate,
-                                     info->load_state, info->upload_progress);
-  }
   if (hang_after_start_) {
     return new net::URLRequestFailedJob(request, network_delegate,
                                         net::ERR_IO_PENDING);
@@ -3515,12 +3942,11 @@ net::URLRequestJob* TestURLRequestJobFactory::MaybeCreateJobWithProtocolHandler(
     } else if (delay_complete_) {
       return new URLRequestTestDelayedCompletionJob(request,
                                                     network_delegate);
-    } else if (network_start_notification_) {
-      return new URLRequestTestDelayedNetworkJob(request, network_delegate);
     } else if (scheme == "big-job") {
       return new URLRequestBigJob(request, network_delegate);
     } else {
-      return new net::URLRequestTestJob(request, network_delegate);
+      return new net::URLRequestTestJob(request, network_delegate,
+                                        test_fixture_->auto_advance_);
     }
   } else {
     if (delay_start_) {
@@ -3533,11 +3959,18 @@ net::URLRequestJob* TestURLRequestJobFactory::MaybeCreateJobWithProtocolHandler(
           request, network_delegate,
           test_fixture_->response_headers_, test_fixture_->response_data_,
           false);
+    } else if (must_not_read_) {
+      return new URLRequestMustNotReadTestJob(request, network_delegate,
+                                              test_fixture_->response_headers_,
+                                              test_fixture_->response_data_);
+    } else if (test_fixture_->use_test_ssl_certificate_) {
+      return new TestHTTPSURLRequestJob(request, network_delegate,
+                                        test_fixture_->response_headers_,
+                                        test_fixture_->response_data_, false);
     } else {
       return new net::URLRequestTestJob(
-          request, network_delegate,
-          test_fixture_->response_headers_, test_fixture_->response_data_,
-          false);
+          request, network_delegate, test_fixture_->response_headers_,
+          test_fixture_->response_data_, test_fixture_->auto_advance_);
     }
   }
 }
@@ -3554,5 +3987,11 @@ net::URLRequestJob* TestURLRequestJobFactory::MaybeInterceptResponse(
     net::NetworkDelegate* network_delegate) const {
   return nullptr;
 }
+
+INSTANTIATE_TEST_CASE_P(
+    ResourceDispatcherHostTests,
+    ResourceDispatcherHostTest,
+    testing::Values(TestConfig::kDefault,
+                    TestConfig::kOptimizeIPCForSmallResourceEnabled));
 
 }  // namespace content

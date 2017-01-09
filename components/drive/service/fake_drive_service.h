@@ -5,9 +5,13 @@
 #ifndef COMPONENTS_DRIVE_SERVICE_FAKE_DRIVE_SERVICE_H_
 #define COMPONENTS_DRIVE_SERVICE_FAKE_DRIVE_SERVICE_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/files/file_path.h"
+#include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "components/drive/service/drive_service_interface.h"
 
@@ -79,7 +83,7 @@ class FakeDriveService : public DriveServiceInterface {
   }
 
   // Changes the quota fields returned from GetAboutResource().
-  void SetQuotaValue(int64 used, int64 total);
+  void SetQuotaValue(int64_t used, int64_t total);
 
   // Returns the AboutResource.
   const google_apis::AboutResource& about_resource() const {
@@ -120,9 +124,6 @@ class FakeDriveService : public DriveServiceInterface {
     return last_cancelled_file_;
   }
 
-  // Returns the (fake) URL for the link.
-  static GURL GetFakeLinkUrl(const std::string& resource_id);
-
   // Sets the printf format for constructing the response of AuthorizeApp().
   // The format string must include two %s that are to be filled with
   // resource_id and app_id.
@@ -157,7 +158,7 @@ class FakeDriveService : public DriveServiceInterface {
       const std::string& directory_resource_id,
       const google_apis::FileListCallback& callback) override;
   google_apis::CancelCallback GetChangeList(
-      int64 start_changestamp,
+      int64_t start_changestamp,
       const google_apis::ChangeListCallback& callback) override;
   google_apis::CancelCallback GetRemainingChangeList(
       const GURL& next_link,
@@ -218,33 +219,33 @@ class FakeDriveService : public DriveServiceInterface {
       const google_apis::FileResourceCallback& callback) override;
   google_apis::CancelCallback InitiateUploadNewFile(
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const std::string& parent_resource_id,
       const std::string& title,
       const UploadNewFileOptions& options,
       const google_apis::InitiateUploadCallback& callback) override;
   google_apis::CancelCallback InitiateUploadExistingFile(
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const std::string& resource_id,
       const UploadExistingFileOptions& options,
       const google_apis::InitiateUploadCallback& callback) override;
   google_apis::CancelCallback ResumeUpload(
       const GURL& upload_url,
-      int64 start_position,
-      int64 end_position,
-      int64 content_length,
+      int64_t start_position,
+      int64_t end_position,
+      int64_t content_length,
       const std::string& content_type,
       const base::FilePath& local_file_path,
       const google_apis::drive::UploadRangeCallback& callback,
       const google_apis::ProgressCallback& progress_callback) override;
   google_apis::CancelCallback GetUploadStatus(
       const GURL& upload_url,
-      int64 content_length,
+      int64_t content_length,
       const google_apis::drive::UploadRangeCallback& callback) override;
   google_apis::CancelCallback MultipartUploadNewFile(
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const std::string& parent_resource_id,
       const std::string& title,
       const base::FilePath& local_file_path,
@@ -253,7 +254,7 @@ class FakeDriveService : public DriveServiceInterface {
       const google_apis::ProgressCallback& progress_callback) override;
   google_apis::CancelCallback MultipartUploadExistingFile(
       const std::string& content_type,
-      int64 content_length,
+      int64_t content_length,
       const std::string& resource_id,
       const base::FilePath& local_file_path,
       const UploadExistingFileOptions& options,
@@ -271,7 +272,8 @@ class FakeDriveService : public DriveServiceInterface {
       const std::string& email,
       google_apis::drive::PermissionRole role,
       const google_apis::EntryActionCallback& callback) override;
-  scoped_ptr<BatchRequestConfiguratorInterface> StartBatchRequest() override;
+  std::unique_ptr<BatchRequestConfiguratorInterface> StartBatchRequest()
+      override;
 
   // Adds a new file with the given parameters. On success, returns
   // HTTP_CREATED with the parsed entry.
@@ -362,14 +364,13 @@ class FakeDriveService : public DriveServiceInterface {
   // is between |start_offset| (inclusive) and |start_offset| + |max_results|
   // (exclusive).
   // Increments *load_counter by 1 before it returns successfully.
-  void GetChangeListInternal(
-      int64 start_changestamp,
-      const std::string& search_query,
-      const std::string& directory_resource_id,
-      int start_offset,
-      int max_results,
-      int* load_counter,
-      const google_apis::ChangeListCallback& callback);
+  void GetChangeListInternal(int64_t start_changestamp,
+                             const std::string& search_query,
+                             const std::string& directory_resource_id,
+                             int start_offset,
+                             int max_results,
+                             int* load_counter,
+                             const google_apis::ChangeListCallback& callback);
 
   // Returns new upload session URL.
   GURL GetNewUploadSessionUrl();
@@ -379,13 +380,12 @@ class FakeDriveService : public DriveServiceInterface {
   // The class is expected to run on UI thread.
   base::ThreadChecker thread_checker_;
 
-  typedef std::map<std::string, EntryInfo*> EntryInfoMap;
-  EntryInfoMap entries_;
-  scoped_ptr<google_apis::AboutResource> about_resource_;
-  scoped_ptr<base::DictionaryValue> app_info_value_;
+  std::map<std::string, std::unique_ptr<EntryInfo>> entries_;
+  std::unique_ptr<google_apis::AboutResource> about_resource_;
+  std::unique_ptr<base::DictionaryValue> app_info_value_;
   std::map<GURL, UploadSession> upload_sessions_;
-  int64 published_date_seq_;
-  int64 next_upload_sequence_number_;
+  int64_t published_date_seq_;
+  int64_t next_upload_sequence_number_;
   int default_max_results_;
   int resource_id_count_;
   int file_list_load_count_;

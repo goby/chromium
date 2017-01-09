@@ -4,6 +4,8 @@
 
 #include "cc/output/latency_info_swap_promise.h"
 
+#include <stdint.h>
+
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 
@@ -38,15 +40,17 @@ void LatencyInfoSwapPromise::DidSwap(CompositorFrameMetadata* metadata) {
   metadata->latency_info.push_back(latency_);
 }
 
-void LatencyInfoSwapPromise::DidNotSwap(DidNotSwapReason reason) {
+SwapPromise::DidNotSwapAction LatencyInfoSwapPromise::DidNotSwap(
+    DidNotSwapReason reason) {
   latency_.AddLatencyNumber(DidNotSwapReasonToLatencyComponentType(reason), 0,
                             0);
   // TODO(miletus): Turn this back on once per-event LatencyInfo tracking
   // is enabled in GPU side.
   // DCHECK(latency_.terminated);
+  return DidNotSwapAction::BREAK_PROMISE;
 }
 
-int64 LatencyInfoSwapPromise::TraceId() const {
+int64_t LatencyInfoSwapPromise::TraceId() const {
   return latency_.trace_id();
 }
 

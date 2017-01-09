@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "ui/events/test/event_generator.h"
 #include "ui/events/test/test_event_handler.h"
 #include "ui/views/event_monitor.h"
@@ -20,9 +21,14 @@ class EventMonitorTest : public WidgetTest {
     widget_ = CreateTopLevelNativeWidget();
     widget_->SetSize(gfx::Size(100, 100));
     widget_->Show();
-    generator_.reset(
-        new ui::test::EventGenerator(GetContext(), widget_->GetNativeWindow()));
-    generator_->set_targeting_application(true);
+    if (IsMus() || IsAuraMusClient()) {
+      generator_.reset(
+          new ui::test::EventGenerator(widget_->GetNativeWindow()));
+    } else {
+      generator_.reset(new ui::test::EventGenerator(
+          GetContext(), widget_->GetNativeWindow()));
+    }
+    generator_->set_target(ui::test::EventGenerator::Target::APPLICATION);
   }
   void TearDown() override {
     widget_->CloseNow();
@@ -31,7 +37,7 @@ class EventMonitorTest : public WidgetTest {
 
  protected:
   Widget* widget_;
-  scoped_ptr<ui::test::EventGenerator> generator_;
+  std::unique_ptr<ui::test::EventGenerator> generator_;
   ui::test::TestEventHandler handler_;
 
  private:
@@ -39,7 +45,7 @@ class EventMonitorTest : public WidgetTest {
 };
 
 TEST_F(EventMonitorTest, ShouldReceiveAppEventsWhileInstalled) {
-  scoped_ptr<EventMonitor> monitor(
+  std::unique_ptr<EventMonitor> monitor(
       EventMonitor::CreateApplicationMonitor(&handler_));
 
   generator_->ClickLeftButton();
@@ -51,7 +57,7 @@ TEST_F(EventMonitorTest, ShouldReceiveAppEventsWhileInstalled) {
 }
 
 TEST_F(EventMonitorTest, ShouldReceiveWindowEventsWhileInstalled) {
-  scoped_ptr<EventMonitor> monitor(
+  std::unique_ptr<EventMonitor> monitor(
       EventMonitor::CreateWindowMonitor(&handler_, widget_->GetNativeWindow()));
 
   generator_->ClickLeftButton();
@@ -64,7 +70,7 @@ TEST_F(EventMonitorTest, ShouldReceiveWindowEventsWhileInstalled) {
 
 TEST_F(EventMonitorTest, ShouldNotReceiveEventsFromOtherWindow) {
   Widget* widget2 = CreateTopLevelNativeWidget();
-  scoped_ptr<EventMonitor> monitor(
+  std::unique_ptr<EventMonitor> monitor(
       EventMonitor::CreateWindowMonitor(&handler_, widget2->GetNativeWindow()));
 
   generator_->ClickLeftButton();

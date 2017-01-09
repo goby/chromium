@@ -22,43 +22,56 @@
 #define SVGPathElement_h
 
 #include "core/SVGNames.h"
-#include "core/svg/SVGAnimatedNumber.h"
 #include "core/svg/SVGAnimatedPath.h"
 #include "core/svg/SVGGeometryElement.h"
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
+class StylePath;
+
 class SVGPathElement final : public SVGGeometryElement {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    DECLARE_NODE_FACTORY(SVGPathElement);
+  DEFINE_WRAPPERTYPEINFO();
 
-    Path asPath() const override;
+ public:
+  DECLARE_NODE_FACTORY(SVGPathElement);
 
-    float getTotalLength();
-    PassRefPtrWillBeRawPtr<SVGPointTearOff> getPointAtLength(float distance);
-    unsigned getPathSegAtLength(float distance);
+  Path asPath() const override;
+  Path attributePath() const;
 
-    SVGAnimatedPath* path() { return m_path.get(); }
-    SVGAnimatedNumber* pathLength() { return m_pathLength.get(); }
+  float getTotalLength() override;
+  SVGPointTearOff* getPointAtLength(float distance) override;
+  unsigned getPathSegAtLength(float distance);
 
-    DECLARE_VIRTUAL_TRACE();
+  SVGAnimatedPath* path() const { return m_path.get(); }
+  float computePathLength() const override;
+  const SVGPathByteStream& pathByteStream() const {
+    return stylePath()->byteStream();
+  }
 
-private:
-    explicit SVGPathElement(Document&);
+  FloatRect getBBox() override;
 
-    void svgAttributeChanged(const QualifiedName&) override;
+  DECLARE_VIRTUAL_TRACE();
 
-    Node::InsertionNotificationRequest insertedInto(ContainerNode*) override;
-    void removedFrom(ContainerNode*) override;
+ private:
+  explicit SVGPathElement(Document&);
 
-    void invalidateMPathDependencies();
+  const StylePath* stylePath() const;
 
-    RefPtrWillBeMember<SVGAnimatedNumber> m_pathLength;
-    RefPtrWillBeMember<SVGAnimatedPath> m_path;
+  void svgAttributeChanged(const QualifiedName&) override;
+
+  void collectStyleForPresentationAttribute(const QualifiedName&,
+                                            const AtomicString&,
+                                            MutableStylePropertySet*) override;
+
+  Node::InsertionNotificationRequest insertedInto(ContainerNode*) override;
+  void removedFrom(ContainerNode*) override;
+
+  void invalidateMPathDependencies();
+
+  Member<SVGAnimatedPath> m_path;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGPathElement_h
+#endif  // SVGPathElement_h

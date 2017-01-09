@@ -5,11 +5,15 @@
 #include "extensions/browser/content_verifier.h"
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 #include "base/files/file_path.h"
 #include "base/stl_util.h"
 #include "base/strings/string_util.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "extensions/browser/content_hash_fetcher.h"
 #include "extensions/browser/content_hash_reader.h"
 #include "extensions/browser/content_verifier_delegate.h"
@@ -62,12 +66,12 @@ ContentVerifier::ContentVerifier(content::BrowserContext* context,
       context_(context),
       delegate_(delegate),
       fetcher_(new ContentHashFetcher(
-          context,
+          content::BrowserContext::GetDefaultStoragePartition(context)
+              ->GetURLRequestContext(),
           delegate,
           base::Bind(&ContentVerifier::OnFetchComplete, this))),
       observer_(this),
-      io_data_(new ContentVerifierIOData) {
-}
+      io_data_(new ContentVerifierIOData) {}
 
 ContentVerifier::~ContentVerifier() {
 }
@@ -157,15 +161,15 @@ void ContentVerifier::OnExtensionLoaded(
     std::set<base::FilePath> original_image_paths =
         delegate_->GetBrowserImagePaths(extension);
 
-    scoped_ptr<std::set<base::FilePath>> image_paths(
+    std::unique_ptr<std::set<base::FilePath>> image_paths(
         new std::set<base::FilePath>);
     for (const auto& path : original_image_paths) {
       image_paths->insert(NormalizeRelativePath(path));
     }
 
-    scoped_ptr<ContentVerifierIOData::ExtensionData> data(
+    std::unique_ptr<ContentVerifierIOData::ExtensionData> data(
         new ContentVerifierIOData::ExtensionData(
-            image_paths.Pass(),
+            std::move(image_paths),
             extension->version() ? *extension->version() : base::Version()));
     content::BrowserThread::PostTask(content::BrowserThread::IO,
                                      FROM_HERE,
@@ -250,7 +254,7 @@ bool ContentVerifier::ShouldVerifyAnyPaths(
   const std::set<base::FilePath>& browser_images = *(data->browser_image_paths);
 
   base::FilePath locales_dir = extension_root.Append(kLocaleFolder);
-  scoped_ptr<std::set<std::string> > all_locales;
+  std::unique_ptr<std::set<std::string>> all_locales;
 
   for (std::set<base::FilePath>::const_iterator i = relative_paths.begin();
        i != relative_paths.end();
@@ -260,7 +264,7 @@ bool ContentVerifier::ShouldVerifyAnyPaths(
     if (relative_path == base::FilePath(kManifestFilename))
       continue;
 
-    if (ContainsKey(browser_images, relative_path))
+    if (base::ContainsKey(browser_images, relative_path))
       continue;
 
     base::FilePath full_path = extension_root.Append(relative_path);

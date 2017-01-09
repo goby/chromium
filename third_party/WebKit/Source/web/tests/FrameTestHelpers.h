@@ -34,24 +34,33 @@
 #include "core/frame/Settings.h"
 #include "platform/RuntimeEnabledFeatures.h"
 #include "platform/scroll/ScrollbarTheme.h"
+#include "public/platform/WebString.h"
 #include "public/platform/WebURLRequest.h"
 #include "public/web/WebFrameClient.h"
+#include "public/web/WebFrameOwnerProperties.h"
 #include "public/web/WebHistoryItem.h"
 #include "public/web/WebRemoteFrameClient.h"
+#include "public/web/WebSettings.h"
 #include "public/web/WebViewClient.h"
 #include "web/WebViewImpl.h"
-#include "wtf/PassOwnPtr.h"
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
+#include <memory>
 #include <string>
 
 namespace blink {
 
+class WebFrame;
+class WebLocalFrameImpl;
 class WebRemoteFrameImpl;
+class WebSettings;
+enum class WebCachePolicy;
 
 namespace FrameTestHelpers {
 
 class TestWebFrameClient;
+class TestWebWidgetClient;
+class TestWebViewClient;
 
 // Loads a url into the specified WebFrame for testing purposes. Pumps any
 // pending resource requests, as well as waiting for the threaded parser to
@@ -60,123 +69,211 @@ void loadFrame(WebFrame*, const std::string& url);
 // Same as above, but for WebFrame::loadHTMLString().
 void loadHTMLString(WebFrame*, const std::string& html, const WebURL& baseURL);
 // Same as above, but for WebFrame::loadHistoryItem().
-void loadHistoryItem(WebFrame*, const WebHistoryItem&, WebHistoryLoadType, WebURLRequest::CachePolicy);
+void loadHistoryItem(WebFrame*,
+                     const WebHistoryItem&,
+                     WebHistoryLoadType,
+                     WebCachePolicy);
 // Same as above, but for WebFrame::reload().
 void reloadFrame(WebFrame*);
-void reloadFrameIgnoringCache(WebFrame*);
+void reloadFrameBypassingCache(WebFrame*);
 
-// Pumps pending resource requests while waiting for a frame to load. Don't use
-// this. Use one of the above helpers.
-void pumpPendingRequestsDoNotUse(WebFrame*);
+// Pumps pending resource requests while waiting for a frame to load. Consider
+// using one of the above helper methods whenever possible.
+void pumpPendingRequestsForFrameToLoad(WebFrame*);
 
+WebMouseEvent createMouseEvent(WebInputEvent::Type,
+                               WebMouseEvent::Button,
+                               const IntPoint&,
+                               int modifiers);
+
+// Calls WebRemoteFrame::createLocalChild, but with some arguments prefilled
+// with default test values (i.e. with a default |client| or |properties| and/or
+// with a precalculated |uniqueName|).
+WebLocalFrameImpl* createLocalChild(
+    WebRemoteFrame* parent,
+    const WebString& name = WebString(),
+    WebFrameClient* = nullptr,
+    WebWidgetClient* = nullptr,
+    WebFrame* previousSibling = nullptr,
+    const WebFrameOwnerProperties& = WebFrameOwnerProperties());
+WebRemoteFrameImpl* createRemoteChild(WebRemoteFrame* parent,
+                                      WebRemoteFrameClient*,
+                                      const WebString& name = WebString());
+
+// Helpers for unit tests with parameterized WebSettings overrides.
+typedef void (*SettingOverrideFunction)(WebSettings*);
 class SettingOverrider {
-public:
-    virtual void overrideSettings(WebSettings*) = 0;
+ public:
+  virtual void overrideSettings(WebSettings*) = 0;
 };
 
-// Forces to use mocked overlay scrollbars instead of the default native theme scrollbars to avoid
-// crash in Chromium code when it tries to load UI resources that are not available when running
-// blink unit tests, and to ensure consistent layout regardless of differences between scrollbar themes.
-// WebViewHelper includes this, so this is only needed if a test doesn't use WebViewHelper or the test
-// needs a bigger scope of mock scrollbar settings than the scope of WebViewHelper.
+// Forces to use mocked overlay scrollbars instead of the default native theme
+// scrollbars to avoid crash in Chromium code when it tries to load UI
+// resources that are not available when running blink unit tests, and to
+// ensure consistent layout regardless of differences between scrollbar themes.
+// WebViewHelper includes this, so this is only needed if a test doesn't use
+// WebViewHelper or the test needs a bigger scope of mock scrollbar settings
+// than the scope of WebViewHelper.
 class UseMockScrollbarSettings {
-public:
-    UseMockScrollbarSettings()
-        : m_originalMockScrollbarEnabled(Settings::mockScrollbarsEnabled())
-        , m_originalOverlayScrollbarsEnabled(RuntimeEnabledFeatures::overlayScrollbarsEnabled())
-    {
-        Settings::setMockScrollbarsEnabled(true);
-        RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(true);
-        EXPECT_TRUE(ScrollbarTheme::theme()->usesOverlayScrollbars());
-    }
+ public:
+  UseMockScrollbarSettings()
+      : m_originalMockScrollbarEnabled(Settings::mockScrollbarsEnabled()),
+        m_originalOverlayScrollbarsEnabled(
+            RuntimeEnabledFeatures::overlayScrollbarsEnabled()) {
+    Settings::setMockScrollbarsEnabled(true);
+    RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(true);
+    EXPECT_TRUE(ScrollbarTheme::theme().usesOverlayScrollbars());
+  }
 
-    ~UseMockScrollbarSettings()
-    {
-        Settings::setMockScrollbarsEnabled(m_originalMockScrollbarEnabled);
-        RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(m_originalOverlayScrollbarsEnabled);
-    }
+  ~UseMockScrollbarSettings() {
+    Settings::setMockScrollbarsEnabled(m_originalMockScrollbarEnabled);
+    RuntimeEnabledFeatures::setOverlayScrollbarsEnabled(
+        m_originalOverlayScrollbarsEnabled);
+  }
 
-private:
-    bool m_originalMockScrollbarEnabled;
-    bool m_originalOverlayScrollbarsEnabled;
+ private:
+  bool m_originalMockScrollbarEnabled;
+  bool m_originalOverlayScrollbarsEnabled;
 };
 
-// Convenience class for handling the lifetime of a WebView and its associated mainframe in tests.
-class WebViewHelper {
-    WTF_MAKE_NONCOPYABLE(WebViewHelper);
-public:
-    WebViewHelper(SettingOverrider* = 0);
-    ~WebViewHelper();
-
-    // Creates and initializes the WebView. Implicitly calls reset() first. IF a
-    // WebFrameClient or a WebViewClient are passed in, they must outlive the
-    // WebViewHelper.
-    WebViewImpl* initialize(bool enableJavascript = false, TestWebFrameClient* = 0, WebViewClient* = 0, void (*updateSettingsFunc)(WebSettings*) = 0);
-
-    // Same as initialize() but also performs the initial load of the url. Only
-    // returns once the load is complete.
-    WebViewImpl* initializeAndLoad(const std::string& url, bool enableJavascript = false, TestWebFrameClient* = 0, WebViewClient* = 0, void (*updateSettingsFunc)(WebSettings*) = 0);
-
-    void reset();
-
-    WebView* webView() const { return m_webView; }
-    WebViewImpl* webViewImpl() const { return m_webView; }
-
-private:
-    WebViewImpl* m_webView;
-    SettingOverrider* m_settingOverrider;
-    UseMockScrollbarSettings m_mockScrollbarSettings;
+class TestWebWidgetClient : public WebWidgetClient {
+ public:
+  virtual ~TestWebWidgetClient() {}
+  bool allowsBrokenNullLayerTreeView() const override { return true; }
 };
 
-// Minimal implementation of WebFrameClient needed for unit tests that load frames. Tests that load
-// frames and need further specialization of WebFrameClient behavior should subclass this.
-class TestWebFrameClient : public WebFrameClient {
-public:
-    TestWebFrameClient();
+class TestWebViewWidgetClient : public TestWebWidgetClient {
+ public:
+  explicit TestWebViewWidgetClient(TestWebViewClient* testWebViewClient)
+      : m_testWebViewClient(testWebViewClient) {}
+  virtual ~TestWebViewWidgetClient() {}
 
-    WebFrame* createChildFrame(WebLocalFrame* parent, WebTreeScopeType, const WebString& frameName, WebSandboxFlags, const WebFrameOwnerProperties&) override;
-    void frameDetached(WebFrame*, DetachType) override;
-    void didStartLoading(bool) override;
-    void didStopLoading() override;
+  void initializeLayerTreeView() override;
+  WebLayerTreeView* layerTreeView() override;
+  void scheduleAnimation() override;
+  void didMeaningfulLayout(WebMeaningfulLayout) override;
 
-    bool isLoading() { return m_loadsInProgress > 0; }
-    void waitForLoadToComplete();
-
-private:
-    int m_loadsInProgress;
-};
-
-// Minimal implementation of WebRemoteFrameClient needed for unit tests that load remote frames. Tests that load
-// frames and need further specialization of WebFrameClient behavior should subclass this.
-class TestWebRemoteFrameClient : public WebRemoteFrameClient {
-public:
-    TestWebRemoteFrameClient();
-
-    WebRemoteFrameImpl* frame() const { return m_frame; }
-
-    // WebRemoteFrameClient overrides:
-    void frameDetached(DetachType) override;
-    void postMessageEvent(
-        WebLocalFrame* sourceFrame,
-        WebRemoteFrame* targetFrame,
-        WebSecurityOrigin targetOrigin,
-        WebDOMMessageEvent) override { }
-
-private:
-    RawPtrWillBePersistent<WebRemoteFrameImpl> const m_frame;
+ private:
+  TestWebViewClient* m_testWebViewClient;
 };
 
 class TestWebViewClient : public WebViewClient {
-public:
-    virtual ~TestWebViewClient() { }
-    void initializeLayerTreeView() override;
-    WebLayerTreeView* layerTreeView() override { return m_layerTreeView.get(); }
+ public:
+  TestWebViewClient()
+      : m_testWebWidgetClient(this), m_animationScheduled(false) {}
+  virtual ~TestWebViewClient() {}
+  void initializeLayerTreeView() override;
+  WebLayerTreeView* layerTreeView() override { return m_layerTreeView.get(); }
 
-private:
-    OwnPtr<WebLayerTreeView> m_layerTreeView;
+  void scheduleAnimation() override { m_animationScheduled = true; }
+  bool animationScheduled() { return m_animationScheduled; }
+  void clearAnimationScheduled() { m_animationScheduled = false; }
+
+  // TODO(lfg): This is a temporary method to retrieve the WebWidgetClient,
+  // while we refactor WebView to not inherit from Webwidget.
+  // Returns the WebWidgetClient.
+  TestWebWidgetClient* widgetClient() { return &m_testWebWidgetClient; }
+
+ private:
+  friend class TestWebViewWidgetClient;
+
+  TestWebViewWidgetClient m_testWebWidgetClient;
+  std::unique_ptr<WebLayerTreeView> m_layerTreeView;
+  bool m_animationScheduled;
 };
 
-} // namespace FrameTestHelpers
-} // namespace blink
+// Convenience class for handling the lifetime of a WebView and its associated
+// mainframe in tests.
+class WebViewHelper {
+  WTF_MAKE_NONCOPYABLE(WebViewHelper);
 
-#endif // FrameTestHelpers_h
+ public:
+  WebViewHelper(SettingOverrider* = 0);
+  ~WebViewHelper();
+
+  // Creates and initializes the WebView. Implicitly calls reset() first. If
+  // a WebFrameClient or a WebViewClient are passed in, they must outlive the
+  // WebViewHelper.
+  WebViewImpl* initializeWithOpener(
+      WebFrame* opener,
+      bool enableJavascript = false,
+      TestWebFrameClient* = nullptr,
+      TestWebViewClient* = nullptr,
+      TestWebWidgetClient* = nullptr,
+      void (*updateSettingsFunc)(WebSettings*) = nullptr);
+
+  // Same as initializeWithOpener(), but always sets the opener to null.
+  WebViewImpl* initialize(bool enableJavascript = false,
+                          TestWebFrameClient* = nullptr,
+                          TestWebViewClient* = nullptr,
+                          TestWebWidgetClient* = nullptr,
+                          void (*updateSettingsFunc)(WebSettings*) = 0);
+
+  // Same as initialize() but also performs the initial load of the url. Only
+  // returns once the load is complete.
+  WebViewImpl* initializeAndLoad(const std::string& url,
+                                 bool enableJavascript = false,
+                                 TestWebFrameClient* = nullptr,
+                                 TestWebViewClient* = nullptr,
+                                 TestWebWidgetClient* = nullptr,
+                                 void (*updateSettingsFunc)(WebSettings*) = 0);
+
+  void resize(WebSize);
+
+  void reset();
+
+  WebViewImpl* webView() const { return m_webView; }
+
+ private:
+  WebViewImpl* m_webView;
+  SettingOverrider* m_settingOverrider;
+  UseMockScrollbarSettings m_mockScrollbarSettings;
+  TestWebViewClient* m_testWebViewClient;
+};
+
+// Minimal implementation of WebFrameClient needed for unit tests that load
+// frames. Tests that load frames and need further specialization of
+// WebFrameClient behavior should subclass this.
+class TestWebFrameClient : public WebFrameClient {
+ public:
+  TestWebFrameClient();
+
+  WebLocalFrame* createChildFrame(WebLocalFrame* parent,
+                                  WebTreeScopeType,
+                                  const WebString& name,
+                                  const WebString& uniqueName,
+                                  WebSandboxFlags,
+                                  const WebFrameOwnerProperties&) override;
+  void didStartLoading(bool) override;
+  void didStopLoading() override;
+
+  bool isLoading() { return m_loadsInProgress > 0; }
+
+ private:
+  int m_loadsInProgress = 0;
+};
+
+// Minimal implementation of WebRemoteFrameClient needed for unit tests that
+// load remote frames. Tests that load frames and need further specialization
+// of WebFrameClient behavior should subclass this.
+class TestWebRemoteFrameClient : public WebRemoteFrameClient {
+ public:
+  TestWebRemoteFrameClient();
+
+  WebRemoteFrameImpl* frame() const { return m_frame; }
+
+  // WebRemoteFrameClient overrides:
+  void frameDetached(DetachType) override;
+  void forwardPostMessage(WebLocalFrame* sourceFrame,
+                          WebRemoteFrame* targetFrame,
+                          WebSecurityOrigin targetOrigin,
+                          WebDOMMessageEvent) override {}
+
+ private:
+  Persistent<WebRemoteFrameImpl> const m_frame;
+};
+
+}  // namespace FrameTestHelpers
+}  // namespace blink
+
+#endif  // FrameTestHelpers_h

@@ -4,9 +4,19 @@
 
 #include "ui/native_theme/native_theme.h"
 
+#include <cstring>
+
 #include "ui/native_theme/native_theme_observer.h"
 
 namespace ui {
+
+NativeTheme::ExtraParams::ExtraParams() {
+  memset(this, 0, sizeof(*this));
+}
+
+NativeTheme::ExtraParams::ExtraParams(const ExtraParams& other) {
+  memcpy(this, &other, sizeof(*this));
+}
 
 void NativeTheme::SetScrollbarColors(unsigned inactive_color,
                                      unsigned active_color,
@@ -25,8 +35,8 @@ void NativeTheme::RemoveObserver(NativeThemeObserver* observer) {
 }
 
 void NativeTheme::NotifyObservers() {
-  FOR_EACH_OBSERVER(NativeThemeObserver, native_theme_observers_,
-                    OnNativeThemeUpdated(this));
+  for (NativeThemeObserver& observer : native_theme_observers_)
+    observer.OnNativeThemeUpdated(this);
 }
 
 NativeTheme::NativeTheme()

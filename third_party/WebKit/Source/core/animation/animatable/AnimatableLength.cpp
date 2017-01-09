@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/animation/animatable/AnimatableLength.h"
 
 #include "platform/CalculationValue.h"
@@ -38,46 +37,48 @@ namespace blink {
 
 namespace {
 
-double clampNumber(double value, ValueRange range)
-{
-    if (range == ValueRangeNonNegative)
-        return std::max(value, 0.0);
-    ASSERT(range == ValueRangeAll);
-    return value;
+double clampNumber(double value, ValueRange range) {
+  if (range == ValueRangeNonNegative)
+    return std::max(value, 0.0);
+  DCHECK_EQ(range, ValueRangeAll);
+  return value;
 }
 
-} // namespace
+}  // namespace
 
-AnimatableLength::AnimatableLength(const Length& length, float zoom)
-{
-    ASSERT(zoom);
-    PixelsAndPercent pixelsAndPercent = length.pixelsAndPercent();
-    m_pixels = pixelsAndPercent.pixels / zoom;
-    m_percent = pixelsAndPercent.percent;
-    m_hasPixels = length.type() != Percent;
-    m_hasPercent = !length.isFixed();
+AnimatableLength::AnimatableLength(const Length& length, float zoom) {
+  DCHECK(zoom);
+  PixelsAndPercent pixelsAndPercent = length.getPixelsAndPercent();
+  m_pixels = pixelsAndPercent.pixels / zoom;
+  m_percent = pixelsAndPercent.percent;
+  m_hasPixels = length.type() != Percent;
+  m_hasPercent = !length.isFixed();
 }
 
-Length AnimatableLength::length(float zoom, ValueRange range) const
-{
-    if (!m_hasPercent)
-        return Length(clampNumber(m_pixels, range) * zoom, Fixed);
-    if (!m_hasPixels)
-        return Length(clampNumber(m_percent, range), Percent);
-    return Length(CalculationValue::create(PixelsAndPercent(m_pixels * zoom, m_percent), range));
+Length AnimatableLength::getLength(float zoom, ValueRange range) const {
+  if (!m_hasPercent)
+    return Length(clampNumber(m_pixels, range) * zoom, Fixed);
+  if (!m_hasPixels)
+    return Length(clampNumber(m_percent, range), Percent);
+  return Length(CalculationValue::create(
+      PixelsAndPercent(m_pixels * zoom, m_percent), range));
 }
 
-PassRefPtr<AnimatableValue> AnimatableLength::interpolateTo(const AnimatableValue* value, double fraction) const
-{
-    const AnimatableLength* length = toAnimatableLength(value);
-    return create(blend(m_pixels, length->m_pixels, fraction), blend(m_percent, length->m_percent, fraction),
-        m_hasPixels || length->m_hasPixels, m_hasPercent || length->m_hasPercent);
+PassRefPtr<AnimatableValue> AnimatableLength::interpolateTo(
+    const AnimatableValue* value,
+    double fraction) const {
+  const AnimatableLength* length = toAnimatableLength(value);
+  return create(blend(m_pixels, length->m_pixels, fraction),
+                blend(m_percent, length->m_percent, fraction),
+                m_hasPixels || length->m_hasPixels,
+                m_hasPercent || length->m_hasPercent);
 }
 
-bool AnimatableLength::equalTo(const AnimatableValue* value) const
-{
-    const AnimatableLength* length = toAnimatableLength(value);
-    return m_pixels == length->m_pixels && m_percent == length->m_percent && m_hasPixels == length->m_hasPixels && m_hasPercent == length->m_hasPercent;
+bool AnimatableLength::equalTo(const AnimatableValue* value) const {
+  const AnimatableLength* length = toAnimatableLength(value);
+  return m_pixels == length->m_pixels && m_percent == length->m_percent &&
+         m_hasPixels == length->m_hasPixels &&
+         m_hasPercent == length->m_hasPercent;
 }
 
-} // namespace blink
+}  // namespace blink

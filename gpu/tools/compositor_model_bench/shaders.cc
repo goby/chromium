@@ -4,7 +4,10 @@
 
 #include "gpu/tools/compositor_model_bench/shaders.h"
 
+#include <stdint.h>
+
 #include <algorithm>
+#include <memory>
 
 #include "gpu/tools/compositor_model_bench/render_model_utils.h"
 #include "gpu/tools/compositor_model_bench/render_tree.h"
@@ -235,7 +238,7 @@ static void ReportAnyShaderCompilationErrors(GLuint shader, ShaderID id) {
   // Get the length of the log string
   GLsizei length;
   glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &length);
-  scoped_ptr<GLchar[]> log(new GLchar[length+1]);
+  std::unique_ptr<GLchar[]> log(new GLchar[length + 1]);
   glGetShaderInfoLog(shader, length, NULL, log.get());
   LOG(ERROR) << log.get() << " in shader " << ShaderNameFromID(id);
 }

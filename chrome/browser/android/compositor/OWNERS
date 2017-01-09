@@ -1,6 +1,8 @@
 changwan@chromium.org
 dtrainor@chromium.org
-jaekyun@chromium.org
 
 per-file *contextual_search*=donnd@chromium.org
-per-file *contextual_search*=pedrosimonetti@chromium.org
+per-file *contextual_search*=mdjones@chromium.org
+per-file *contextual_search*=twellington@chromium.org
+
+per-file *crushed_sprite*=twellington@chromium.org

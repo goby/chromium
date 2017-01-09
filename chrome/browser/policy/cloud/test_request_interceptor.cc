@@ -5,15 +5,17 @@
 #include "chrome/browser/policy/cloud/test_request_interceptor.h"
 
 #include <limits>
+#include <memory>
 #include <queue>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/sequenced_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
 #include "net/base/upload_bytes_element_reader.h"
@@ -83,7 +85,7 @@ bool ValidRequest(net::URLRequest* request,
   const net::UploadDataStream* stream = request->get_upload();
   if (!stream)
     return false;
-  const std::vector<scoped_ptr<net::UploadElementReader>>* readers =
+  const std::vector<std::unique_ptr<net::UploadElementReader>>* readers =
       stream->GetElementReaders();
   if (!readers || readers->size() != 1u)
     return false;
@@ -151,9 +153,9 @@ net::URLRequestJob* RegisterJobCallback(
 
 void RegisterHttpInterceptor(
     const std::string& hostname,
-    scoped_ptr<net::URLRequestInterceptor> interceptor) {
+    std::unique_ptr<net::URLRequestInterceptor> interceptor) {
   net::URLRequestFilter::GetInstance()->AddHostnameInterceptor(
-      "http", hostname, interceptor.Pass());
+      "http", hostname, std::move(interceptor));
 }
 
 void UnregisterHttpInterceptor(const std::string& hostname) {
@@ -179,7 +181,7 @@ class TestRequestInterceptor::Delegate : public net::URLRequestInterceptor {
 
  private:
   static void InvokeRequestServicedCallbacks(
-      scoped_ptr<std::vector<base::Closure>> callbacks);
+      std::unique_ptr<std::vector<base::Closure>> callbacks);
 
   const std::string hostname_;
   scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
@@ -206,7 +208,7 @@ net::URLRequestJob* TestRequestInterceptor::Delegate::MaybeInterceptRequest(
     net::NetworkDelegate* network_delegate) const {
   CHECK(io_task_runner_->RunsTasksOnCurrentThread());
 
-  if (request->url().host() != hostname_) {
+  if (request->url().host_piece() != hostname_) {
     // Reject requests to other servers.
     return ErrorJobCallback(
         net::ERR_CONNECTION_REFUSED, request, network_delegate);
@@ -220,7 +222,7 @@ net::URLRequestJob* TestRequestInterceptor::Delegate::MaybeInterceptRequest(
   // Invoke any callbacks that are waiting for the next request to be serviced
   // after this job is serviced.
   if (!request_serviced_callbacks_.empty()) {
-    scoped_ptr<std::vector<base::Closure>> callbacks(
+    std::unique_ptr<std::vector<base::Closure>> callbacks(
         new std::vector<base::Closure>);
     callbacks->swap(request_serviced_callbacks_);
     io_task_runner_->PostTask(
@@ -253,7 +255,7 @@ void TestRequestInterceptor::Delegate::PushJobCallback(
 
 // static
 void TestRequestInterceptor::Delegate::InvokeRequestServicedCallbacks(
-    scoped_ptr<std::vector<base::Closure>> callbacks) {
+    std::unique_ptr<std::vector<base::Closure>> callbacks) {
   for (const auto& p : *callbacks)
     p.Run();
 }
@@ -263,7 +265,7 @@ TestRequestInterceptor::TestRequestInterceptor(const std::string& hostname,
     : hostname_(hostname),
       io_task_runner_(io_task_runner) {
   delegate_ = new Delegate(hostname_, io_task_runner_);
-  scoped_ptr<net::URLRequestInterceptor> interceptor(delegate_);
+  std::unique_ptr<net::URLRequestInterceptor> interceptor(delegate_);
   PostToIOAndWait(
       base::Bind(&RegisterHttpInterceptor, hostname_,
                  base::Passed(&interceptor)));

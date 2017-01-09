@@ -3,10 +3,9 @@ asanka@chromium.org
 bnc@chromium.org
 cbentzel@chromium.org
 davidben@chromium.org
-ellyjones@chromium.org
 eroman@chromium.org
 gavinp@chromium.org
-jar@chromium.org
+jri@chromium.org
 mattm@chromium.org
 mef@chromium.org
 mmenke@chromium.org
@@ -14,15 +13,16 @@ pauljensen@chromium.org
 rch@chromium.org
 rdsmith@chromium.org
 rsleevi@chromium.org
-rtenneti@chromium.org
-ttuttle@chromium.org
+juliatuttle@chromium.org
 xunjieli@chromium.org
+zhongyi@chromium.org
 
 per-file *.isolate=maruel@chromium.org
 per-file *.isolate=tandrii@chromium.org
 per-file *.isolate=vadimsh@chromium.org
 
-# Don't use as a reviewer for new CLs, but still here
-# so he can continue to review some already in-progress
-# work.
-szym@chromium.org
+per-file BUILD.gn=bengr@chromium.org
+per-file net.gyp*=bengr@chromium.org
+
+per-file BUILD.gn=file://net/websockets/OWNERS
+per-file net.gyp*=file://net/websockets/OWNERS

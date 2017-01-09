@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_UI_SEARCH_INSTANT_SEARCH_PRERENDERER_H_
 #define CHROME_BROWSER_UI_SEARCH_INSTANT_SEARCH_PRERENDERER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/strings/string16.h"
-#include "chrome/common/instant_types.h"
-#include "content/public/browser/navigation_controller.h"
+#include "chrome/common/search/instant_types.h"
 
 class GURL;
 class Profile;
@@ -38,7 +38,7 @@ class PrerenderHandle;
 // with the prerendered contents.
 class InstantSearchPrerenderer {
  public:
-  InstantSearchPrerenderer(Profile* profile, const GURL& url);
+  InstantSearchPrerenderer(Profile* profile, const GURL& prerender_url);
   ~InstantSearchPrerenderer();
 
   // Returns the InstantSearchPrerenderer instance for the given |profile|.
@@ -73,6 +73,8 @@ class InstantSearchPrerenderer {
   // exists for |url| and is swapped in.
   bool UsePrerenderedPage(const GURL& url, chrome::NavigateParams* params);
 
+  const GURL& prerender_url() const { return prerender_url_; }
+
   // Returns the last prefetched search query.
   const base::string16& get_last_query() const {
     return last_instant_suggestion_.text;
@@ -97,7 +99,7 @@ class InstantSearchPrerenderer {
   // Instant search base page URL.
   const GURL prerender_url_;
 
-  scoped_ptr<prerender::PrerenderHandle> prerender_handle_;
+  std::unique_ptr<prerender::PrerenderHandle> prerender_handle_;
 
   InstantSuggestion last_instant_suggestion_;
 

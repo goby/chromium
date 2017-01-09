@@ -45,9 +45,12 @@ component("compositor") {
     "layer_animator.h",
     "layer_animator_collection.cc",
     "layer_animator_collection.h",
+    "layer_delegate.cc",
     "layer_delegate.h",
+    "layer_observer.h",
     "layer_owner.cc",
     "layer_owner.h",
+    "layer_threaded_animation_delegate.h",
     "layer_tree_owner.cc",
     "layer_tree_owner.h",
     "layer_type.h",
@@ -75,6 +78,7 @@ component("compositor") {
     "//base",
     "//base/third_party/dynamic_annotations",
     "//cc",
+    "//cc/animation",
     "//cc/surfaces",
     "//cc/surfaces:surface_id",
     "//gpu/command_buffer/common",
@@ -95,7 +99,7 @@ component("compositor") {
   }
 }
 
-source_set("test_support") {
+static_library("test_support") {
   testonly = true
   sources = [
     "test/context_factories_for_test.cc",
@@ -110,6 +114,9 @@ source_set("test_support") {
     "test/layer_animation_observer_test_api.h",
     "test/layer_animator_test_controller.cc",
     "test/layer_animator_test_controller.h",
+    "test/multi_layer_animator_test_controller.cc",
+    "test/multi_layer_animator_test_controller.h",
+    "test/multi_layer_animator_test_controller_delegate.h",
     "test/test_compositor_host.h",
     "test/test_compositor_host_android.cc",
     "test/test_compositor_host_mac.mm",
@@ -134,17 +141,18 @@ source_set("test_support") {
     "//cc",
     "//cc:test_support",
     "//cc/surfaces",
-    "//gpu/command_buffer/client:gl_in_process_context",
     "//gpu/command_buffer/client:gles2_c_lib",
     "//gpu/command_buffer/client:gles2_implementation",
     "//gpu/command_buffer/common:gles2_utils",
+    "//gpu/ipc:gl_in_process_context",
     "//gpu/skia_bindings",
     "//skia",
     "//testing/gtest",
     "//ui/base",
+    "//ui/display",
     "//ui/gfx",
     "//ui/gfx/geometry",
-    "//ui/gl",
+    "//ui/gl:test_support",
   ]
 
   if (use_x11) {
@@ -157,15 +165,6 @@ source_set("test_support") {
   } else if (use_x11) {
     sources += [ "test/test_compositor_host_x11.cc" ]
   }
-}
-
-# TODO(GYP): Delete this after we've converted everything to GN.
-# The _run targets exist only for compatibility w/ GYP.
-group("compositor_unittests_run") {
-  testonly = true
-  deps = [
-    ":compositor_unittests",
-  ]
 }
 
 test("compositor_unittests") {
@@ -189,10 +188,11 @@ test("compositor_unittests") {
     ":compositor",
     ":test_support",
     "//base",
-    "//base/allocator",
     "//base/test:test_support",
     "//cc",
     "//cc:test_support",
+    "//cc/surfaces",
+    "//cc/surfaces:surface_id",
     "//skia",
     "//testing/gmock",
     "//testing/gtest",

@@ -9,6 +9,7 @@
 #include "extensions/browser/api/api_resource_manager.h"
 #include "net/base/address_list.h"
 #include "net/base/io_buffer.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/socket/socket.h"
@@ -90,7 +91,7 @@ bool Socket::SetKeepAlive(bool enable, int delay) { return false; }
 bool Socket::SetNoDelay(bool no_delay) { return false; }
 
 int Socket::Listen(const std::string& address,
-                   uint16 port,
+                   uint16_t port,
                    int backlog,
                    std::string* error_msg) {
   *error_msg = kSocketTypeNotSupported;
@@ -103,20 +104,20 @@ void Socket::Accept(const AcceptCompletionCallback& callback) {
 
 // static
 bool Socket::StringAndPortToIPEndPoint(const std::string& ip_address_str,
-                                       uint16 port,
+                                       uint16_t port,
                                        net::IPEndPoint* ip_end_point) {
   DCHECK(ip_end_point);
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(ip_address_str, &ip_number))
+  net::IPAddress ip_address;
+  if (!ip_address.AssignFromIPLiteral(ip_address_str))
     return false;
 
-  *ip_end_point = net::IPEndPoint(ip_number, port);
+  *ip_end_point = net::IPEndPoint(ip_address, port);
   return true;
 }
 
 void Socket::IPEndPointToStringAndPort(const net::IPEndPoint& address,
                                        std::string* ip_address_str,
-                                       uint16* port) {
+                                       uint16_t* port) {
   DCHECK(ip_address_str);
   DCHECK(port);
   *ip_address_str = address.ToStringWithoutPort();
@@ -134,6 +135,8 @@ Socket::WriteRequest::WriteRequest(scoped_refptr<net::IOBuffer> io_buffer,
       byte_count(byte_count),
       callback(callback),
       bytes_written(0) {}
+
+Socket::WriteRequest::WriteRequest(const WriteRequest& other) = default;
 
 Socket::WriteRequest::~WriteRequest() {}
 

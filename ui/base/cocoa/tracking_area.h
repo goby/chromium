@@ -8,6 +8,7 @@
 #import <AppKit/AppKit.h>
 
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "ui/base/ui_base_export.h"
 
 @class CrTrackingAreaOwnerProxy;
@@ -33,6 +34,10 @@ UI_BASE_EXPORT
 // Watches |window| for its NSWindowWillCloseNotification and calls
 // |-clearOwner| when the notification is observed.
 - (void)clearOwnerWhenWindowWillClose:(NSWindow*)window;
+
+// Returns YES if the mouse is inside the tracking area's rect. |view| is the
+// NSView the tracking area is attached to.
+- (BOOL)mouseInsideTrackingAreaForView:(NSView*)view;
 
 @end
 

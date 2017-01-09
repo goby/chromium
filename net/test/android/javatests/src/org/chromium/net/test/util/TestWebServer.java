@@ -4,10 +4,12 @@
 
 package org.chromium.net.test.util;
 
+import android.annotation.SuppressLint;
 import android.util.Base64;
 import android.util.Log;
 import android.util.Pair;
 
+import org.apache.http.Header;
 import org.apache.http.HttpException;
 import org.apache.http.HttpRequest;
 import org.apache.http.HttpResponse;
@@ -32,8 +34,10 @@ import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLConnection;
+import java.nio.charset.Charset;
 import java.security.KeyManagementException;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
@@ -63,8 +67,6 @@ import javax.net.ssl.X509TrustManager;
 public class TestWebServer {
     private static final String TAG = "TestWebServer";
 
-    public static final String SHUTDOWN_PREFIX = "/shutdown";
-
     private static TestWebServer sInstance;
     private static TestWebServer sSecureInstance;
     private static Hashtable<Integer, String> sReasons;
@@ -81,13 +83,15 @@ public class TestWebServer {
         final Runnable mResponseAction;
         final boolean mIsNotFound;
         final boolean mIsNoContent;
+        final boolean mForWebSocket;
 
         Response(byte[] responseData, List<Pair<String, String>> responseHeaders,
-                boolean isRedirect, boolean isNotFound, boolean isNoContent,
+                boolean isRedirect, boolean isNotFound, boolean isNoContent, boolean forWebSocket,
                 Runnable responseAction) {
             mIsRedirect = isRedirect;
             mIsNotFound = isNotFound;
             mIsNoContent = isNoContent;
+            mForWebSocket = forWebSocket;
             mResponseData = responseData;
             mResponseHeaders = responseHeaders == null
                     ? new ArrayList<Pair<String, String>>() : responseHeaders;
@@ -169,31 +173,15 @@ public class TestWebServer {
         }
 
         try {
-            // Avoid a deadlock between two threads where one is trying to call
-            // close() and the other one is calling accept() by sending a GET
-            // request for shutdown and having the server's one thread
-            // sequentially call accept() and close().
-            URL url = new URL(mServerUri + SHUTDOWN_PREFIX);
-            URLConnection connection = openConnection(url);
-            connection.connect();
-
-            // Read the input from the stream to send the request.
-            InputStream is = connection.getInputStream();
-            is.close();
-
+            mServerThread.cancelAllRequests();
             // Block until the server thread is done shutting down.
             mServerThread.join();
-
         } catch (MalformedURLException e) {
             throw new IllegalStateException(e);
         } catch (InterruptedException e) {
             throw new RuntimeException(e);
         } catch (IOException e) {
             throw new RuntimeException(e);
-        } catch (NoSuchAlgorithmException e) {
-            throw new IllegalStateException(e);
-        } catch (KeyManagementException e) {
-            throw new IllegalStateException(e);
         }
     }
 
@@ -212,6 +200,7 @@ public class TestWebServer {
     private static final int RESPONSE_STATUS_MOVED_TEMPORARILY = 1;
     private static final int RESPONSE_STATUS_NOT_FOUND = 2;
     private static final int RESPONSE_STATUS_NO_CONTENT = 3;
+    private static final int RESPONSE_STATUS_FOR_WEBSOCKET = 4;
 
     private String setResponseInternal(
             String requestPath, byte[] responseData,
@@ -220,11 +209,12 @@ public class TestWebServer {
         final boolean isRedirect = (status == RESPONSE_STATUS_MOVED_TEMPORARILY);
         final boolean isNotFound = (status == RESPONSE_STATUS_NOT_FOUND);
         final boolean isNoContent = (status == RESPONSE_STATUS_NO_CONTENT);
+        final boolean forWebSocket = (status == RESPONSE_STATUS_FOR_WEBSOCKET);
 
         synchronized (mLock) {
-            mResponseMap.put(requestPath, new Response(
-                    responseData, responseHeaders, isRedirect, isNotFound, isNoContent,
-                    responseAction));
+            mResponseMap.put(
+                    requestPath, new Response(responseData, responseHeaders, isRedirect, isNotFound,
+                                         isNoContent, forWebSocket, responseAction));
             mResponseCountMap.put(requestPath, Integer.valueOf(0));
             mLastRequestMap.put(requestPath, null);
         }
@@ -361,6 +351,28 @@ public class TestWebServer {
     }
 
     /**
+     * Sets a response to a WebSocket handshake request.
+     *
+     * @param requestPath The path to respond to.
+     * @param responseHeaders Any additional headers that should be returned along with the
+     *                        response (null is acceptable).
+     * @return The full URL including the path that should be requested to get the expected
+     *         response.
+     */
+    public String setResponseForWebSocket(
+            String requestPath, List<Pair<String, String>> responseHeaders) {
+        if (responseHeaders == null) {
+            responseHeaders = new ArrayList<Pair<String, String>>();
+        } else {
+            responseHeaders = new ArrayList<Pair<String, String>>(responseHeaders);
+        }
+        responseHeaders.add(Pair.create("Connection", "Upgrade"));
+        responseHeaders.add(Pair.create("Upgrade", "websocket"));
+        return setResponseInternal(
+                requestPath, "".getBytes(), responseHeaders, null, RESPONSE_STATUS_FOR_WEBSOCKET);
+    }
+
+    /**
      * Get the number of requests was made at this path since it was last set.
      */
     public int getRequestCount(String requestPath) {
@@ -416,11 +428,15 @@ public class TestWebServer {
      */
     private static class TestTrustManager implements X509TrustManager {
         @Override
+        // TODO(crbug.com/635567): Fix this properly.
+        @SuppressLint("TrustAllX509TrustManager")
         public void checkClientTrusted(X509Certificate[] chain, String authType) {
             // Trust the TestWebServer...
         }
 
         @Override
+        // TODO(crbug.com/635567): Fix this properly.
+        @SuppressLint("TrustAllX509TrustManager")
         public void checkServerTrusted(X509Certificate[] chain, String authType) {
             // Trust the TestWebServer...
         }
@@ -476,9 +492,7 @@ public class TestWebServer {
         synchronized (mLock) {
             response = mResponseMap.get(path);
         }
-        if (path.equals(SHUTDOWN_PREFIX)) {
-            httpResponse = createResponse(HttpStatus.SC_OK);
-        } else if (response == null) {
+        if (response == null) {
             httpResponse = createResponse(HttpStatus.SC_NOT_FOUND);
         } else if (response.mIsNotFound) {
             httpResponse = createResponse(HttpStatus.SC_NOT_FOUND);
@@ -496,6 +510,23 @@ public class TestWebServer {
                 httpResponse.addHeader(header.first, header.second);
             }
             servedResponseFor(path, request);
+        } else if (response.mForWebSocket) {
+            Header[] keys = request.getHeaders("Sec-WebSocket-Key");
+            try {
+                if (keys.length == 1) {
+                    final String key = keys[0].getValue();
+                    httpResponse = createResponse(HttpStatus.SC_SWITCHING_PROTOCOLS);
+                    for (Pair<String, String> header : response.mResponseHeaders) {
+                        httpResponse.addHeader(header.first, header.second);
+                    }
+                    httpResponse.addHeader("Sec-WebSocket-Accept", computeWebSocketAccept(key));
+                } else {
+                    httpResponse = createResponse(HttpStatus.SC_NOT_FOUND);
+                }
+            } catch (NoSuchAlgorithmException e) {
+                httpResponse = createResponse(HttpStatus.SC_NOT_FOUND);
+            }
+            servedResponseFor(path, request);
         } else {
             if (response.mResponseAction != null) response.mResponseAction.run();
 
@@ -510,6 +541,11 @@ public class TestWebServer {
         }
         StatusLine sl = httpResponse.getStatusLine();
         Log.i(TAG, sl.getStatusCode() + "(" + sl.getReasonPhrase() + ")");
+
+        if (path.endsWith(".js")) {
+            httpResponse.addHeader("Content-Type", "application/javascript");
+        }
+
         setDateHeaders(httpResponse);
         return httpResponse;
     }
@@ -562,12 +598,29 @@ public class TestWebServer {
         return entity;
     }
 
+    /**
+     * Return a response for WebSocket handshake challenge.
+     */
+    private static String computeWebSocketAccept(String keyString) throws NoSuchAlgorithmException {
+        byte[] key = keyString.getBytes(Charset.forName("US-ASCII"));
+        byte[] guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11".getBytes(Charset.forName("US-ASCII"));
+
+        MessageDigest md = MessageDigest.getInstance("SHA");
+        md.update(key);
+        md.update(guid);
+        byte[] output = md.digest();
+        return Base64.encodeToString(output, Base64.DEFAULT);
+    }
+
     private static class ServerThread extends Thread {
         private TestWebServer mServer;
         private ServerSocket mSocket;
         private boolean mIsSsl;
-        private boolean mIsCancelled;
         private SSLContext mSslContext;
+
+        private final Object mLock = new Object();
+        private boolean mIsCancelled;
+        private Socket mCurrentRequestSocket;
 
         /**
          * Defines the keystore contents for the server, BKS version. Holds just a
@@ -620,6 +673,33 @@ public class TestWebServer {
             return keyManagerFactory.getKeyManagers();
         }
 
+        private void setCurrentRequestSocket(Socket socket) {
+            synchronized (mLock) {
+                mCurrentRequestSocket = socket;
+            }
+        }
+
+        private boolean getIsCancelled() {
+            synchronized (mLock) {
+                return mIsCancelled;
+            }
+        }
+
+        // Called from non-server thread.
+        public void cancelAllRequests() throws IOException {
+            synchronized (mLock) {
+                mIsCancelled = true;
+                if (mCurrentRequestSocket != null) {
+                    try {
+                        mCurrentRequestSocket.close();
+                    } catch (IOException ignored) {
+                        // Catching this to ensure the server socket is closed as well.
+                    }
+                }
+            }
+            // Any current and subsequent accept call will throw instead of block.
+            mSocket.close();
+        }
 
         public ServerThread(TestWebServer server, int port, boolean ssl) throws Exception {
             super("ServerThread");
@@ -651,21 +731,17 @@ public class TestWebServer {
         public void run() {
             HttpParams params = new BasicHttpParams();
             params.setParameter(CoreProtocolPNames.PROTOCOL_VERSION, HttpVersion.HTTP_1_0);
-            while (!mIsCancelled) {
+            while (!getIsCancelled()) {
                 Socket socket = null;
                 try {
                     socket = mSocket.accept();
+                    setCurrentRequestSocket(socket);
+
                     DefaultHttpServerConnection conn = new DefaultHttpServerConnection();
                     conn.bind(socket, params);
 
-                    // Determine whether we need to shutdown early before
-                    // parsing the response since conn.close() will crash
-                    // for SSL requests due to UnsupportedOperationException.
+                    if (getIsCancelled()) continue;
                     HttpRequest request = conn.receiveRequestHeader();
-                    if (isShutdownRequest(request)) {
-                        mIsCancelled = true;
-                    }
-
                     HttpResponse response = mServer.getResponse(request);
                     conn.sendResponseHeader(response);
                     conn.sendResponseEntity(response);
@@ -697,19 +773,6 @@ public class TestWebServer {
                     }
                 }
             }
-            try {
-                mSocket.close();
-            } catch (IOException ignored) {
-                // safe to ignore
-            }
-        }
-
-        private boolean isShutdownRequest(HttpRequest request) {
-            RequestLine requestLine = request.getRequestLine();
-            String uriString = requestLine.getUri();
-            URI uri = URI.create(uriString);
-            String path = uri.getPath();
-            return path.equals(SHUTDOWN_PREFIX);
         }
     }
 }

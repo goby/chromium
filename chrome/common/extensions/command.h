@@ -16,10 +16,6 @@ class DictionaryValue;
 }
 
 namespace extensions {
-class Extension;
-}
-
-namespace extensions {
 
 class Command {
  public:
@@ -28,6 +24,7 @@ class Command {
           const base::string16& description,
           const std::string& accelerator,
           bool global);
+  Command(const Command& other);
   ~Command();
 
   // The platform value for the Command.
@@ -60,7 +57,7 @@ class Command {
   bool global() const { return global_; }
 
   // Setter:
-  void set_accelerator(ui::Accelerator accelerator) {
+  void set_accelerator(const ui::Accelerator& accelerator) {
     accelerator_ = accelerator;
   }
   void set_global(bool global) {

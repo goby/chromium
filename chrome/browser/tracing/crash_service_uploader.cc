@@ -4,6 +4,8 @@
 
 #include "chrome/browser/tracing/crash_service_uploader.h"
 
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
@@ -12,9 +14,10 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
-#include "base/strings/stringprintf.h"
 #include "base/time/time.h"
-#include "components/tracing/tracing_switches.h"
+#include "build/build_config.h"
+#include "components/data_use_measurement/core/data_use_user_data.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/common/content_switches.h"
@@ -40,13 +43,13 @@ const char kMultipartBoundary[] =
 const int kHttpResponseOk = 200;
 
 // Allow up to 10MB for trace upload
-const int kMaxUploadBytes = 10000000;
+const size_t kMaxUploadBytes = 10000000;
 
 }  // namespace
 
 TraceCrashServiceUploader::TraceCrashServiceUploader(
     net::URLRequestContextGetter* request_context)
-    : request_context_(request_context) {
+    : request_context_(request_context), max_upload_bytes_(kMaxUploadBytes) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -67,6 +70,11 @@ void TraceCrashServiceUploader::SetUploadURL(const std::string& url) {
 
   if (!GURL(upload_url_).is_valid())
     upload_url_.clear();
+}
+
+void TraceCrashServiceUploader::SetMaxUploadBytes(size_t max_upload_bytes) {
+  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  max_upload_bytes_ = max_upload_bytes;
 }
 
 void TraceCrashServiceUploader::OnURLFetchComplete(
@@ -91,8 +99,8 @@ void TraceCrashServiceUploader::OnURLFetchComplete(
 
 void TraceCrashServiceUploader::OnURLFetchUploadProgress(
     const net::URLFetcher* source,
-    int64 current,
-    int64 total) {
+    int64_t current,
+    int64_t total) {
   DCHECK(url_fetcher_.get());
 
   LOG(WARNING) << "Upload progress: " << current << " of " << total;
@@ -107,7 +115,7 @@ void TraceCrashServiceUploader::OnURLFetchUploadProgress(
 void TraceCrashServiceUploader::DoUpload(
     const std::string& file_contents,
     UploadMode upload_mode,
-    scoped_ptr<const base::DictionaryValue> metadata,
+    std::unique_ptr<const base::DictionaryValue> metadata,
     const UploadProgressCallback& progress_callback,
     const UploadDoneCallback& done_callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
@@ -115,15 +123,15 @@ void TraceCrashServiceUploader::DoUpload(
       content::BrowserThread::FILE, FROM_HERE,
       base::Bind(&TraceCrashServiceUploader::DoUploadOnFileThread,
                  base::Unretained(this), file_contents, upload_mode,
-                 upload_url_, base::Passed(metadata.Pass()), progress_callback,
-                 done_callback));
+                 upload_url_, base::Passed(std::move(metadata)),
+                 progress_callback, done_callback));
 }
 
 void TraceCrashServiceUploader::DoUploadOnFileThread(
     const std::string& file_contents,
     UploadMode upload_mode,
     const std::string& upload_url,
-    scoped_ptr<const base::DictionaryValue> metadata,
+    std::unique_ptr<const base::DictionaryValue> metadata,
     const UploadProgressCallback& progress_callback,
     const UploadDoneCallback& done_callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::FILE);
@@ -171,9 +179,9 @@ void TraceCrashServiceUploader::DoUploadOnFileThread(
 
   std::string compressed_contents;
   if (upload_mode == COMPRESSED_UPLOAD) {
-    scoped_ptr<char[]> compressed_buffer(new char[kMaxUploadBytes]);
+    std::unique_ptr<char[]> compressed_buffer(new char[max_upload_bytes_]);
     int compressed_bytes;
-    if (!Compress(file_contents, kMaxUploadBytes, compressed_buffer.get(),
+    if (!Compress(file_contents, max_upload_bytes_, compressed_buffer.get(),
                   &compressed_bytes)) {
       OnUploadError("Compressing file failed.");
       return;
@@ -181,15 +189,15 @@ void TraceCrashServiceUploader::DoUploadOnFileThread(
     compressed_contents =
         std::string(compressed_buffer.get(), compressed_bytes);
   } else {
-    if (file_contents.size() >= kMaxUploadBytes) {
-      OnUploadError("File is too large to upload.");
-      return;
-    }
     compressed_contents = file_contents;
+  }
+  if (compressed_contents.size() > max_upload_bytes_) {
+    OnUploadError("File is too large to upload.");
+    return;
   }
 
   std::string post_data;
-  SetupMultipart(product, version, metadata.Pass(), "trace.json.gz",
+  SetupMultipart(product, version, std::move(metadata), "trace.json.gz",
                  compressed_contents, &post_data);
 
   content::BrowserThread::PostTask(
@@ -209,7 +217,7 @@ void TraceCrashServiceUploader::OnUploadError(
 void TraceCrashServiceUploader::SetupMultipart(
     const std::string& product,
     const std::string& version,
-    scoped_ptr<const base::DictionaryValue> metadata,
+    std::unique_ptr<const base::DictionaryValue> metadata,
     const std::string& trace_filename,
     const std::string& trace_contents,
     std::string* post_data) {
@@ -271,9 +279,9 @@ bool TraceCrashServiceUploader::Compress(std::string input,
                             8,  // memLevel = 8 is default.
                             Z_DEFAULT_STRATEGY);
   DCHECK_EQ(Z_OK, result);
-  stream.next_in = reinterpret_cast<uint8*>(&input[0]);
+  stream.next_in = reinterpret_cast<uint8_t*>(&input[0]);
   stream.avail_in = input.size();
-  stream.next_out = reinterpret_cast<uint8*>(compressed);
+  stream.next_out = reinterpret_cast<uint8_t*>(compressed);
   stream.avail_out = max_compressed_bytes;
   // Do a one-shot compression. This will return Z_STREAM_END only if |output|
   // is large enough to hold all compressed data.
@@ -302,6 +310,9 @@ void TraceCrashServiceUploader::CreateAndStartURLFetcher(
 
   url_fetcher_ =
       net::URLFetcher::Create(GURL(upload_url), net::URLFetcher::POST, this);
+  data_use_measurement::DataUseUserData::AttachToFetcher(
+      url_fetcher_.get(),
+      data_use_measurement::DataUseUserData::TRACING_UPLOADER);
   url_fetcher_->SetRequestContext(request_context_);
   url_fetcher_->SetUploadData(content_type, post_data);
   url_fetcher_->Start();

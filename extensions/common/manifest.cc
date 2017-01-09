@@ -4,7 +4,8 @@
 
 #include "extensions/common/manifest.h"
 
-#include "base/basictypes.h"
+#include <utility>
+
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/strings/string_split.h"
@@ -108,10 +109,9 @@ Manifest::Location Manifest::GetHigherPriorityLocation(
   return (loc1_rank > loc2_rank ? loc1 : loc2 );
 }
 
-Manifest::Manifest(Location location, scoped_ptr<base::DictionaryValue> value)
-    : location_(location),
-      value_(value.Pass()),
-      type_(TYPE_UNKNOWN) {
+Manifest::Manifest(Location location,
+                   std::unique_ptr<base::DictionaryValue> value)
+    : location_(location), value_(std::move(value)), type_(TYPE_UNKNOWN) {
   if (value_->HasKey(keys::kTheme)) {
     type_ = TYPE_THEME;
   } else if (value_->HasKey(keys::kExport)) {
@@ -147,20 +147,15 @@ bool Manifest::ValidateManifest(
 
   const FeatureProvider* manifest_feature_provider =
       FeatureProvider::GetManifestFeatures();
-  const std::vector<std::string>& feature_names =
-      manifest_feature_provider->GetAllFeatureNames();
-  for (std::vector<std::string>::const_iterator feature_name =
-           feature_names.begin();
-       feature_name != feature_names.end(); ++feature_name) {
+  for (const auto& map_entry : manifest_feature_provider->GetAllFeatures()) {
     // Use Get instead of HasKey because the former uses path expansion.
-    if (!value_->Get(*feature_name, NULL))
+    if (!value_->Get(map_entry.first, nullptr))
       continue;
 
-    Feature* feature = manifest_feature_provider->GetFeature(*feature_name);
-    Feature::Availability result = feature->IsAvailableToManifest(
+    Feature::Availability result = map_entry.second->IsAvailableToManifest(
         extension_id_, type_, location_, GetManifestVersion());
     if (!result.is_available())
-      warnings->push_back(InstallWarning(result.message(), *feature_name));
+      warnings->push_back(InstallWarning(result.message(), map_entry.first));
   }
 
   // Also generate warnings for keys that are not features.
@@ -222,7 +217,7 @@ bool Manifest::GetList(
 
 Manifest* Manifest::DeepCopy() const {
   Manifest* manifest = new Manifest(
-      location_, scoped_ptr<base::DictionaryValue>(value_->DeepCopy()));
+      location_, std::unique_ptr<base::DictionaryValue>(value_->DeepCopy()));
   manifest->set_extension_id(extension_id_);
   return manifest;
 }

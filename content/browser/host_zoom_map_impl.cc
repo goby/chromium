@@ -24,7 +24,7 @@
 #include "content/public/browser/storage_partition.h"
 #include "content/public/common/page_zoom.h"
 #include "content/public/common/url_constants.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 
 namespace content {
 
@@ -278,10 +278,69 @@ double HostZoomMapImpl::GetDefaultZoomLevel() const {
 
 void HostZoomMapImpl::SetDefaultZoomLevel(double level) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
+
+  if (ZoomValuesEqual(level, default_zoom_level_))
+      return;
+
   default_zoom_level_ = level;
+
+  // First, remove all entries that match the new default zoom level.
+  {
+    base::AutoLock auto_lock(lock_);
+    for (auto it = host_zoom_levels_.begin(); it != host_zoom_levels_.end(); ) {
+      if (ZoomValuesEqual(it->second, default_zoom_level_))
+        it = host_zoom_levels_.erase(it);
+      else
+        it++;
+    }
+  }
+
+  // Second, update zoom levels for all pages that do not have an overriding
+  // entry.
+  for (auto* web_contents : WebContentsImpl::GetAllWebContents()) {
+    // Only change zoom for WebContents tied to the StoragePartition this
+    // HostZoomMap serves.
+    if (GetForWebContents(web_contents) != this)
+      continue;
+
+    int render_process_id = web_contents->GetRenderProcessHost()->GetID();
+    int render_view_id = web_contents->GetRenderViewHost()->GetRoutingID();
+
+    // Get the url from the navigation controller directly, as calling
+    // WebContentsImpl::GetLastCommittedURL() may give us a virtual url that
+    // is different than the one stored in the map.
+    GURL url;
+    std::string host;
+    std::string scheme;
+
+    NavigationEntry* entry =
+        web_contents->GetController().GetLastCommittedEntry();
+    // It is possible for a WebContent's zoom level to be queried before
+    // a navigation has occurred.
+    if (entry) {
+      url = GetURLFromEntry(entry);
+      scheme = url.scheme();
+      host = net::GetHostOrSpecFromURL(url);
+    }
+
+    bool uses_default_zoom =
+        !HasZoomLevel(scheme, host) &&
+        !UsesTemporaryZoomLevel(render_process_id, render_view_id);
+
+    if (uses_default_zoom) {
+      web_contents->UpdateZoom(level);
+
+      HostZoomMap::ZoomLevelChange change;
+      change.mode = HostZoomMap::ZOOM_CHANGED_FOR_HOST;
+      change.host = host;
+      change.zoom_level = level;
+
+      zoom_level_changed_callbacks_.Notify(change);
+    }
+  }
 }
 
-scoped_ptr<HostZoomMap::Subscription>
+std::unique_ptr<HostZoomMap::Subscription>
 HostZoomMapImpl::AddZoomLevelChangedCallback(
     const ZoomLevelChangedCallback& callback) {
   return zoom_level_changed_callbacks_.Add(callback);
@@ -363,7 +422,7 @@ bool HostZoomMapImpl::PageScaleFactorIsOneForWebContents(
   base::AutoLock auto_lock(lock_);
   auto found = view_page_scale_factors_are_one_.find(
       RenderViewKey(web_contents_impl.GetRenderProcessHost()->GetID(),
-                    web_contents_impl.GetRoutingID()));
+                    web_contents_impl.GetRenderViewHost()->GetRoutingID()));
   if (found == view_page_scale_factors_are_one_.end())
     return true;
   return found->second;
@@ -381,14 +440,14 @@ bool HostZoomMapImpl::UsesTemporaryZoomLevel(int render_process_id,
   RenderViewKey key(render_process_id, render_view_id);
 
   base::AutoLock auto_lock(lock_);
-  return ContainsKey(temporary_zoom_levels_, key);
+  return base::ContainsKey(temporary_zoom_levels_, key);
 }
 
 double HostZoomMapImpl::GetTemporaryZoomLevel(int render_process_id,
                                               int render_view_id) const {
   base::AutoLock auto_lock(lock_);
   RenderViewKey key(render_process_id, render_view_id);
-  if (!ContainsKey(temporary_zoom_levels_, key))
+  if (!base::ContainsKey(temporary_zoom_levels_, key))
     return 0;
 
   return temporary_zoom_levels_.find(key)->second;
@@ -405,9 +464,10 @@ void HostZoomMapImpl::SetTemporaryZoomLevel(int render_process_id,
     temporary_zoom_levels_[key] = level;
   }
 
-  RenderViewHost* host =
-      RenderViewHost::FromID(render_process_id, render_view_id);
-  host->Send(new ViewMsg_SetZoomLevelForView(render_view_id, true, level));
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(WebContents::FromRenderViewHost(
+          RenderViewHost::FromID(render_process_id, render_view_id)));
+  web_contents->SetTemporaryZoomLevel(level, true);
 
   HostZoomMap::ZoomLevelChange change;
   change.mode = HostZoomMap::ZOOM_CHANGED_TEMPORARY_ZOOM;
@@ -423,7 +483,7 @@ double HostZoomMapImpl::GetZoomLevelForView(const GURL& url,
   RenderViewKey key(render_process_id, render_view_id);
   base::AutoLock auto_lock(lock_);
 
-  if (ContainsKey(temporary_zoom_levels_, key))
+  if (base::ContainsKey(temporary_zoom_levels_, key))
     return temporary_zoom_levels_.find(key)->second;
 
   return GetZoomLevelForHostAndSchemeInternal(url.scheme(),
@@ -457,30 +517,31 @@ void HostZoomMapImpl::ClearTemporaryZoomLevel(int render_process_id,
       return;
     temporary_zoom_levels_.erase(it);
   }
-  RenderViewHost* host =
-      RenderViewHost::FromID(render_process_id, render_view_id);
-  DCHECK(host);
-  // Send a new zoom level, host-specific if one exists.
-  host->Send(new ViewMsg_SetZoomLevelForView(
-      render_view_id,
-      false,
-      GetZoomLevelForHost(
-          GetHostFromProcessView(render_process_id, render_view_id))));
+  WebContentsImpl* web_contents =
+      static_cast<WebContentsImpl*>(WebContents::FromRenderViewHost(
+          RenderViewHost::FromID(render_process_id, render_view_id)));
+  web_contents->SetTemporaryZoomLevel(GetZoomLevelForHost(
+          GetHostFromProcessView(render_process_id, render_view_id)), false);
 }
 
 void HostZoomMapImpl::SendZoomLevelChange(const std::string& scheme,
                                           const std::string& host,
                                           double level) {
-  for (RenderProcessHost::iterator i(RenderProcessHost::AllHostsIterator());
-       !i.IsAtEnd(); i.Advance()) {
-    RenderProcessHost* render_process_host = i.GetCurrentValue();
-    // TODO(wjmaclean) This will need to be cleaned up when
-    // RenderProcessHost::GetStoragePartition() goes away. Perhaps have
-    // RenderProcessHost expose a GetHostZoomMap() function?
-    if (render_process_host->GetStoragePartition()->GetHostZoomMap() == this) {
-      render_process_host->Send(
-          new ViewMsg_SetZoomLevelForCurrentURL(scheme, host, level));
-    }
+  // We'll only send to WebContents not using temporary zoom levels. The one
+  // other case of interest is where the renderer is hosting a plugin document;
+  // that should be reflected in our temporary zoom level map, but we will
+  // double check on the renderer side to avoid the possibility of any races.
+  for (auto* web_contents : WebContentsImpl::GetAllWebContents()) {
+    // Only send zoom level changes to WebContents that are using this
+    // HostZoomMap.
+    if (GetForWebContents(web_contents) != this)
+      continue;
+
+    int render_process_id = web_contents->GetRenderProcessHost()->GetID();
+    int render_view_id = web_contents->GetRenderViewHost()->GetRoutingID();
+
+    if (!UsesTemporaryZoomLevel(render_process_id, render_view_id))
+      web_contents->UpdateZoomIfNecessary(scheme, host, level);
   }
 }
 

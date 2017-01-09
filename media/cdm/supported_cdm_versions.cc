@@ -4,7 +4,6 @@
 
 #include "media/cdm/supported_cdm_versions.h"
 
-#include "base/basictypes.h"
 #include "media/cdm/api/content_decryption_module.h"
 
 namespace media {
@@ -26,7 +25,6 @@ bool IsSupportedCdmInterfaceVersion(int version) {
   switch (version) {
     // Supported versions in decreasing order.
     case cdm::ContentDecryptionModule_8::kVersion:
-    case cdm::ContentDecryptionModule_7::kVersion:
       return true;
     default:
       return false;
@@ -40,7 +38,6 @@ bool IsSupportedCdmHostVersion(int version) {
   switch (version) {
     // Supported versions in decreasing order.
     case cdm::Host_8::kVersion:
-    case cdm::Host_7::kVersion:
       return true;
     default:
       return false;

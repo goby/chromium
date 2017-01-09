@@ -4,10 +4,11 @@
 
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/location.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
@@ -23,7 +24,8 @@
 #include "chromeos/network/portal_detector/network_portal_detector.h"
 #include "chromeos/network/portal_detector/network_portal_detector_strategy.h"
 #include "components/captive_portal/captive_portal_testing_utils.h"
-#include "components/syncable_prefs/pref_service_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/sync_preferences/pref_service_syncable.h"
 #include "content/public/test/test_utils.h"
 #include "dbus/object_path.h"
 #include "net/base/net_errors.h"
@@ -32,7 +34,6 @@
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/message_center_observer.h"
 
-using base::MessageLoop;
 using message_center::MessageCenter;
 using message_center::MessageCenterObserver;
 
@@ -82,18 +83,22 @@ class TestObserver : public MessageCenterObserver {
   void OnNotificationDisplayed(
       const std::string& notification_id,
       const message_center::DisplaySource source) override {
-    if (notification_id == kNotificationId)
-      MessageLoop::current()->PostTask(FROM_HERE, run_loop_->QuitClosure());
+    if (notification_id == kNotificationId) {
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    run_loop_->QuitClosure());
+    }
   }
 
   void OnNotificationRemoved(const std::string& notification_id,
                              bool by_user) override {
-    if (notification_id == kNotificationId && by_user)
-      MessageLoop::current()->PostTask(FROM_HERE, run_loop_->QuitClosure());
+    if (notification_id == kNotificationId && by_user) {
+      base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
+                                                    run_loop_->QuitClosure());
+    }
   }
 
  private:
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(TestObserver);
 };

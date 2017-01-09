@@ -4,6 +4,10 @@
 
 #include "ppapi/shared_impl/media_stream_buffer_manager.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/logging.h"
 #include "ppapi/c/pp_errors.h"
 #include "ppapi/shared_impl/media_stream_buffer.h"
@@ -21,10 +25,11 @@ MediaStreamBufferManager::MediaStreamBufferManager(Delegate* delegate)
 
 MediaStreamBufferManager::~MediaStreamBufferManager() {}
 
-bool MediaStreamBufferManager::SetBuffers(int32_t number_of_buffers,
-                                          int32_t buffer_size,
-                                          scoped_ptr<base::SharedMemory> shm,
-                                          bool enqueue_all_buffers) {
+bool MediaStreamBufferManager::SetBuffers(
+    int32_t number_of_buffers,
+    int32_t buffer_size,
+    std::unique_ptr<base::SharedMemory> shm,
+    bool enqueue_all_buffers) {
   DCHECK(shm);
   DCHECK_GT(number_of_buffers, 0);
   DCHECK_GT(buffer_size,
@@ -35,7 +40,7 @@ bool MediaStreamBufferManager::SetBuffers(int32_t number_of_buffers,
   buffer_size_ = buffer_size;
 
   size_t size = number_of_buffers_ * buffer_size;
-  shm_ = shm.Pass();
+  shm_ = std::move(shm);
   if (!shm_->Map(size))
     return false;
 

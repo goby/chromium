@@ -6,13 +6,15 @@
 #define CHROME_BROWSER_ANDROID_METRICS_UMA_SESSION_STATS_H_
 
 #include <jni.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <vector>
 
 #include "base/android/scoped_java_ref.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
-
-class UserActionRateCounter;
 
 // The native part of java UmaSessionStats class.
 class UmaSessionStats {
@@ -24,13 +26,12 @@ class UmaSessionStats {
   void UmaEndSession(JNIEnv* env,
                      const base::android::JavaParamRef<jobject>& obj);
 
-  static void RegisterSyntheticFieldTrialWithNameHash(
-      uint32_t trial_name_hash,
-      const std::string& group_name);
+  static void RegisterSyntheticFieldTrial(const std::string& trial_name,
+                                          const std::string& group_name);
 
-  static void RegisterSyntheticFieldTrial(
+  static void RegisterSyntheticMultiGroupFieldTrial(
       const std::string& trial_name,
-      const std::string& group_name);
+      const std::vector<uint32_t>& group_name_hashes);
 
  private:
   ~UmaSessionStats();

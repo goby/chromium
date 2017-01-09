@@ -31,11 +31,6 @@ GS_SERVER_LOGS_URL = GS_CHROMEDRIVER_DATA_BUCKET + '/server_logs'
 SERVER_LOGS_LINK = (
     'http://chromedriver-data.storage.googleapis.com/server_logs')
 TEST_LOG_FORMAT = '%s_log.json'
-GS_GIT_LOG_URL = (
-    'https://chromium.googlesource.com/chromium/src/+/%s?format=json')
-GS_SEARCH_PATTERN = (
-    r'Cr-Commit-Position: refs/heads/master@{#(\d+)}')
-CR_REV_URL = 'https://cr-rev.appspot.com/_ah/api/crrev/v1/redirect/%s'
 
 SCRIPT_DIR = os.path.join(_THIS_DIR, os.pardir, os.pardir, os.pardir, os.pardir,
                           os.pardir, os.pardir, os.pardir, 'scripts')
@@ -67,13 +62,15 @@ def _ArchiveServerLogs():
   """Uploads chromedriver server logs to google storage."""
   util.MarkBuildStepStart('archive chromedriver server logs')
   for server_log in glob.glob(os.path.join(tempfile.gettempdir(),
-                                           'chromedriver_*')):
-    base_name = os.path.basename(server_log)
-    util.AddLink(base_name, '%s/%s' % (SERVER_LOGS_LINK, base_name))
-    slave_utils.GSUtilCopy(
-        server_log,
-        '%s/%s' % (GS_SERVER_LOGS_URL, base_name),
-        mimetype='text/plain')
+                                           'chromedriver_*',
+                                           'chromedriver_log_*')):
+    if os.path.isfile(server_log):
+      base_name = os.path.basename(server_log)
+      util.AddLink(base_name, '%s/%s' % (SERVER_LOGS_LINK, base_name))
+      slave_utils.GSUtilCopy(
+          server_log,
+          '%s/%s' % (GS_SERVER_LOGS_URL, base_name),
+          mimetype='text/plain')
 
 
 def _DownloadPrebuilts():
@@ -358,7 +355,7 @@ def _MaybeUpdateLatestRelease(version):
   latest_release_fname = 'LATEST_RELEASE'
   latest_release_url = '%s/%s' % (GS_CHROMEDRIVER_BUCKET, latest_release_fname)
 
-  # Check if LATEST_RELEASE is up-to-date.
+  # Check if LATEST_RELEASE is up to date.
   latest_released_version = _GetWebPageContent(
       '%s/%s' % (GS_CHROMEDRIVER_RELEASE_URL, latest_release_fname))
   if version == latest_released_version:
@@ -385,64 +382,27 @@ def _CleanTmpDir():
   print 'cleaning temp directory:', tmp_dir
   for file_name in os.listdir(tmp_dir):
     file_path = os.path.join(tmp_dir, file_name)
-    if os.path.isdir(file_path):
-      print 'deleting sub-directory', file_path
-      shutil.rmtree(file_path, True)
     if file_name.startswith('chromedriver_'):
-      print 'deleting file', file_path
-      os.remove(file_path)
-
-
-def _GetCommitPositionFromGitHash(snapshot_hashcode):
-  json_url = GS_GIT_LOG_URL % snapshot_hashcode
-  try:
-    response = urllib2.urlopen(json_url)
-  except urllib2.HTTPError as error:
-    util.PrintAndFlush('HTTP Error %d' % error.getcode())
-    return None
-  except urllib2.URLError as error:
-    util.PrintAndFlush('URL Error %s' % error.message)
-    return None
-  data = json.loads(response.read()[4:])
-  if 'message' in data:
-    message = data['message'].split('\n')
-    message = [line for line in message if line.strip()]
-    search_pattern = re.compile(GS_SEARCH_PATTERN)
-    result = search_pattern.search(message[len(message)-1])
-    if result:
-      return result.group(1)
-  util.PrintAndFlush('Failed to get commit position number for %s' %
-                     snapshot_hashcode)
-  return None
-
-
-def _GetGitHashFromCommitPosition(commit_position):
-  json_url = CR_REV_URL % commit_position
-  try:
-    response = urllib2.urlopen(json_url)
-  except urllib2.HTTPError as error:
-    util.PrintAndFlush('HTTP Error %d' % error.getcode())
-    return None
-  except urllib2.URLError as error:
-    util.PrintAndFlush('URL Error %s' % error.message)
-    return None
-  data = json.loads(response.read())
-  if 'git_sha' in data:
-    return data['git_sha']
-  util.PrintAndFlush('Failed to get git hash for %s' % commit_position)
-  return None
+      if os.path.isdir(file_path):
+        print 'deleting sub-directory', file_path
+        shutil.rmtree(file_path, True)
+      else:
+        print 'deleting file', file_path
+        os.remove(file_path)
 
 
 def _WaitForLatestSnapshot(commit_position):
   util.MarkBuildStepStart('wait_for_snapshot')
-  while True:
-    snapshot_position = archive.GetLatestSnapshotVersion()
+  for attempt in range(0, 200):
+    snapshot_position = archive.GetLatestSnapshotPosition()
     if commit_position is not None and snapshot_position is not None:
       if int(snapshot_position) >= int(commit_position):
         break
       util.PrintAndFlush('Waiting for snapshot >= %s, found %s' %
                          (commit_position, snapshot_position))
     time.sleep(60)
+  if int(snapshot_position) < int(commit_position):
+    raise Exception('Failed to find a snapshot version >= %s' % commit_position)
   util.PrintAndFlush('Got snapshot commit position %s' % snapshot_position)
 
 
@@ -489,7 +449,7 @@ def main():
   options, _ = parser.parse_args()
 
   bitness = '32'
-  if util.IsLinux() and platform_module.architecture()[0] == '64bit':
+  if util.Is64Bit():
     bitness = '64'
   platform = '%s%s' % (util.GetPlatformName(), bitness)
   if options.android_packages:
@@ -497,10 +457,17 @@ def main():
 
   _CleanTmpDir()
 
+  # Make sure any subprocesses (i.e. chromedriver) create temp files under
+  # $TMPDIR/chromedriver_*, so that they can be cleaned up by _CleanTempDir().
+  if util.IsWindows():
+    os.environ['TMP'] = os.environ['TEMP'] = util.MakeTempDir()
+  else:
+    os.environ['TMPDIR'] = util.MakeTempDir()
+
   if not options.revision:
     commit_position = None
   else:
-    commit_position = _GetCommitPositionFromGitHash(options.revision)
+    commit_position = archive.GetCommitPositionFromGitHash(options.revision)
 
   if platform == 'android':
     if not options.revision and options.update_log:

@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/layout/OrderIterator.h"
 
 #include "core/layout/LayoutBox.h"
@@ -36,57 +35,49 @@
 namespace blink {
 
 OrderIterator::OrderIterator(const LayoutBox* containerBox)
-    : m_containerBox(containerBox)
-    , m_currentChild(nullptr)
-    , m_isReset(false)
-{
+    : m_containerBox(containerBox), m_currentChild(nullptr), m_isReset(false) {}
+
+LayoutBox* OrderIterator::first() {
+  reset();
+  return next();
 }
 
-LayoutBox* OrderIterator::first()
-{
-    reset();
-    return next();
+LayoutBox* OrderIterator::next() {
+  do {
+    if (!m_currentChild) {
+      if (m_orderValuesIterator == m_orderValues.end())
+        return nullptr;
+
+      if (!m_isReset) {
+        ++m_orderValuesIterator;
+        if (m_orderValuesIterator == m_orderValues.end())
+          return nullptr;
+      } else {
+        m_isReset = false;
+      }
+
+      m_currentChild = m_containerBox->firstChildBox();
+    } else {
+      m_currentChild = m_currentChild->nextSiblingBox();
+    }
+  } while (!m_currentChild ||
+           m_currentChild->style()->order() != *m_orderValuesIterator);
+
+  return m_currentChild;
 }
 
-LayoutBox* OrderIterator::next()
-{
-    do {
-        if (!m_currentChild) {
-            if (m_orderValuesIterator == m_orderValues.end())
-                return nullptr;
-
-            if (!m_isReset) {
-                ++m_orderValuesIterator;
-                if (m_orderValuesIterator == m_orderValues.end())
-                    return nullptr;
-            } else {
-                m_isReset = false;
-            }
-
-            m_currentChild = m_containerBox->firstChildBox();
-        } else {
-            m_currentChild = m_currentChild->nextSiblingBox();
-        }
-    } while (!m_currentChild || m_currentChild->style()->order() != *m_orderValuesIterator);
-
-    return m_currentChild;
+void OrderIterator::reset() {
+  m_currentChild = nullptr;
+  m_orderValuesIterator = m_orderValues.begin();
+  m_isReset = true;
 }
 
-void OrderIterator::reset()
-{
-    m_currentChild = nullptr;
-    m_orderValuesIterator = m_orderValues.begin();
-    m_isReset = true;
+OrderIteratorPopulator::~OrderIteratorPopulator() {
+  m_iterator.reset();
 }
 
-OrderIteratorPopulator::~OrderIteratorPopulator()
-{
-    m_iterator.reset();
+void OrderIteratorPopulator::collectChild(const LayoutBox* child) {
+  m_iterator.m_orderValues.insert(child->style()->order());
 }
 
-void OrderIteratorPopulator::collectChild(const LayoutBox* child)
-{
-    m_iterator.m_orderValues.insert(child->style()->order());
-}
-
-} // namespace blink
+}  // namespace blink

@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_APPCACHE_APPCACHE_URL_REQUEST_JOB_H_
 #define CONTENT_BROWSER_APPCACHE_APPCACHE_URL_REQUEST_JOB_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "base/callback.h"
@@ -44,11 +46,14 @@ class CONTENT_EXPORT AppCacheURLRequestJob
                         bool is_main_resource,
                         const OnPrepareToRestartCallback& restart_callback_);
 
+  ~AppCacheURLRequestJob() override;
+
   // Informs the job of what response it should deliver. Only one of these
   // methods should be called, and only once per job. A job will sit idle and
   // wait indefinitely until one of the deliver methods is called.
-  void DeliverAppCachedResponse(const GURL& manifest_url, int64 group_id,
-                                int64 cache_id, const AppCacheEntry& entry,
+  void DeliverAppCachedResponse(const GURL& manifest_url,
+                                int64_t cache_id,
+                                const AppCacheEntry& entry,
                                 bool is_fallback);
   void DeliverNetworkResponse();
   void DeliverErrorResponse();
@@ -73,8 +78,7 @@ class CONTENT_EXPORT AppCacheURLRequestJob
   // that this job has been instructed to deliver. These are only
   // valid to call if is_delivering_appcache_response.
   const GURL& manifest_url() const { return manifest_url_; }
-  int64 group_id() const { return group_id_; }
-  int64 cache_id() const { return cache_id_; }
+  int64_t cache_id() const { return cache_id_; }
   const AppCacheEntry& entry() const { return entry_; }
 
   // net::URLRequestJob's Kill method is made public so the users of this
@@ -95,9 +99,6 @@ class CONTENT_EXPORT AppCacheURLRequestJob
   bool cache_entry_not_found() const {
     return cache_entry_not_found_;
   }
-
- protected:
-  ~AppCacheURLRequestJob() override;
 
  private:
   friend class AppCacheRequestHandlerTest;
@@ -133,8 +134,8 @@ class CONTENT_EXPORT AppCacheURLRequestJob
 
   // AppCacheStorage::Delegate methods
   void OnResponseInfoLoaded(AppCacheResponseInfo* response_info,
-                            int64 response_id) override;
-  void OnCacheLoaded(AppCache* cache, int64 cache_id) override;
+                            int64_t response_id) override;
+  void OnCacheLoaded(AppCache* cache, int64_t cache_id) override;
 
   const net::HttpResponseInfo* http_info() const;
   bool is_range_request() const { return range_requested_.IsValid(); }
@@ -149,6 +150,7 @@ class CONTENT_EXPORT AppCacheURLRequestJob
   bool GetCharset(std::string* charset) override;
   void GetResponseInfo(net::HttpResponseInfo* info) override;
   int ReadRawData(net::IOBuffer* buf, int buf_size) override;
+  net::HostPortPair GetSocketAddress() const override;
 
   // Sets extra request headers for Job types that support request headers.
   // This is how we get informed of range-requests.
@@ -169,18 +171,17 @@ class CONTENT_EXPORT AppCacheURLRequestJob
   bool has_been_killed_;
   DeliveryType delivery_type_;
   GURL manifest_url_;
-  int64 group_id_;
-  int64 cache_id_;
+  int64_t cache_id_;
   AppCacheEntry entry_;
   bool is_fallback_;
   bool is_main_resource_;  // Used for histogram logging.
   bool cache_entry_not_found_;
   scoped_refptr<AppCacheResponseInfo> info_;
   scoped_refptr<net::GrowableIOBuffer> handler_source_buffer_;
-  scoped_ptr<AppCacheResponseReader> handler_source_reader_;
+  std::unique_ptr<AppCacheResponseReader> handler_source_reader_;
   net::HttpByteRange range_requested_;
-  scoped_ptr<net::HttpResponseInfo> range_response_info_;
-  scoped_ptr<AppCacheResponseReader> reader_;
+  std::unique_ptr<net::HttpResponseInfo> range_response_info_;
+  std::unique_ptr<AppCacheResponseReader> reader_;
   scoped_refptr<AppCache> cache_;
   scoped_refptr<AppCacheGroup> group_;
   const OnPrepareToRestartCallback on_prepare_to_restart_callback_;

@@ -27,7 +27,6 @@
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-import StringIO
 import csv
 import errno
 import logging
@@ -36,9 +35,9 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 import time
 
-from webkitpy.common.system.outputtee import Tee
 from webkitpy.common.system.filesystem import FileSystem
 
 
@@ -69,7 +68,7 @@ class ScriptError(Exception):
             message += "\n\noutput: %s" % shortened_output
 
         Exception.__init__(self, message)
-        self.script_args = script_args # 'args' is already used by Exception
+        self.script_args = script_args  # 'args' is already used by Exception
         self.exit_code = exit_code
         self.output = output
         self.cwd = cwd
@@ -79,7 +78,7 @@ class ScriptError(Exception):
 
     def command_name(self):
         command_path = self.script_args
-        if type(command_path) is list:
+        if isinstance(command_path, list):
             command_path = command_path[0]
         return os.path.basename(command_path)
 
@@ -96,26 +95,6 @@ class Executive(object):
         # Note that close_fds isn't supported on Windows, but this bug only
         # shows up on Mac and Linux.
         return sys.platform not in ('win32', 'cygwin')
-
-    def _run_command_with_teed_output(self, args, teed_output, **kwargs):
-        child_process = self.popen(args,
-                                   stdout=self.PIPE,
-                                   stderr=self.STDOUT,
-                                   close_fds=self._should_close_fds(),
-                                   **kwargs)
-
-        # Use our own custom wait loop because Popen ignores a tee'd
-        # stderr/stdout.
-        # FIXME: This could be improved not to flatten output to stdout.
-        while True:
-            output_line = child_process.stdout.readline()
-            if output_line == "" and child_process.poll() != None:
-                # poll() is not threadsafe and can throw OSError due to:
-                # http://bugs.python.org/issue1731717
-                return child_process.poll()
-            # We assume that the child process wrote to us in utf-8,
-            # so no re-encoding is necessary before writing here.
-            teed_output.write(output_line)
 
     def cpu_count(self):
         return multiprocessing.cpu_count()
@@ -147,7 +126,8 @@ class Executive(object):
 
     def kill_process(self, pid):
         """Attempts to kill the given pid.
-        Will fail silently if pid does not exist or insufficient permisssions."""
+        Will fail silently if pid does not exist or insufficient permissions.
+        """
         if sys.platform == "win32":
             # We only use taskkill.exe on windows (not cygwin) because subprocess.pid
             # is a CYGWIN pid and taskkill.exe expects a windows pid.
@@ -166,10 +146,10 @@ class Executive(object):
                 retries_left -= 1
                 os.kill(pid, signal.SIGKILL)
                 _ = os.waitpid(pid, os.WNOHANG)
-            except OSError, e:
+            except OSError as e:
                 if e.errno == errno.EAGAIN:
                     if retries_left <= 0:
-                        _log.warn("Failed to kill pid %s.  Too many EAGAIN errors." % pid)
+                        _log.warning("Failed to kill pid %s.  Too many EAGAIN errors.", pid)
                     continue
                 if e.errno == errno.ESRCH:  # The process does not exist.
                     return
@@ -265,7 +245,7 @@ class Executive(object):
                 pid = line[1]
                 if process_name_filter(process_name):
                     running_pids.append(int(pid))
-            except (ValueError, IndexError), e:
+            except (ValueError, IndexError):
                 pass
 
         return sorted(running_pids)
@@ -345,7 +325,7 @@ class Executive(object):
         # Popen in Python 2.5 and before does not automatically encode unicode objects.
         # http://bugs.python.org/issue5290
         # See https://bugs.webkit.org/show_bug.cgi?id=37528
-        # for an example of a regresion caused by passing a unicode string directly.
+        # for an example of a regression caused by passing a unicode string directly.
         # FIXME: We may need to encode differently on different platforms.
         if isinstance(input, unicode):
             input = input.encode(self._child_process_encoding())
@@ -353,7 +333,8 @@ class Executive(object):
 
     def command_for_printing(self, args):
         """Returns a print-ready string representing command args.
-        The string should be copy/paste ready for execution in a shell."""
+        The string should be copy/paste ready for execution in a shell.
+        """
         args = self._stringify_args(args)
         escaped_args = []
         for arg in args:
@@ -369,12 +350,13 @@ class Executive(object):
                     cwd=None,
                     env=None,
                     input=None,
+                    timeout_seconds=None,
                     error_handler=None,
                     return_exit_code=False,
                     return_stderr=True,
                     decode_output=True, debug_logging=True):
         """Popen wrapper for convenience and to work around python bugs."""
-        assert(isinstance(args, list) or isinstance(args, tuple))
+        assert isinstance(args, list) or isinstance(args, tuple)
         start_time = time.time()
 
         stdin, string_to_communicate = self._compute_stdin(input)
@@ -387,18 +369,26 @@ class Executive(object):
                              cwd=cwd,
                              env=env,
                              close_fds=self._should_close_fds())
+
+        if timeout_seconds:
+            timer = threading.Timer(timeout_seconds, process.kill)
+            timer.start()
+
         output = process.communicate(string_to_communicate)[0]
 
         # run_command automatically decodes to unicode() unless explicitly told not to.
         if decode_output:
-            output = output.decode(self._child_process_encoding())
+            output = output.decode(self._child_process_encoding(), errors="replace")
 
         # wait() is not threadsafe and can throw OSError due to:
         # http://bugs.python.org/issue1731717
         exit_code = process.wait()
 
+        if timeout_seconds:
+            timer.cancel()
+
         if debug_logging:
-            _log.debug('"%s" took %.2fs' % (self.command_for_printing(args), time.time() - start_time))
+            _log.debug('"%s" took %.2fs', self.command_for_printing(args), time.time() - start_time)
 
         if return_exit_code:
             return exit_code

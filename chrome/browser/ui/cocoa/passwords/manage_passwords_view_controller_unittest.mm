@@ -4,8 +4,10 @@
 
 #import "chrome/browser/ui/cocoa/passwords/manage_passwords_view_controller.h"
 
+#include <memory>
+
 #include "base/mac/foundation_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/cocoa/passwords/base_passwords_controller_test.h"
 #import "chrome/browser/ui/cocoa/passwords/password_item_views.h"
@@ -20,25 +22,17 @@ using testing::ReturnRef;
 
 namespace {
 
-class ManagePasswordsBubbleManageViewControllerTest
-    : public ManagePasswordsControllerTest {
+class ManagePasswordsViewControllerTest : public ManagePasswordsControllerTest {
  public:
-  ManagePasswordsBubbleManageViewControllerTest() : controller_(nil) {}
-
-  void SetUp() override {
-    ManagePasswordsControllerTest::SetUp();
-    delegate_.reset([[ContentViewDelegateMock alloc] init]);
+  void SetUpManageState(
+      const VectorConstFormPtr& forms = VectorConstFormPtr()) {
+    ManagePasswordsControllerTest::SetUpManageState(forms);
+    controller_.reset(
+        [[ManagePasswordsViewController alloc] initWithDelegate:delegate()]);
+    [controller_ view];
   }
 
-  ContentViewDelegateMock* delegate() { return delegate_.get(); }
-
-  ManagePasswordsBubbleManageViewController* controller() {
-    if (!controller_) {
-      controller_.reset([[ManagePasswordsBubbleManageViewController alloc]
-          initWithModel:GetModelAndCreateIfNull()
-               delegate:delegate()]);
-      [controller_ loadView];
-    }
+  ManagePasswordsViewController* controller() {
     return controller_.get();
   }
 
@@ -47,19 +41,16 @@ class ManagePasswordsBubbleManageViewControllerTest
   }
 
  private:
-  base::scoped_nsobject<ManagePasswordsBubbleManageViewController> controller_;
-  base::scoped_nsobject<ContentViewDelegateMock> delegate_;
-  DISALLOW_COPY_AND_ASSIGN(ManagePasswordsBubbleManageViewControllerTest);
+  base::scoped_nsobject<ManagePasswordsViewController> controller_;
 };
 
-TEST_F(ManagePasswordsBubbleManageViewControllerTest,
-       ShouldDismissWhenDoneClicked) {
+TEST_F(ManagePasswordsViewControllerTest, ShouldDismissWhenDoneClicked) {
   SetUpManageState();
   [controller().doneButton performClick:nil];
   EXPECT_TRUE([delegate() dismissed]);
 }
 
-TEST_F(ManagePasswordsBubbleManageViewControllerTest,
+TEST_F(ManagePasswordsViewControllerTest,
        ShouldOpenPasswordsWhenManageClicked) {
   SetUpManageState();
   EXPECT_CALL(*ui_controller(), NavigateToPasswordManagerSettingsPage());
@@ -67,7 +58,7 @@ TEST_F(ManagePasswordsBubbleManageViewControllerTest,
   EXPECT_TRUE([delegate() dismissed]);
 }
 
-TEST_F(ManagePasswordsBubbleManageViewControllerTest,
+TEST_F(ManagePasswordsViewControllerTest,
        ShouldShowNoPasswordsWhenNoPasswordsExistForSite) {
   SetUpManageState();
   EXPECT_TRUE(GetModelAndCreateIfNull()->local_credentials().empty());
@@ -75,29 +66,23 @@ TEST_F(ManagePasswordsBubbleManageViewControllerTest,
   EXPECT_FALSE([controller() passwordsListController]);
 }
 
-TEST_F(ManagePasswordsBubbleManageViewControllerTest,
+TEST_F(ManagePasswordsViewControllerTest,
        ShouldShowAllPasswordItemsWhenPasswordsExistForSite) {
   // Add a few password entries.
-  autofill::PasswordForm form1;
-  form1.username_value = base::ASCIIToUTF16("username1");
-  form1.password_value = base::ASCIIToUTF16("password1");
+  std::unique_ptr<autofill::PasswordForm> form1(new autofill::PasswordForm);
+  form1->username_value = base::ASCIIToUTF16("username1");
+  form1->password_value = base::ASCIIToUTF16("password1");
 
-  autofill::PasswordForm form2;
-  form2.username_value = base::ASCIIToUTF16("username2");
-  form2.password_value = base::ASCIIToUTF16("password2");
+  std::unique_ptr<autofill::PasswordForm> form2(new autofill::PasswordForm);
+  form2->username_value = base::ASCIIToUTF16("username2");
+  form2->password_value = base::ASCIIToUTF16("password2");
 
-  // Add the entries to the model.
-  std::vector<const autofill::PasswordForm*> forms;
-  forms.push_back(&form1);
-  forms.push_back(&form2);
-  EXPECT_CALL(*ui_controller(), GetCurrentForms()).WillOnce(ReturnRef(forms));
-  GURL origin;
-  EXPECT_CALL(*ui_controller(), GetOrigin()).WillOnce(ReturnRef(origin));
-  EXPECT_CALL(*ui_controller(), GetState())
-      .WillOnce(Return(password_manager::ui::MANAGE_STATE));
+  VectorConstFormPtr forms;
+  forms.push_back(std::move(form1));
+  forms.push_back(std::move(form2));
+  SetUpManageState(forms);
 
   // Check the view state.
-  EXPECT_FALSE(GetModelAndCreateIfNull()->local_credentials().empty());
   ASSERT_TRUE([controller() passwordsListController]);
   EXPECT_FALSE([controller() noPasswordsView]);
   NSArray* items = [[controller() passwordsListController] itemViews];
@@ -116,6 +101,17 @@ TEST_F(ManagePasswordsBubbleManageViewControllerTest,
       NOTREACHED();
     }
   }
+}
+
+TEST_F(ManagePasswordsViewControllerTest, CloseBubbleAndHandleClick) {
+  // A user may press mouse down, some navigation closes the bubble, mouse up
+  // still sends the action.
+  SetUpManageState();
+  EXPECT_CALL(*ui_controller(), NavigateToPasswordManagerSettingsPage())
+      .Times(0);
+  [delegate() setModel:nil];
+  [controller().doneButton performClick:nil];
+  [controller().manageButton performClick:nil];
 }
 
 }  // namespace

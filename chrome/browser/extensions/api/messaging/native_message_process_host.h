@@ -5,16 +5,22 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGE_PROCESS_HOST_H_
 #define CHROME_BROWSER_EXTENSIONS_API_MESSAGING_NATIVE_MESSAGE_PROCESS_HOST_H_
 
+#include <memory>
 #include <queue>
 #include <string>
 
 #include "base/files/file.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/message_loop/message_loop.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/process/process.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
 #include "extensions/browser/api/messaging/native_message_host.h"
 #include "ui/gfx/native_widget_types.h"
+
+#if defined(OS_POSIX)
+#include "base/files/file_descriptor_watcher_posix.h"
+#endif
 
 namespace net {
 
@@ -33,30 +39,20 @@ namespace extensions {
 // This class must only be created, called, and deleted on the IO thread.
 // Public methods typically accept callbacks which will be invoked on the UI
 // thread.
-class NativeMessageProcessHost :
-#if defined(OS_POSIX)
-    public base::MessageLoopForIO::Watcher,
-#endif  // !defined(OS_POSIX)
-    public NativeMessageHost {
+class NativeMessageProcessHost : public NativeMessageHost {
  public:
   ~NativeMessageProcessHost() override;
 
   // Create using specified |launcher|. Used in tests.
-  static scoped_ptr<NativeMessageHost> CreateWithLauncher(
+  static std::unique_ptr<NativeMessageHost> CreateWithLauncher(
       const std::string& source_extension_id,
       const std::string& native_host_name,
-      scoped_ptr<NativeProcessLauncher> launcher);
+      std::unique_ptr<NativeProcessLauncher> launcher);
 
   // extensions::NativeMessageHost implementation.
   void OnMessage(const std::string& message) override;
   void Start(Client* client) override;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner() const override;
-
-#if defined(OS_POSIX)
-  // MessageLoopForIO::Watcher interface
-  void OnFileCanReadWithoutBlocking(int fd) override;
-  void OnFileCanWriteWithoutBlocking(int fd) override;
-#endif  // !defined(OS_POSIX)
 
   // Try and read a single message from |read_file_|. This should only be called
   // in unittests when you know there is data in the file.
@@ -65,7 +61,7 @@ class NativeMessageProcessHost :
  private:
   NativeMessageProcessHost(const std::string& source_extension_id,
                            const std::string& native_host_name,
-                           scoped_ptr<NativeProcessLauncher> launcher);
+                           std::unique_ptr<NativeProcessLauncher> launcher);
 
   // Starts the host process.
   void LaunchHostProcess();
@@ -102,7 +98,7 @@ class NativeMessageProcessHost :
   std::string native_host_name_;
 
   // Launcher used to launch the native process.
-  scoped_ptr<NativeProcessLauncher> launcher_;
+  std::unique_ptr<NativeProcessLauncher> launcher_;
 
   // Set to true after the native messaging connection has been stopped, e.g.
   // due to an error.
@@ -111,15 +107,15 @@ class NativeMessageProcessHost :
   base::Process process_;
 
   // Input stream reader.
-  scoped_ptr<net::FileStream> read_stream_;
+  std::unique_ptr<net::FileStream> read_stream_;
 
 #if defined(OS_POSIX)
   base::PlatformFile read_file_;
-  base::MessageLoopForIO::FileDescriptorWatcher read_watcher_;
+  std::unique_ptr<base::FileDescriptorWatcher::Controller> read_controller_;
 #endif  // !defined(OS_POSIX)
 
   // Write stream.
-  scoped_ptr<net::FileStream> write_stream_;
+  std::unique_ptr<net::FileStream> write_stream_;
 
   // Read buffer passed to FileStream::Read().
   scoped_refptr<net::IOBuffer> read_buffer_;

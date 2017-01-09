@@ -10,7 +10,7 @@
 #include "chrome/browser/ui/browser_finder.h"
 #import "chrome/browser/ui/cocoa/history_overlay_controller.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebGestureEvent.h"
 
 namespace {
 // The horizontal distance required to cause the browser to perform a history
@@ -118,47 +118,28 @@ BOOL forceMagicMouse = NO;
                          consumed:(BOOL)consumed {
   if (event.phase != NSEventPhaseBegan)
     return;
-  beganEventUnconsumed_ = !consumed;
+  firstScrollUnconsumed_ = !consumed;
 }
 
-- (BOOL)canRubberbandLeft:(NSView*)view {
-  Browser* browser = chrome::FindBrowserWithWindow([view window]);
-  // If history swiping isn't possible, allow rubberbanding.
-  if (!browser)
-    return true;
-
-  // TODO(erikchen): Update this comment after determining whether this
-  // NULL-check fixes the crash.
-  // This NULL check likely prevents a crash. http://crbug.com/418761
-  if (!browser->tab_strip_model()->GetActiveWebContents())
-    return true;
-
-  if (!chrome::CanGoBack(browser))
-    return true;
-  // History swiping is possible. By default, disallow rubberbanding.  If the
-  // user has both started, and then cancelled history swiping for this
-  // gesture, allow rubberbanding.
-  return receivingTouches_ && recognitionState_ == history_swiper::kCancelled;
-}
-
-- (BOOL)canRubberbandRight:(NSView*)view {
-  Browser* browser = chrome::FindBrowserWithWindow([view window]);
-  // If history swiping isn't possible, allow rubberbanding.
-  if (!browser)
-    return true;
-
-  // TODO(erikchen): Update this comment after determining whether this
-  // NULL-check fixes the crash.
-  // This NULL check likely prevents a crash. http://crbug.com/418761
-  if (!browser->tab_strip_model()->GetActiveWebContents())
-    return true;
-
-  if (!chrome::CanGoForward(browser))
-    return true;
-  // History swiping is possible. By default, disallow rubberbanding.  If the
-  // user has both started, and then cancelled history swiping for this
-  // gesture, allow rubberbanding.
-  return receivingTouches_ && recognitionState_ == history_swiper::kCancelled;
+- (void)rendererHandledGestureScrollEvent:(const blink::WebGestureEvent&)event
+                                 consumed:(BOOL)consumed {
+  switch (event.type) {
+    case blink::WebInputEvent::GestureScrollBegin:
+      if (event.data.scrollBegin.synthetic ||
+          event.data.scrollBegin.inertialPhase ==
+              blink::WebGestureEvent::MomentumPhase) {
+        return;
+      }
+      waitingForFirstGestureScroll_ = YES;
+      break;
+    case blink::WebInputEvent::GestureScrollUpdate:
+      if (waitingForFirstGestureScroll_)
+        firstScrollUnconsumed_ = !consumed;
+      waitingForFirstGestureScroll_ = NO;
+      break;
+    default:
+      break;
+  }
 }
 
 - (void)beginGestureWithEvent:(NSEvent*)event {
@@ -219,7 +200,8 @@ BOOL forceMagicMouse = NO;
   // Reset state pertaining to previous trackpad gestures.
   gestureStartPointValid_ = NO;
   gestureTotalY_ = 0;
-  beganEventUnconsumed_ = NO;
+  firstScrollUnconsumed_ = NO;
+  waitingForFirstGestureScroll_ = NO;
   recognitionState_ = history_swiper::kPending;
 }
 
@@ -395,9 +377,9 @@ BOOL forceMagicMouse = NO;
       historyOverlay_.view.window);
   if (browser) {
     if (direction == history_swiper::kForwards)
-      chrome::GoForward(browser, CURRENT_TAB);
+      chrome::GoForward(browser, WindowOpenDisposition::CURRENT_TAB);
     else
-      chrome::GoBack(browser, CURRENT_TAB);
+      chrome::GoBack(browser, WindowOpenDisposition::CURRENT_TAB);
   }
 }
 
@@ -500,9 +482,9 @@ BOOL forceMagicMouse = NO;
               chrome::FindBrowserWithWindow(historyOverlay.view.window);
           if (ended && browser) {
             if (isRightScroll)
-              chrome::GoForward(browser, CURRENT_TAB);
+              chrome::GoForward(browser, WindowOpenDisposition::CURRENT_TAB);
             else
-              chrome::GoBack(browser, CURRENT_TAB);
+              chrome::GoBack(browser, WindowOpenDisposition::CURRENT_TAB);
           }
 
           if (ended || isComplete) {
@@ -543,7 +525,7 @@ BOOL forceMagicMouse = NO;
 
   // Don't enable history swiping until the renderer has decided to not consume
   // the event with phase NSEventPhaseBegan.
-  if (!beganEventUnconsumed_)
+  if (!firstScrollUnconsumed_)
     return NO;
 
   // Magic mouse and touchpad swipe events are identical except magic mouse

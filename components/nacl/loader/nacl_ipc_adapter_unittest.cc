@@ -4,12 +4,16 @@
 
 #include "components/nacl/loader/nacl_ipc_adapter.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/thread_task_runner_handle.h"
+#include <memory>
+
+#include "base/run_loop.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/simple_thread.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_test_sink.h"
 #include "native_client/src/public/nacl_desc_custom.h"
 #include "native_client/src/trusted/service_runtime/include/sys/fcntl.h"
@@ -29,7 +33,7 @@ class NaClIPCAdapterTest : public testing::Test {
     // Takes ownership of the sink_ pointer. Note we provide the current message
     // loop instead of using a real IO thread. This should work OK since we do
     // not need real IPC for the tests.
-    adapter_ = new NaClIPCAdapter(scoped_ptr<IPC::Channel>(sink_),
+    adapter_ = new NaClIPCAdapter(std::unique_ptr<IPC::Channel>(sink_),
                                   base::ThreadTaskRunnerHandle::Get().get());
   }
   void TearDown() override {
@@ -38,7 +42,7 @@ class NaClIPCAdapterTest : public testing::Test {
     // The adapter destructor has to post a task to destroy the Channel on the
     // IO thread. For the purposes of the test, we just need to make sure that
     // task gets run, or it will appear as a leak.
-    message_loop_.RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
   }
 
  protected:
@@ -73,9 +77,9 @@ class NaClIPCAdapterTest : public testing::Test {
 // Tests a simple message getting rewritten sent from native code to NaCl.
 TEST_F(NaClIPCAdapterTest, SimpleReceiveRewriting) {
   int routing_id = 0x89898989;
-  uint32 type = 0x55555555;
+  uint32_t type = 0x55555555;
   IPC::Message input(routing_id, type, IPC::Message::PRIORITY_NORMAL);
-  uint32 flags = input.flags();
+  uint32_t flags = input.flags();
 
   int value = 0x12345678;
   input.WriteInt(value);
@@ -107,7 +111,7 @@ TEST_F(NaClIPCAdapterTest, SimpleReceiveRewriting) {
 // Tests a simple message getting rewritten sent from NaCl to native code.
 TEST_F(NaClIPCAdapterTest, SendRewriting) {
   int routing_id = 0x89898989;
-  uint32 type = 0x55555555;
+  uint32_t type = 0x55555555;
   int value = 0x12345678;
 
   // Send a message with one int inside it.
@@ -129,7 +133,7 @@ TEST_F(NaClIPCAdapterTest, SendRewriting) {
 
   // Check that the message came out the other end in the test sink
   // (messages are posted, so we have to pump).
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1u, sink_->message_count());
   const IPC::Message* msg = sink_->GetMessageAt(0);
 
@@ -145,14 +149,14 @@ TEST_F(NaClIPCAdapterTest, SendRewriting) {
   EXPECT_EQ(first_chunk_size, result);
 
   // First partial send should not have made any messages.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(0u, sink_->message_count());
 
   // Second partial send should do the same.
   int second_chunk_size = 2;
   result = Send(&buf[first_chunk_size], second_chunk_size);
   EXPECT_EQ(second_chunk_size, result);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(0u, sink_->message_count());
 
   // Send the rest of the message in a third chunk.
@@ -162,7 +166,7 @@ TEST_F(NaClIPCAdapterTest, SendRewriting) {
   EXPECT_EQ(third_chunk_size, result);
 
   // Last send should have generated one message.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(1u, sink_->message_count());
   msg = sink_->GetMessageAt(0);
   EXPECT_EQ(sizeof(int), msg->payload_size());
@@ -173,14 +177,14 @@ TEST_F(NaClIPCAdapterTest, SendRewriting) {
 // Tests when a buffer is too small to receive the entire message.
 TEST_F(NaClIPCAdapterTest, PartialReceive) {
   int routing_id_1 = 0x89898989;
-  uint32 type_1 = 0x55555555;
+  uint32_t type_1 = 0x55555555;
   IPC::Message input_1(routing_id_1, type_1, IPC::Message::PRIORITY_NORMAL);
   int value_1 = 0x12121212;
   input_1.WriteInt(value_1);
   adapter_->OnMessageReceived(input_1);
 
   int routing_id_2 = 0x90909090;
-  uint32 type_2 = 0x66666666;
+  uint32_t type_2 = 0x66666666;
   IPC::Message input_2(routing_id_2, type_2, IPC::Message::PRIORITY_NORMAL);
   int value_2 = 0x23232323;
   input_2.WriteInt(value_2);
@@ -223,7 +227,7 @@ TEST_F(NaClIPCAdapterTest, PartialReceive) {
 // succeeds and buffers the data.
 TEST_F(NaClIPCAdapterTest, SendOverflow) {
   int routing_id = 0x89898989;
-  uint32 type = 0x55555555;
+  uint32_t type = 0x55555555;
   int value = 0x12345678;
 
   // Make a message with one int inside it. Reserve some extra space so
@@ -245,7 +249,7 @@ TEST_F(NaClIPCAdapterTest, SendOverflow) {
   // Send too much data and make sure that the send fails.
   int result = Send(buf, big_buf_size);
   EXPECT_EQ(-1, result);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(0u, sink_->message_count());
 
   // Send too much data in two chunks and make sure that the send fails.
@@ -254,13 +258,13 @@ TEST_F(NaClIPCAdapterTest, SendOverflow) {
   EXPECT_EQ(first_chunk_size, result);
 
   // First partial send should not have made any messages.
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(0u, sink_->message_count());
 
   int second_chunk_size = big_buf_size - first_chunk_size;
   result = Send(&buf[first_chunk_size], second_chunk_size);
   EXPECT_EQ(-1, result);
-  message_loop_.RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_EQ(0u, sink_->message_count());
 }
 

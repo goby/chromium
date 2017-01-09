@@ -5,27 +5,13 @@
 #ifndef CONTENT_SHELL_RENDERER_LAYOUT_TEST_LAYOUT_TEST_CONTENT_RENDERER_CLIENT_H_
 #define CONTENT_SHELL_RENDERER_LAYOUT_TEST_LAYOUT_TEST_CONTENT_RENDERER_CLIENT_H_
 
-#include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "content/shell/renderer/shell_content_renderer_client.h"
-
-namespace blink {
-class WebFrame;
-class WebPlugin;
-struct WebPluginParams;
-}
-
-namespace web_cache {
-class WebCacheRenderProcessObserver;
-}
-
-namespace test_runner {
-class WebTestProxyBase;
-}
 
 namespace content {
 
-class LayoutTestRenderProcessObserver;
+class LayoutTestRenderThreadObserver;
 class MockWebClipboardImpl;
 
 class LayoutTestContentRendererClient : public ShellContentRendererClient {
@@ -46,17 +32,17 @@ class LayoutTestContentRendererClient : public ShellContentRendererClient {
   blink::WebAudioDevice* OverrideCreateAudioDevice(double sample_rate) override;
   blink::WebClipboard* OverrideWebClipboard() override;
   blink::WebThemeEngine* OverrideThemeEngine() override;
-  scoped_ptr<blink::WebAppBannerClient> CreateAppBannerClient(
-      RenderFrame* render_frame) override;
-  scoped_ptr<MediaStreamRendererFactory> CreateMediaStreamRendererFactory()
+  std::unique_ptr<MediaStreamRendererFactory> CreateMediaStreamRendererFactory()
       override;
+  std::unique_ptr<gfx::ICCProfile> GetImageDecodeColorProfile() override;
+  void DidInitializeWorkerContextOnWorkerThread(
+      v8::Local<v8::Context> context) override;
+  void RunScriptsAtDocumentEnd(RenderFrame* render_frame) override;
+  void SetRuntimeFeaturesDefaultsBeforeBlinkInitialization() override;
 
  private:
-  void WebTestProxyCreated(RenderView* render_view,
-                           test_runner::WebTestProxyBase* proxy);
-
-  scoped_ptr<LayoutTestRenderProcessObserver> shell_observer_;
-  scoped_ptr<MockWebClipboardImpl> clipboard_;
+  std::unique_ptr<LayoutTestRenderThreadObserver> shell_observer_;
+  std::unique_ptr<MockWebClipboardImpl> clipboard_;
 };
 
 }  // namespace content

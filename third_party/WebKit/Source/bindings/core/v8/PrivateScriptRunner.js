@@ -63,6 +63,9 @@ function PrivateScriptController()
 
         // Push API
         "PermissionDeniedError",
+
+        // Pointer Events
+        "InvalidPointerId",
     ];
 
     // This list must be in sync with the enum in ExceptionCode.h. The order matters.
@@ -136,7 +139,7 @@ PrivateScriptController.prototype = {
     },
 }
 
-if (typeof window.privateScriptController === 'undefined')
+if (!window.hasOwnProperty("privateScriptController"))
     window.privateScriptController = new PrivateScriptController();
 
 // This line must be the last statement of this JS file.

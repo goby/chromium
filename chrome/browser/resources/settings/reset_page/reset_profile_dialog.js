@@ -4,59 +4,128 @@
 
 /**
  * @fileoverview
- * 'settings-reset-profile-dialog' is the dialog shown for clearing profile
- * settings.
  *
- * @group Chrome Settings Elements
- * @element settings-reset-profile-dialog
+ * 'settings-reset-profile-dialog' is the dialog shown for clearing profile
+ * settings. A triggered variant of this dialog can be shown under certain
+ * circumstances. See triggered_profile_resetter.h for when the triggered
+ * variant will be used.
  */
 Polymer({
   is: 'settings-reset-profile-dialog',
 
+  behaviors: [WebUIListenerBehavior],
+
   properties: {
-    feedbackInfo_: String,
+    // TODO(dpapad): Evaluate whether this needs to be synced across different
+    // settings tabs.
+
+    /** @private */
+    isTriggered_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @private */
+    triggeredResetToolName_: {
+      type: String,
+      value: '',
+    },
+
+    /** @private */
+    resetRequestOrigin_: String,
+
+    /** @private */
+    clearingInProgress_: {
+      type: Boolean,
+      value: false,
+    },
   },
 
-  attached: function() {
-    cr.define('SettingsResetPage', function() {
-      return {
-        doneResetting: function() {
-          this.$.resetSpinner.active = false;
-          this.$.dialog.close();
-        }.bind(this),
+  /** @private {!settings.ResetBrowserProxy} */
+  browserProxy_: null,
 
-        setFeedbackInfo: function(data) {
-          this.set('feedbackInfo_', data.feedbackInfo);
-          this.async(function() {
-            this.$.dialog.center();
-          });
-        }.bind(this),
-      };
+  /**
+   * @private
+   * @return {string}
+   */
+  getExplanationText_: function() {
+    if (this.isTriggered_) {
+      return loadTimeData.getStringF('triggeredResetPageExplanation',
+                                     this.triggeredResetToolName_);
+    }
+    return loadTimeData.getStringF('resetPageExplanation');
+  },
+
+  /**
+   * @private
+   * @return {string}
+   */
+  getPageTitle_: function() {
+    if (this.isTriggered_) {
+      return loadTimeData.getStringF('triggeredResetPageTitle',
+                                     this.triggeredResetToolName_);
+    }
+    return loadTimeData.getStringF('resetPageTitle');
+  },
+
+  /** @override */
+  ready: function() {
+    this.browserProxy_ = settings.ResetBrowserProxyImpl.getInstance();
+
+    this.addEventListener('cancel', function() {
+      this.browserProxy_.onHideResetProfileDialog();
     }.bind(this));
   },
 
-  open: function() {
-    this.$.dialog.open();
-    chrome.send('onShowResetProfileDialog');
+  /** @private */
+  showDialog_: function() {
+    this.$.dialog.showModal();
+    this.browserProxy_.onShowResetProfileDialog();
+  },
+
+  /** @override */
+  attached: function() {
+    this.isTriggered_ =
+        settings.getCurrentRoute() == settings.Route.TRIGGERED_RESET_DIALOG;
+    if (this.isTriggered_) {
+      this.browserProxy_.getTriggeredResetToolName().then(function(name) {
+        this.resetRequestOrigin_ = 'triggeredreset';
+        this.triggeredResetToolName_ = name;
+        this.showDialog_();
+      }.bind(this));
+    } else {
+      // For the non-triggered reset dialog, a '#cct' hash indicates that the
+      // reset request came from the Chrome Cleanup Tool by launching Chrome
+      // with the startup URL chrome://settings/resetProfileSettings#cct.
+      var origin = window.location.hash.slice(1).toLowerCase() == 'cct' ?
+          'cct' : settings.getQueryParameters().get('origin');
+      this.resetRequestOrigin_ = origin || '';
+      this.showDialog_();
+    }
   },
 
   /** @private */
   onCancelTap_: function() {
-    this.$.dialog.close();
-    chrome.send('onHideResetProfileDialog');
+    this.$.dialog.cancel();
   },
 
   /** @private */
   onResetTap_: function() {
-    this.$.resetSpinner.active = true;
-    chrome.send('performResetProfileSettings', [this.$.sendSettings.checked]);
+    this.clearingInProgress_ = true;
+    this.browserProxy_.performResetProfileSettings(
+        this.$.sendSettings.checked, this.resetRequestOrigin_).then(function() {
+      this.clearingInProgress_ = false;
+      if (this.$.dialog.open)
+        this.$.dialog.close();
+      this.fire('reset-done');
+    }.bind(this));
   },
 
-  /** @private */
-  onSendSettingsChange_: function() {
-    // TODO(dpapad): Update how settings info is surfaced when final mocks
-    // exist.
-    this.$.settings.hidden = !this.$.sendSettings.checked;
-    this.$.dialog.center();
+  /**
+   * Displays the settings that will be reported in a new tab.
+   * @private
+   */
+  onShowReportedSettingsTap_: function() {
+    this.browserProxy_.showReportedSettings();
   },
 });

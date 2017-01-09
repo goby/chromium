@@ -4,57 +4,44 @@
 
 #include "chrome/browser/ui/ash/ash_util.h"
 
-#include "ash/accelerators/accelerator_controller.h"
-#include "ash/shell.h"
+#include "ash/common/accelerators/accelerator_controller.h"
+#include "ash/common/wm_shell.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/ash/ash_init.h"
-#include "chrome/browser/ui/host_desktop.h"
+#include "content/public/common/service_names.mojom.h"
+#include "services/service_manager/runner/common/client_util.h"
 #include "ui/aura/window_event_dispatcher.h"
 
-#if !defined(OS_CHROMEOS)
-#include "base/command_line.h"
-#include "chrome/common/chrome_switches.h"
-#endif
+namespace ash_util {
+
+const char* GetAshServiceName() {
+  // Under mash the ash process provides the service.
+  if (chrome::IsRunningInMash())
+    return "ash";
+
+  // Under classic ash the browser process provides the service.
+  return content::mojom::kBrowserServiceName;
+}
+
+}  // namespace ash_util
 
 namespace chrome {
 
 bool ShouldOpenAshOnStartup() {
-#if defined(OS_CHROMEOS)
-  return true;
-#else
-  // TODO(scottmg): http://crbug.com/133312, will need this for Win8 too.
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(switches::kOpenAsh);
-#endif
+  return !IsRunningInMash();
 }
 
-bool IsNativeViewInAsh(gfx::NativeView native_view) {
-#if defined(OS_CHROMEOS)
-  // Optimization. There is only ash on ChromeOS.
-  return true;
-#endif
-
-  if (!ash::Shell::HasInstance())
-    return false;
-
-  aura::Window::Windows root_windows =
-      ash::Shell::GetInstance()->GetAllRootWindows();
-
-  for (aura::Window::Windows::const_iterator it = root_windows.begin();
-       it != root_windows.end(); ++it) {
-    if ((*it)->Contains(native_view))
-      return true;
-  }
-
-  return false;
-}
-
-bool IsNativeWindowInAsh(gfx::NativeWindow native_window) {
-  return IsNativeViewInAsh(native_window);
+bool IsRunningInMash() {
+  return service_manager::ServiceManagerIsRemote();
 }
 
 bool IsAcceleratorDeprecated(const ui::Accelerator& accelerator) {
-  ash::AcceleratorController* controller =
-      ash::Shell::GetInstance()->accelerator_controller();
-  return controller->IsDeprecated(accelerator);
+  // When running in mash the browser doesn't handle ash accelerators.
+  if (chrome::IsRunningInMash())
+    return false;
+
+  return ash::WmShell::Get()->accelerator_controller()->IsDeprecated(
+      accelerator);
 }
 
 }  // namespace chrome

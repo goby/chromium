@@ -2,11 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/spellchecker/spellcheck_message_filter_platform.h"
+#include "components/spellcheck/browser/spellcheck_message_filter_platform.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/common/spellcheck_messages.h"
-#include "chrome/common/spellcheck_result.h"
+#include "components/spellcheck/common/spellcheck_messages.h"
+#include "components/spellcheck/common/spellcheck_result.h"
 #include "content/public/browser/browser_thread.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -45,8 +49,8 @@ TEST(SpellcheckMessageFilterPlatformMacTest, CombineResults) {
 }
 
 TEST(SpellCheckMessageFilterPlatformMacTest, TestOverrideThread) {
-  static const uint32 kSpellcheckMessages[] = {
-    SpellCheckHostMsg_RequestTextCheck::ID,
+  static const uint32_t kSpellcheckMessages[] = {
+      SpellCheckHostMsg_RequestTextCheck::ID,
   };
   scoped_refptr<SpellCheckMessageFilterPlatform> filter(
       new SpellCheckMessageFilterPlatform(0));

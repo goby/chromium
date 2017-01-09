@@ -4,9 +4,10 @@
 
 #include "chrome/browser/captive_portal/captive_portal_tab_helper.h"
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/captive_portal/captive_portal_service.h"
 #include "chrome/browser/captive_portal/captive_portal_tab_reloader.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -15,10 +16,10 @@
 #include "content/public/browser/notification_service.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
-#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/render_process_host.h"
+#include "content/public/browser/render_view_host.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/content_switches.h"
+#include "content/public/common/browser_side_navigation_policy.h"
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/web_contents_tester.h"
 #include "net/base/net_errors.h"
@@ -26,10 +27,10 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 using captive_portal::CaptivePortalResult;
-using content::ResourceType;
 
 namespace {
 
+const char* const kStartUrl = "http://whatever.com/index.html";
 const char* const kHttpUrl = "http://whatever.com/";
 const char* const kHttpsUrl = "https://whatever.com/";
 
@@ -49,7 +50,7 @@ enum NavigationType {
 class MockCaptivePortalTabReloader : public CaptivePortalTabReloader {
  public:
   MockCaptivePortalTabReloader()
-      : CaptivePortalTabReloader(NULL, NULL, base::Callback<void()>()) {
+      : CaptivePortalTabReloader(nullptr, nullptr, base::Callback<void()>()) {
   }
 
   MOCK_METHOD1(OnLoadStart, void(bool));
@@ -73,11 +74,13 @@ class CaptivePortalTabHelperTest : public ChromeRenderViewHostTestHarness {
   void SetUp() override {
     ChromeRenderViewHostTestHarness::SetUp();
 
-    // Load kHttpUrl. This ensures that any subsequent navigation to kHttpsUrl2
-    // will be properly registered as cross-process.
+    // Load kStartUrl. This ensures that any subsequent navigation to kHttpsUrl2
+    // will be properly registered as cross-process. It should be different than
+    // the rest of the URLs used, otherwise unit tests will clasify navigations
+    // as same document ones, which would be incorrect.
     content::WebContentsTester* web_contents_tester =
         content::WebContentsTester::For(web_contents());
-    web_contents_tester->NavigateAndCommit(GURL(kHttpUrl));
+    web_contents_tester->NavigateAndCommit(GURL(kStartUrl));
     content::RenderFrameHostTester* rfh_tester =
         content::RenderFrameHostTester::For(main_rfh());
     rfh_tester->SimulateNavigationStop();
@@ -85,6 +88,11 @@ class CaptivePortalTabHelperTest : public ChromeRenderViewHostTestHarness {
     tab_helper_.reset(new CaptivePortalTabHelper(web_contents()));
     tab_helper_->profile_ = nullptr;
     tab_helper_->SetTabReloaderForTest(mock_reloader_);
+  }
+
+  void TearDown() override {
+    tab_helper_.reset();
+    ChromeRenderViewHostTestHarness::TearDown();
   }
 
   // Simulates a successful load of |url|.
@@ -138,10 +146,8 @@ class CaptivePortalTabHelperTest : public ChromeRenderViewHostTestHarness {
     // PlzNavigate: on abort, no renderer will have been associated with the
     // navigation. Therefore do not simulate a DidStopLoading IPC coming from a
     // renderer.
-    if (!base::CommandLine::ForCurrentProcess()->HasSwitch(
-            switches::kEnableBrowserSideNavigation)) {
+    if (!content::IsBrowserSideNavigationEnabled())
       rfh_tester->SimulateNavigationStop();
-    }
 
     // Make sure that above call resulted in abort, for tests that continue
     // after the abort.
@@ -176,7 +182,7 @@ class CaptivePortalTabHelperTest : public ChromeRenderViewHostTestHarness {
   // Simulates a captive portal redirect by calling the Observe method.
   void ObservePortalResult(CaptivePortalResult previous_result,
                            CaptivePortalResult result) {
-    content::Source<Profile> source_profile(NULL);
+    content::Source<Profile> source_profile(nullptr);
 
     CaptivePortalService::Results results;
     results.previous_result = previous_result;
@@ -194,7 +200,7 @@ class CaptivePortalTabHelperTest : public ChromeRenderViewHostTestHarness {
   void SetIsLoginTab() { tab_helper()->SetIsLoginTab(); }
 
  private:
-  scoped_ptr<CaptivePortalTabHelper> tab_helper_;
+  std::unique_ptr<CaptivePortalTabHelper> tab_helper_;
 
   // Owned by |tab_helper_|.
   testing::StrictMock<MockCaptivePortalTabReloader>* mock_reloader_;

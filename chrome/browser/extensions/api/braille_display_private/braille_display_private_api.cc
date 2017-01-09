@@ -4,7 +4,10 @@
 
 #include "chrome/browser/extensions/api/braille_display_private/braille_display_private_api.h"
 
+#include <utility>
+
 #include "base/lazy_instance.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/braille_display_private/braille_controller.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_manager.h"
@@ -30,7 +33,7 @@ class BrailleDisplayPrivateAPI::DefaultEventDelegate
   DefaultEventDelegate(EventRouter::Observer* observer, Profile* profile);
   ~DefaultEventDelegate() override;
 
-  void BroadcastEvent(scoped_ptr<Event> event) override;
+  void BroadcastEvent(std::unique_ptr<Event> event) override;
   bool HasListener() override;
 
  private:
@@ -62,21 +65,21 @@ BrailleDisplayPrivateAPI::GetFactoryInstance() {
 
 void BrailleDisplayPrivateAPI::OnBrailleDisplayStateChanged(
     const DisplayState& display_state) {
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::BRAILLE_DISPLAY_PRIVATE_ON_DISPLAY_STATE_CHANGED,
                 OnDisplayStateChanged::kEventName,
                 OnDisplayStateChanged::Create(display_state)));
-  event_delegate_->BroadcastEvent(event.Pass());
+  event_delegate_->BroadcastEvent(std::move(event));
 }
 
 void BrailleDisplayPrivateAPI::OnBrailleKeyEvent(const KeyEvent& key_event) {
   // Key events only go to extensions of the active profile.
   if (!IsProfileActive())
     return;
-  scoped_ptr<Event> event(
+  std::unique_ptr<Event> event(
       new Event(events::BRAILLE_DISPLAY_PRIVATE_ON_KEY_EVENT,
                 OnKeyEvent::kEventName, OnKeyEvent::Create(key_event)));
-  event_delegate_->BroadcastEvent(event.Pass());
+  event_delegate_->BroadcastEvent(std::move(event));
 }
 
 bool BrailleDisplayPrivateAPI::IsProfileActive() {
@@ -99,8 +102,8 @@ bool BrailleDisplayPrivateAPI::IsProfileActive() {
 }
 
 void BrailleDisplayPrivateAPI::SetEventDelegateForTest(
-    scoped_ptr<EventDelegate> delegate) {
-  event_delegate_ = delegate.Pass();
+    std::unique_ptr<EventDelegate> delegate) {
+  event_delegate_ = std::move(delegate);
 }
 
 void BrailleDisplayPrivateAPI::OnListenerAdded(
@@ -132,8 +135,8 @@ BrailleDisplayPrivateAPI::DefaultEventDelegate::~DefaultEventDelegate() {
 }
 
 void BrailleDisplayPrivateAPI::DefaultEventDelegate::BroadcastEvent(
-    scoped_ptr<Event> event) {
-  EventRouter::Get(profile_)->BroadcastEvent(event.Pass());
+    std::unique_ptr<Event> event) {
+  EventRouter::Get(profile_)->BroadcastEvent(std::move(event));
 }
 
 bool BrailleDisplayPrivateAPI::DefaultEventDelegate::HasListener() {
@@ -148,8 +151,7 @@ bool BrailleDisplayPrivateGetDisplayStateFunction::Prepare() {
 }
 
 void BrailleDisplayPrivateGetDisplayStateFunction::Work() {
-  SetResult(
-      BrailleController::GetInstance()->GetDisplayState()->ToValue().release());
+  SetResult(BrailleController::GetInstance()->GetDisplayState()->ToValue());
 }
 
 bool BrailleDisplayPrivateGetDisplayStateFunction::Respond() {
@@ -167,11 +169,15 @@ BrailleDisplayPrivateWriteDotsFunction::
 bool BrailleDisplayPrivateWriteDotsFunction::Prepare() {
   params_ = WriteDots::Params::Create(*args_);
   EXTENSION_FUNCTION_VALIDATE(params_);
+  EXTENSION_FUNCTION_VALIDATE(
+      params_->cells.size() >=
+      static_cast<size_t>(params_->columns * params_->rows));
   return true;
 }
 
 void BrailleDisplayPrivateWriteDotsFunction::Work() {
-  BrailleController::GetInstance()->WriteDots(params_->cells);
+  BrailleController::GetInstance()->WriteDots(params_->cells, params_->columns,
+                                              params_->rows);
 }
 
 bool BrailleDisplayPrivateWriteDotsFunction::Respond() {

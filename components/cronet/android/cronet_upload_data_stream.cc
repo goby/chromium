@@ -9,7 +9,7 @@
 
 namespace cronet {
 
-CronetUploadDataStream::CronetUploadDataStream(Delegate* delegate, int64 size)
+CronetUploadDataStream::CronetUploadDataStream(Delegate* delegate, int64_t size)
     : UploadDataStream(size < 0, 0),
       size_(size),
       waiting_on_read_(false),
@@ -18,14 +18,13 @@ CronetUploadDataStream::CronetUploadDataStream(Delegate* delegate, int64 size)
       rewind_in_progress_(false),
       at_front_of_stream_(true),
       delegate_(delegate),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 CronetUploadDataStream::~CronetUploadDataStream() {
   delegate_->OnUploadDataStreamDestroyed();
 }
 
-int CronetUploadDataStream::InitInternal() {
+int CronetUploadDataStream::InitInternal(const net::NetLogWithSource& net_log) {
   // ResetInternal should have been called before init, if the stream was in
   // use.
   DCHECK(!waiting_on_read_);
@@ -36,7 +35,7 @@ int CronetUploadDataStream::InitInternal() {
 
   // Set size of non-chunked uploads.
   if (size_ >= 0)
-    SetSize(static_cast<uint64>(size_));
+    SetSize(static_cast<uint64_t>(size_));
 
   // If already at the front of the stream, nothing to do.
   if (at_front_of_stream_) {

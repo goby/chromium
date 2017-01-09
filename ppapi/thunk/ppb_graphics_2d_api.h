@@ -5,6 +5,8 @@
 #ifndef PPAPI_THUNK_PPB_GRAPHICS_2D_API_H_
 #define PPAPI_THUNK_PPB_GRAPHICS_2D_API_H_
 
+#include <stdint.h>
+
 #include "base/memory/ref_counted.h"
 #include "ppapi/c/pp_bool.h"
 #include "ppapi/c/pp_completion_callback.h"
@@ -34,6 +36,9 @@ class PPAPI_THUNK_EXPORT PPB_Graphics2D_API {
   virtual int32_t Flush(scoped_refptr<TrackedCallback> callback) = 0;
   virtual PP_Bool SetScale(float scale) = 0;
   virtual float GetScale() = 0;
+  virtual PP_Bool SetLayerTransform(float scale,
+                                    const PP_Point* origin,
+                                    const PP_Point* translate) = 0;
 
   // Test only
   virtual bool ReadImageData(PP_Resource image, const PP_Point* top_left) = 0;

@@ -8,7 +8,6 @@
 #include <map>
 #include <set>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/layer_animation_element.h"
@@ -16,6 +15,7 @@
 namespace ui {
 
 namespace test {
+class CountCheckingLayerAnimationObserver;
 class LayerAnimationObserverTestApi;
 }  // namespace test
 
@@ -82,6 +82,7 @@ class COMPOSITOR_EXPORT LayerAnimationObserver  {
 
  private:
   friend class LayerAnimationSequence;
+  friend class test::CountCheckingLayerAnimationObserver;
   friend class test::LayerAnimationObserverTestApi;
 
   // Called when |this| is added to |sequence|'s observer list.

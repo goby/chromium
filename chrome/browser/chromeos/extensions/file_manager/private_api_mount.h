@@ -14,10 +14,6 @@
 #include "components/drive/drive.pb.h"
 #include "components/drive/file_errors.h"
 
-namespace ui {
-struct SelectedFileInfo;
-}
-
 namespace extensions {
 
 // Implements chrome.fileManagerPrivate.addMount method.
@@ -38,7 +34,7 @@ class FileManagerPrivateAddMountFunction : public LoggedAsyncExtensionFunction {
   void RunAfterGetDriveFile(const base::FilePath& drive_path,
                             drive::FileError error,
                             const base::FilePath& cache_path,
-                            scoped_ptr<drive::ResourceEntry> entry);
+                            std::unique_ptr<drive::ResourceEntry> entry);
 
   // Part of Run(). Called after MarkCacheFielAsMounted for Drive File System.
   // (or directly called from RunAsync() for other file system).

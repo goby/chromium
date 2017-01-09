@@ -6,6 +6,7 @@
 
 #include "base/logging.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "tools/gn/err.h"
 #include "tools/gn/filesystem_utils.h"
 #include "tools/gn/parse_tree.h"
@@ -98,16 +99,13 @@ bool Resolve(const SourceDir& current_dir,
   size_t offset = 0;
 #if defined(OS_WIN)
   if (IsPathAbsolute(input)) {
-    if (input[0] != '/') {
-      *err = Err(original_value, "Bad absolute path.",
-                 "Absolute paths must be of the form /C:\\ but this is \"" +
-                     input.as_string() + "\".");
-      return false;
-    }
-    if (input.size() > 3 && input[2] == ':' && IsSlash(input[3]) &&
-        base::IsAsciiAlpha(input[1])) {
+    size_t drive_letter_pos = input[0] == '/' ? 1 : 0;
+    if (input.size() > drive_letter_pos + 2 &&
+        input[drive_letter_pos + 1] == ':' &&
+        IsSlash(input[drive_letter_pos + 2]) &&
+        base::IsAsciiAlpha(input[drive_letter_pos])) {
       // Skip over the drive letter colon.
-      offset = 3;
+      offset = drive_letter_pos + 2;
     }
   }
 #endif
@@ -195,6 +193,61 @@ bool Resolve(const SourceDir& current_dir,
 
 }  // namespace
 
+const char kLabels_Help[] =
+    R"*(About labels
+
+  Everything that can participate in the dependency graph (targets, configs,
+  and toolchains) are identified by labels. A common label looks like:
+
+    //base/test:test_support
+
+  This consists of a source-root-absolute path, a colon, and a name. This means
+  to look for the thing named "test_support" in "base/test/BUILD.gn".
+
+  You can also specify system absolute paths if necessary. Typically such
+  paths would be specified via a build arg so the developer can specify where
+  the component is on their system.
+
+    /usr/local/foo:bar    (Posix)
+    /C:/Program Files/MyLibs:bar   (Windows)
+
+Toolchains
+
+  A canonical label includes the label of the toolchain being used. Normally,
+  the toolchain label is implicitly inherited from the current execution
+  context, but you can override this to specify cross-toolchain dependencies:
+
+    //base/test:test_support(//build/toolchain/win:msvc)
+
+  Here GN will look for the toolchain definition called "msvc" in the file
+  "//build/toolchain/win" to know how to compile this target.
+
+Relative labels
+
+  If you want to refer to something in the same buildfile, you can omit
+  the path name and just start with a colon. This format is recommended for
+  all same-file references.
+
+    :base
+
+  Labels can be specified as being relative to the current directory.
+  Stylistically, we prefer to use absolute paths for all non-file-local
+  references unless a build file needs to be run in different contexts (like a
+  project needs to be both standalone and pulled into other projects in
+  difference places in the directory hierarchy).
+
+    source/plugin:myplugin
+    ../net:url_request
+
+Implicit names
+
+  If a name is unspecified, it will inherit the directory name. Stylistically,
+  we prefer to omit the colon and name when possible:
+
+    //net  ->  //net:net
+    //tools/gn  ->  //tools/gn:gn
+)*";
+
 Label::Label() {
 }
 
@@ -212,6 +265,8 @@ Label::Label(const SourceDir& dir, const base::StringPiece& name)
     : dir_(dir) {
   name_.assign(name.data(), name.size());
 }
+
+Label::Label(const Label& other) = default;
 
 Label::~Label() {
 }

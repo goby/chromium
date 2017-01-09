@@ -4,6 +4,8 @@
 
 #include "gpu/command_buffer/service/gles2_cmd_decoder.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
 #include "base/strings/string_number_conversions.h"
 #include "gpu/command_buffer/common/gles2_cmd_format.h"
@@ -29,7 +31,7 @@
 #define GL_DEPTH24_STENCIL8 0x88F0
 #endif
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -60,7 +62,7 @@ class GLES2DecoderGeometryInstancingTest : public GLES2DecoderWithShaderTest {
     // Most of the tests in this file assume they're running on
     // desktop OpenGL, and large portions of the tests will become
     // no-ops if they aren't.
-    init.gl_version = "opengl 2.1";
+    init.gl_version = "2.1";
     init.has_alpha = true;
     init.has_depth = true;
     init.request_alpha = true;
@@ -318,7 +320,7 @@ TEST_P(GLES2DecoderRGBBackbufferTest, RGBBackbufferColorMaskFBO) {
   EXPECT_CALL(*gl_, GenTextures(_, _))
       .WillOnce(SetArgumentPointee<1>(kNewServiceId))
       .RetiresOnSaturation();
-  GenHelper<cmds::GenTexturesImmediate>(kNewClientId);
+  GenHelper<GenTexturesImmediate>(kNewClientId);
   DoBindTexture(GL_TEXTURE_2D, kNewClientId, kNewServiceId);
   // Pass some data so the texture will be marked as cleared.
   DoTexImage2D(GL_TEXTURE_2D,
@@ -799,6 +801,18 @@ TEST_P(GLES2DecoderWithShaderTest,
   cmd.Init(GL_TRIANGLES, 0, 0);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderWithShaderTest, DrawArraysIntOverflow) {
+  DoEnableVertexAttribArray(1);
+
+  GLint large = std::numeric_limits<GLint>::max();
+
+  EXPECT_CALL(*gl_, DrawArrays(_, _, _)).Times(0);
+  DrawArrays cmd;
+  cmd.Init(GL_TRIANGLES, large, large);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_INVALID_OPERATION, GetGLError());
 }
 
 TEST_P(GLES2DecoderWithShaderTest, DrawArraysValidAttributesSucceeds) {
@@ -2058,9 +2072,9 @@ TEST_P(GLES2DecoderManualInitTest, DrawArraysClearsAfterTexImage2DNULLCubemap) {
   // Fill out all the faces for 2 levels, leave 2 uncleared.
   for (int ii = 0; ii < 6; ++ii) {
     GLenum face = faces[ii];
-    int32 shm_id =
+    int32_t shm_id =
         (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_Y) ? 0 : kSharedMemoryId;
-    uint32 shm_offset =
+    uint32_t shm_offset =
         (face == GL_TEXTURE_CUBE_MAP_NEGATIVE_Y) ? 0 : kSharedMemoryOffset;
     DoTexImage2D(face,
                  0,
@@ -2323,6 +2337,24 @@ TEST_P(GLES2DecoderManualInitTest, DrawClearsDepthTexture) {
   cmd.Init(GL_TRIANGLES, 0, kNumVertices);
   EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
   EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES3DecoderTest, DrawNoProgram) {
+  SetupAllNeededVertexBuffers();
+
+  EXPECT_CALL(*gl_, DrawArrays(GL_TRIANGLES, _, _)).Times(0);
+  DrawArrays cmd;
+  cmd.Init(GL_TRIANGLES, 0, kNumVertices);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_NO_ERROR, GetGLError());
+}
+
+TEST_P(GLES2DecoderTest, ClearInvalidValue) {
+  EXPECT_CALL(*gl_, Clear(_)).Times(0);
+  Clear cmd;
+  cmd.Init(0xffffffff);
+  EXPECT_EQ(error::kNoError, ExecuteCmd(cmd));
+  EXPECT_EQ(GL_INVALID_VALUE, GetGLError());
 }
 
 }  // namespace gles2

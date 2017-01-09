@@ -5,18 +5,16 @@
 #include "chrome/browser/ui/network_profile_bubble.h"
 
 #include <windows.h>
+#include <stdint.h>
 
 #include <wtsapi32.h>
-// Make sure we link the wtsapi lib file in.
-#pragma comment(lib, "wtsapi32.lib")
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/profiles/profile.h"
@@ -26,6 +24,7 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace {
@@ -78,7 +77,7 @@ bool NetworkProfileBubble::ShouldCheckNetworkProfile(Profile* profile) {
   PrefService* prefs = profile->GetPrefs();
   if (prefs->GetInteger(prefs::kNetworkProfileWarningsLeft))
     return !notification_shown_;
-  int64 last_check = prefs->GetInt64(prefs::kNetworkProfileLastWarningTime);
+  int64_t last_check = prefs->GetInt64(prefs::kNetworkProfileLastWarningTime);
   base::TimeDelta time_since_last_check =
       base::Time::Now() - base::Time::FromTimeT(last_check);
   if (time_since_last_check.InDays() > kSilenceDurationDays) {
@@ -173,8 +172,7 @@ void NetworkProfileBubble::RecordUmaEvent(MetricNetworkedProfileCheck event) {
 
 // static
 void NetworkProfileBubble::NotifyNetworkProfileDetected() {
-  Browser* browser = chrome::FindLastActiveWithHostDesktopType(
-      chrome::GetActiveDesktop());
+  Browser* browser = chrome::FindLastActive();
 
   if (browser)
     ShowNotification(browser);

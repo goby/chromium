@@ -15,46 +15,47 @@ namespace blink {
 
 class DOMWrapperWorld;
 class Frame;
-class ScriptState;
 class SecurityOrigin;
 class WindowProxy;
 
-class CORE_EXPORT WindowProxyManager final : public NoBaseWillBeGarbageCollectedFinalized<WindowProxyManager> {
-    USING_FAST_MALLOC_WILL_BE_REMOVED(WindowProxyManager);
-public:
-    static PassOwnPtrWillBeRawPtr<WindowProxyManager> create(Frame&);
+class CORE_EXPORT WindowProxyManager final
+    : public GarbageCollected<WindowProxyManager> {
+ public:
+  static WindowProxyManager* create(Frame&);
 
-    ~WindowProxyManager();
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-    Frame* frame() const { return m_frame.get(); }
-    v8::Isolate* isolate() const { return m_isolate; }
-    WindowProxy* mainWorldProxy() const { return m_windowProxy.get(); }
+  Frame* frame() const { return m_frame.get(); }
+  v8::Isolate* isolate() const { return m_isolate; }
+  WindowProxy* mainWorldProxy() const { return m_windowProxy.get(); }
 
-    WindowProxy* windowProxy(DOMWrapperWorld&);
+  WindowProxy* windowProxy(DOMWrapperWorld&);
 
-    void clearForClose();
-    void clearForNavigation();
+  void clearForClose();
+  void clearForNavigation();
 
-    // For devtools:
-    WindowProxy* existingWindowProxy(DOMWrapperWorld&);
-    void collectIsolatedContexts(Vector<std::pair<ScriptState*, SecurityOrigin*>>&);
+  // Sets the given security origin to the main world's context.  Also updates
+  // the security origin of the context for each isolated world.
+  void updateSecurityOrigin(SecurityOrigin*);
 
-    void releaseGlobals(HashMap<DOMWrapperWorld*, v8::Local<v8::Object>>&);
-    void setGlobals(const HashMap<DOMWrapperWorld*, v8::Local<v8::Object>>&);
+  // For devtools:
+  WindowProxy* existingWindowProxy(DOMWrapperWorld&);
 
-private:
-    typedef WillBeHeapHashMap<int, OwnPtrWillBeMember<WindowProxy>> IsolatedWorldMap;
+  void releaseGlobals(HashMap<DOMWrapperWorld*, v8::Local<v8::Object>>&);
+  void setGlobals(const HashMap<DOMWrapperWorld*, v8::Local<v8::Object>>&);
 
-    explicit WindowProxyManager(Frame&);
+ private:
+  typedef HeapHashMap<int, Member<WindowProxy>> IsolatedWorldMap;
 
-    RawPtrWillBeMember<Frame> m_frame;
-    v8::Isolate* const m_isolate;
+  explicit WindowProxyManager(Frame&);
 
-    const OwnPtrWillBeMember<WindowProxy> m_windowProxy;
-    IsolatedWorldMap m_isolatedWorlds;
+  Member<Frame> m_frame;
+  v8::Isolate* const m_isolate;
+
+  const Member<WindowProxy> m_windowProxy;
+  IsolatedWorldMap m_isolatedWorlds;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // WindowProxyManager_h
+#endif  // WindowProxyManager_h

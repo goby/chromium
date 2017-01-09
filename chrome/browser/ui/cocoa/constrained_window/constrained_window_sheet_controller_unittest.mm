@@ -4,8 +4,12 @@
 
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_sheet_controller.h"
 
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include <stddef.h>
+
+#include "base/mac/sdk_forward_declarations.h"
+#include "base/macros.h"
 #import "chrome/browser/ui/cocoa/constrained_window/constrained_window_custom_sheet.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 #import "testing/gtest_mac.h"
 
 namespace {
@@ -54,6 +58,10 @@ const int kSystemSheetReturnCode = 77;
 }
 
 - (void)updateSheetPosition {
+}
+
+- (void)resizeWithNewSize:(NSSize)size {
+  // NOOP
 }
 
 - (NSWindow*)sheetWindow {
@@ -136,14 +144,17 @@ class ConstrainedWindowSheetControllerTest : public CocoaTest {
     for (NSView* view in tab_views_.get())
       [view removeFromSuperview];
     [tab_view_parent_ addSubview:tab_view];
-    active_tab_view_ = tab_view;
+    CustomConstrainedWindowSheet* current_sheet =
+        [sheets_ objectAtIndex:[tab_views_ indexOfObject:active_tab_view_]];
+    [[ConstrainedWindowSheetController controllerForSheet:current_sheet]
+        hideSheet:current_sheet];
 
+    active_tab_view_ = tab_view;
     ConstrainedWindowSheetController* controller =
         [ConstrainedWindowSheetController
             controllerForParentWindow:test_window()];
     EXPECT_TRUE(controller);
 
-    [controller hideSheet];
     CustomConstrainedWindowSheet* sheet =
         [sheets_ objectAtIndex:[tab_views_ indexOfObject:active_tab_view_]];
     EXPECT_TRUE(sheet);
@@ -152,7 +163,7 @@ class ConstrainedWindowSheetControllerTest : public CocoaTest {
 
   NSRect GetViewFrameInScreenCoordinates(NSView* view) {
     NSRect rect = [view convertRect:[view bounds] toView:nil];
-    rect.origin = [[view window] convertBaseToScreen:rect.origin];
+    rect = [[view window] convertRectToScreen:rect];
     return rect;
   }
 
@@ -206,6 +217,19 @@ TEST_F(ConstrainedWindowSheetControllerTest, SwitchTabs) {
   EXPECT_TRUE([sheet_window_ isVisible]);
   EXPECT_EQ(0.0, [sheet_window_ alphaValue]);
   ActivateTabView([tab_views_ objectAtIndex:0]);
+  EXPECT_TRUE([sheet_window_ isVisible]);
+  EXPECT_EQ(1.0, [sheet_window_ alphaValue]);
+}
+
+// Test that hiding a hidden tab for the second time is not affecting the
+// visible one. See http://crbug.com/589074.
+TEST_F(ConstrainedWindowSheetControllerTest, DoubleHide) {
+  ActivateTabView([tab_views_ objectAtIndex:1]);
+  ActivateTabView([tab_views_ objectAtIndex:0]);
+
+  ASSERT_TRUE([ConstrainedWindowSheetController controllerForSheet:sheet1_]);
+  [[ConstrainedWindowSheetController controllerForSheet:sheet1_]
+      hideSheet:sheet1_];
   EXPECT_TRUE([sheet_window_ isVisible]);
   EXPECT_EQ(1.0, [sheet_window_ alphaValue]);
 }

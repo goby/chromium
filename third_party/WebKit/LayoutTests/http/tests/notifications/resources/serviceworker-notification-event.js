@@ -1,30 +1,53 @@
 importScripts('../../serviceworker/resources/worker-testharness.js');
-importScripts('/resources/testharness-helpers.js');
 
-test(function() {
-    assert_true('NotificationEvent' in self);
+let messagePort = null;
+addEventListener('message', workerEvent => {
+    messagePort = workerEvent.data;
+    messagePort.postMessage('ready');
+});
 
-    var event = new NotificationEvent('NotificationEvent');
-    assert_equals(event.type, 'NotificationEvent');
-    assert_will_be_idl_attribute(event, 'notification');
-    assert_will_be_idl_attribute(event, 'action');
-    assert_equals(event.cancelable, false);
-    assert_equals(event.bubbles, false);
-    assert_equals(event.notification, null);
-    assert_equals(event.action, "");
-    assert_inherits(event, 'waitUntil');
+addEventListener('notificationclick', e => runTest(e.notification));
 
-    var eventWithInit = new NotificationEvent('NotificationEvent',
-                                              { cancelable: true,
-                                                bubbles: true
-                                              });
-    assert_equals(eventWithInit.cancelable, true);
-    assert_equals(eventWithInit.bubbles, true);
+// Test body for the serviceworker-notification-event.html layout test.
+function runTest(notification) {
+    const result = {
+      success: true,
+      message: null
+    }
+    try {
+      assert_true('NotificationEvent' in self);
 
-}, 'NotificationEvent is exposed, and has the expected interface.');
+      assert_throws(null, () => new NotificationEvent('NotificationEvent'));
+      assert_throws(null, () => new NotificationEvent('NotificationEvent', {}));
+      assert_throws(null, () => new NotificationEvent('NotificationEvent', { notification: null }));
 
-test(function() {
-    assert_will_be_idl_attribute(self, 'onnotificationclick',
-                                 'The notificationclick event exists.');
+      const event = new NotificationEvent('NotificationEvent', { notification });
 
-}, 'The notificationclick event exists on the global scope.');
+      assert_equals(event.type, 'NotificationEvent');
+      assert_idl_attribute(event, 'notification');
+      assert_idl_attribute(event, 'action');
+      assert_equals(event.cancelable, false);
+      assert_equals(event.bubbles, false);
+      assert_equals(event.notification, notification);
+      assert_equals(event.action, '');
+      assert_equals(event.reply, '');
+      assert_inherits(event, 'waitUntil');
+
+      const customEvent = new NotificationEvent('NotificationEvent', {
+                              notification: notification,
+                              reply: 'my reply',
+                              bubbles: true,
+                              cancelable: true });
+
+      assert_equals(customEvent.type, 'NotificationEvent');
+      assert_equals(customEvent.cancelable, true);
+      assert_equals(customEvent.bubbles, true);
+      assert_equals(customEvent.notification, notification);
+      assert_equals(customEvent.reply, 'my reply');
+    } catch (e) {
+      result.success = false;
+      result.message = e.message + '\n' + e.stack;
+    }
+    // Signal to the document that the test has finished running.
+    messagePort.postMessage(result);
+}

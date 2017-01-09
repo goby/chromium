@@ -24,7 +24,6 @@
 
 import logging
 from optparse import OptionParser
-import os.path
 import sys
 
 from filter import validate_filter_rules
@@ -109,7 +108,6 @@ class DefaultCommandOptionValues(object):
     Attributes:
       output_format: A string that is the default output format.
       min_confidence: An integer that is the default minimum confidence level.
-
     """
 
     def __init__(self, min_confidence, output_format):
@@ -140,8 +138,8 @@ class CommandOptionValues(object):
       output_format: A string that is the output format.  The supported
                      output formats are "emacs" which emacs can parse
                      and "vs7" which Microsoft Visual Studio 7 can parse.
-
     """
+
     def __init__(self,
                  filter_rules=None,
                  git_commit=None,
@@ -198,7 +196,7 @@ class ArgumentPrinter(object):
     """Supports the printing of check-webkit-style command arguments."""
 
     def _flag_pair_to_string(self, flag_key, flag_value):
-        return '--%(key)s=%(val)s' % {'key': flag_key, 'val': flag_value }
+        return '--%(key)s=%(val)s' % {'key': flag_key, 'val': flag_value}
 
     def to_flag_string(self, options):
         """Return a flag string of the given CommandOptionValues instance.
@@ -207,7 +205,6 @@ class ArgumentPrinter(object):
 
         Args:
           options: A CommandOptionValues instance.
-
         """
         flags = {}
         flags['min-confidence'] = options.min_confidence
@@ -246,7 +243,6 @@ class ArgumentParser(object):
       stderr_write: A function that takes a string as a parameter and
                     serves as stderr.write.  Defaults to sys.stderr.write.
                     This parameter should be specified only for unit tests.
-
     """
 
     def __init__(self,
@@ -272,7 +268,6 @@ class ArgumentParser(object):
                         attribute in the class docstring.
           stderr_write: See the documentation of the corresponding
                         attribute in the class docstring.
-
         """
         if base_filter_rules is None:
             base_filter_rules = []
@@ -288,9 +283,9 @@ class ArgumentParser(object):
         self.stderr_write = stderr.write
 
         self._parser = self._create_option_parser(stderr=stderr,
-            usage=usage,
-            default_min_confidence=self.default_options.min_confidence,
-            default_output_format=self.default_options.output_format)
+                                                  usage=usage,
+                                                  default_min_confidence=self.default_options.min_confidence,
+                                                  default_output_format=self.default_options.output_format)
 
     def _create_option_parser(self, stderr, usage,
                               default_min_confidence, default_output_format):
@@ -310,7 +305,7 @@ class ArgumentParser(object):
                           dest="filter_value", help=filter_help)
 
         git_commit_help = ("check all changes in the given commit. "
-                           "Use 'commit_id..' to check all changes after commmit_id")
+                           "Use 'commit_id..' to check all changes after commit_id")
         parser.add_option("-g", "--git-diff", "--git-commit",
                           metavar="COMMIT", dest="git_commit", help=git_commit_help,)
 
@@ -391,7 +386,6 @@ class ArgumentParser(object):
         Args:
           flag_value: A string of comma-separated filter rules, for
                       example "-whitespace,+whitespace/indent".
-
         """
         filters = []
         for uncleaned_filter in flag_value.split(','):
@@ -412,7 +406,6 @@ class ArgumentParser(object):
 
           paths: The list of paths to check.
           options: A CommandOptionValues instance.
-
         """
         (options, paths) = self._parser.parse_args(args=args)
 
@@ -443,7 +436,7 @@ class ArgumentParser(object):
 
         try:
             validate_filter_rules(filter_rules, self._all_categories)
-        except ValueError, err:
+        except ValueError as err:
             self._parse_error(err)
 
         options = CommandOptionValues(filter_rules=filter_rules,
@@ -454,4 +447,3 @@ class ArgumentParser(object):
                                       output_format=output_format)
 
         return (paths, options)
-

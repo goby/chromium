@@ -6,7 +6,7 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/accessibility/ax_view_state.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/events/event_utils.h"
 #include "ui/views/accessibility/ax_aura_obj_cache.h"
 #include "ui/views/view.h"
@@ -36,6 +36,9 @@ void AXViewObjWrapper::GetChildren(
     std::vector<AXAuraObjWrapper*>* out_children) {
   // TODO(dtseng): Need to handle |Widget| child of |View|.
   for (int i = 0; i < view_->child_count(); ++i) {
+    if (!view_->child_at(i)->visible())
+      continue;
+
     AXAuraObjWrapper* child =
         AXAuraObjCache::GetInstance()->GetOrCreate(view_->child_at(i));
     out_children->push_back(child);
@@ -43,37 +46,20 @@ void AXViewObjWrapper::GetChildren(
 }
 
 void AXViewObjWrapper::Serialize(ui::AXNodeData* out_node_data) {
-  ui::AXViewState view_data;
-  view_->GetAccessibleState(&view_data);
+  out_node_data->state = 0;
+  view_->GetAccessibleNodeData(out_node_data);
 
   out_node_data->id = GetID();
-  out_node_data->role = view_data.role;
 
-  out_node_data->state = view_data.state();
-  if (view_->HasFocus())
-    out_node_data->state |= 1 << ui::AX_STATE_FOCUSED;
   if (view_->IsFocusable())
     out_node_data->state |= 1 << ui::AX_STATE_FOCUSABLE;
   if (!view_->visible())
     out_node_data->state |= 1 << ui::AX_STATE_INVISIBLE;
 
-  out_node_data->location = view_->GetBoundsInScreen();
-
-  out_node_data->AddStringAttribute(
-      ui::AX_ATTR_NAME, base::UTF16ToUTF8(view_data.name));
-  out_node_data->AddStringAttribute(
-      ui::AX_ATTR_VALUE, base::UTF16ToUTF8(view_data.value));
-
-  if (view_data.selection_start > -1 && view_data.selection_end > -1) {
-    out_node_data->AddIntAttribute(ui::AX_ATTR_TEXT_SEL_START,
-                                   view_data.selection_start);
-
-    out_node_data->AddIntAttribute(ui::AX_ATTR_TEXT_SEL_END,
-                                   view_data.selection_end);
-  }
+  out_node_data->location = gfx::RectF(view_->GetBoundsInScreen());
 }
 
-int32 AXViewObjWrapper::GetID() {
+int32_t AXViewObjWrapper::GetID() {
   return AXAuraObjCache::GetInstance()->GetID(view_);
 }
 
@@ -96,7 +82,7 @@ void AXViewObjWrapper::MakeVisible() {
   // TODO(dtseng): Implement.
 }
 
-void AXViewObjWrapper::SetSelection(int32 start, int32 end) {
+void AXViewObjWrapper::SetSelection(int32_t start, int32_t end) {
   // TODO(dtseng): Implement.
 }
 

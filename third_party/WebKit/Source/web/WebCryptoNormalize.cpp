@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebCryptoNormalize.h"
 
 #include "bindings/core/v8/Dictionary.h"
@@ -41,24 +40,29 @@
 
 namespace blink {
 
-WebCryptoAlgorithm normalizeCryptoAlgorithm(v8::Local<v8::Object> algorithmObject, WebCryptoOperation operation, int* exceptionCode, WebString* errorDetails, v8::Isolate* isolate)
-{
-    // FIXME: Avoid using NonThrowableExceptionState.
-    NonThrowableExceptionState exceptionState;
-    Dictionary algorithmDictionary(algorithmObject, isolate, exceptionState);
-    if (!algorithmDictionary.isUndefinedOrNull() && !algorithmDictionary.isObject())
-        return WebCryptoAlgorithm();
-    WebCryptoAlgorithm algorithm;
-    AlgorithmError error;
-    AlgorithmIdentifier algorithmIdentifier;
-    algorithmIdentifier.setDictionary(algorithmDictionary);
-    if (!normalizeAlgorithm(algorithmIdentifier, operation, algorithm, &error)) {
-        *exceptionCode = webCryptoErrorToExceptionCode(error.errorType);
-        *errorDetails = error.errorDetails;
-        return WebCryptoAlgorithm();
-    }
+WebCryptoAlgorithm normalizeCryptoAlgorithm(
+    v8::Local<v8::Object> algorithmObject,
+    WebCryptoOperation operation,
+    int* exceptionCode,
+    WebString* errorDetails,
+    v8::Isolate* isolate) {
+  // FIXME: Avoid using NonThrowableExceptionState.
+  NonThrowableExceptionState exceptionState;
+  Dictionary algorithmDictionary(isolate, algorithmObject, exceptionState);
+  if (!algorithmDictionary.isUndefinedOrNull() &&
+      !algorithmDictionary.isObject())
+    return WebCryptoAlgorithm();
+  WebCryptoAlgorithm algorithm;
+  AlgorithmError error;
+  AlgorithmIdentifier algorithmIdentifier;
+  algorithmIdentifier.setDictionary(algorithmDictionary);
+  if (!normalizeAlgorithm(algorithmIdentifier, operation, algorithm, &error)) {
+    *exceptionCode = webCryptoErrorToExceptionCode(error.errorType);
+    *errorDetails = error.errorDetails;
+    return WebCryptoAlgorithm();
+  }
 
-    return algorithm;
+  return algorithm;
 }
 
-} // namespace blink
+}  // namespace blink

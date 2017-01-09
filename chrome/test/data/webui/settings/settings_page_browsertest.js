@@ -14,7 +14,7 @@ GEN_INCLUDE(
 /**
  * @constructor
  * @extends {PolymerTest}
-*/
+ */
 function SettingsPageBrowserTest() {}
 
 SettingsPageBrowserTest.prototype = {
@@ -24,53 +24,95 @@ SettingsPageBrowserTest.prototype = {
   browsePreload: 'chrome://md-settings/',
 
   /** @override */
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH),
+  extraLibraries: PolymerTest.getLibraries(ROOT_PATH).concat([
+    '../fake_chrome_event.js',
+    'fake_settings_private.js',
+  ]),
 
   /** @override */
   runAccessibilityChecks: false,
 
   /** @override */
   setUp: function() {
+    PolymerTest.prototype.setUp.call(this);
     suiteSetup(function() {
       return CrSettingsPrefs.initialized;
     });
   },
 
   /**
+   * Toggles the Advanced sections.
+   */
+  toggleAdvanced: function() {
+    var settingsMain = document.querySelector('* /deep/ settings-main');
+    assert(!!settingsMain);
+    settingsMain.toggleAdvancedPage_();
+    Polymer.dom.flush();
+  },
+
+  /**
    * @param {string} type The settings page type, e.g. 'advanced' or 'basic'.
-   * @return {Node} The DOM node for the page.
+   * @return {!PolymerElement} The PolymerElement for the page.
    */
   getPage: function(type) {
-    var settings = document.querySelector('cr-settings');
-    assertTrue(!!settings);
-    var settingsUi = settings.shadowRoot.querySelector('settings-ui');
+    var settingsUi = document.querySelector('settings-ui');
     assertTrue(!!settingsUi);
-    var settingsMain = settingsUi.shadowRoot.querySelector('settings-main');
+    var settingsMain = settingsUi.$$('settings-main');
     assertTrue(!!settingsMain);
-    var pages = settingsMain.$.pageContainer;
-    assertTrue(!!pages);
     var pageType = 'settings-' + type + '-page';
-    var page = pages.querySelector(pageType);
+    var page = settingsMain.$$(pageType);
     assertTrue(!!page);
     return page;
   },
 
   /**
-   * @param {Node} page The DOM node for the settings page containing |section|.
+   * @param {!PolymerElement} page The PolymerElement for the page containing
+   *     |section|.
    * @param {string} section The settings page section, e.g. 'appearance'.
-   * @return {Node} The DOM node for the section.
+   * @return {Node|undefined} The DOM node for the section.
    */
   getSection: function(page, section) {
     var sections = page.shadowRoot.querySelectorAll('settings-section');
     assertTrue(!!sections);
-    var len = sections.length;
-    assertGT(len, 0);
-    for (var i = 0; i < len; ++i) {
+    for (var i = 0; i < sections.length; ++i) {
       var s = sections[i];
       if (s.section == section)
         return s;
     }
-    assertNotReached('Section not found: ' + section + ' in ' + page);
     return undefined;
+  },
+
+  /**
+   * Verifies the section has a visible #main element and that any possible
+   * sub-pages are hidden.
+   * @param {!Node} The DOM node for the section.
+   */
+  verifySubpagesHidden: function(section) {
+    // Check if there are sub-pages to verify.
+    var pages = section.querySelector('* /deep/ settings-animated-pages');
+    if (!pages)
+      return;
+
+    var children = pages.getContentChildren();
+    var stampedChildren = children.filter(function(element) {
+      return element.tagName != 'TEMPLATE';
+    });
+
+    // The section's main child should be stamped and visible.
+    var main = stampedChildren.filter(function(element) {
+      return element.getAttribute('route-path') == 'default';
+    });
+    assertEquals(main.length, 1, 'default card not found for section ' +
+        section.section);
+    assertGT(main[0].offsetHeight, 0);
+
+    // Any other stamped subpages should not be visible.
+    var subpages = stampedChildren.filter(function(element) {
+      return element.getAttribute('route-path') != 'default';
+    });
+    for (var subpage of subpages) {
+      assertEquals(subpage.offsetHeight, 0, 'Expected subpage #' + subpage.id +
+          ' in ' + section.section + ' not to be visible.');
+    }
   },
 };

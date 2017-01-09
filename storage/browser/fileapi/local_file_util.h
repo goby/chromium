@@ -5,17 +5,19 @@
 #ifndef STORAGE_BROWSER_FILEAPI_LOCAL_FILE_UTIL_H_
 #define STORAGE_BROWSER_FILEAPI_LOCAL_FILE_UTIL_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "storage/browser/fileapi/file_system_file_util.h"
 #include "storage/browser/storage_browser_export.h"
 
 namespace base {
 class Time;
 }
-
-class GURL;
 
 namespace storage {
 
@@ -43,7 +45,7 @@ class STORAGE_EXPORT LocalFileUtil
                                 const FileSystemURL& url,
                                 base::File::Info* file_info,
                                 base::FilePath* platform_file) override;
-  scoped_ptr<AbstractFileEnumerator> CreateFileEnumerator(
+  std::unique_ptr<AbstractFileEnumerator> CreateFileEnumerator(
       FileSystemOperationContext* context,
       const FileSystemURL& root_url) override;
   base::File::Error GetLocalFilePath(FileSystemOperationContext* context,
@@ -55,7 +57,7 @@ class STORAGE_EXPORT LocalFileUtil
                           const base::Time& last_modified_time) override;
   base::File::Error Truncate(FileSystemOperationContext* context,
                              const FileSystemURL& url,
-                             int64 length) override;
+                             int64_t length) override;
   base::File::Error CopyOrMoveFile(FileSystemOperationContext* context,
                                    const FileSystemURL& src_url,
                                    const FileSystemURL& dest_url,

@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/streams/stream_url_request_job.h"
+
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/test/test_simple_task_runner.h"
 #include "content/browser/streams/stream.h"
 #include "content/browser/streams/stream_registry.h"
-#include "content/browser/streams/stream_url_request_job.h"
 #include "content/browser/streams/stream_write_observer.h"
 #include "net/base/request_priority.h"
 #include "net/http/http_byte_range.h"
@@ -57,7 +60,7 @@ class StreamURLRequestJobTest : public testing::Test {
     registry_.reset(new StreamRegistry());
 
     url_request_job_factory_.SetProtocolHandler(
-        "blob", make_scoped_ptr(new MockProtocolHandler(registry_.get())));
+        "blob", base::MakeUnique<MockProtocolHandler>(registry_.get()));
     url_request_context_.set_job_factory(&url_request_job_factory_);
   }
 
@@ -65,13 +68,15 @@ class StreamURLRequestJobTest : public testing::Test {
 
   void TestSuccessRequest(const GURL& url,
                           const std::string& expected_response) {
-    TestRequest("GET", url, net::HttpRequestHeaders(), 200, expected_response);
+    TestRequest("GET", url, net::HttpRequestHeaders(), 200, net::OK,
+                expected_response);
   }
 
   void TestRequest(const std::string& method,
                    const GURL& url,
                    const net::HttpRequestHeaders& extra_headers,
                    int expected_status_code,
+                   int expected_error_code,
                    const std::string& expected_response) {
     net::TestDelegate delegate;
     request_ = url_request_context_.CreateRequest(
@@ -81,10 +86,13 @@ class StreamURLRequestJobTest : public testing::Test {
       request_->SetExtraRequestHeaders(extra_headers);
     request_->Start();
 
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
 
     // Verify response.
-    EXPECT_TRUE(request_->status().is_success());
+    if (expected_error_code)
+      EXPECT_EQ(expected_error_code, request_->status().error());
+    else
+      EXPECT_TRUE(request_->status().is_success());
     ASSERT_TRUE(request_->response_headers());
     EXPECT_EQ(expected_status_code,
               request_->response_headers()->response_code());
@@ -93,11 +101,11 @@ class StreamURLRequestJobTest : public testing::Test {
 
  protected:
   base::MessageLoopForIO message_loop_;
-  scoped_ptr<StreamRegistry> registry_;
+  std::unique_ptr<StreamRegistry> registry_;
 
   net::URLRequestContext url_request_context_;
   net::URLRequestJobFactoryImpl url_request_job_factory_;
-  scoped_ptr<net::URLRequest> request_;
+  std::unique_ptr<net::URLRequest> request_;
 };
 
 TEST_F(StreamURLRequestJobTest, TestGetSimpleDataRequest) {
@@ -108,7 +116,7 @@ TEST_F(StreamURLRequestJobTest, TestGetSimpleDataRequest) {
       new net::StringIOBuffer(kTestData1));
 
   stream->AddData(buffer, buffer->size());
-  stream->Finalize();
+  stream->Finalize(net::OK);
 
   TestSuccessRequest(kStreamURL, kTestData1);
 }
@@ -126,7 +134,7 @@ TEST_F(StreamURLRequestJobTest, TestGetLargeStreamRequest) {
       new net::StringIOBuffer(large_data));
 
   stream->AddData(buffer, buffer->size());
-  stream->Finalize();
+  stream->Finalize(net::OK);
   TestSuccessRequest(kStreamURL, large_data);
 }
 
@@ -137,7 +145,7 @@ TEST_F(StreamURLRequestJobTest, TestGetNonExistentStreamRequest) {
   request_->set_method("GET");
   request_->Start();
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   // Verify response.
   EXPECT_FALSE(request_->status().is_success());
@@ -151,13 +159,13 @@ TEST_F(StreamURLRequestJobTest, TestRangeDataRequest) {
       new net::StringIOBuffer(kTestData2));
 
   stream->AddData(buffer, buffer->size());
-  stream->Finalize();
+  stream->Finalize(net::OK);
 
   net::HttpRequestHeaders extra_headers;
   extra_headers.SetHeader(net::HttpRequestHeaders::kRange,
                           net::HttpByteRange::Bounded(0, 3).GetHeaderValue());
   TestRequest("GET", kStreamURL, extra_headers,
-              200, std::string(kTestData2, 4));
+              200, net::OK, std::string(kTestData2, 4));
 }
 
 TEST_F(StreamURLRequestJobTest, TestInvalidRangeDataRequest) {
@@ -168,12 +176,13 @@ TEST_F(StreamURLRequestJobTest, TestInvalidRangeDataRequest) {
       new net::StringIOBuffer(kTestData2));
 
   stream->AddData(buffer, buffer->size());
-  stream->Finalize();
+  stream->Finalize(net::OK);
 
   net::HttpRequestHeaders extra_headers;
   extra_headers.SetHeader(net::HttpRequestHeaders::kRange,
                           net::HttpByteRange::Bounded(1, 3).GetHeaderValue());
-  TestRequest("GET", kStreamURL, extra_headers, 405, std::string());
+  TestRequest("GET", kStreamURL, extra_headers, 405,
+              net::ERR_METHOD_NOT_SUPPORTED, std::string());
 }
 
 }  // namespace content

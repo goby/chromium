@@ -4,8 +4,12 @@
 
 #include "extensions/browser/error_map.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/crx_file/id_util.h"
 #include "extensions/browser/extension_error.h"
@@ -147,10 +151,10 @@ TEST_F(ErrorMapUnitTest, DuplicateErrorsAreReplaced) {
 
   // Create an error identical to the second error reported, save its
   // location, and add it to the error map.
-  scoped_ptr<ExtensionError> runtime_error2 =
+  std::unique_ptr<ExtensionError> runtime_error2 =
       CreateNewRuntimeError(kId, base::UintToString(1u));
   const ExtensionError* weak_error = runtime_error2.get();
-  ASSERT_TRUE(errors_.AddError(runtime_error2.Pass()));
+  ASSERT_TRUE(errors_.AddError(std::move(runtime_error2)));
 
   // We should only have three errors stored, since two of the four reported
   // were identical, and the older should have been replaced.
@@ -159,7 +163,7 @@ TEST_F(ErrorMapUnitTest, DuplicateErrorsAreReplaced) {
   ASSERT_EQ(kNumErrors, list.size());
 
   // The duplicate error should be the last reported (pointer comparison)...
-  ASSERT_EQ(weak_error, list.back());
+  ASSERT_EQ(weak_error, list.back().get());
   // ... and should have two reported occurrences.
   ASSERT_EQ(2u, list.back()->occurrences());
 }

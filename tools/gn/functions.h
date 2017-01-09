@@ -18,7 +18,6 @@ class Label;
 class ListNode;
 class ParseNode;
 class Scope;
-class Token;
 class Value;
 
 // -----------------------------------------------------------------------------
@@ -79,6 +78,24 @@ Value RunAssert(Scope* scope,
                 const FunctionCallNode* function,
                 const std::vector<Value>& args,
                 Err* err);
+
+extern const char kBundleData[];
+extern const char kBundleData_HelpShort[];
+extern const char kBundleData_Help[];
+Value RunBundleData(Scope* scope,
+                    const FunctionCallNode* function,
+                    const std::vector<Value>& args,
+                    BlockNode* block,
+                    Err* err);
+
+extern const char kCreateBundle[];
+extern const char kCreateBundle_HelpShort[];
+extern const char kCreateBundle_Help[];
+Value RunCreateBundle(Scope* scope,
+                      const FunctionCallNode* function,
+                      const std::vector<Value>& args,
+                      BlockNode* block,
+                      Err* err);
 
 extern const char kConfig[];
 extern const char kConfig_HelpShort[];
@@ -204,6 +221,14 @@ Value RunLoadableModule(Scope* scope,
                         BlockNode* block,
                         Err* err);
 
+extern const char kPool[];
+extern const char kPool_HelpShort[];
+extern const char kPool_Help[];
+Value RunPool(const FunctionCallNode* function,
+              const std::vector<Value>& args,
+              Scope* block_scope,
+              Err* err);
+
 extern const char kPrint[];
 extern const char kPrint_HelpShort[];
 extern const char kPrint_Help[];
@@ -279,6 +304,14 @@ Value RunSourceSet(Scope* scope,
                    BlockNode* block,
                    Err* err);
 
+extern const char kSplitList[];
+extern const char kSplitList_HelpShort[];
+extern const char kSplitList_Help[];
+Value RunSplitList(Scope* scope,
+                   const FunctionCallNode* function,
+                   const ListNode* args_list,
+                   Err* err);
+
 extern const char kStaticLibrary[];
 extern const char kStaticLibrary_HelpShort[];
 extern const char kStaticLibrary_Help[];
@@ -323,15 +356,6 @@ Value RunToolchain(Scope* scope,
                    const std::vector<Value>& args,
                    BlockNode* block,
                    Err* err);
-
-extern const char kToolchainArgs[];
-extern const char kToolchainArgs_HelpShort[];
-extern const char kToolchainArgs_Help[];
-Value RunToolchainArgs(Scope* scope,
-                       const FunctionCallNode* function,
-                       const std::vector<Value>& args,
-                       BlockNode* block,
-                       Err* err);
 
 extern const char kWriteFile[];
 extern const char kWriteFile_HelpShort[];
@@ -391,6 +415,16 @@ Value RunFunction(Scope* scope,
 
 // Helper functions -----------------------------------------------------------
 
+// Validates that the scope that a value is defined in is not the scope
+// of the current declare_args() call, if that's what we're in. It is
+// illegal to read a value from inside the same declare_args() call, since
+// the overrides will not have been applied yet (see `gn help declare_args`
+// for more).
+bool EnsureNotReadingFromSameDeclareArgs(const ParseNode* node,
+                                         const Scope* cur_scope,
+                                         const Scope* val_scope,
+                                         Err* err);
+
 // Verifies that the current scope is not processing an import. If it is, it
 // will set the error, blame the given parse node for it, and return false.
 bool EnsureNotProcessingImport(const ParseNode* node,
@@ -439,7 +473,7 @@ Label MakeLabelForScope(const Scope* scope,
                         const FunctionCallNode* function,
                         const std::string& name);
 
-// Some tyesp of blocks can't be nested inside other ones. For such cases,
+// Some types of blocks can't be nested inside other ones. For such cases,
 // instantiate this object upon entering the block and Enter() will fail if
 // there is already another non-nestable block on the stack.
 class NonNestableBlock {

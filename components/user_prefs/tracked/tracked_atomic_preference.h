@@ -5,6 +5,8 @@
 #ifndef COMPONENTS_USER_PREFS_TRACKED_ATOMIC_PREFERENCE_H_
 #define COMPONENTS_USER_PREFS_TRACKED_ATOMIC_PREFERENCE_H_
 
+#include <stddef.h>
+
 #include <string>
 
 #include "base/compiler_specific.h"
@@ -28,10 +30,13 @@ class TrackedAtomicPreference : public TrackedPreference {
                           TrackedPreferenceValidationDelegate* delegate);
 
   // TrackedPreference implementation.
+  TrackedPreferenceType GetType() const override;
   void OnNewValue(const base::Value* value,
                   PrefHashStoreTransaction* transaction) const override;
-  bool EnforceAndReport(base::DictionaryValue* pref_store_contents,
-                        PrefHashStoreTransaction* transaction) const override;
+  bool EnforceAndReport(
+      base::DictionaryValue* pref_store_contents,
+      PrefHashStoreTransaction* transaction,
+      PrefHashStoreTransaction* external_validation_transaction) const override;
 
  private:
   const std::string pref_path_;

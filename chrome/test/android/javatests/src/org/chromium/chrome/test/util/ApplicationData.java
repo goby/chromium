@@ -39,7 +39,7 @@ public final class ApplicationData {
      */
     public static void clearAppData(Context targetContext) throws InterruptedException {
         final String appDir = getAppDirFromTargetContext(targetContext);
-        CriteriaHelper.pollForCriteria(
+        CriteriaHelper.pollInstrumentationThread(
                 new Criteria() {
                     private boolean mDataRemoved = false;
 
@@ -84,9 +84,8 @@ public final class ApplicationData {
         File[] files = new File(appDir).listFiles();
         if (files == null) return true;
         for (File file : files) {
-            if (!(file.getAbsolutePath().endsWith("/lib")
-                    || file.getAbsolutePath().endsWith("/etp_native") // Work Chrome
-                    || file.getAbsolutePath().endsWith("/sdk_dex")) // Work Chrome
+            if (!(file.getName().equals("lib")
+                    || file.getName().equals("incremental-install-files"))
                     && !removeFile(file)) {
                 return false;
             }

@@ -2,12 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/prefs/pref_service.h"
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "chrome/browser/browsing_data/browsing_data_remover_test_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/webui/options/options_ui_browsertest.h"
 #include "chrome/common/url_constants.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 
 namespace options {
@@ -85,7 +89,7 @@ IN_PROC_BROWSER_TEST_F(ClearBrowserDataBrowserTest,
                               "browser.clear_data.passwords",
                               "browser.clear_data.form_data",
                               "browser.clear_data.hosted_apps_data",
-                              "browser.clear_data.content_licenses"};
+                              "browser.clear_data.media_licenses"};
 
   PrefService* prefs = browser()->profile()->GetPrefs();
   for (size_t i = 0; i < arraysize(kDataTypes); ++i) {

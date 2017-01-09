@@ -11,15 +11,9 @@
 #include <windows.h>
 #endif
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "content/common/content_export.h"
 #include "content/public/common/main_function_params.h"
-
-#ifdef __OBJC__
-@class NSBundle;
-#else
-class NSBundle;
-#endif  // __OBJC__
 
 namespace content {
 
@@ -38,11 +32,8 @@ class CONTENT_EXPORT RendererMainPlatformDelegate {
   bool EnableSandbox();
 
  private:
-  const MainFunctionParams& parameters_;
 #if defined(OS_WIN)
-  HMODULE sandbox_test_module_;
-#elif defined(OS_MACOSX)
-  NSBundle* sandbox_tests_bundle_;
+  const MainFunctionParams& parameters_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(RendererMainPlatformDelegate);

@@ -5,30 +5,26 @@
 #ifndef ASH_SHELL_CONTEXT_MENU_H_
 #define ASH_SHELL_CONTEXT_MENU_H_
 
-#include "ash/shelf/shelf_alignment_menu.h"
-#include "ash/shelf/shelf_types.h"
-#include "base/basictypes.h"
+#include "ash/common/shelf/shelf_alignment_menu.h"
+#include "base/macros.h"
 #include "ui/base/models/simple_menu_model.h"
 
-namespace aura {
-class RootWindow;
-}
-
 namespace ash {
+
+class WmShelf;
+
 namespace shell {
 
-// Context menu for the ash_shell.
+// Context menu for the ash shell.
 class ContextMenu : public ui::SimpleMenuModel,
                     public ui::SimpleMenuModel::Delegate {
  public:
-  explicit ContextMenu(aura::Window* root);
+  explicit ContextMenu(WmShelf* wm_shelf);
   ~ContextMenu() override;
 
   // ui::SimpleMenuModel::Delegate overrides:
   bool IsCommandIdChecked(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override;
   void ExecuteCommand(int command_id, int event_flags) override;
 
  private:
@@ -37,8 +33,7 @@ class ContextMenu : public ui::SimpleMenuModel,
     MENU_ALIGNMENT_MENU,
   };
 
-  aura::Window* root_window_;
-
+  WmShelf* wm_shelf_;
   ShelfAlignmentMenu alignment_menu_;
 
   DISALLOW_COPY_AND_ASSIGN(ContextMenu);

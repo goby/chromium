@@ -5,6 +5,8 @@
 #ifndef DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_ADAPTER_CLIENT_H_
 #define DEVICE_BLUETOOTH_DBUS_FAKE_BLUETOOTH_ADAPTER_CLIENT_H_
 
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "base/bind.h"
@@ -58,6 +60,14 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
                           const DiscoveryFilter& discovery_filter,
                           const base::Closure& callback,
                           const ErrorCallback& error_callback) override;
+  void CreateServiceRecord(const dbus::ObjectPath& object_path,
+                           const bluez::BluetoothServiceRecordBlueZ& record,
+                           const ServiceRecordCallback& callback,
+                           const ErrorCallback& error_callback) override;
+  void RemoveServiceRecord(const dbus::ObjectPath& object_path,
+                           uint32_t handle,
+                           const base::Closure& callback,
+                           const ErrorCallback& error_callback) override;
 
   // Sets the current simulation timeout interval.
   void SetSimulationIntervalMs(int interval_ms);
@@ -71,6 +81,13 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   // Mark the adapter and second adapter as visible or invisible.
   void SetVisible(bool visible);
   void SetSecondVisible(bool visible);
+
+  // Set adapter UUIDs
+  void SetUUIDs(const std::vector<std::string>& uuids);
+  void SetSecondUUIDs(const std::vector<std::string>& uuids);
+
+  // Set discoverable timeout
+  void SetDiscoverableTimeout(uint32_t timeout);
 
   // Object path, name and addresses of the adapters we emulate.
   static const char kAdapterPath[];
@@ -93,8 +110,8 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   base::ObserverList<Observer> observers_;
 
   // Static properties we return.
-  scoped_ptr<Properties> properties_;
-  scoped_ptr<Properties> second_properties_;
+  std::unique_ptr<Properties> properties_;
+  std::unique_ptr<Properties> second_properties_;
 
   // Whether the adapter and second adapter should be visible or not.
   bool visible_;
@@ -104,13 +121,19 @@ class DEVICE_BLUETOOTH_EXPORT FakeBluetoothAdapterClient
   int discovering_count_;
 
   // Current discovery filter
-  scoped_ptr<DiscoveryFilter> discovery_filter_;
+  std::unique_ptr<DiscoveryFilter> discovery_filter_;
 
   // When set, next call to SetDiscoveryFilter would fail.
   bool set_discovery_filter_should_fail_;
 
   // Current timeout interval used when posting delayed tasks.
   int simulation_interval_ms_;
+
+  // Last used handle value issued for a service record.
+  uint32_t last_handle_;
+
+  // Service records manually registered with this adapter by handle.
+  std::map<uint32_t, BluetoothServiceRecordBlueZ> records_;
 };
 
 }  // namespace bluez

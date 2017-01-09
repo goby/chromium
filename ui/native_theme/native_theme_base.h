@@ -5,15 +5,15 @@
 #ifndef UI_NATIVE_THEME_NATIVE_THEME_BASE_H_
 #define UI_NATIVE_THEME_NATIVE_THEME_BASE_H_
 
-#include "base/basictypes.h"
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "skia/ext/platform_canvas.h"
 #include "ui/native_theme/native_theme.h"
 
 namespace gfx {
-class Canvas;
-class ImageSkia;
 class Rect;
 class Size;
 }
@@ -32,13 +32,6 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
              State state,
              const gfx::Rect& rect,
              const ExtraParams& extra) const override;
-
-  void PaintStateTransition(SkCanvas* canvas,
-                            Part part,
-                            State startState,
-                            State endState,
-                            double progress,
-                            const gfx::Rect& rect) const override;
 
  protected:
   NativeThemeBase();
@@ -63,7 +56,8 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
       SkCanvas* canvas,
       Part part,
       State state,
-      const gfx::Rect& rect) const;
+      const gfx::Rect& rect,
+      NativeTheme::ScrollbarOverlayColorTheme theme) const;
 
   virtual void PaintScrollbarCorner(SkCanvas* canvas,
                                     State state,
@@ -108,7 +102,7 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
       SkCanvas* canvas,
       State state,
       const gfx::Rect& rect,
-      const MenuListExtraParams& menu_list) const;
+      const MenuItemExtraParams& menu_item) const;
 
   virtual void PaintSliderTrack(
       SkCanvas* canvas,
@@ -134,13 +128,6 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
       const gfx::Rect& rect,
       const ProgressBarExtraParams& progress_bar) const;
 
-  virtual void PaintScrollbarThumbStateTransition(
-      SkCanvas* canvas,
-      State startState,
-      State endState,
-      double progress,
-      const gfx::Rect& rect) const {}
-
   // Shrinks checkbox/radio button rect, if necessary, to make room for padding
   // and drop shadow.
   // TODO(mohsen): This is needed because checkboxes/radio buttons on Android
@@ -148,23 +135,10 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
   // crbug.com/530746 is resolved.
   virtual void AdjustCheckboxRadioRectForPadding(SkRect* rect) const;
 
-  void set_scrollbar_button_length(unsigned int length) {
+  void set_scrollbar_button_length(int length) {
     scrollbar_button_length_ = length;
   }
   int scrollbar_button_length() const { return scrollbar_button_length_; }
-
-  bool IntersectsClipRectInt(SkCanvas* canvas,
-                             int x, int y, int w, int h) const;
-
-  void DrawImageInt(SkCanvas* canvas, const gfx::ImageSkia& image,
-                    int src_x, int src_y, int src_w, int src_h,
-                    int dest_x, int dest_y, int dest_w, int dest_h) const;
-
-  void DrawTiledImage(SkCanvas* canvas,
-                      const gfx::ImageSkia& image,
-                      int src_x, int src_y,
-                      float tile_scale_x, float tile_scale_y,
-                      int dest_x, int dest_y, int w, int h) const;
 
   SkColor SaturateAndBrighten(SkScalar* hsv,
                               SkScalar saturate_amount,
@@ -179,7 +153,14 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
   // Returns the color used to draw the arrow.
   SkColor GetArrowColor(State state) const;
 
+  int scrollbar_width_;
+
  private:
+  friend class NativeThemeAuraTest;
+
+  SkPath PathForArrow(const gfx::Rect& rect, Part direction) const;
+  gfx::Rect BoundingRectForArrow(const gfx::Rect& rect) const;
+
   void DrawVertLine(SkCanvas* canvas,
                     int x,
                     int y1,
@@ -206,10 +187,8 @@ class NATIVE_THEME_EXPORT NativeThemeBase : public NativeTheme {
       const gfx::Rect& rect,
       const SkScalar borderRadius) const;
 
-  unsigned int scrollbar_width_;
-
   // The length of the arrow buttons, 0 means no buttons are drawn.
-  unsigned int scrollbar_button_length_;
+  int scrollbar_button_length_;
 
   DISALLOW_COPY_AND_ASSIGN(NativeThemeBase);
 };

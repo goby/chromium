@@ -4,6 +4,7 @@
 
 #include "base/system_monitor/system_monitor.h"
 
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/test/mock_devices_changed_observer.h"
@@ -21,7 +22,7 @@ class SystemMonitorTest : public testing::Test {
   }
 
   MessageLoop message_loop_;
-  scoped_ptr<SystemMonitor> system_monitor_;
+  std::unique_ptr<SystemMonitor> system_monitor_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SystemMonitorTest);

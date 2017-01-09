@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_RENDERER_MODULE_SYSTEM_TEST_H_
 #define EXTENSIONS_RENDERER_MODULE_SYSTEM_TEST_H_
 
+#include "base/macros.h"
 #include "extensions/renderer/module_system.h"
 #include "extensions/renderer/script_context.h"
 #include "gin/public/context_holder.h"
@@ -54,11 +55,11 @@ class ModuleSystemTestEnvironment {
 
  private:
   v8::Isolate* isolate_;
-  scoped_ptr<gin::ContextHolder> context_holder_;
+  std::unique_ptr<gin::ContextHolder> context_holder_;
   v8::HandleScope handle_scope_;
-  scoped_ptr<ScriptContext> context_;
+  std::unique_ptr<ScriptContext> context_;
   AssertNatives* assert_natives_;
-  scoped_ptr<StringSourceMap> source_map_;
+  std::unique_ptr<StringSourceMap> source_map_;
 
   DISALLOW_COPY_AND_ASSIGN(ModuleSystemTestEnvironment);
 };
@@ -86,7 +87,7 @@ class ModuleSystemTest : public testing::Test {
  protected:
   ModuleSystemTestEnvironment* env() { return env_.get(); }
 
-  scoped_ptr<ModuleSystemTestEnvironment> CreateEnvironment();
+  std::unique_ptr<ModuleSystemTestEnvironment> CreateEnvironment();
 
   // Make the test fail if any asserts are called. By default a test will fail
   // if no asserts are called.
@@ -98,7 +99,7 @@ class ModuleSystemTest : public testing::Test {
 
  private:
   v8::Isolate* isolate_;
-  scoped_ptr<ModuleSystemTestEnvironment> env_;
+  std::unique_ptr<ModuleSystemTestEnvironment> env_;
   bool should_assertions_be_made_;
 
  private:

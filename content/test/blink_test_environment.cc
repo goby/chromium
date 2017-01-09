@@ -12,6 +12,7 @@
 #include "base/strings/string_tokenizer.h"
 #include "base/test/test_discardable_memory_allocator.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/user_agent.h"
 #include "content/public/test/test_content_client_initializer.h"
@@ -22,12 +23,7 @@
 #include "url/url_util.h"
 
 #if defined(OS_WIN)
-#include "ui/gfx/win/dpi.h"
-#endif
-
-#if defined(OS_ANDROID)
-#include "base/android/jni_android.h"
-#include "net/android/network_library.h"
+#include "ui/display/win/dpi.h"
 #endif
 
 #if defined(OS_MACOSX)
@@ -37,21 +33,6 @@
 namespace content {
 
 namespace {
-
-void EnableBlinkPlatformLogChannels(const std::string& channels) {
-  if (channels.empty())
-    return;
-  base::StringTokenizer t(channels, ", ");
-  while (t.GetNext())
-    blink::enableLogChannel(t.token().c_str());
-}
-
-void ParseBlinkCommandLineArgumentsForUnitTests() {
-  const base::CommandLine& command_line =
-      *base::CommandLine::ForCurrentProcess();
-  EnableBlinkPlatformLogChannels(
-      command_line.GetSwitchValueASCII(switches::kBlinkPlatformLogChannels));
-}
 
 class TestEnvironment {
  public:
@@ -81,9 +62,9 @@ class TestEnvironment {
   }
 
  private:
-  scoped_ptr<MessageLoopType> main_message_loop_;
-  scoped_ptr<TestBlinkWebUnitTestSupport> blink_test_support_;
-  scoped_ptr<TestContentClientInitializer> content_initializer_;
+  std::unique_ptr<MessageLoopType> main_message_loop_;
+  std::unique_ptr<TestBlinkWebUnitTestSupport> blink_test_support_;
+  std::unique_ptr<TestContentClientInitializer> content_initializer_;
   base::TestDiscardableMemoryAllocator discardable_memory_allocator_;
 };
 
@@ -92,22 +73,15 @@ TestEnvironment* test_environment;
 }  // namespace
 
 void SetUpBlinkTestEnvironment() {
-  ParseBlinkCommandLineArgumentsForUnitTests();
-
   blink::WebRuntimeFeatures::enableExperimentalFeatures(true);
   blink::WebRuntimeFeatures::enableTestOnlyFeatures(true);
-
-#if defined(OS_ANDROID)
-  JNIEnv* env = base::android::AttachCurrentThread();
-  net::android::RegisterNetworkLibrary(env);
-#endif
 
 #if defined(OS_MACOSX)
   mock_cr_app::RegisterMockCrApp();
 #endif
 
 #if defined(OS_WIN)
-  gfx::InitDeviceScaleFactor(1.0f);
+  display::win::SetDefaultDeviceScaleFactor(1.0f);
 #endif
 
   // Explicitly initialize the GURL library before spawning any threads.

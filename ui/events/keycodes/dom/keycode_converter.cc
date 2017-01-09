@@ -5,7 +5,9 @@
 #include "ui/events/keycodes/dom/keycode_converter.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversion_utils.h"
+#include "build/build_config.h"
 #include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/events/keycodes/dom/dom_key.h"
 
@@ -41,14 +43,10 @@ struct DomKeyMapEntry {
 
 #define DOM_KEY_MAP_DECLARATION const DomKeyMapEntry dom_key_map[] =
 #define DOM_KEY_UNI(key, id, value) {DomKey::id, key}
-#define DOM_KEY_MAP_BEGIN
-#define DOM_KEY_MAP(key, id)        {DomKey::id, key}
-#define DOM_KEY_MAP_END
+#define DOM_KEY_MAP(key, id, value) {DomKey::id, key}
 #include "ui/events/keycodes/dom/dom_key_data.inc"
 #undef DOM_KEY_MAP_DECLARATION
-#undef DOM_KEY_MAP_BEGIN
 #undef DOM_KEY_MAP
-#undef DOM_KEY_MAP_END
 #undef DOM_KEY_UNI
 
 const size_t kDomKeyMapEntries = arraysize(dom_key_map);
@@ -127,11 +125,11 @@ DomKeyLocation KeycodeConverter::DomCodeToLocation(DomCode dom_code) {
   } kLocations[] = {{DomCode::CONTROL_LEFT, DomKeyLocation::LEFT},
                     {DomCode::SHIFT_LEFT, DomKeyLocation::LEFT},
                     {DomCode::ALT_LEFT, DomKeyLocation::LEFT},
-                    {DomCode::OS_LEFT, DomKeyLocation::LEFT},
+                    {DomCode::META_LEFT, DomKeyLocation::LEFT},
                     {DomCode::CONTROL_RIGHT, DomKeyLocation::RIGHT},
                     {DomCode::SHIFT_RIGHT, DomKeyLocation::RIGHT},
                     {DomCode::ALT_RIGHT, DomKeyLocation::RIGHT},
-                    {DomCode::OS_RIGHT, DomKeyLocation::RIGHT},
+                    {DomCode::META_RIGHT, DomKeyLocation::RIGHT},
                     {DomCode::NUMPAD_DIVIDE, DomKeyLocation::NUMPAD},
                     {DomCode::NUMPAD_MULTIPLY, DomKeyLocation::NUMPAD},
                     {DomCode::NUMPAD_SUBTRACT, DomKeyLocation::NUMPAD},
@@ -189,7 +187,8 @@ DomKey KeycodeConverter::KeyStringToDomKey(const std::string& key) {
   // the key value is that character.
   int32_t char_index = 0;
   uint32_t character;
-  if (base::ReadUnicodeCharacter(key.c_str(), static_cast<int32>(key.length()),
+  if (base::ReadUnicodeCharacter(key.c_str(),
+                                 static_cast<int32_t>(key.length()),
                                  &char_index, &character) &&
       key[++char_index] == 0) {
     return DomKey::FromCharacter(character);
@@ -232,7 +231,6 @@ bool KeycodeConverter::IsDomKeyForModifier(DomKey dom_key) {
     case DomKey::HYPER:
     case DomKey::META:
     case DomKey::NUM_LOCK:
-    case DomKey::OS:
     case DomKey::SCROLL_LOCK:
     case DomKey::SHIFT:
     case DomKey::SUPER:

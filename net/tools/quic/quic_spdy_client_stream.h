@@ -5,17 +5,17 @@
 #ifndef NET_TOOLS_QUIC_QUIC_SPDY_CLIENT_STREAM_H_
 #define NET_TOOLS_QUIC_QUIC_SPDY_CLIENT_STREAM_H_
 
+#include <stddef.h>
 #include <sys/types.h>
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
-#include "net/quic/quic_protocol.h"
-#include "net/quic/quic_spdy_stream.h"
+#include "net/quic/core/quic_packets.h"
+#include "net/quic/core/quic_spdy_stream.h"
 #include "net/spdy/spdy_framer.h"
 
 namespace net {
-namespace tools {
 
 class QuicClientSession;
 
@@ -27,35 +27,36 @@ class QuicSpdyClientStream : public QuicSpdyStream {
   ~QuicSpdyClientStream() override;
 
   // Override the base class to close the write side as soon as we get a
-  // response.
-  // SPDY/HTTP does not support bidirectional streaming.
+  // response (if bidirectional streaming is not enabled).
   void OnStreamFrame(const QuicStreamFrame& frame) override;
 
-  // Override the base class to store the size of the headers.
-  void OnStreamHeadersComplete(bool fin, size_t frame_len) override;
+  // Override the base class to parse and store headers.
+  void OnInitialHeadersComplete(bool fin,
+                                size_t frame_len,
+                                const QuicHeaderList& header_list) override;
 
-  // ReliableQuicStream implementation called by the session when there's
-  // data for us.
+  // Override the base class to parse and store trailers.
+  void OnTrailingHeadersComplete(bool fin,
+                                 size_t frame_len,
+                                 const QuicHeaderList& header_list) override;
+
+  // Override the base class to handle creation of the push stream.
+  void OnPromiseHeaderList(QuicStreamId promised_id,
+                           size_t frame_len,
+                           const QuicHeaderList& header_list) override;
+
+  // QuicStream implementation called by the session when there's data for us.
   void OnDataAvailable() override;
 
   // Serializes the headers and body, sends it to the server, and
   // returns the number of bytes sent.
-  size_t SendRequest(const SpdyHeaderBlock& headers,
-                     base::StringPiece body,
-                     bool fin);
-
-  // Sends body data to the server, or buffers if it can't be sent immediately.
-  void SendBody(const std::string& data, bool fin);
-  // As above, but |delegate| will be notified once |data| is ACKed.
-  void SendBody(const std::string& data,
-                bool fin,
-                QuicAckListenerInterface* listener);
+  size_t SendRequest(SpdyHeaderBlock headers, base::StringPiece body, bool fin);
 
   // Returns the response data.
   const std::string& data() { return data_; }
 
   // Returns whatever headers have been received for this stream.
-  const SpdyHeaderBlock& headers() { return response_headers_; }
+  const SpdyHeaderBlock& response_headers() { return response_headers_; }
 
   size_t header_bytes_read() const { return header_bytes_read_; }
 
@@ -63,35 +64,26 @@ class QuicSpdyClientStream : public QuicSpdyStream {
 
   int response_code() const { return response_code_; }
 
-  // While the server's set_priority shouldn't be called externally, the creator
+  // While the server's SetPriority shouldn't be called externally, the creator
   // of client-side streams should be able to set the priority.
-  using QuicSpdyStream::set_priority;
-
-  void set_allow_bidirectional_data(bool value) {
-    allow_bidirectional_data_ = value;
-  }
-
-  bool allow_bidirectional_data() const { return allow_bidirectional_data_; }
+  using QuicSpdyStream::SetPriority;
 
  private:
-  bool ParseResponseHeaders(const char* data, uint32 data_len);
-
   // The parsed headers received from the server.
   SpdyHeaderBlock response_headers_;
+
   // The parsed content-length, or -1 if none is specified.
-  int content_length_;
+  int64_t content_length_;
   int response_code_;
   std::string data_;
   size_t header_bytes_read_;
   size_t header_bytes_written_;
-  // When true allows the sending of a request to continue while the response is
-  // arriving.
-  bool allow_bidirectional_data_;
+
+  QuicClientSession* session_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicSpdyClientStream);
 };
 
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_QUIC_SPDY_CLIENT_STREAM_H_

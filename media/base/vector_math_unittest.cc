@@ -6,10 +6,13 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/aligned_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringize_macros.h"
+#include "build/build_config.h"
 #include "media/base/vector_math.h"
 #include "media/base/vector_math_testing.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -47,8 +50,8 @@ class VectorMathTest : public testing::Test {
   }
 
  protected:
-  scoped_ptr<float[], base::AlignedFreeDeleter> input_vector_;
-  scoped_ptr<float[], base::AlignedFreeDeleter> output_vector_;
+  std::unique_ptr<float[], base::AlignedFreeDeleter> input_vector_;
+  std::unique_ptr<float[], base::AlignedFreeDeleter> output_vector_;
 
   DISALLOW_COPY_AND_ASSIGN(VectorMathTest);
 };
@@ -245,7 +248,7 @@ class EWMATestScenario {
 
  private:
   float initial_value_;
-  scoped_ptr<float, base::AlignedFreeDeleter> data_;
+  std::unique_ptr<float, base::AlignedFreeDeleter> data_;
   int data_len_;
   float smoothing_factor_;
   float expected_final_avg_;

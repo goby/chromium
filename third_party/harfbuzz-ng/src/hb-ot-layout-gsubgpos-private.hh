@@ -319,7 +319,7 @@ struct hb_apply_context_t :
       if (!c->check_glyph_property (&info, lookup_props))
 	return SKIP_YES;
 
-      if (unlikely (_hb_glyph_info_is_default_ignorable (&info) &&
+      if (unlikely (_hb_glyph_info_is_default_ignorable_and_not_fvs (&info) &&
 		    (ignore_zwnj || !_hb_glyph_info_is_zwnj (&info)) &&
 		    (ignore_zwj || !_hb_glyph_info_is_zwj (&info))))
 	return SKIP_MAYBE;
@@ -845,9 +845,12 @@ static inline bool ligate_input (hb_apply_context_t *c,
     while (buffer->idx < match_positions[i] && !buffer->in_error)
     {
       if (!is_mark_ligature) {
+        unsigned int this_comp = _hb_glyph_info_get_lig_comp (&buffer->cur());
+	if (this_comp == 0)
+	  this_comp = last_num_components;
 	unsigned int new_lig_comp = components_so_far - last_num_components +
-				    MIN (MAX (_hb_glyph_info_get_lig_comp (&buffer->cur()), 1u), last_num_components);
-	_hb_glyph_info_set_lig_props_for_mark (&buffer->cur(), lig_id, new_lig_comp);
+				    MIN (this_comp, last_num_components);
+	  _hb_glyph_info_set_lig_props_for_mark (&buffer->cur(), lig_id, new_lig_comp);
       }
       buffer->next_glyph ();
     }
@@ -864,8 +867,11 @@ static inline bool ligate_input (hb_apply_context_t *c,
     /* Re-adjust components for any marks following. */
     for (unsigned int i = buffer->idx; i < buffer->len; i++) {
       if (last_lig_id == _hb_glyph_info_get_lig_id (&buffer->info[i])) {
+        unsigned int this_comp = _hb_glyph_info_get_lig_comp (&buffer->info[i]);
+	if (!this_comp)
+	  break;
 	unsigned int new_lig_comp = components_so_far - last_num_components +
-				    MIN (MAX (_hb_glyph_info_get_lig_comp (&buffer->info[i]), 1u), last_num_components);
+				    MIN (this_comp, last_num_components);
 	_hb_glyph_info_set_lig_props_for_mark (&buffer->info[i], lig_id, new_lig_comp);
       } else
 	break;
@@ -965,7 +971,7 @@ static inline bool apply_lookup (hb_apply_context_t *c,
       match_positions[j] += delta;
   }
 
-  for (unsigned int i = 0; i < lookupCount; i++)
+  for (unsigned int i = 0; i < lookupCount && !buffer->in_error; i++)
   {
     unsigned int idx = lookupRecord[i].sequenceIndex;
     if (idx >= count)
@@ -990,10 +996,13 @@ static inline bool apply_lookup (hb_apply_context_t *c,
 
     /* Recursed lookup changed buffer len.  Adjust. */
 
-    /* end can't go back past the current match position.
-     * Note: this is only true because we do NOT allow MultipleSubst
-     * with zero sequence len. */
-    end = MAX (MIN((int) match_positions[idx] + 1, (int) new_len), int (end) + delta);
+    end = int (end) + delta;
+    if (end <= match_positions[idx])
+    {
+      /* There can't be any further changes. */
+      assert (end == match_positions[idx]);
+      break;
+    }
 
     unsigned int next = idx + 1; /* next now is the position after the recursed lookup. */
 
@@ -2271,7 +2280,7 @@ struct GSUBGPOS
   }
 
   protected:
-  FixedVersion	version;	/* Version of the GSUB/GPOS table--initially set
+  FixedVersion<>version;	/* Version of the GSUB/GPOS table--initially set
 				 * to 0x00010000u */
   OffsetTo<ScriptList>
 		scriptList;  	/* ScriptList table */

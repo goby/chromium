@@ -5,6 +5,7 @@
 #include "components/autofill/content/renderer/form_cache.h"
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/content/renderer/form_autofill_util.h"
@@ -44,10 +45,10 @@ void LogDeprecationMessages(const WebFormControlElement& element) {
           element.getAttribute("autocomplete")));
 
   static const char* const deprecated[] = { "region", "locality" };
-  for (size_t i = 0; i < arraysize(deprecated); ++i) {
-    if (autocomplete_attribute.find(deprecated[i]) == std::string::npos)
+  for (const char* str : deprecated) {
+    if (autocomplete_attribute.find(str) == std::string::npos)
       continue;
-    std::string msg = std::string("autocomplete='") + deprecated[i] +
+    std::string msg = std::string("autocomplete='") + str +
         "' is deprecated and will soon be ignored. See http://goo.gl/YjeSsW";
     WebConsoleMessage console_message = WebConsoleMessage(
         WebConsoleMessage::LevelWarning,
@@ -64,15 +65,21 @@ bool IsFormInteresting(const FormData& form, size_t num_editable_elements) {
 
   // If the form has at least one field with an autocomplete attribute, it is a
   // candidate for autofill.
+  bool all_fields_are_passwords = true;
   for (const FormFieldData& field : form.fields) {
     if (!field.autocomplete_attribute.empty())
       return true;
+    if (field.form_control_type != "password")
+      all_fields_are_passwords = false;
   }
 
   // If there are no autocomplete attributes, the form needs to have at least
   // the required number of editable fields for the prediction routines to be a
   // candidate for autofill.
-  return num_editable_elements >= kRequiredFieldsForPredictionRoutines;
+  return num_editable_elements >= kRequiredFieldsForPredictionRoutines ||
+         (all_fields_are_passwords &&
+          num_editable_elements >=
+              kRequiredFieldsForFormsWithOnlyPasswordFields);
 }
 
 }  // namespace
@@ -116,7 +123,7 @@ std::vector<FormData> FormCache::ExtractNewForms() {
 
     FormData form;
     if (!WebFormElementToFormData(form_element, WebFormControlElement(),
-                                  extract_mask, &form, nullptr)) {
+                                  nullptr, extract_mask, &form, nullptr)) {
       continue;
     }
 
@@ -124,7 +131,7 @@ std::vector<FormData> FormCache::ExtractNewForms() {
     if (num_fields_seen > form_util::kMaxParseableFields)
       return forms;
 
-    if (!ContainsKey(parsed_forms_, form) &&
+    if (!base::ContainsKey(parsed_forms_, form) &&
         IsFormInteresting(form, num_editable_elements)) {
       for (auto it = parsed_forms_.begin(); it != parsed_forms_.end(); ++it) {
         if (it->SameFormAs(form)) {
@@ -293,20 +300,34 @@ bool FormCache::ShowPredictions(const FormDataPredictions& form) {
   for (size_t i = 0; i < control_elements.size(); ++i) {
     WebFormControlElement& element = control_elements[i];
 
-    if (base::string16(element.nameForAutofill()) != form.data.fields[i].name) {
+    const FormFieldData& field_data = form.data.fields[i];
+    if (base::string16(element.nameForAutofill()) != field_data.name) {
       // Keep things simple.  Don't show predictions for elements whose names
       // were modified between page load and the server's response to our query.
       continue;
     }
 
-    base::string16 title = l10n_util::GetStringFUTF16(
-        IDS_AUTOFILL_SHOW_PREDICTIONS_TITLE,
-        base::UTF8ToUTF16(form.fields[i].overall_type),
-        base::UTF8ToUTF16(form.fields[i].server_type),
-        base::UTF8ToUTF16(form.fields[i].heuristic_type),
-        base::UTF8ToUTF16(form.fields[i].signature),
-        base::UTF8ToUTF16(form.signature));
+    static const size_t kMaxLabelSize = 100;
+    const base::string16 truncated_label = field_data.label.substr(
+        0, std::min(field_data.label.length(), kMaxLabelSize));
+
+    const FormFieldDataPredictions& field = form.fields[i];
+    std::vector<base::string16> replacements;
+
+    base::string16 overall_type = base::UTF8ToUTF16(field.overall_type);
+
+    replacements.push_back(overall_type);
+    replacements.push_back(base::UTF8ToUTF16(field.server_type));
+    replacements.push_back(base::UTF8ToUTF16(field.heuristic_type));
+    replacements.push_back(truncated_label);
+    replacements.push_back(base::UTF8ToUTF16(field.parseable_name));
+    replacements.push_back(base::UTF8ToUTF16(field.signature));
+    replacements.push_back(base::UTF8ToUTF16(form.signature));
+    const base::string16 title = l10n_util::GetStringFUTF16(
+        IDS_AUTOFILL_SHOW_PREDICTIONS_TITLE, replacements, nullptr);
     element.setAttribute("title", WebString(title));
+
+    element.setAttribute("autofill-prediction", WebString(overall_type));
   }
 
   return true;

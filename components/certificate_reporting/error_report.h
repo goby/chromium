@@ -5,9 +5,16 @@
 #ifndef COMPONENTS_CERTIFICATE_REPORTING_CERTIFICATE_ERROR_REPORT_H_
 #define COMPONENTS_CERTIFICATE_REPORTING_CERTIFICATE_ERROR_REPORT_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+namespace base {
+class Time;
+}  // namespace base
+
+namespace network_time {
+class NetworkTimeTracker;
+}  // namespace network_time
 
 namespace net {
 class SSLInfo;
@@ -59,13 +66,17 @@ class ErrorReport {
 
   void SetInterstitialInfo(const InterstitialReason& interstitial_reason,
                            const ProceedDecision& proceed_decision,
-                           const Overridable& overridable);
+                           const Overridable& overridable,
+                           const base::Time& interstitial_time);
+
+  void AddNetworkTimeInfo(
+      const network_time::NetworkTimeTracker* network_time_tracker);
 
   // Gets the hostname to which this report corresponds.
   const std::string& hostname() const;
 
  private:
-  scoped_ptr<CertLoggerRequest> cert_report_;
+  std::unique_ptr<CertLoggerRequest> cert_report_;
 };
 
 }  // namespace certificate_reporting

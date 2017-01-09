@@ -5,15 +5,17 @@
 #ifndef CHROME_BROWSER_SAFE_BROWSING_CLIENT_SIDE_DETECTION_HOST_H_
 #define CHROME_BROWSER_SAFE_BROWSING_CLIENT_SIDE_DETECTION_HOST_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/safe_browsing/browser_feature_extractor.h"
-#include "chrome/browser/safe_browsing/database_manager.h"
 #include "chrome/browser/safe_browsing/ui_manager.h"
+#include "components/safe_browsing_db/database_manager.h"
 #include "content/public/browser/resource_request_details.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "url/gurl.h"
@@ -36,7 +38,8 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   ~ClientSideDetectionHost() override;
 
   // From content::WebContentsObserver.
-  bool OnMessageReceived(const IPC::Message& message) override;
+  bool OnMessageReceived(const IPC::Message& message,
+                         content::RenderFrameHost* render_frame_host) override;
   void DidGetResourceResponseStart(
       const content::ResourceRequestDetails& details) override;
 
@@ -50,7 +53,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // Called when the SafeBrowsingService found a hit with one of the
   // SafeBrowsing lists.  This method is called on the UI thread.
   void OnSafeBrowsingHit(
-      const SafeBrowsingUIManager::UnsafeResource& resource) override;
+      const security_interstitials::UnsafeResource& resource) override;
 
   virtual scoped_refptr<SafeBrowsingDatabaseManager> database_manager();
 
@@ -93,7 +96,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // This method is responsible for deleting the request object.  Called on
   // the UI thread.
   void FeatureExtractionDone(bool success,
-                             scoped_ptr<ClientPhishingRequest> request);
+                             std::unique_ptr<ClientPhishingRequest> request);
 
   // Start malware classification once the onload handler was called and
   // malware pre-classification checks are done and passed.
@@ -102,7 +105,8 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // Function to be called when the browser malware feature extractor is done.
   // Called on the UI thread.
   void MalwareFeatureExtractionDone(
-      bool success, scoped_ptr<ClientMalwareRequest> request);
+      bool success,
+      std::unique_ptr<ClientMalwareRequest> request);
 
   // Update the entries in browse_info_->ips map.
   void UpdateIPUrlMap(const std::string& ip,
@@ -134,12 +138,12 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // it if necessary.
   scoped_refptr<ShouldClassifyUrlRequest> classification_request_;
   // Browser-side feature extractor.
-  scoped_ptr<BrowserFeatureExtractor> feature_extractor_;
+  std::unique_ptr<BrowserFeatureExtractor> feature_extractor_;
   // Keeps some info about the current page visit while the renderer
   // classification is going on.  Since we cancel classification on
   // every page load we can simply keep this data around as a member
   // variable.  This information will be passed on to the feature extractor.
-  scoped_ptr<BrowseInfo> browse_info_;
+  std::unique_ptr<BrowseInfo> browse_info_;
   // Redirect chain that leads to the first page of the current host. We keep
   // track of this for browse_info_.
   std::vector<GURL> cur_host_redirects_;
@@ -158,7 +162,7 @@ class ClientSideDetectionHost : public content::WebContentsObserver,
   // Unique page ID of the most recent unsafe site that was loaded in this tab
   // as well as the UnsafeResource.
   int unsafe_unique_page_id_;
-  scoped_ptr<SafeBrowsingUIManager::UnsafeResource> unsafe_resource_;
+  std::unique_ptr<security_interstitials::UnsafeResource> unsafe_resource_;
 
   base::WeakPtrFactory<ClientSideDetectionHost> weak_factory_;
 

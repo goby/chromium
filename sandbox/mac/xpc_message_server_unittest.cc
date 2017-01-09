@@ -7,6 +7,7 @@
 #include <Block.h>
 #include <mach/mach.h>
 #include <servers/bootstrap.h>
+#include <stdint.h>
 
 #include "base/command_line.h"
 #include "base/logging.h"
@@ -19,19 +20,6 @@
 #include "testing/multiprocess_func_list.h"
 
 namespace sandbox {
-
-class XPCMessageServerTest : public testing::Test {
- public:
-  void SetUp() override {
-    if (!RunXPCTest())
-      return;
-    ASSERT_TRUE(InitializeXPC());
-  }
-
-  bool RunXPCTest() {
-    return base::mac::IsOSMountainLionOrLater();
-  }
-};
 
 // A MessageDemuxer that manages a test server and executes a block for every
 // message.
@@ -86,11 +74,7 @@ class BlockDemuxer : public MessageDemuxer {
   xpc_pipe_t pipe_;
 };
 
-#define XPC_TEST_F(name) TEST_F(XPCMessageServerTest, name) { \
-    if (!RunXPCTest()) \
-      return; \
-
-XPC_TEST_F(ReceiveMessage)  // {
+TEST(XPCMessageServerTest, ReceiveMessage) {
   BlockDemuxer fixture;
   XPCMessageServer* server = fixture.server();
 
@@ -112,7 +96,7 @@ XPC_TEST_F(ReceiveMessage)  // {
   xpc_release(reply);
 }
 
-XPC_TEST_F(RejectMessage)  // {
+TEST(XPCMessageServerTest, RejectMessage) {
   BlockDemuxer fixture;
   XPCMessageServer* server = fixture.server();
   ASSERT_TRUE(fixture.Initialize(^(IPCMessage request) {
@@ -129,7 +113,7 @@ XPC_TEST_F(RejectMessage)  // {
   xpc_release(reply);
 }
 
-XPC_TEST_F(RejectMessageSimpleRoutine)  // {
+TEST(XPCMessageServerTest, RejectMessageSimpleRoutine) {
   BlockDemuxer fixture;
   XPCMessageServer* server = fixture.server();
   ASSERT_TRUE(fixture.Initialize(^(IPCMessage request) {
@@ -145,7 +129,7 @@ XPC_TEST_F(RejectMessageSimpleRoutine)  // {
 
 char kGetSenderPID[] = "org.chromium.sandbox.test.GetSenderPID";
 
-XPC_TEST_F(GetSenderPID)  // {
+TEST(XPCMessageServerTest, GetSenderPID) {
   BlockDemuxer fixture;
   XPCMessageServer* server = fixture.server();
 
@@ -179,8 +163,6 @@ XPC_TEST_F(GetSenderPID)  // {
 }
 
 MULTIPROCESS_TEST_MAIN(GetSenderPID) {
-  CHECK(sandbox::InitializeXPC());
-
   mach_port_t port = MACH_PORT_NULL;
   CHECK_EQ(KERN_SUCCESS, bootstrap_look_up(bootstrap_port, kGetSenderPID,
       &port));
@@ -198,7 +180,7 @@ MULTIPROCESS_TEST_MAIN(GetSenderPID) {
   return 0;
 }
 
-XPC_TEST_F(ForwardMessage)  // {
+TEST(XPCMessageServerTest, ForwardMessage) {
   BlockDemuxer first;
   XPCMessageServer* first_server = first.server();
 

@@ -4,11 +4,11 @@
 
 #include "components/content_settings/core/browser/content_settings_pref.h"
 
+#include <memory>
+
 #include "base/auto_reset.h"
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/scoped_user_pref_update.h"
 #include "base/strings/string_split.h"
 #include "base/time/clock.h"
 #include "components/content_settings/core/browser/content_settings_info.h"
@@ -19,6 +19,7 @@
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_pattern.h"
 #include "components/content_settings/core/common/pref_names.h"
+#include "components/prefs/scoped_user_pref_update.h"
 #include "url/gurl.h"
 
 namespace {
@@ -49,7 +50,7 @@ bool IsValueAllowedForType(const base::Value* value, ContentSettingsType type) {
 
   // TODO(raymes): We should permit different types of base::Value for
   // website settings.
-  return value->GetType() == base::Value::TYPE_DICTIONARY;
+  return value->GetType() == base::Value::Type::DICTIONARY;
 }
 
 }  // namespace
@@ -82,7 +83,7 @@ ContentSettingsPref::ContentSettingsPref(
 ContentSettingsPref::~ContentSettingsPref() {
 }
 
-scoped_ptr<RuleIterator> ContentSettingsPref::GetRuleIterator(
+std::unique_ptr<RuleIterator> ContentSettingsPref::GetRuleIterator(
     const ResourceIdentifier& resource_identifier,
     bool incognito) const {
   if (incognito)
@@ -105,7 +106,7 @@ bool ContentSettingsPref::SetWebsiteSetting(
          !resource_identifier.empty());
 
   // At this point take the ownership of the |in_value|.
-  scoped_ptr<base::Value> value(in_value);
+  std::unique_ptr<base::Value> value(in_value);
 
   // Update in memory value map.
   OriginIdentifierValueMap* map_to_modify = &incognito_value_map_;
@@ -143,27 +144,32 @@ bool ContentSettingsPref::SetWebsiteSetting(
   return true;
 }
 
+void ContentSettingsPref::ClearPref() {
+  DCHECK(thread_checker_.CalledOnValidThread());
+  DCHECK(prefs_);
+
+  {
+    base::AutoLock auto_lock(lock_);
+    value_map_.clear();
+  }
+
+  {
+    base::AutoReset<bool> auto_reset(&updating_preferences_, true);
+    DictionaryPrefUpdate update(prefs_, pref_name_);
+    base::DictionaryValue* pattern_pairs_settings = update.Get();
+    pattern_pairs_settings->Clear();
+  }
+}
+
 void ContentSettingsPref::ClearAllContentSettingsRules() {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(prefs_);
 
-  OriginIdentifierValueMap* map_to_modify = &incognito_value_map_;
-  if (!is_incognito_)
-    map_to_modify = &value_map_;
-
-  {
+  if (is_incognito_) {
     base::AutoLock auto_lock(lock_);
-    map_to_modify->clear();
-  }
-
-  if (!is_incognito_) {
-    // Clear the preference.
-    {
-      base::AutoReset<bool> auto_reset(&updating_preferences_, true);
-      DictionaryPrefUpdate update(prefs_, pref_name_);
-      base::DictionaryValue* pattern_pairs_settings = update.Get();
-      pattern_pairs_settings->Clear();
-    }
+    incognito_value_map_.clear();
+  } else {
+    ClearPref();
   }
 
   notify_callback_.Run(ContentSettingsPattern(),
@@ -263,12 +269,12 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
     return;
 
   base::DictionaryValue* mutable_settings;
-  scoped_ptr<base::DictionaryValue> mutable_settings_scope;
+  std::unique_ptr<base::DictionaryValue> mutable_settings_scope;
 
   if (!is_incognito_) {
     mutable_settings = update.Get();
   } else {
-    // Create copy as we do not want to persist anything in OTR prefs.
+    // Create copy as we do not want to persist anything in incognito prefs.
     mutable_settings = all_settings_dictionary->DeepCopy();
     mutable_settings_scope.reset(mutable_settings);
   }
@@ -308,7 +314,7 @@ void ContentSettingsPref::ReadContentSettingsFromPref() {
           bool is_integer = j.value().GetAsInteger(&setting);
           DCHECK(is_integer);
           DCHECK_NE(CONTENT_SETTING_DEFAULT, setting);
-          scoped_ptr<base::Value> setting_ptr(
+          std::unique_ptr<base::Value> setting_ptr(
               new base::FundamentalValue(setting));
           value_map_.SetValue(pattern_pair.first,
                               pattern_pair.second,
@@ -493,7 +499,7 @@ void ContentSettingsPref::CanonicalizeContentSettingsExceptions(
   }
 
   for (size_t i = 0; i < move_items.size(); ++i) {
-    scoped_ptr<base::Value> pattern_settings_dictionary;
+    std::unique_ptr<base::Value> pattern_settings_dictionary;
     all_settings_dictionary->RemoveWithoutPathExpansion(
         move_items[i].first, &pattern_settings_dictionary);
     all_settings_dictionary->SetWithoutPathExpansion(

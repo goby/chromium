@@ -6,11 +6,12 @@
 #define GIN_PER_ISOLATE_DATA_H_
 
 #include <map>
+#include <memory>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "gin/gin_export.h"
+#include "gin/public/isolate_holder.h"
 #include "gin/public/v8_idle_task_runner.h"
 #include "gin/public/wrapper_info.h"
 #include "v8/include/v8.h"
@@ -29,7 +30,9 @@ class WrappableBase;
 // class stores all the Gin-related data that varies per isolate.
 class GIN_EXPORT PerIsolateData {
  public:
-  PerIsolateData(v8::Isolate* isolate, v8::ArrayBuffer::Allocator* allocator);
+  PerIsolateData(v8::Isolate* isolate,
+                 v8::ArrayBuffer::Allocator* allocator,
+                 IsolateHolder::AccessMode access_mode);
   ~PerIsolateData();
 
   static PerIsolateData* From(v8::Isolate* isolate);
@@ -65,7 +68,7 @@ class GIN_EXPORT PerIsolateData {
       WrappableBase* base);
   NamedPropertyInterceptor* GetNamedPropertyInterceptor(WrappableBase* base);
 
-  void EnableIdleTasks(scoped_ptr<V8IdleTaskRunner> idle_task_runner);
+  void EnableIdleTasks(std::unique_ptr<V8IdleTaskRunner> idle_task_runner);
 
   v8::Isolate* isolate() { return isolate_; }
   v8::ArrayBuffer::Allocator* allocator() { return allocator_; }
@@ -73,6 +76,8 @@ class GIN_EXPORT PerIsolateData {
   V8IdleTaskRunner* idle_task_runner() {
     return idle_task_runner_.get();
   }
+
+  IsolateHolder::AccessMode access_mode() const { return access_mode_; }
 
  private:
   typedef std::map<
@@ -88,12 +93,13 @@ class GIN_EXPORT PerIsolateData {
   // owned by the IsolateHolder, which also owns the PerIsolateData.
   v8::Isolate* isolate_;
   v8::ArrayBuffer::Allocator* allocator_;
+  IsolateHolder::AccessMode access_mode_;
   ObjectTemplateMap object_templates_;
   FunctionTemplateMap function_templates_;
   IndexedPropertyInterceptorMap indexed_interceptors_;
   NamedPropertyInterceptorMap named_interceptors_;
   scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-  scoped_ptr<V8IdleTaskRunner> idle_task_runner_;
+  std::unique_ptr<V8IdleTaskRunner> idle_task_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(PerIsolateData);
 };

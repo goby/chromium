@@ -6,14 +6,14 @@
 
 #include <windows.h>
 #include <softpub.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <wintrust.h>
 
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
 #include "chrome/common/safe_browsing/pe_image_reader_win.h"
-
-#pragma comment(lib, "wintrust.lib")
 
 namespace safe_browsing {
 

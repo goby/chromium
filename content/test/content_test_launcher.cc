@@ -9,10 +9,12 @@
 #include "base/debug/stack_trace.h"
 #include "base/i18n/icu_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/process/memory.h"
 #include "base/sys_info.h"
 #include "base/test/test_suite.h"
 #include "base/test/test_timeouts.h"
+#include "build/build_config.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/test/content_test_suite_base.h"
 #include "content/shell/app/shell_main_delegate.h"
@@ -38,8 +40,8 @@
 namespace content {
 
 #if defined(OS_ANDROID)
-scoped_ptr<base::MessagePump> CreateMessagePumpForUI() {
-  return scoped_ptr<base::MessagePump>(new NestedMessagePumpAndroid());
+std::unique_ptr<base::MessagePump> CreateMessagePumpForUI() {
+  return std::unique_ptr<base::MessagePump>(new NestedMessagePumpAndroid());
 };
 #endif
 
@@ -87,8 +89,8 @@ class ContentBrowserTestSuite : public ContentTestSuiteBase {
   }
 
 #if defined(OS_ANDROID)
-  scoped_ptr<ShellContentClient> content_client_;
-  scoped_ptr<ShellContentBrowserClient> browser_content_client_;
+  std::unique_ptr<ShellContentClient> content_client_;
+  std::unique_ptr<ShellContentBrowserClient> browser_content_client_;
 #endif
 
   DISALLOW_COPY_AND_ASSIGN(ContentBrowserTestSuite);

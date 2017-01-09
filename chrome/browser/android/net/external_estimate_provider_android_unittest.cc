@@ -5,10 +5,13 @@
 #include "chrome/browser/android/net/external_estimate_provider_android.h"
 
 #include <stdint.h>
+#include <utility>
 
+#include "base/at_exit.h"
 #include "base/test/histogram_tester.h"
 #include "base/time/time.h"
-#include "net/base/network_quality_estimator.h"
+#include "content/public/test/test_browser_thread_bundle.h"
+#include "net/nqe/network_quality_estimator.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
@@ -16,6 +19,7 @@ namespace {
 // Tests if the |ExternalEstimateProviderAndroid| APIs return false without the
 // downstream implementation.
 TEST(ExternalEstimateProviderAndroidTest, BasicsTest) {
+  base::ShadowingAtExitManager at_exit_manager;
   chrome::android::ExternalEstimateProviderAndroid external_estimate_provider;
 
   base::TimeDelta rtt;
@@ -33,21 +37,27 @@ TEST(ExternalEstimateProviderAndroidTest, BasicsTest) {
 class TestNetworkQualityEstimator : public net::NetworkQualityEstimator {
  public:
   TestNetworkQualityEstimator(
-      scoped_ptr<chrome::android::ExternalEstimateProviderAndroid>
+      std::unique_ptr<chrome::android::ExternalEstimateProviderAndroid>
           external_estimate_provider,
       const std::map<std::string, std::string>& variation_params)
-      : NetworkQualityEstimator(external_estimate_provider.Pass(),
+      : NetworkQualityEstimator(std::move(external_estimate_provider),
                                 variation_params),
         notified_(false) {}
 
   ~TestNetworkQualityEstimator() override {}
 
-  void OnUpdatedEstimateAvailable() override {
+  void OnUpdatedEstimateAvailable(const base::TimeDelta& rtt,
+                                  int32_t downstream_throughput_kbps,
+                                  int32_t upstream_throughput_kbps) override {
+    EXPECT_EQ(base::TimeDelta(), rtt);
+    EXPECT_EQ(-1, downstream_throughput_kbps);
+    EXPECT_EQ(-1, upstream_throughput_kbps);
     notified_ = true;
-    net::NetworkQualityEstimator::OnUpdatedEstimateAvailable();
+    net::NetworkQualityEstimator::OnUpdatedEstimateAvailable(
+        rtt, downstream_throughput_kbps, upstream_throughput_kbps);
   }
 
-  bool IsNotified() const { return notified_; }
+  bool notified() const { return notified_; }
 
  private:
   bool notified_;
@@ -63,7 +73,7 @@ class TestExternalEstimateProviderAndroid
 
   bool GetTimeSinceLastUpdate(
       base::TimeDelta* time_since_last_update) const override {
-    *time_since_last_update = base::TimeDelta::FromMilliseconds(1);
+    *time_since_last_update = base::TimeDelta::FromMilliseconds(0);
     return true;
   }
 };
@@ -71,42 +81,31 @@ class TestExternalEstimateProviderAndroid
 // Tests if the |ExternalEstimateProviderAndroid| notifies
 // |NetworkQualityEstimator|.
 TEST(ExternalEstimateProviderAndroidTest, DelegateTest) {
+  content::TestBrowserThreadBundle thread_bundle(
+      content::TestBrowserThreadBundle::IO_MAINLOOP);
+
+  base::ShadowingAtExitManager at_exit_manager;
   base::HistogramTester histogram_tester;
-  scoped_ptr<TestExternalEstimateProviderAndroid> external_estimate_provider;
+  std::unique_ptr<TestExternalEstimateProviderAndroid>
+      external_estimate_provider;
   external_estimate_provider.reset(new TestExternalEstimateProviderAndroid());
 
   TestExternalEstimateProviderAndroid* ptr = external_estimate_provider.get();
   std::map<std::string, std::string> variation_params;
   TestNetworkQualityEstimator network_quality_estimator(
-      external_estimate_provider.Pass(), variation_params);
+      std::move(external_estimate_provider), variation_params);
   ptr->NotifyUpdatedEstimateAvailable();
-  DCHECK(network_quality_estimator.IsNotified());
+  EXPECT_TRUE(network_quality_estimator.notified());
 
-  // EXTERNAL_ESTIMATE_PROVIDER_STATUS_NOT_AVAILABLE
-  histogram_tester.ExpectBucketCount("NQE.ExternalEstimateProviderStatus", 0,
-                                     0);
+  histogram_tester.ExpectTotalCount("NQE.ExternalEstimateProviderStatus", 2);
 
   // EXTERNAL_ESTIMATE_PROVIDER_STATUS_AVAILABLE
   histogram_tester.ExpectBucketCount("NQE.ExternalEstimateProviderStatus", 1,
                                      1);
 
-  // EXTERNAL_ESTIMATE_PROVIDER_STATUS_QUERIED
-  // Updated once during NetworkQualityEstimator constructor and again,
-  // when |OnUpdatedEstimateAvailable| is called.
-  histogram_tester.ExpectBucketCount("NQE.ExternalEstimateProviderStatus", 2,
-                                     2);
-
-  // EXTERNAL_ESTIMATE_PROVIDER_STATUS_QUERY_SUCCESSFUL
-  // Updated once during NetworkQualityEstimator constructor and again,
-  // when |OnUpdatedEstimateAvailable| is called.
-  histogram_tester.ExpectBucketCount("NQE.ExternalEstimateProviderStatus", 3,
-                                     2);
-
   // EXTERNAL_ESTIMATE_PROVIDER_STATUS_CALLBACK
   histogram_tester.ExpectBucketCount("NQE.ExternalEstimateProviderStatus", 4,
                                      1);
-
-  histogram_tester.ExpectTotalCount("NQE.ExternalEstimateProviderStatus", 6);
 }
 
 }  // namespace

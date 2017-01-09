@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebScopedWindowFocusAllowedIndicator.h"
 
 #include "core/dom/Document.h"
@@ -37,16 +36,13 @@
 
 namespace blink {
 
-void WebScopedWindowFocusAllowedIndicator::initialize(WebDocument* webDocument)
-{
-    Document* document = webDocument->unwrap<Document>();
-    ASSERT(document);
-    m_private.reset(new ScopedWindowFocusAllowedIndicator(document));
+WebScopedWindowFocusAllowedIndicator::WebScopedWindowFocusAllowedIndicator(
+    WebDocument* webDocument) {
+  Document* document = webDocument->unwrap<Document>();
+  DCHECK(document);
+  m_private.reset(new ScopedWindowFocusAllowedIndicator(document));
 }
 
-void WebScopedWindowFocusAllowedIndicator::reset()
-{
-    m_private.reset(0);
-}
+WebScopedWindowFocusAllowedIndicator::~WebScopedWindowFocusAllowedIndicator() {}
 
-} // namespace blink
+}  // namespace blink

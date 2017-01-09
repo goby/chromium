@@ -7,75 +7,78 @@
 
 #include "core/CSSPropertyNames.h"
 #include "core/animation/css/CSSTimingData.h"
+#include "wtf/PtrUtil.h"
 #include "wtf/Vector.h"
+#include <memory>
 
 namespace blink {
 
 class CSSTransitionData final : public CSSTimingData {
-public:
-    enum TransitionPropertyType {
-        TransitionNone,
-        TransitionKnownProperty,
-        TransitionUnknownProperty,
-    };
+ public:
+  enum TransitionPropertyType {
+    TransitionNone,
+    TransitionKnownProperty,
+    TransitionUnknownProperty,
+  };
 
-    // FIXME: We shouldn't allow 'none' to be used alongside other properties.
-    struct TransitionProperty {
-        DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
-        TransitionProperty(CSSPropertyID id)
-            : propertyType(TransitionKnownProperty)
-            , unresolvedProperty(id)
-        {
-            ASSERT(id != CSSPropertyInvalid);
-        }
-
-        TransitionProperty(const String& string)
-            : propertyType(TransitionUnknownProperty)
-            , unresolvedProperty(CSSPropertyInvalid)
-            , propertyString(string)
-        {
-        }
-
-        TransitionProperty(TransitionPropertyType type)
-            : propertyType(type)
-            , unresolvedProperty(CSSPropertyInvalid)
-        {
-            ASSERT(type == TransitionNone);
-        }
-
-        bool operator==(const TransitionProperty& other) const { return propertyType == other.propertyType && unresolvedProperty == other.unresolvedProperty && propertyString == other.propertyString; }
-
-        TransitionPropertyType propertyType;
-        CSSPropertyID unresolvedProperty;
-        String propertyString;
-    };
-
-    static PassOwnPtr<CSSTransitionData> create()
-    {
-        return adoptPtr(new CSSTransitionData);
+  // FIXME: We shouldn't allow 'none' to be used alongside other properties.
+  struct TransitionProperty {
+    DISALLOW_NEW_EXCEPT_PLACEMENT_NEW();
+    TransitionProperty(CSSPropertyID id)
+        : propertyType(TransitionKnownProperty), unresolvedProperty(id) {
+      DCHECK_NE(id, CSSPropertyInvalid);
     }
 
-    static PassOwnPtr<CSSTransitionData> create(const CSSTransitionData& transitionData)
-    {
-        return adoptPtr(new CSSTransitionData(transitionData));
+    TransitionProperty(const AtomicString& string)
+        : propertyType(TransitionUnknownProperty),
+          unresolvedProperty(CSSPropertyInvalid),
+          propertyString(string) {}
+
+    TransitionProperty(TransitionPropertyType type)
+        : propertyType(type), unresolvedProperty(CSSPropertyInvalid) {
+      DCHECK_EQ(type, TransitionNone);
     }
 
-    bool transitionsMatchForStyleRecalc(const CSSTransitionData& other) const;
+    bool operator==(const TransitionProperty& other) const {
+      return propertyType == other.propertyType &&
+             unresolvedProperty == other.unresolvedProperty &&
+             propertyString == other.propertyString;
+    }
 
-    Timing convertToTiming(size_t index) const;
+    TransitionPropertyType propertyType;
+    CSSPropertyID unresolvedProperty;
+    AtomicString propertyString;
+  };
 
-    const Vector<TransitionProperty>& propertyList() const { return m_propertyList; }
-    Vector<TransitionProperty>& propertyList() { return m_propertyList; }
+  static std::unique_ptr<CSSTransitionData> create() {
+    return WTF::wrapUnique(new CSSTransitionData);
+  }
 
-    static TransitionProperty initialProperty() { return TransitionProperty(CSSPropertyAll); }
+  static std::unique_ptr<CSSTransitionData> create(
+      const CSSTransitionData& transitionData) {
+    return WTF::wrapUnique(new CSSTransitionData(transitionData));
+  }
 
-private:
-    CSSTransitionData();
-    explicit CSSTransitionData(const CSSTransitionData&);
+  bool transitionsMatchForStyleRecalc(const CSSTransitionData& other) const;
 
-    Vector<TransitionProperty> m_propertyList;
+  Timing convertToTiming(size_t index) const;
+
+  const Vector<TransitionProperty>& propertyList() const {
+    return m_propertyList;
+  }
+  Vector<TransitionProperty>& propertyList() { return m_propertyList; }
+
+  static TransitionProperty initialProperty() {
+    return TransitionProperty(CSSPropertyAll);
+  }
+
+ private:
+  CSSTransitionData();
+  explicit CSSTransitionData(const CSSTransitionData&);
+
+  Vector<TransitionProperty> m_propertyList;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSTransitionData_h
+#endif  // CSSTransitionData_h

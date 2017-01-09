@@ -17,7 +17,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/SVGPathUtilities.h"
 
 #include "core/svg/SVGPathBuilder.h"
@@ -29,55 +28,49 @@
 
 namespace blink {
 
-bool buildPathFromString(const String& d, Path& result)
-{
-    if (d.isEmpty())
-        return true;
+bool buildPathFromString(const String& d, Path& result) {
+  if (d.isEmpty())
+    return true;
 
-    SVGPathBuilder builder(result);
-    SVGPathStringSource source(d);
-    SVGPathParser parser(&source, &builder);
-    return parser.parsePathDataFromSource(NormalizedParsing);
+  SVGPathBuilder builder(result);
+  SVGPathStringSource source(d);
+  return SVGPathParser::parsePath(source, builder);
 }
 
-bool buildPathFromByteStream(const SVGPathByteStream& stream, Path& result)
-{
-    if (stream.isEmpty())
-        return true;
+bool buildPathFromByteStream(const SVGPathByteStream& stream, Path& result) {
+  if (stream.isEmpty())
+    return true;
 
-    SVGPathBuilder builder(result);
-    SVGPathByteStreamSource source(stream);
-    SVGPathParser parser(&source, &builder);
-    return parser.parsePathDataFromSource(NormalizedParsing);
+  SVGPathBuilder builder(result);
+  SVGPathByteStreamSource source(stream);
+  return SVGPathParser::parsePath(source, builder);
 }
 
-String buildStringFromByteStream(const SVGPathByteStream& stream)
-{
-    if (stream.isEmpty())
-        return String();
+String buildStringFromByteStream(const SVGPathByteStream& stream) {
+  if (stream.isEmpty())
+    return String();
 
-    SVGPathStringBuilder builder;
-    SVGPathByteStreamSource source(stream);
-    SVGPathParser parser(&source, &builder);
-    parser.parsePathDataFromSource(UnalteredParsing);
-    return builder.result();
+  SVGPathStringBuilder builder;
+  SVGPathByteStreamSource source(stream);
+  SVGPathParser::parsePath(source, builder);
+  return builder.result();
 }
 
-bool buildByteStreamFromString(const String& d, SVGPathByteStream& result)
-{
-    result.clear();
-    if (d.isEmpty())
-        return true;
+SVGParsingError buildByteStreamFromString(const String& d,
+                                          SVGPathByteStream& result) {
+  result.clear();
+  if (d.isEmpty())
+    return SVGParseStatus::NoError;
 
-    // The string length is typically a minor overestimate of eventual byte stream size, so it avoids us a lot of reallocs.
-    result.reserveInitialCapacity(d.length());
+  // The string length is typically a minor overestimate of eventual byte stream
+  // size, so it avoids us a lot of reallocs.
+  result.reserveInitialCapacity(d.length());
 
-    SVGPathByteStreamBuilder builder(result);
-    SVGPathStringSource source(d);
-    SVGPathParser parser(&source, &builder);
-    bool ok = parser.parsePathDataFromSource(UnalteredParsing);
-    result.shrinkToFit();
-    return ok;
+  SVGPathByteStreamBuilder builder(result);
+  SVGPathStringSource source(d);
+  SVGPathParser::parsePath(source, builder);
+  result.shrinkToFit();
+  return source.parseError();
 }
 
-}
+}  // namespace blink

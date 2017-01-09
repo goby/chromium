@@ -5,9 +5,17 @@
 #ifndef MEDIA_AUDIO_AUDIO_OUTPUT_CONTROLLER_H_
 #define MEDIA_AUDIO_AUDIO_OUTPUT_CONTROLLER_H_
 
+#include <stdint.h>
+#include <memory>
+#include <set>
+#include <string>
+#include <utility>
+
 #include "base/atomic_ref_count.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "base/threading/thread_checker.h"
 #include "base/timer/timer.h"
 #include "build/build_config.h"
 #include "media/audio/audio_io.h"
@@ -63,10 +71,10 @@ class MEDIA_EXPORT AudioOutputController
   // following methods are called on the audio manager thread.
   class MEDIA_EXPORT EventHandler {
    public:
-    virtual void OnCreated() = 0;
-    virtual void OnPlaying() = 0;
-    virtual void OnPaused() = 0;
-    virtual void OnError() = 0;
+    virtual void OnControllerCreated() = 0;
+    virtual void OnControllerPlaying() = 0;
+    virtual void OnControllerPaused() = 0;
+    virtual void OnControllerError() = 0;
 
    protected:
     virtual ~EventHandler() {}
@@ -80,10 +88,14 @@ class MEDIA_EXPORT AudioOutputController
    public:
     virtual ~SyncReader() {}
 
-    // Notify the synchronous reader the number of bytes in the
-    // AudioOutputController not yet played. This is used by SyncReader to
-    // prepare more data and perform synchronization.
-    virtual void UpdatePendingBytes(uint32 bytes) = 0;
+    // This is used by SyncReader to prepare more data and perform
+    // synchronization. Also inform about output delay at a certain moment and
+    // if any frames have been skipped by the renderer (typically the OS). The
+    // renderer source can handle this appropriately depending on the type of
+    // source. An ordinary file playout would ignore this.
+    virtual void RequestMoreData(base::TimeDelta delay,
+                                 base::TimeTicks delay_timestamp,
+                                 int prior_frames_skipped) = 0;
 
     // Attempts to completely fill |dest|, zeroing |dest| if the request can not
     // be fulfilled (due to timeout).
@@ -96,8 +108,8 @@ class MEDIA_EXPORT AudioOutputController
   // Factory method for creating an AudioOutputController.
   // This also creates and opens an AudioOutputStream on the audio manager
   // thread, and if this is successful, the |event_handler| will receive an
-  // OnCreated() call from the same audio manager thread.  |audio_manager| must
-  // outlive AudioOutputController.
+  // OnControllerCreated() call from the same audio manager thread.
+  // |audio_manager| must outlive AudioOutputController.
   // The |output_device_id| can be either empty (default device) or specify a
   // specific hardware device for audio output.
   static scoped_refptr<AudioOutputController> Create(
@@ -124,9 +136,10 @@ class MEDIA_EXPORT AudioOutputController
   void Pause();
 
   // Closes the audio output stream. The state is changed and the resources
-  // are freed on the audio manager thread. closed_task is executed after that.
-  // Callbacks (EventHandler and SyncReader) must exist until closed_task is
-  // called.
+  // are freed on the audio manager thread. |closed_task| is executed after
+  // that, on the thread on which Close was called. Callbacks (EventHandler and
+  // SyncReader) must exist until closed_task is called, but they are safe
+  // to delete after that.
   //
   // It is safe to call this method more than once. Calls after the first one
   // will have no effect.
@@ -153,7 +166,10 @@ class MEDIA_EXPORT AudioOutputController
                           const base::Closure& callback);
 
   // AudioSourceCallback implementation.
-  int OnMoreData(AudioBus* dest, uint32 total_bytes_delay) override;
+  int OnMoreData(base::TimeDelta delay,
+                 base::TimeTicks delay_timestamp,
+                 int prior_frames_skipped,
+                 AudioBus* dest) override;
   void OnError(AudioOutputStream* stream) override;
 
   // AudioDeviceListener implementation.  When called AudioOutputController will
@@ -166,6 +182,8 @@ class MEDIA_EXPORT AudioOutputController
   const AudioParameters& GetAudioParameters() override;
   void StartDiverting(AudioOutputStream* to_stream) override;
   void StopDiverting() override;
+  void StartDuplicating(AudioPushSink* sink) override;
+  void StopDuplicating(AudioPushSink* sink) override;
 
   // Accessor for AudioPowerMonitor::ReadCurrentPowerAndClip().  See comments in
   // audio_power_monitor.h for usage.  This may be called on any thread.
@@ -206,6 +224,8 @@ class MEDIA_EXPORT AudioOutputController
   void DoReportError();
   void DoStartDiverting(AudioOutputStream* to_stream);
   void DoStopDiverting();
+  void DoStartDuplicating(AudioPushSink* sink);
+  void DoStopDuplicating(AudioPushSink* sink);
 
   // Helper method that stops the physical stream.
   void StopStream();
@@ -215,6 +235,10 @@ class MEDIA_EXPORT AudioOutputController
 
   // Checks if a stream was started successfully but never calls OnMoreData().
   void WedgeCheck();
+
+  // Send audio data to each duplication target.
+  void BroadcastDataToDuplicationTargets(std::unique_ptr<AudioBus> audio_bus,
+                                         base::TimeTicks reference_time);
 
   AudioManager* const audio_manager_;
   const AudioParameters params_;
@@ -228,6 +252,10 @@ class MEDIA_EXPORT AudioOutputController
 
   // When non-NULL, audio is being diverted to this stream.
   AudioOutputStream* diverting_to_stream_;
+
+  // The targets for audio stream to be copied to.
+  std::set<AudioPushSink*> duplication_targets_;
+  base::Lock duplication_targets_lock_;
 
   // The current volume of the audio stream.
   double volume_;
@@ -246,7 +274,7 @@ class MEDIA_EXPORT AudioOutputController
 
   // Flags when we've asked for a stream to start but it never did.
   base::AtomicRefCount on_more_io_data_called_;
-  scoped_ptr<base::OneShotTimer> wedge_timer_;
+  std::unique_ptr<base::OneShotTimer> wedge_timer_;
 
   // Flag which indicates errors received during Stop/Close should be ignored.
   // These errors are generally harmless since a fresh stream is about to be

@@ -4,7 +4,11 @@
 
 #include "chrome/browser/extensions/api/file_system/file_system_api.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <set>
+#include <utility>
 #include <vector>
 
 #include "apps/saved_files_service.h"
@@ -12,7 +16,8 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
@@ -20,6 +25,7 @@
 #include "base/strings/utf_string_conversions.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/file_handlers/app_file_handler_util.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/extension_util.h"
@@ -60,9 +66,8 @@
 #endif
 
 #if defined(OS_CHROMEOS)
-#include "base/prefs/testing_pref_service.h"
 #include "base/strings/string16.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/file_manager/app_id.h"
 #include "chrome/browser/chromeos/file_manager/filesystem_api_util.h"
@@ -90,7 +95,7 @@ const char kRequiresFileSystemWriteError[] =
 const char kRequiresFileSystemDirectoryError[] =
     "Operation requires fileSystem.directory permission";
 const char kMultipleUnsupportedError[] =
-    "acceptsMultiple: true is not supported for 'saveFile'";
+    "acceptsMultiple: true is only supported for 'openFile'";
 const char kUnknownIdError[] = "Unknown id";
 
 #if !defined(OS_CHROMEOS)
@@ -189,7 +194,7 @@ bool GetFileTypesFromAcceptOption(
     return false;
 
   if (accept_option.description.get())
-    *description = base::UTF8ToUTF16(*accept_option.description.get());
+    *description = base::UTF8ToUTF16(*accept_option.description);
   else if (description_id)
     *description = l10n_util::GetStringUTF16(description_id);
 
@@ -209,14 +214,15 @@ const int kGraylistedPaths[] = {
 #endif
 };
 
-typedef base::Callback<void(scoped_ptr<base::File::Info>)> FileInfoOptCallback;
+typedef base::Callback<void(std::unique_ptr<base::File::Info>)>
+    FileInfoOptCallback;
 
 // Passes optional file info to the UI thread depending on |result| and |info|.
 void PassFileInfoToUIThread(const FileInfoOptCallback& callback,
                             base::File::Error result,
                             const base::File::Info& info) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::IO);
-  scoped_ptr<base::File::Info> file_info(
+  std::unique_ptr<base::File::Info> file_info(
       result == base::File::FILE_OK ? new base::File::Info(info) : NULL);
   content::BrowserThread::PostTask(
       content::BrowserThread::UI,
@@ -252,19 +258,18 @@ content::WebContents* GetWebContentsForAppId(Profile* profile,
 
 // Fills a list of volumes mounted in the system.
 void FillVolumeList(Profile* profile,
-                    std::vector<linked_ptr<api::file_system::Volume>>* result) {
-  using file_manager::VolumeManager;
-  VolumeManager* const volume_manager = VolumeManager::Get(profile);
+                    std::vector<api::file_system::Volume>* result) {
+  file_manager::VolumeManager* const volume_manager =
+      file_manager::VolumeManager::Get(profile);
   DCHECK(volume_manager);
 
-  using api::file_system::Volume;
   const auto& volume_list = volume_manager->GetVolumeList();
   // Convert volume_list to result_volume_list.
   for (const auto& volume : volume_list) {
-    const linked_ptr<Volume> result_volume(new Volume);
-    result_volume->volume_id = volume->volume_id();
-    result_volume->writable = !volume->is_read_only();
-    result->push_back(result_volume);
+    api::file_system::Volume result_volume;
+    result_volume.volume_id = volume->volume_id();
+    result_volume.writable = !volume->is_read_only();
+    result->push_back(std::move(result_volume));
   }
 }
 #endif
@@ -293,16 +298,6 @@ void SetLastChooseEntryDirectory(ExtensionPrefs* prefs,
                              base::CreateFilePathValue(path));
 }
 
-std::vector<base::FilePath> GetGrayListedDirectories() {
-  std::vector<base::FilePath> graylisted_directories;
-  for (size_t i = 0; i < arraysize(kGraylistedPaths); ++i) {
-    base::FilePath graylisted_path;
-    if (PathService::Get(kGraylistedPaths[i], &graylisted_path))
-      graylisted_directories.push_back(graylisted_path);
-  }
-  return graylisted_directories;
-}
-
 #if defined(OS_CHROMEOS)
 void DispatchVolumeListChangeEvent(Profile* profile) {
   DCHECK(profile);
@@ -323,10 +318,10 @@ void DispatchVolumeListChangeEvent(Profile* profile) {
       continue;
     event_router->DispatchEventToExtension(
         extension->id(),
-        make_scoped_ptr(new Event(
+        base::MakeUnique<Event>(
             events::FILE_SYSTEM_ON_VOLUME_LIST_CHANGED,
             api::file_system::OnVolumeListChanged::kEventName,
-            api::file_system::OnVolumeListChanged::Create(event_args))));
+            api::file_system::OnVolumeListChanged::Create(event_args)));
   }
 }
 
@@ -445,7 +440,7 @@ void ConsentProviderDelegate::ShowDialog(
   }
 
   RequestFileSystemDialogView::ShowDialog(web_contents, extension, volume,
-                                          writable, base::Bind(callback));
+                                          writable, callback);
 }
 
 void ConsentProviderDelegate::ShowNotification(
@@ -464,7 +459,7 @@ bool ConsentProviderDelegate::IsAutoLaunched(const Extension& extension) {
 
 bool ConsentProviderDelegate::IsWhitelistedComponent(
     const Extension& extension) {
-  for (const auto& whitelisted_id : kRequestFileSystemComponentWhitelist) {
+  for (auto* whitelisted_id : kRequestFileSystemComponentWhitelist) {
     if (extension.id().compare(whitelisted_id) == 0)
       return true;
   }
@@ -479,38 +474,42 @@ bool ConsentProviderDelegate::IsWhitelistedComponent(
 using file_system_api::ConsentProvider;
 #endif
 
-bool FileSystemGetDisplayPathFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemGetDisplayPathFunction::Run() {
   std::string filesystem_name;
   std::string filesystem_path;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &filesystem_name));
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(1, &filesystem_path));
 
   base::FilePath file_path;
+  std::string error;
   if (!app_file_handler_util::ValidateFileEntryAndGetPath(
           filesystem_name, filesystem_path,
-          render_frame_host()->GetProcess()->GetID(), &file_path, &error_))
-    return false;
+          render_frame_host()->GetProcess()->GetID(), &file_path, &error)) {
+    return RespondNow(Error(error));
+  }
 
   file_path = path_util::PrettifyPath(file_path);
-  SetResult(new base::StringValue(file_path.value()));
-  return true;
+  return RespondNow(
+      OneArgument(base::MakeUnique<base::StringValue>(file_path.value())));
 }
 
 FileSystemEntryFunction::FileSystemEntryFunction()
-    : multiple_(false),
-      is_directory_(false),
-      response_(NULL) {}
+    : multiple_(false), is_directory_(false) {}
 
 void FileSystemEntryFunction::PrepareFilesForWritableApp(
     const std::vector<base::FilePath>& paths) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
+  // TODO(cmihail): Path directory set should be initialized only with the
+  // paths that are actually directories, but for now we will consider
+  // all paths directories in case is_directory_ is true, otherwise
+  // all paths files, as this was the previous logic.
+  std::set<base::FilePath> path_directory_set_ =
+      is_directory_ ? std::set<base::FilePath>(paths.begin(), paths.end())
+                    : std::set<base::FilePath>{};
   app_file_handler_util::PrepareFilesForWritableApp(
-      paths,
-      GetProfile(),
-      is_directory_,
+      paths, GetProfile(), path_directory_set_,
       base::Bind(&FileSystemEntryFunction::RegisterFileSystemsAndSendResponse,
-                 this,
-                 paths),
+                 this, paths),
       base::Bind(&FileSystemEntryFunction::HandleWritableFileError, this));
 }
 
@@ -520,27 +519,23 @@ void FileSystemEntryFunction::RegisterFileSystemsAndSendResponse(
   if (!render_frame_host())
     return;
 
-  CreateResponse();
-  for (std::vector<base::FilePath>::const_iterator it = paths.begin();
-       it != paths.end(); ++it) {
-    AddEntryToResponse(*it, "");
-  }
+  std::unique_ptr<base::DictionaryValue> result = CreateResult();
+  for (const auto& path : paths)
+    AddEntryToResult(path, std::string(), result.get());
+  SetResult(std::move(result));
   SendResponse(true);
 }
 
-void FileSystemEntryFunction::CreateResponse() {
-  DCHECK(!response_);
-  response_ = new base::DictionaryValue();
-  base::ListValue* list = new base::ListValue();
-  response_->Set("entries", list);
-  response_->SetBoolean("multiple", multiple_);
-  SetResult(response_);
+std::unique_ptr<base::DictionaryValue> FileSystemEntryFunction::CreateResult() {
+  std::unique_ptr<base::DictionaryValue> result(new base::DictionaryValue());
+  result->Set("entries", base::MakeUnique<base::ListValue>());
+  result->SetBoolean("multiple", multiple_);
+  return result;
 }
 
-void FileSystemEntryFunction::AddEntryToResponse(
-    const base::FilePath& path,
-    const std::string& id_override) {
-  DCHECK(response_);
+void FileSystemEntryFunction::AddEntryToResult(const base::FilePath& path,
+                                               const std::string& id_override,
+                                               base::DictionaryValue* result) {
   GrantedFileEntry file_entry = app_file_handler_util::CreateFileEntry(
       GetProfile(),
       extension(),
@@ -548,10 +543,10 @@ void FileSystemEntryFunction::AddEntryToResponse(
       path,
       is_directory_);
   base::ListValue* entries;
-  bool success = response_->GetList("entries", &entries);
+  bool success = result->GetList("entries", &entries);
   DCHECK(success);
 
-  base::DictionaryValue* entry = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> entry(new base::DictionaryValue());
   entry->SetString("fileSystemId", file_entry.filesystem_id);
   entry->SetString("baseName", file_entry.registered_name);
   if (id_override.empty())
@@ -559,7 +554,7 @@ void FileSystemEntryFunction::AddEntryToResponse(
   else
     entry->SetString("id", id_override);
   entry->SetBoolean("isDirectory", is_directory_);
-  entries->Append(entry);
+  entries->Append(std::move(entry));
 }
 
 void FileSystemEntryFunction::HandleWritableFileError(
@@ -618,17 +613,15 @@ void FileSystemGetWritableEntryFunction::SetIsDirectoryOnFileThread() {
   }
 }
 
-bool FileSystemIsWritableEntryFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemIsWritableEntryFunction::Run() {
   std::string filesystem_name;
   std::string filesystem_path;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &filesystem_name));
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(1, &filesystem_path));
 
   std::string filesystem_id;
-  if (!storage::CrackIsolatedFileSystemName(filesystem_name, &filesystem_id)) {
-    error_ = app_file_handler_util::kInvalidParameters;
-    return false;
-  }
+  if (!storage::CrackIsolatedFileSystemName(filesystem_name, &filesystem_id))
+    return RespondNow(Error(app_file_handler_util::kInvalidParameters));
 
   content::ChildProcessSecurityPolicy* policy =
       content::ChildProcessSecurityPolicy::GetInstance();
@@ -636,8 +629,8 @@ bool FileSystemIsWritableEntryFunction::RunSync() {
   bool is_writable = policy->CanReadWriteFileSystem(renderer_id,
                                                     filesystem_id);
 
-  SetResult(new base::FundamentalValue(is_writable));
-  return true;
+  return RespondNow(
+      OneArgument(base::MakeUnique<base::FundamentalValue>(is_writable)));
 }
 
 // Handles showing a dialog to the user to ask for the filename for a file to
@@ -722,7 +715,7 @@ class FileSystemChooseEntryFunction::FilePicker
     // not its cache. On other platforms than Chrome OS, they are the same.
     //
     // TODO(kinaba): remove this, once after the file picker implements proper
-    // switch of the path treatment depending on the |support_drive| flag.
+    // switch of the path treatment depending on the |allowed_paths|.
     FileSelected(file.file_path, index, params);
   }
 
@@ -981,13 +974,11 @@ void FileSystemChooseEntryFunction::BuildFileTypeInfo(
                          !suggested_extension.empty();
 
   if (accepts) {
-    typedef file_system::AcceptOption AcceptOption;
-    for (std::vector<linked_ptr<AcceptOption> >::const_iterator iter =
-            accepts->begin(); iter != accepts->end(); ++iter) {
+    for (const file_system::AcceptOption& option : *accepts) {
       base::string16 description;
       std::vector<base::FilePath::StringType> extensions;
 
-      if (!GetFileTypesFromAcceptOption(**iter, &extensions, &description))
+      if (!GetFileTypesFromAcceptOption(option, &extensions, &description))
         continue;  // No extensions were found.
 
       file_type_info->extensions.push_back(extensions);
@@ -1049,7 +1040,8 @@ void FileSystemChooseEntryFunction::SetInitialPathAndShowPicker(
 }
 
 bool FileSystemChooseEntryFunction::RunAsync() {
-  scoped_ptr<ChooseEntry::Params> params(ChooseEntry::Params::Create(*args_));
+  std::unique_ptr<ChooseEntry::Params> params(
+      ChooseEntry::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
   base::FilePath suggested_name;
@@ -1059,7 +1051,7 @@ bool FileSystemChooseEntryFunction::RunAsync() {
 
   file_system::ChooseEntryOptions* options = params->options.get();
   if (options) {
-    multiple_ = options->accepts_multiple;
+    multiple_ = options->accepts_multiple && *options->accepts_multiple;
     if (multiple_)
       picker_type = ui::SelectFileDialog::SELECT_OPEN_MULTI_FILE;
 
@@ -1101,7 +1093,7 @@ bool FileSystemChooseEntryFunction::RunAsync() {
         options->accepts.get(), options->accepts_all_types.get());
   }
 
-  file_type_info.support_drive = true;
+  file_type_info.allowed_paths = ui::SelectFileDialog::FileTypeInfo::ANY_PATH;
 
   base::FilePath previous_path = file_system_api::GetLastChooseEntryDirectory(
       ExtensionPrefs::Get(GetProfile()), extension()->id());
@@ -1187,7 +1179,7 @@ bool FileSystemRetainEntryFunction::RunAsync() {
 void FileSystemRetainEntryFunction::RetainFileEntry(
     const std::string& entry_id,
     const base::FilePath& path,
-    scoped_ptr<base::File::Info> file_info) {
+    std::unique_ptr<base::File::Info> file_info) {
   if (!file_info) {
     SendResponse(false);
     return;
@@ -1200,12 +1192,12 @@ void FileSystemRetainEntryFunction::RetainFileEntry(
   SendResponse(true);
 }
 
-bool FileSystemIsRestorableFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemIsRestorableFunction::Run() {
   std::string entry_id;
   EXTENSION_FUNCTION_VALIDATE(args_->GetString(0, &entry_id));
-  SetResult(new base::FundamentalValue(SavedFilesService::Get(
-      GetProfile())->IsRegistered(extension_->id(), entry_id)));
-  return true;
+  return RespondNow(OneArgument(base::MakeUnique<base::FundamentalValue>(
+      SavedFilesService::Get(Profile::FromBrowserContext(browser_context()))
+          ->IsRegistered(extension_->id(), entry_id))));
 }
 
 bool FileSystemRestoreEntryFunction::RunAsync() {
@@ -1228,35 +1220,33 @@ bool FileSystemRestoreEntryFunction::RunAsync() {
   // |entry_id|.
   if (needs_new_entry) {
     is_directory_ = file_entry->is_directory;
-    CreateResponse();
-    AddEntryToResponse(file_entry->path, file_entry->id);
+    std::unique_ptr<base::DictionaryValue> result = CreateResult();
+    AddEntryToResult(file_entry->path, file_entry->id, result.get());
+    SetResult(std::move(result));
   }
   SendResponse(true);
   return true;
 }
 
-bool FileSystemObserveDirectoryFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemObserveDirectoryFunction::Run() {
   NOTIMPLEMENTED();
-  error_ = kUnknownIdError;
-  return false;
+  return RespondNow(Error(kUnknownIdError));
 }
 
-bool FileSystemUnobserveEntryFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemUnobserveEntryFunction::Run() {
   NOTIMPLEMENTED();
-  error_ = kUnknownIdError;
-  return false;
+  return RespondNow(Error(kUnknownIdError));
 }
 
-bool FileSystemGetObservedEntriesFunction::RunSync() {
+ExtensionFunction::ResponseAction FileSystemGetObservedEntriesFunction::Run() {
   NOTIMPLEMENTED();
-  error_ = kUnknownIdError;
-  return false;
+  return RespondNow(Error(kUnknownIdError));
 }
 
 #if !defined(OS_CHROMEOS)
 ExtensionFunction::ResponseAction FileSystemRequestFileSystemFunction::Run() {
   using api::file_system::RequestFileSystem::Params;
-  const scoped_ptr<Params> params(Params::Create(*args_));
+  const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
   NOTIMPLEMENTED();
@@ -1278,7 +1268,7 @@ FileSystemRequestFileSystemFunction::~FileSystemRequestFileSystemFunction() {
 
 ExtensionFunction::ResponseAction FileSystemRequestFileSystemFunction::Run() {
   using api::file_system::RequestFileSystem::Params;
-  const scoped_ptr<Params> params(Params::Create(*args_));
+  const std::unique_ptr<Params> params(Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params);
 
   // Only kiosk apps in kiosk sessions can use this API.
@@ -1340,13 +1330,11 @@ void FileSystemRequestFileSystemFunction::OnConsentReceived(
 
   switch (result) {
     case ConsentProvider::CONSENT_REJECTED:
-      SetError(kSecurityError);
-      SendResponse(false);
+      Respond(Error(kSecurityError));
       return;
 
     case ConsentProvider::CONSENT_IMPOSSIBLE:
-      SetError(kConsentImpossible);
-      SendResponse(false);
+      Respond(Error(kConsentImpossible));
       return;
 
     case ConsentProvider::CONSENT_GRANTED:
@@ -1354,8 +1342,7 @@ void FileSystemRequestFileSystemFunction::OnConsentReceived(
   }
 
   if (!volume.get()) {
-    SetError(kVolumeNotFoundError);
-    SendResponse(false);
+    Respond(Error(kVolumeNotFoundError));
     return;
   }
 
@@ -1370,8 +1357,7 @@ void FileSystemRequestFileSystemFunction::OnConsentReceived(
 
   base::FilePath virtual_path;
   if (!backend->GetVirtualPath(volume->mount_path(), &virtual_path)) {
-    SetError(kSecurityError);
-    SendResponse(false);
+    Respond(Error(kSecurityError));
     return;
   }
 
@@ -1394,8 +1380,7 @@ void FileSystemRequestFileSystemFunction::OnConsentReceived(
           std::string() /* file_system_id */, original_url.path(),
           &register_name);
   if (file_system_id.empty()) {
-    SetError(kSecurityError);
-    SendResponse(false);
+    Respond(Error(kSecurityError));
     return;
   }
 
@@ -1426,12 +1411,11 @@ void FileSystemRequestFileSystemFunction::OnConsentReceived(
         render_frame_host()->GetProcess()->GetID(), file_system_id);
   }
 
-  base::DictionaryValue* const dict = new base::DictionaryValue();
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue());
   dict->SetString("file_system_id", file_system_id);
   dict->SetString("file_system_path", register_name);
 
-  SetResult(dict);
-  SendResponse(true);
+  Respond(OneArgument(std::move(dict)));
 }
 
 FileSystemGetVolumeListFunction::FileSystemGetVolumeListFunction()
@@ -1450,13 +1434,11 @@ ExtensionFunction::ResponseAction FileSystemGetVolumeListFunction::Run() {
 
   if (!consent_provider.IsGrantable(*extension()))
     return RespondNow(Error(kNotSupportedOnNonKioskSessionError));
-  using api::file_system::Volume;
-  std::vector<linked_ptr<Volume>> result_volume_list;
+  std::vector<api::file_system::Volume> result_volume_list;
   FillVolumeList(chrome_details_.GetProfile(), &result_volume_list);
 
-  return RespondNow(
-      ArgumentList(api::file_system::GetVolumeList::Results::Create(
-                       result_volume_list).Pass()));
+  return RespondNow(ArgumentList(
+      api::file_system::GetVolumeList::Results::Create(result_volume_list)));
 }
 #endif
 

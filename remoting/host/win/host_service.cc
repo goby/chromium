@@ -7,8 +7,8 @@
 
 #include "remoting/host/win/host_service.h"
 
-#include <sddl.h>
 #include <windows.h>
+#include <sddl.h>
 #include <wtsapi32.h>
 
 #include "base/base_paths.h"
@@ -135,17 +135,17 @@ void HostService::RemoveWtsTerminalObserver(WtsTerminalObserver* observer) {
   }
 }
 
-HostService::HostService() :
-  run_routine_(&HostService::RunAsService),
-  service_status_handle_(0),
-  stopped_event_(true, false),
-  weak_factory_(this) {
-}
+HostService::HostService()
+    : run_routine_(&HostService::RunAsService),
+      service_status_handle_(0),
+      stopped_event_(base::WaitableEvent::ResetPolicy::MANUAL,
+                     base::WaitableEvent::InitialState::NOT_SIGNALED),
+      weak_factory_(this) {}
 
 HostService::~HostService() {
 }
 
-void HostService::OnSessionChange(uint32 event, uint32 session_id) {
+void HostService::OnSessionChange(uint32_t event, uint32_t session_id) {
   DCHECK(main_task_runner_->BelongsToCurrentThread());
   DCHECK_NE(session_id, kInvalidSessionId);
 
@@ -434,7 +434,7 @@ VOID WINAPI HostService::ServiceMain(DWORD argc, WCHAR* argv[]) {
 int DaemonProcessMain() {
   HostService* service = HostService::GetInstance();
   if (!service->InitWithCommandLine(base::CommandLine::ForCurrentProcess())) {
-    return kUsageExitCode;
+    return kInvalidCommandLineExitCode;
   }
 
   return service->Run();

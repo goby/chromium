@@ -4,20 +4,25 @@
 
 #include "extensions/browser/sandboxed_unpacker.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <set>
+#include <tuple>
 
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/message_loop/message_loop.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "build/build_config.h"
 #include "components/crx_file/crx_file.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/utility_process_host.h"
@@ -48,7 +53,7 @@ using crx_file::CrxFile;
 // fail to install. To see if this is happening, see how long the
 // path to the temp unpack directory is. See crbug.com/69693 .
 #define PATH_LENGTH_HISTOGRAM(name, path) \
-  UMA_HISTOGRAM_CUSTOM_COUNTS(name, path.value().length(), 0, 500, 100)
+  UMA_HISTOGRAM_CUSTOM_COUNTS(name, path.value().length(), 1, 500, 100)
 
 // Record a rate (kB per second) at which extensions are unpacked.
 // Range from 1kB/s to 100mB/s.
@@ -60,14 +65,14 @@ namespace {
 
 void RecordSuccessfulUnpackTimeHistograms(const base::FilePath& crx_path,
                                           const base::TimeDelta unpack_time) {
-  const int64 kBytesPerKb = 1024;
-  const int64 kBytesPerMb = 1024 * 1024;
+  const int64_t kBytesPerKb = 1024;
+  const int64_t kBytesPerMb = 1024 * 1024;
 
   UMA_HISTOGRAM_TIMES("Extensions.SandboxUnpackSuccessTime", unpack_time);
 
   // To get a sense of how CRX size impacts unpack time, record unpack
   // time for several increments of CRX size.
-  int64 crx_file_size;
+  int64_t crx_file_size;
   if (!base::GetFileSize(crx_path, &crx_file_size)) {
     UMA_HISTOGRAM_COUNTS("Extensions.SandboxUnpackSuccessCantGetCrxSize", 1);
     return;
@@ -206,7 +211,7 @@ bool ReadMessageCatalogsFromFile(const base::FilePath& extension_path,
 
 SandboxedUnpackerClient::SandboxedUnpackerClient()
     : RefCountedDeleteOnMessageLoop<SandboxedUnpackerClient>(
-          content::BrowserThread::GetMessageLoopProxyForThread(
+          content::BrowserThread::GetTaskRunnerForThread(
               content::BrowserThread::UI)) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 }
@@ -267,7 +272,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
     return;  // ReportFailure() already called.
 
   // Initialize the path that will eventually contain the unpacked extension.
-  extension_root_ = temp_dir_.path().AppendASCII(kTempExtensionName);
+  extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
   PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackUnpackedCrxPathLength",
                         extension_root_);
 
@@ -277,7 +282,7 @@ void SandboxedUnpacker::StartWithCrx(const CRXFileInfo& crx_info) {
 
   // Copy the crx file into our working directory.
   base::FilePath temp_crx_path =
-      temp_dir_.path().Append(crx_info.path.BaseName());
+      temp_dir_.GetPath().Append(crx_info.path.BaseName());
   PATH_LENGTH_HISTOGRAM("Extensions.SandboxUnpackTempCrxPathLength",
                         temp_crx_path);
 
@@ -320,7 +325,7 @@ void SandboxedUnpacker::StartWithDirectory(const std::string& extension_id,
   if (!CreateTempDirectory())
     return;  // ReportFailure() already called.
 
-  extension_root_ = temp_dir_.path().AppendASCII(kTempExtensionName);
+  extension_root_ = temp_dir_.GetPath().AppendASCII(kTempExtensionName);
 
   if (!base::Move(directory, extension_root_)) {
     LOG(ERROR) << "Could not move " << directory.value() << " to "
@@ -375,7 +380,7 @@ void SandboxedUnpacker::OnProcessCrashed(int exit_code) {
 }
 
 void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
-  if (!utility_wrapper_->StartIfNeeded(temp_dir_.path(), this,
+  if (!utility_wrapper_->StartIfNeeded(temp_dir_.GetPath(), this,
                                        unpacker_io_task_runner_)) {
     ReportFailure(
         COULD_NOT_START_UTILITY_PROCESS,
@@ -384,7 +389,7 @@ void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
             FailureReasonToString16(COULD_NOT_START_UTILITY_PROCESS)));
     return;
   }
-  DCHECK(crx_path.DirName() == temp_dir_.path());
+  DCHECK(crx_path.DirName() == temp_dir_.GetPath());
   base::FilePath unzipped_dir =
       crx_path.DirName().AppendASCII(kTempExtensionName);
   utility_wrapper_->host()->Send(
@@ -393,7 +398,7 @@ void SandboxedUnpacker::StartUnzipOnIOThread(const base::FilePath& crx_path) {
 
 void SandboxedUnpacker::StartUnpackOnIOThread(
     const base::FilePath& directory_path) {
-  if (!utility_wrapper_->StartIfNeeded(temp_dir_.path(), this,
+  if (!utility_wrapper_->StartIfNeeded(temp_dir_.GetPath(), this,
                                        unpacker_io_task_runner_)) {
     ReportFailure(
         COULD_NOT_START_UTILITY_PROCESS,
@@ -402,7 +407,7 @@ void SandboxedUnpacker::StartUnpackOnIOThread(
             FailureReasonToString16(COULD_NOT_START_UTILITY_PROCESS)));
     return;
   }
-  DCHECK(directory_path.DirName() == temp_dir_.path());
+  DCHECK(directory_path.DirName() == temp_dir_.GetPath());
   utility_wrapper_->host()->Send(new ExtensionUtilityMsg_UnpackExtension(
       directory_path, extension_id_, location_, creation_flags_));
 }
@@ -426,7 +431,7 @@ void SandboxedUnpacker::OnUnpackExtensionSucceeded(
   got_response_ = true;
   utility_wrapper_ = nullptr;
 
-  scoped_ptr<base::DictionaryValue> final_manifest(
+  std::unique_ptr<base::DictionaryValue> final_manifest(
       RewriteManifestFile(manifest));
   if (!final_manifest)
     return;
@@ -664,7 +669,7 @@ void SandboxedUnpacker::ReportSuccess(
     RecordSuccessfulUnpackTimeHistograms(
         crx_path_for_histograms_,
         base::TimeTicks::Now() - crx_unpack_start_time_);
-  DCHECK(!temp_dir_.path().empty());
+  DCHECK(!temp_dir_.GetPath().empty());
 
   // Client takes ownership of temporary directory and extension.
   client_->OnUnpackSuccess(temp_dir_.Take(), extension_root_,
@@ -678,7 +683,7 @@ base::DictionaryValue* SandboxedUnpacker::RewriteManifestFile(
   // the original manifest. We do this to ensure the manifest doesn't contain an
   // exploitable bug that could be used to compromise the browser.
   DCHECK(!public_key_.empty());
-  scoped_ptr<base::DictionaryValue> final_manifest(manifest.DeepCopy());
+  std::unique_ptr<base::DictionaryValue> final_manifest(manifest.DeepCopy());
   final_manifest->SetString(manifest_keys::kPublicKey, public_key_);
 
   std::string manifest_json;
@@ -708,9 +713,9 @@ base::DictionaryValue* SandboxedUnpacker::RewriteManifestFile(
 }
 
 bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
-  DCHECK(!temp_dir_.path().empty());
+  DCHECK(!temp_dir_.GetPath().empty());
   DecodedImages images;
-  if (!ReadImagesFromFile(temp_dir_.path(), &images)) {
+  if (!ReadImagesFromFile(temp_dir_.GetPath(), &images)) {
     // Couldn't read image data from disk.
     ReportFailure(COULD_NOT_READ_IMAGE_DATA_FROM_DISK,
                   l10n_util::GetStringFUTF16(
@@ -771,8 +776,8 @@ bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
       return false;
     }
 
-    const SkBitmap& image = base::get<0>(images[i]);
-    base::FilePath path_suffix = base::get<1>(images[i]);
+    const SkBitmap& image = std::get<0>(images[i]);
+    base::FilePath path_suffix = std::get<1>(images[i]);
     if (path_suffix.MaybeAsASCII() == install_icon_path)
       *install_icon = image;
 
@@ -818,7 +823,7 @@ bool SandboxedUnpacker::RewriteImageFiles(SkBitmap* install_icon) {
 
 bool SandboxedUnpacker::RewriteCatalogFiles() {
   base::DictionaryValue catalogs;
-  if (!ReadMessageCatalogsFromFile(temp_dir_.path(), &catalogs)) {
+  if (!ReadMessageCatalogsFromFile(temp_dir_.GetPath(), &catalogs)) {
     // Could not read catalog data from disk.
     ReportFailure(COULD_NOT_READ_CATALOG_DATA_FROM_DISK,
                   l10n_util::GetStringFUTF16(
@@ -884,7 +889,7 @@ void SandboxedUnpacker::Cleanup() {
   DCHECK(unpacker_io_task_runner_->RunsTasksOnCurrentThread());
   if (!temp_dir_.Delete()) {
     LOG(WARNING) << "Can not delete temp directory at "
-                 << temp_dir_.path().value();
+                 << temp_dir_.GetPath().value();
   }
 }
 

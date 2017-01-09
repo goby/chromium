@@ -5,7 +5,10 @@
 #ifndef IOS_CHROME_BROWSER_INFOBARS_INFOBAR_H_
 #define IOS_CHROME_BROWSER_INFOBARS_INFOBAR_H_
 
+#include <memory>
+
 #include "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "components/infobars/core/infobar.h"
 #import "ios/public/provider/chrome/browser/ui/infobar_view_delegate.h"
 
@@ -18,7 +21,7 @@ class InfoBarDelegate;
 // InfoBar for iOS acts as a UIViewController for InfoBarView.
 class InfoBarIOS : public infobars::InfoBar, public InfoBarViewDelegate {
  public:
-  explicit InfoBarIOS(scoped_ptr<infobars::InfoBarDelegate> delegate);
+  explicit InfoBarIOS(std::unique_ptr<infobars::InfoBarDelegate> delegate);
   ~InfoBarIOS() override;
 
   // Layouts the infobar using data from delegate and prepare it for adding to

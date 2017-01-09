@@ -5,18 +5,18 @@
 #ifndef COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_MANAGER_H_
 #define COMPONENTS_POLICY_CORE_COMMON_CLOUD_CLOUD_POLICY_MANAGER_H_
 
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_member.h"
 #include "components/policy/core/common/cloud/cloud_policy_core.h"
 #include "components/policy/core/common/cloud/cloud_policy_store.h"
 #include "components/policy/core/common/cloud/component_cloud_policy_service.h"
 #include "components/policy/core/common/configuration_policy_provider.h"
 #include "components/policy/policy_export.h"
+#include "components/prefs/pref_member.h"
 
 namespace base {
 class FilePath;
@@ -61,6 +61,7 @@ class POLICY_EXPORT CloudPolicyManager
   const CloudPolicyCore* core() const { return &core_; }
 
   // ConfigurationPolicyProvider:
+  void Init(SchemaRegistry* registry) override;
   void Shutdown() override;
   bool IsInitializationComplete(PolicyDomain domain) const override;
   void RefreshPolicies() override;
@@ -83,9 +84,11 @@ class POLICY_EXPORT CloudPolicyManager
   virtual void GetChromePolicy(PolicyMap* policy_map);
 
   void CreateComponentCloudPolicyService(
+      const std::string& policy_type,
       const base::FilePath& policy_cache_path,
       const scoped_refptr<net::URLRequestContextGetter>& request_context,
-      CloudPolicyClient* client);
+      CloudPolicyClient* client,
+      SchemaRegistry* schema_registry);
 
   void ClearAndDestroyComponentCloudPolicyService();
 
@@ -105,7 +108,7 @@ class POLICY_EXPORT CloudPolicyManager
   void OnRefreshComplete(bool success);
 
   CloudPolicyCore core_;
-  scoped_ptr<ComponentCloudPolicyService> component_policy_service_;
+  std::unique_ptr<ComponentCloudPolicyService> component_policy_service_;
 
   // Whether there's a policy refresh operation pending, in which case all
   // policy update notifications are deferred until after it completes.

@@ -17,10 +17,10 @@ var NetworkUI = (function() {
     'connectable',
     'ErrorState',
     'WiFi.Security',
-    ['Cellular.NetworkTechnology',
-     'EAP.EAP'],
+    ['Cellular.NetworkTechnology', 'EAP.EAP'],
     'Cellular.ActivationState',
     'Cellular.RoamingState',
+    'WiFi.Frequency',
     'WiFi.SignalStrength'
   ];
 
@@ -323,12 +323,21 @@ var NetworkUI = (function() {
   };
 
   /**
-   * Gets network information from WebUI.
+   * Gets network information from WebUI and sets custom items.
    */
   document.addEventListener('DOMContentLoaded', function() {
+    let select = document.querySelector('cr-network-select');
+    select.customItems = [
+      {customItemName: 'Add WiFi', polymerIcon: 'cr:add', customData: 'WiFi'},
+      {customItemName: 'Add VPN', polymerIcon: 'cr:add', customData: 'VPN'}
+    ];
     $('refresh').onclick = requestNetworks;
     setRefresh();
     requestNetworks();
+  });
+
+  document.addEventListener('custom-item-selected', function(event) {
+    chrome.send('addNetwork', [event.detail.customData]);
   });
 
   return {

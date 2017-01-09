@@ -2,8 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <limits>
+#include <memory>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
@@ -11,9 +17,10 @@
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "build/build_config.h"
 #include "content/browser/fileapi/mock_file_change_observer.h"
 #include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/mock_special_storage_policy.h"
@@ -54,8 +61,8 @@ bool FileExists(const base::FilePath& path) {
   return base::PathExists(path) && !base::DirectoryExists(path);
 }
 
-int64 GetSize(const base::FilePath& path) {
-  int64 size;
+int64_t GetSize(const base::FilePath& path) {
+  int64_t size;
   EXPECT_TRUE(base::GetFileSize(path, &size));
   return size;
 }
@@ -99,11 +106,11 @@ struct OriginEnumerationTestRecord {
 };
 
 const OriginEnumerationTestRecord kOriginEnumerationTestRecords[] = {
-  {"http://example.com", false, true},
-  {"http://example1.com", true, false},
-  {"https://example1.com", true, true},
-  {"file://", false, true},
-  {"http://example.com:8000", false, true},
+  {"http://example.com/", false, true},
+  {"http://example1.com/", true, false},
+  {"https://example1.com/", true, true},
+  {"file:///", false, true},
+  {"http://example.com:8000/", false, true},
 };
 
 FileSystemURL FileSystemURLAppend(
@@ -158,7 +165,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     storage_policy_ = new MockSpecialStoragePolicy();
 
     quota_manager_ = new storage::QuotaManager(
-        false /* is_incognito */, data_dir_.path(),
+        false /* is_incognito */, data_dir_.GetPath(),
         base::ThreadTaskRunnerHandle::Get().get(),
         base::ThreadTaskRunnerHandle::Get().get(), storage_policy_.get());
 
@@ -167,8 +174,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     // another sandbox_backend, and another OFU.
     // We need to pass in the context to skip all that.
     file_system_context_ = CreateFileSystemContextForTesting(
-        quota_manager_->proxy(),
-        data_dir_.path());
+        quota_manager_->proxy(), data_dir_.GetPath());
 
     sandbox_file_system_.SetUp(file_system_context_.get());
 
@@ -181,16 +187,16 @@ class ObfuscatedFileUtilTest : public testing::Test {
     sandbox_file_system_.TearDown();
   }
 
-  scoped_ptr<FileSystemOperationContext> LimitedContext(
-      int64 allowed_bytes_growth) {
-    scoped_ptr<FileSystemOperationContext> context(
+  std::unique_ptr<FileSystemOperationContext> LimitedContext(
+      int64_t allowed_bytes_growth) {
+    std::unique_ptr<FileSystemOperationContext> context(
         sandbox_file_system_.NewOperationContext());
     context->set_allowed_bytes_growth(allowed_bytes_growth);
-    return context.Pass();
+    return context;
   }
 
-  scoped_ptr<FileSystemOperationContext> UnlimitedContext() {
-    return LimitedContext(kint64max);
+  std::unique_ptr<FileSystemOperationContext> UnlimitedContext() {
+    return LimitedContext(std::numeric_limits<int64_t>::max());
   }
 
   FileSystemOperationContext* NewContext(
@@ -228,20 +234,19 @@ class ObfuscatedFileUtilTest : public testing::Test {
     return file_system;
   }
 
-  scoped_ptr<ObfuscatedFileUtil> CreateObfuscatedFileUtil(
+  std::unique_ptr<ObfuscatedFileUtil> CreateObfuscatedFileUtil(
       storage::SpecialStoragePolicy* storage_policy) {
-    return scoped_ptr<ObfuscatedFileUtil>(ObfuscatedFileUtil::CreateForTesting(
-        storage_policy, data_dir_path(), NULL,
-        base::ThreadTaskRunnerHandle::Get().get()));
+    return std::unique_ptr<ObfuscatedFileUtil>(
+        ObfuscatedFileUtil::CreateForTesting(
+            storage_policy, data_dir_path(), NULL,
+            base::ThreadTaskRunnerHandle::Get().get()));
   }
 
   ObfuscatedFileUtil* ofu() {
     return static_cast<ObfuscatedFileUtil*>(sandbox_file_system_.file_util());
   }
 
-  const base::FilePath& test_directory() const {
-    return data_dir_.path();
-  }
+  const base::FilePath& test_directory() const { return data_dir_.GetPath(); }
 
   const GURL& origin() const {
     return origin_;
@@ -253,13 +258,13 @@ class ObfuscatedFileUtilTest : public testing::Test {
     return GetTypeString(type_);
   }
 
-  int64 ComputeTotalFileSize() {
+  int64_t ComputeTotalFileSize() {
     return sandbox_file_system_.ComputeCurrentOriginUsage() -
         sandbox_file_system_.ComputeCurrentDirectoryDatabaseUsage();
   }
 
   void GetUsageFromQuotaManager() {
-    int64 quota = -1;
+    int64_t quota = -1;
     quota_status_ =
         AsyncFileTestHelper::GetUsageAndQuota(quota_manager_.get(),
                                               origin(),
@@ -274,19 +279,19 @@ class ObfuscatedFileUtilTest : public testing::Test {
     usage_cache()->Delete(sandbox_file_system_.GetUsageCachePath());
   }
 
-  int64 SizeByQuotaUtil() {
+  int64_t SizeByQuotaUtil() {
     return sandbox_file_system_.GetCachedOriginUsage();
   }
 
-  int64 SizeInUsageFile() {
+  int64_t SizeInUsageFile() {
     base::RunLoop().RunUntilIdle();
-    int64 usage = 0;
+    int64_t usage = 0;
     return usage_cache()->GetUsage(
         sandbox_file_system_.GetUsageCachePath(), &usage) ? usage : -1;
   }
 
   bool PathExists(const FileSystemURL& url) {
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
     base::File::Info file_info;
     base::FilePath platform_path;
     base::File::Error error = ofu()->GetFileInfo(
@@ -298,7 +303,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     return AsyncFileTestHelper::DirectoryExists(file_system_context(), url);
   }
 
-  int64 usage() const { return usage_; }
+  int64_t usage() const { return usage_; }
   storage::FileSystemUsageCache* usage_cache() {
     return sandbox_file_system_.usage_cache();
   }
@@ -307,7 +312,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     return sandbox_file_system_.CreateURLFromUTF8(path);
   }
 
-  int64 PathCost(const FileSystemURL& url) {
+  int64_t PathCost(const FileSystemURL& url) {
     return ObfuscatedFileUtil::ComputeFilePathCost(url.path());
   }
 
@@ -316,7 +321,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
   }
 
   void CheckFileAndCloseHandle(const FileSystemURL& url, base::File file) {
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
     base::FilePath local_path;
     EXPECT_EQ(base::File::FILE_OK,
               ofu()->GetLocalFilePath(context.get(), url, &local_path));
@@ -371,7 +376,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
       const FileSystemURL& root_url,
       const std::set<base::FilePath::StringType>& files,
       const std::set<base::FilePath::StringType>& directories) {
-    scoped_ptr<FileSystemOperationContext> context;
+    std::unique_ptr<FileSystemOperationContext> context;
     std::set<base::FilePath::StringType>::const_iterator iter;
     for (iter = files.begin(); iter != files.end(); ++iter) {
       bool created = true;
@@ -391,10 +396,10 @@ class ObfuscatedFileUtilTest : public testing::Test {
 
   class UsageVerifyHelper {
    public:
-    UsageVerifyHelper(scoped_ptr<FileSystemOperationContext> context,
+    UsageVerifyHelper(std::unique_ptr<FileSystemOperationContext> context,
                       SandboxFileSystemTestHelper* file_system,
-                      int64 expected_usage)
-        : context_(context.Pass()),
+                      int64_t expected_usage)
+        : context_(std::move(context)),
           sandbox_file_system_(file_system),
           expected_usage_(expected_usage) {}
 
@@ -413,21 +418,23 @@ class ObfuscatedFileUtilTest : public testing::Test {
                 sandbox_file_system_->GetCachedOriginUsage());
     }
 
-    scoped_ptr<FileSystemOperationContext> context_;
+    std::unique_ptr<FileSystemOperationContext> context_;
     SandboxFileSystemTestHelper* sandbox_file_system_;
-    int64 expected_usage_;
+    int64_t expected_usage_;
   };
 
-  scoped_ptr<UsageVerifyHelper> AllowUsageIncrease(int64 requested_growth) {
-    int64 usage = sandbox_file_system_.GetCachedOriginUsage();
-    return scoped_ptr<UsageVerifyHelper>(new UsageVerifyHelper(
-        LimitedContext(requested_growth),
-        &sandbox_file_system_, usage + requested_growth));
+  std::unique_ptr<UsageVerifyHelper> AllowUsageIncrease(
+      int64_t requested_growth) {
+    int64_t usage = sandbox_file_system_.GetCachedOriginUsage();
+    return std::unique_ptr<UsageVerifyHelper>(
+        new UsageVerifyHelper(LimitedContext(requested_growth),
+                              &sandbox_file_system_, usage + requested_growth));
   }
 
-  scoped_ptr<UsageVerifyHelper> DisallowUsageIncrease(int64 requested_growth) {
-    int64 usage = sandbox_file_system_.GetCachedOriginUsage();
-    return scoped_ptr<UsageVerifyHelper>(new UsageVerifyHelper(
+  std::unique_ptr<UsageVerifyHelper> DisallowUsageIncrease(
+      int64_t requested_growth) {
+    int64_t usage = sandbox_file_system_.GetCachedOriginUsage();
+    return std::unique_ptr<UsageVerifyHelper>(new UsageVerifyHelper(
         LimitedContext(requested_growth - 1), &sandbox_file_system_, usage));
   }
 
@@ -435,7 +442,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
       const FileSystemURL& root_url,
       std::set<base::FilePath::StringType>* files,
       std::set<base::FilePath::StringType>* directories) {
-    scoped_ptr<FileSystemOperationContext> context;
+    std::unique_ptr<FileSystemOperationContext> context;
     std::vector<storage::DirectoryEntry> entries;
     EXPECT_EQ(base::File::FILE_OK,
               AsyncFileTestHelper::ReadDirectory(file_system_context(),
@@ -477,7 +484,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     std::set<base::FilePath::StringType> directories;
     FillTestDirectory(root_url, &files, &directories);
 
-    scoped_ptr<FileSystemOperationContext> context;
+    std::unique_ptr<FileSystemOperationContext> context;
     std::vector<storage::DirectoryEntry> entries;
     context.reset(NewContext(NULL));
     EXPECT_EQ(base::File::FILE_OK,
@@ -507,7 +514,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     base::Time last_access_time = base::Time::Now();
     base::Time last_modified_time = base::Time::Now();
 
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
     EXPECT_EQ(base::File::FILE_OK,
               ofu()->Touch(context.get(), url, last_access_time,
                            last_modified_time));
@@ -541,10 +548,10 @@ class ObfuscatedFileUtilTest : public testing::Test {
   void TestCopyInForeignFileHelper(bool overwrite) {
     base::ScopedTempDir source_dir;
     ASSERT_TRUE(source_dir.CreateUniqueTempDir());
-    base::FilePath root_file_path = source_dir.path();
+    base::FilePath root_file_path = source_dir.GetPath();
     base::FilePath src_file_path = root_file_path.AppendASCII("file_name");
     FileSystemURL dest_url = CreateURLFromUTF8("new file");
-    int64 src_file_length = 87;
+    int64_t src_file_length = 87;
 
     base::File file(src_file_path,
                     base::File::FLAG_CREATE | base::File::FLAG_WRITE);
@@ -553,7 +560,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     ASSERT_TRUE(file.SetLength(src_file_length));
     file.Close();
 
-    scoped_ptr<FileSystemOperationContext> context;
+    std::unique_ptr<FileSystemOperationContext> context;
 
     if (overwrite) {
       context.reset(NewContext(NULL));
@@ -567,7 +574,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
       EXPECT_TRUE(change_observer()->HasNoChange());
     }
 
-    const int64 path_cost =
+    const int64_t path_cost =
         ObfuscatedFileUtil::ComputeFilePathCost(dest_url.path());
     if (!overwrite) {
       // Verify that file creation requires sufficient quota for the path.
@@ -602,14 +609,14 @@ class ObfuscatedFileUtilTest : public testing::Test {
   }
 
   void ClearTimestamp(const FileSystemURL& url) {
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
     EXPECT_EQ(base::File::FILE_OK,
               ofu()->Touch(context.get(), url, base::Time(), base::Time()));
     EXPECT_EQ(base::Time(), GetModifiedTime(url));
   }
 
   base::Time GetModifiedTime(const FileSystemURL& url) {
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
     base::FilePath data_path;
     base::File::Info file_info;
     context.reset(NewContext(NULL));
@@ -622,7 +629,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
   void TestDirectoryTimestampHelper(const FileSystemURL& base_dir,
                                     bool copy,
                                     bool overwrite) {
-    scoped_ptr<FileSystemOperationContext> context;
+    std::unique_ptr<FileSystemOperationContext> context;
     const FileSystemURL src_dir_url(
         FileSystemURLAppendUTF8(base_dir, "foo_dir"));
     const FileSystemURL dest_dir_url(
@@ -667,7 +674,8 @@ class ObfuscatedFileUtilTest : public testing::Test {
   }
 
   void MaybeDropDatabasesAliveCaseTestBody() {
-    scoped_ptr<ObfuscatedFileUtil> file_util = CreateObfuscatedFileUtil(NULL);
+    std::unique_ptr<ObfuscatedFileUtil> file_util =
+        CreateObfuscatedFileUtil(NULL);
     file_util->InitOriginDatabase(GURL(), true /*create*/);
     ASSERT_TRUE(file_util->origin_database_ != NULL);
 
@@ -684,7 +692,8 @@ class ObfuscatedFileUtilTest : public testing::Test {
     // Run message loop after OFU is already deleted to make sure callback
     // doesn't cause a crash for use after free.
     {
-      scoped_ptr<ObfuscatedFileUtil> file_util = CreateObfuscatedFileUtil(NULL);
+      std::unique_ptr<ObfuscatedFileUtil> file_util =
+          CreateObfuscatedFileUtil(NULL);
       file_util->InitOriginDatabase(GURL(), true /*create*/);
       file_util->db_flush_delay_seconds_ = 0;
       file_util->MarkUsed();
@@ -696,8 +705,8 @@ class ObfuscatedFileUtilTest : public testing::Test {
 
   void DestroyDirectoryDatabase_IsolatedTestBody() {
     storage_policy_->AddIsolated(origin_);
-    scoped_ptr<ObfuscatedFileUtil> file_util = CreateObfuscatedFileUtil(
-        storage_policy_.get());
+    std::unique_ptr<ObfuscatedFileUtil> file_util =
+        CreateObfuscatedFileUtil(storage_policy_.get());
     const FileSystemURL url = FileSystemURL::CreateForTest(
         origin_, kFileSystemTypePersistent, base::FilePath());
 
@@ -714,8 +723,8 @@ class ObfuscatedFileUtilTest : public testing::Test {
 
   void GetDirectoryDatabase_IsolatedTestBody() {
     storage_policy_->AddIsolated(origin_);
-    scoped_ptr<ObfuscatedFileUtil> file_util = CreateObfuscatedFileUtil(
-        storage_policy_.get());
+    std::unique_ptr<ObfuscatedFileUtil> file_util =
+        CreateObfuscatedFileUtil(storage_policy_.get());
     const FileSystemURL url = FileSystemURL::CreateForTest(
         origin_, kFileSystemTypePersistent, base::FilePath());
 
@@ -760,8 +769,8 @@ class ObfuscatedFileUtilTest : public testing::Test {
     }
 
     storage_policy_->AddIsolated(origin_);
-    scoped_ptr<ObfuscatedFileUtil> file_util = CreateObfuscatedFileUtil(
-        storage_policy_.get());
+    std::unique_ptr<ObfuscatedFileUtil> file_util =
+        CreateObfuscatedFileUtil(storage_policy_.get());
     base::File::Error error = base::File::FILE_ERROR_FAILED;
     base::FilePath origin_directory = file_util->GetDirectoryForOrigin(
         origin_, true /* create */, &error);
@@ -779,7 +788,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     EXPECT_EQ(kFakeDirectoryData, origin_db_data);
   }
 
-  int64 ComputeCurrentUsage() {
+  int64_t ComputeCurrentUsage() {
     return sandbox_file_system_.ComputeCurrentOriginUsage() -
         sandbox_file_system_.ComputeCurrentDirectoryDatabaseUsage();
   }
@@ -788,9 +797,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
     return sandbox_file_system_.file_system_context();
   }
 
-  const base::FilePath& data_dir_path() const {
-    return data_dir_.path();
-  }
+  const base::FilePath& data_dir_path() const { return data_dir_.GetPath(); }
 
  protected:
   base::ScopedTempDir data_dir_;
@@ -802,7 +809,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
   storage::FileSystemType type_;
   SandboxFileSystemTestHelper sandbox_file_system_;
   storage::QuotaStatusCode quota_status_;
-  int64 usage_;
+  int64_t usage_;
   storage::MockFileChangeObserver change_observer_;
   storage::ChangeObserverList change_observers_;
   base::WeakPtrFactory<ObfuscatedFileUtilTest> weak_factory_;
@@ -813,7 +820,7 @@ class ObfuscatedFileUtilTest : public testing::Test {
 
 TEST_F(ObfuscatedFileUtilTest, TestCreateAndDeleteFile) {
   FileSystemURL url = CreateURLFromUTF8("fake/file");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   int file_flags = base::File::FLAG_CREATE | base::File::FLAG_WRITE;
 
   base::File file = ofu()->CreateOrOpen(context.get(), url, file_flags);
@@ -844,7 +851,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCreateAndDeleteFile) {
   ASSERT_TRUE(file.created());
   EXPECT_EQ(1, change_observer()->get_and_reset_create_file_count());
 
-  CheckFileAndCloseHandle(url, file.Pass());
+  CheckFileAndCloseHandle(url, std::move(file));
 
   context.reset(NewContext(NULL));
   base::FilePath local_path;
@@ -880,7 +887,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCreateAndDeleteFile) {
   ASSERT_TRUE(file.created());
   EXPECT_EQ(1, change_observer()->get_and_reset_create_file_count());
 
-  CheckFileAndCloseHandle(url, file.Pass());
+  CheckFileAndCloseHandle(url, std::move(file));
 
   context.reset(NewContext(NULL));
   EXPECT_EQ(base::File::FILE_OK,
@@ -899,7 +906,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCreateAndDeleteFile) {
 TEST_F(ObfuscatedFileUtilTest, TestTruncate) {
   bool created = false;
   FileSystemURL url = CreateURLFromUTF8("file");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
             ofu()->Truncate(context.get(), url, 4));
@@ -967,7 +974,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnTruncation) {
 
   // quota exceeded
   {
-    scoped_ptr<UsageVerifyHelper> helper = AllowUsageIncrease(-1);
+    std::unique_ptr<UsageVerifyHelper> helper = AllowUsageIncrease(-1);
     helper->context()->set_allowed_bytes_growth(
         helper->context()->allowed_bytes_growth() - 1);
     EXPECT_EQ(base::File::FILE_OK,
@@ -991,7 +998,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnTruncation) {
 TEST_F(ObfuscatedFileUtilTest, TestEnsureFileExists) {
   FileSystemURL url = CreateURLFromUTF8("fake/file");
   bool created = false;
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
             ofu()->EnsureFileExists(context.get(), url, &created));
   EXPECT_TRUE(change_observer()->HasNoChange());
@@ -1044,7 +1051,7 @@ TEST_F(ObfuscatedFileUtilTest, TestEnsureFileExists) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestDirectoryOps) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   bool exclusive = false;
   bool recursive = false;
@@ -1186,7 +1193,7 @@ TEST_F(ObfuscatedFileUtilTest, TestDirectoryOps) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestReadDirectory) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   bool exclusive = true;
   bool recursive = true;
   FileSystemURL url = CreateURLFromUTF8("directory/to/use");
@@ -1205,7 +1212,7 @@ TEST_F(ObfuscatedFileUtilTest, TestReadRootWithEmptyString) {
 
 TEST_F(ObfuscatedFileUtilTest, TestReadDirectoryOnFile) {
   FileSystemURL url = CreateURLFromUTF8("file");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   bool created = false;
   ASSERT_EQ(base::File::FILE_OK,
@@ -1222,7 +1229,7 @@ TEST_F(ObfuscatedFileUtilTest, TestReadDirectoryOnFile) {
 
 TEST_F(ObfuscatedFileUtilTest, TestTouch) {
   FileSystemURL url = CreateURLFromUTF8("file");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   base::Time last_access_time = base::Time::Now();
   base::Time last_modified_time = base::Time::Now();
@@ -1252,7 +1259,7 @@ TEST_F(ObfuscatedFileUtilTest, TestTouch) {
 
 TEST_F(ObfuscatedFileUtilTest, TestPathQuotas) {
   FileSystemURL url = CreateURLFromUTF8("fake/file");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   url = CreateURLFromUTF8("file name");
   context->set_allowed_bytes_growth(5);
@@ -1264,7 +1271,7 @@ TEST_F(ObfuscatedFileUtilTest, TestPathQuotas) {
   EXPECT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(context.get(), url, &created));
   EXPECT_TRUE(created);
-  int64 path_cost = ObfuscatedFileUtil::ComputeFilePathCost(url.path());
+  int64_t path_cost = ObfuscatedFileUtil::ComputeFilePathCost(url.path());
   EXPECT_EQ(1024 - path_cost, context->allowed_bytes_growth());
 
   context->set_allowed_bytes_growth(1024);
@@ -1290,7 +1297,7 @@ TEST_F(ObfuscatedFileUtilTest, TestPathQuotas) {
 TEST_F(ObfuscatedFileUtilTest, TestCopyOrMoveFileNotFound) {
   FileSystemURL source_url = CreateURLFromUTF8("path0.txt");
   FileSystemURL dest_url = CreateURLFromUTF8("path1.txt");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
   bool is_copy_not_move = false;
   EXPECT_EQ(base::File::FILE_ERROR_NOT_FOUND,
@@ -1330,8 +1337,8 @@ TEST_F(ObfuscatedFileUtilTest, TestCopyOrMoveFileNotFound) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestCopyOrMoveFileSuccess) {
-  const int64 kSourceLength = 5;
-  const int64 kDestLength = 50;
+  const int64_t kSourceLength = 5;
+  const int64_t kDestLength = 50;
 
   for (size_t i = 0; i < arraysize(kCopyMoveTestCases); ++i) {
     SCOPED_TRACE(testing::Message() << "kCopyMoveTestCase " << i);
@@ -1344,7 +1351,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCopyOrMoveFileSuccess) {
       test_case.dest_path);
     SCOPED_TRACE(testing::Message() << "\t cause_overwrite " <<
       test_case.cause_overwrite);
-    scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+    std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
     bool exclusive = false;
     bool recursive = true;
@@ -1421,7 +1428,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCopyOrMoveFileSuccess) {
 TEST_F(ObfuscatedFileUtilTest, TestCopyPathQuotas) {
   FileSystemURL src_url = CreateURLFromUTF8("src path");
   FileSystemURL dest_url = CreateURLFromUTF8("destination path");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   bool created = false;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(context.get(), src_url, &created));
@@ -1451,7 +1458,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCopyPathQuotas) {
 TEST_F(ObfuscatedFileUtilTest, TestMovePathQuotasWithRename) {
   FileSystemURL src_url = CreateURLFromUTF8("src path");
   FileSystemURL dest_url = CreateURLFromUTF8("destination path");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   bool created = false;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(context.get(), src_url, &created));
@@ -1487,7 +1494,7 @@ TEST_F(ObfuscatedFileUtilTest, TestMovePathQuotasWithRename) {
 
 TEST_F(ObfuscatedFileUtilTest, TestMovePathQuotasWithoutRename) {
   FileSystemURL src_url = CreateURLFromUTF8("src path");
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   bool created = false;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(context.get(), src_url, &created));
@@ -1504,7 +1511,7 @@ TEST_F(ObfuscatedFileUtilTest, TestMovePathQuotasWithoutRename) {
       dir_url, src_url.path().value());
 
   bool is_copy = false;
-  int64 allowed_bytes_growth = -1000;  // Over quota, this should still work.
+  int64_t allowed_bytes_growth = -1000;  // Over quota, this should still work.
   // Move, no rename, no overwrite.
   context.reset(NewContext(NULL));
   context->set_allowed_bytes_growth(allowed_bytes_growth);
@@ -1534,7 +1541,7 @@ TEST_F(ObfuscatedFileUtilTest, TestCopyInForeignFile) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestEnumerator) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   FileSystemURL src_url = CreateURLFromUTF8("source dir");
   bool exclusive = true;
   bool recursive = false;
@@ -1564,8 +1571,8 @@ TEST_F(ObfuscatedFileUtilTest, TestEnumerator) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestOriginEnumerator) {
-  scoped_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator>
-      enumerator(ofu()->CreateOriginEnumerator());
+  std::unique_ptr<ObfuscatedFileUtil::AbstractOriginEnumerator> enumerator(
+      ofu()->CreateOriginEnumerator());
   // The test helper starts out with a single filesystem.
   EXPECT_TRUE(enumerator.get());
   EXPECT_EQ(origin(), enumerator->Next());
@@ -1587,9 +1594,9 @@ TEST_F(ObfuscatedFileUtilTest, TestOriginEnumerator) {
     GURL origin_url(record.origin_url);
     origins_expected.insert(origin_url);
     if (record.has_temporary) {
-      scoped_ptr<SandboxFileSystemTestHelper> file_system(
+      std::unique_ptr<SandboxFileSystemTestHelper> file_system(
           NewFileSystem(origin_url, kFileSystemTypeTemporary));
-      scoped_ptr<FileSystemOperationContext> context(
+      std::unique_ptr<FileSystemOperationContext> context(
           NewContext(file_system.get()));
       bool created = false;
       ASSERT_EQ(base::File::FILE_OK,
@@ -1600,9 +1607,9 @@ TEST_F(ObfuscatedFileUtilTest, TestOriginEnumerator) {
       EXPECT_TRUE(created);
     }
     if (record.has_persistent) {
-      scoped_ptr<SandboxFileSystemTestHelper> file_system(
+      std::unique_ptr<SandboxFileSystemTestHelper> file_system(
           NewFileSystem(origin_url, kFileSystemTypePersistent));
-      scoped_ptr<FileSystemOperationContext> context(
+      std::unique_ptr<FileSystemOperationContext> context(
           NewContext(file_system.get()));
       bool created = false;
       ASSERT_EQ(base::File::FILE_OK,
@@ -1625,7 +1632,7 @@ TEST_F(ObfuscatedFileUtilTest, TestOriginEnumerator) {
         ++i) {
       const OriginEnumerationTestRecord& record =
           kOriginEnumerationTestRecords[i];
-      if (GURL(record.origin_url) != origin_url)
+      if (origin_url != record.origin_url)
         continue;
       found = true;
       EXPECT_EQ(record.has_temporary,
@@ -1653,9 +1660,9 @@ TEST_F(ObfuscatedFileUtilTest, TestOriginEnumerator) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestRevokeUsageCache) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
 
-  int64 expected_quota = 0;
+  int64_t expected_quota = 0;
 
   for (size_t i = 0; i < kRegularFileSystemTestCaseSize; ++i) {
     SCOPED_TRACE(testing::Message() << "Creating kRegularTestCase " << i);
@@ -1702,7 +1709,7 @@ TEST_F(ObfuscatedFileUtilTest, TestInconsistency) {
   const FileSystemURL kPath1 = CreateURLFromUTF8("hoge");
   const FileSystemURL kPath2 = CreateURLFromUTF8("fuga");
 
-  scoped_ptr<FileSystemOperationContext> context;
+  std::unique_ptr<FileSystemOperationContext> context;
   base::File::Info file_info;
   base::FilePath data_path;
   bool created = false;
@@ -1780,7 +1787,7 @@ TEST_F(ObfuscatedFileUtilTest, TestIncompleteDirectoryReading) {
     CreateURLFromUTF8("baz")
   };
   const FileSystemURL empty_path = CreateURL(base::FilePath());
-  scoped_ptr<FileSystemOperationContext> context;
+  std::unique_ptr<FileSystemOperationContext> context;
 
   for (size_t i = 0; i < arraysize(kPath); ++i) {
     bool created = false;
@@ -1809,7 +1816,7 @@ TEST_F(ObfuscatedFileUtilTest, TestIncompleteDirectoryReading) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestDirectoryTimestampForCreation) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   const FileSystemURL dir_url = CreateURLFromUTF8("foo_dir");
 
   // Create working directory.
@@ -1934,7 +1941,7 @@ TEST_F(ObfuscatedFileUtilTest, TestDirectoryTimestampForCreation) {
 }
 
 TEST_F(ObfuscatedFileUtilTest, TestDirectoryTimestampForDeletion) {
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   const FileSystemURL dir_url = CreateURLFromUTF8("foo_dir");
 
   // Create working directory.
@@ -2008,7 +2015,7 @@ TEST_F(ObfuscatedFileUtilTest, TestFileEnumeratorTimestamp) {
   FileSystemURL url1 = FileSystemURLAppendUTF8(dir, "bar");
   FileSystemURL url2 = FileSystemURLAppendUTF8(dir, "baz");
 
-  scoped_ptr<FileSystemOperationContext> context(NewContext(NULL));
+  std::unique_ptr<FileSystemOperationContext> context(NewContext(NULL));
   EXPECT_EQ(base::File::FILE_OK,
             ofu()->CreateDirectory(context.get(), dir, false, false));
 
@@ -2035,8 +2042,8 @@ TEST_F(ObfuscatedFileUtilTest, TestFileEnumeratorTimestamp) {
                          base::Time()));
 
   context.reset(NewContext(NULL));
-  scoped_ptr<storage::FileSystemFileUtil::AbstractFileEnumerator> file_enum(
-      ofu()->CreateFileEnumerator(context.get(), dir, false));
+  std::unique_ptr<storage::FileSystemFileUtil::AbstractFileEnumerator>
+      file_enum(ofu()->CreateFileEnumerator(context.get(), dir, false));
 
   int count = 0;
   base::FilePath file_path_each;
@@ -2072,7 +2079,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
   FileSystemURL to_file2(CreateURLFromUTF8("tofile2"));
   bool created;
 
-  int64 expected_total_file_size = 0;
+  int64_t expected_total_file_size = 0;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(
                 AllowUsageIncrease(PathCost(from_file))->context(),
@@ -2087,7 +2094,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
   ASSERT_TRUE(created);
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 from_file_size = 1020;
+  int64_t from_file_size = 1020;
   expected_total_file_size += from_file_size;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->Truncate(
@@ -2095,7 +2102,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
                 from_file, from_file_size));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 obstacle_file_size = 1;
+  int64_t obstacle_file_size = 1;
   expected_total_file_size += obstacle_file_size;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->Truncate(
@@ -2103,7 +2110,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
                 obstacle_file, obstacle_file_size));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 to_file1_size = from_file_size;
+  int64_t to_file1_size = from_file_size;
   expected_total_file_size += to_file1_size;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->CopyOrMoveFile(
@@ -2122,7 +2129,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
                 true /* copy */));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 old_obstacle_file_size = obstacle_file_size;
+  int64_t old_obstacle_file_size = obstacle_file_size;
   obstacle_file_size = from_file_size;
   expected_total_file_size += obstacle_file_size - old_obstacle_file_size;
   ASSERT_EQ(base::File::FILE_OK,
@@ -2134,7 +2141,7 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
                 true /* copy */));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 old_from_file_size = from_file_size;
+  int64_t old_from_file_size = from_file_size;
   from_file_size = old_from_file_size - 1;
   expected_total_file_size += from_file_size - old_from_file_size;
   ASSERT_EQ(base::File::FILE_OK,
@@ -2149,8 +2156,8 @@ TEST_F(ObfuscatedFileUtilTest, MAYBE_TestQuotaOnCopyFile) {
     old_obstacle_file_size = obstacle_file_size;
     obstacle_file_size = from_file_size;
     expected_total_file_size += obstacle_file_size - old_obstacle_file_size;
-    scoped_ptr<UsageVerifyHelper> helper = AllowUsageIncrease(
-        obstacle_file_size - old_obstacle_file_size);
+    std::unique_ptr<UsageVerifyHelper> helper =
+        AllowUsageIncrease(obstacle_file_size - old_obstacle_file_size);
     helper->context()->set_allowed_bytes_growth(
         helper->context()->allowed_bytes_growth() - 1);
     ASSERT_EQ(base::File::FILE_OK,
@@ -2169,7 +2176,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnMoveFile) {
   FileSystemURL to_file(CreateURLFromUTF8("tofile"));
   bool created;
 
-  int64 expected_total_file_size = 0;
+  int64_t expected_total_file_size = 0;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->EnsureFileExists(
                 AllowUsageIncrease(PathCost(from_file))->context(),
@@ -2177,7 +2184,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnMoveFile) {
   ASSERT_TRUE(created);
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 from_file_size = 1020;
+  int64_t from_file_size = 1020;
   expected_total_file_size += from_file_size;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->Truncate(
@@ -2217,7 +2224,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnMoveFile) {
                 from_file, from_file_size));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 obstacle_file_size = 1;
+  int64_t obstacle_file_size = 1;
   expected_total_file_size += obstacle_file_size;
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->Truncate(
@@ -2225,7 +2232,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnMoveFile) {
                 obstacle_file, obstacle_file_size));
   ASSERT_EQ(expected_total_file_size, ComputeTotalFileSize());
 
-  int64 old_obstacle_file_size = obstacle_file_size;
+  int64_t old_obstacle_file_size = obstacle_file_size;
   obstacle_file_size = from_file_size;
   from_file_size = 0;
   expected_total_file_size -= old_obstacle_file_size;
@@ -2258,7 +2265,7 @@ TEST_F(ObfuscatedFileUtilTest, TestQuotaOnMoveFile) {
   obstacle_file_size = from_file_size;
   from_file_size = 0;
   expected_total_file_size -= old_obstacle_file_size;
-  scoped_ptr<FileSystemOperationContext> context =
+  std::unique_ptr<FileSystemOperationContext> context =
       LimitedContext(-old_obstacle_file_size - PathCost(from_file) - 1);
   ASSERT_EQ(base::File::FILE_OK,
             ofu()->CopyOrMoveFile(
@@ -2452,13 +2459,13 @@ TEST_F(ObfuscatedFileUtilTest, DeleteDirectoryForOriginAndType) {
   const GURL origin2("http://www.example.com:1234");
 
   // Create origin directories.
-  scoped_ptr<SandboxFileSystemTestHelper> fs1(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs1(
       NewFileSystem(origin1, kFileSystemTypeTemporary));
-  scoped_ptr<SandboxFileSystemTestHelper> fs2(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs2(
       NewFileSystem(origin1, kFileSystemTypePersistent));
-  scoped_ptr<SandboxFileSystemTestHelper> fs3(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs3(
       NewFileSystem(origin2, kFileSystemTypeTemporary));
-  scoped_ptr<SandboxFileSystemTestHelper> fs4(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs4(
       NewFileSystem(origin2, kFileSystemTypePersistent));
 
   // Make sure directories for origin1 exist.
@@ -2513,13 +2520,13 @@ TEST_F(ObfuscatedFileUtilTest, DeleteDirectoryForOriginAndType_DeleteAll) {
   const GURL origin2("http://www.example.com:1234");
 
   // Create origin directories.
-  scoped_ptr<SandboxFileSystemTestHelper> fs1(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs1(
       NewFileSystem(origin1, kFileSystemTypeTemporary));
-  scoped_ptr<SandboxFileSystemTestHelper> fs2(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs2(
       NewFileSystem(origin1, kFileSystemTypePersistent));
-  scoped_ptr<SandboxFileSystemTestHelper> fs3(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs3(
       NewFileSystem(origin2, kFileSystemTypeTemporary));
-  scoped_ptr<SandboxFileSystemTestHelper> fs4(
+  std::unique_ptr<SandboxFileSystemTestHelper> fs4(
       NewFileSystem(origin2, kFileSystemTypePersistent));
 
   // Make sure directories for origin1 exist.

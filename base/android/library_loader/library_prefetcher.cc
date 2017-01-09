@@ -4,15 +4,19 @@
 
 #include "base/android/library_loader/library_prefetcher.h"
 
+#include <stddef.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <algorithm>
 #include <utility>
 #include <vector>
 
 #include "base/macros.h"
 #include "base/posix/eintr_wrapper.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 
 namespace base {
 namespace android {
@@ -47,6 +51,13 @@ bool PathMatchesSuffix(const std::string& path) {
 // Heap allocations, syscalls and library functions are not allowed in this
 // function.
 // Returns true for success.
+#if defined(ADDRESS_SANITIZER)
+// Disable AddressSanitizer instrumentation for this function. It is touching
+// memory that hasn't been allocated by the app, though the addresses are
+// valid. Furthermore, this takes place in a child process. See crbug.com/653372
+// for the context.
+__attribute__((no_sanitize_address))
+#endif
 bool Prefetch(const std::vector<std::pair<uintptr_t, uintptr_t>>& ranges) {
   for (const auto& range : ranges) {
     const uintptr_t page_mask = kPageSize - 1;
@@ -151,6 +162,42 @@ bool NativeLibraryPrefetcher::ForkAndPrefetchNativeLibrary() {
     }
     return false;
   }
+}
+
+// static
+int NativeLibraryPrefetcher::PercentageOfResidentCode(
+    const std::vector<AddressRange>& ranges) {
+  size_t total_pages = 0;
+  size_t resident_pages = 0;
+  const uintptr_t page_mask = kPageSize - 1;
+
+  for (const auto& range : ranges) {
+    if (range.first & page_mask || range.second & page_mask)
+      return -1;
+    size_t length = range.second - range.first;
+    size_t pages = length / kPageSize;
+    total_pages += pages;
+    std::vector<unsigned char> is_page_resident(pages);
+    int err = mincore(reinterpret_cast<void*>(range.first), length,
+                      &is_page_resident[0]);
+    DPCHECK(!err);
+    if (err)
+      return -1;
+    resident_pages +=
+        std::count_if(is_page_resident.begin(), is_page_resident.end(),
+                      [](unsigned char x) { return x & 1; });
+  }
+  if (total_pages == 0)
+    return -1;
+  return static_cast<int>((100 * resident_pages) / total_pages);
+}
+
+// static
+int NativeLibraryPrefetcher::PercentageOfResidentNativeLibraryCode() {
+  std::vector<AddressRange> ranges;
+  if (!FindRanges(&ranges))
+    return -1;
+  return PercentageOfResidentCode(ranges);
 }
 
 }  // namespace android

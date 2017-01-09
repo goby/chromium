@@ -21,6 +21,7 @@
 #       //content/public/app:both_sources (source set)
 
 import("//build/config/chrome_build.gni")
+import("//services/service_manager/public/service_manifest.gni")
 
 public_app_shared_sources = [
   "content_jni_onload.h",
@@ -36,6 +37,9 @@ public_app_shared_deps = [
   "//base:i18n",
   "//content:export",
   "//content/public/common:common_sources",
+  "//content/public/gpu:gpu_sources",
+  "//content/public/renderer:renderer_sources",
+  "//content/public/utility:utility_sources",
 ]
 
 if (is_component_build) {
@@ -51,21 +55,27 @@ if (is_component_build) {
              "//content/app:both",
              "//content/public/browser:browser_sources",
            ]
+
+    allow_circular_includes_from = [
+      # This target is a pair with the non-public version. They always go
+      # together and include headers from each other.
+      "//content/app:both",
+    ]
   }
 
   # These all just forward to content, which in turn depends on "both_sources".
   group("browser") {
-    deps = [
+    public_deps = [
       "//content",
     ]
   }
   group("child") {
-    deps = [
+    public_deps = [
       "//content",
     ]
   }
   group("both") {
-    deps = [
+    public_deps = [
       "//content",
     ]
   }
@@ -91,6 +101,12 @@ if (is_component_build) {
              "//content/public/browser",
              "//content/public/common",
            ]
+
+    allow_circular_includes_from = [
+      # This target is a pair with the non-public version. They always go
+      # together and include headers from each other.
+      "//content/app:both",
+    ]
   }
 
   if (is_multi_dll_chrome) {
@@ -107,6 +123,12 @@ if (is_component_build) {
                "//content/public/browser",
                "//content/public/common",
              ]
+
+      allow_circular_includes_from = [
+        # This target is a pair with the non-public version. They always go
+        # together and include headers from each other.
+        "//content/app:browser",
+      ]
     }
 
     source_set("child") {
@@ -121,6 +143,12 @@ if (is_component_build) {
                "//content/app:child",
                "//content/public/common",
              ]
+
+      allow_circular_includes_from = [
+        # This target is a pair with the non-public version. They always go
+        # together and include headers from each other.
+        "//content/app:child",
+      ]
     }
   } else {
     # When the multi-DLL build is disabled, there is only one type of the
@@ -136,4 +164,39 @@ if (is_component_build) {
       ]
     }
   }
+}
+
+service_manifest("browser_manifest") {
+  name = "content_browser"
+  source = "mojo/content_browser_manifest.json"
+  packaged_services = [
+    "device",
+    "file",
+    "media",
+  ]
+  deps = [
+    "//media/mojo/services:media_manifest",
+    "//services/device:manifest",
+    "//services/file:manifest",
+  ]
+}
+
+service_manifest("gpu_manifest") {
+  name = "content_gpu"
+  source = "mojo/content_gpu_manifest.json"
+}
+
+service_manifest("plugin_manifest") {
+  name = "content_plugin"
+  source = "mojo/content_plugin_manifest.json"
+}
+
+service_manifest("renderer_manifest") {
+  name = "content_renderer"
+  source = "mojo/content_renderer_manifest.json"
+}
+
+service_manifest("utility_manifest") {
+  name = "content_utility"
+  source = "mojo/content_utility_manifest.json"
 }

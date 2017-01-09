@@ -6,6 +6,7 @@
 #include <string>
 
 #include "base/callback_helpers.h"
+#include "blimp/common/create_blimp_message.h"
 #include "blimp/common/proto/blimp_message.pb.h"
 #include "blimp/net/blimp_message_pump.h"
 #include "blimp/net/common.h"
@@ -30,24 +31,27 @@ namespace {
 
 class BlimpMessagePumpTest : public testing::Test {
  public:
-  BlimpMessagePumpTest()
-      : message1_(new BlimpMessage), message2_(new BlimpMessage) {
-    message1_->set_type(BlimpMessage::INPUT);
-    message2_->set_type(BlimpMessage::CONTROL);
+  BlimpMessagePumpTest() {
+    TabControlMessage* tab_control = nullptr;
+    message1_ = CreateBlimpMessage(&tab_control);
+    InputMessage* input = nullptr;
+    message2_ = CreateBlimpMessage(&input);
     message_pump_.reset(new BlimpMessagePump(&reader_));
     message_pump_->set_error_observer(&error_observer_);
   }
 
   ~BlimpMessagePumpTest() override {}
 
+  void NullMessageProcessor() { message_pump_->SetMessageProcessor(nullptr); }
+
  protected:
-  scoped_ptr<BlimpMessage> message1_;
-  scoped_ptr<BlimpMessage> message2_;
+  std::unique_ptr<BlimpMessage> message1_;
+  std::unique_ptr<BlimpMessage> message2_;
 
   testing::StrictMock<MockPacketReader> reader_;
   testing::StrictMock<MockConnectionErrorObserver> error_observer_;
   testing::StrictMock<MockBlimpMessageProcessor> receiver_;
-  scoped_ptr<BlimpMessagePump> message_pump_;
+  std::unique_ptr<BlimpMessagePump> message_pump_;
 };
 
 // Reader completes reading one packet asynchronously.
@@ -56,7 +60,6 @@ TEST_F(BlimpMessagePumpTest, ReadPacket) {
   EXPECT_CALL(reader_, ReadPacket(NotNull(), _));
   EXPECT_CALL(reader_, ReadPacket(NotNull(), _))
       .WillOnce(DoAll(FillBufferFromMessage<0>(message1_.get()),
-                      SetBufferOffset<0>(message1_->ByteSize()),
                       SaveArg<1>(&read_packet_cb)))
       .RetiresOnSaturation();
   net::CompletionCallback process_msg_cb;
@@ -64,7 +67,7 @@ TEST_F(BlimpMessagePumpTest, ReadPacket) {
       .WillOnce(SaveArg<1>(&process_msg_cb));
   message_pump_->SetMessageProcessor(&receiver_);
   ASSERT_FALSE(read_packet_cb.is_null());
-  base::ResetAndReturn(&read_packet_cb).Run(net::OK);
+  base::ResetAndReturn(&read_packet_cb).Run(message1_->ByteSize());
   process_msg_cb.Run(net::OK);
 }
 
@@ -73,10 +76,8 @@ TEST_F(BlimpMessagePumpTest, ReadTwoPackets) {
   net::CompletionCallback read_packet_cb;
   EXPECT_CALL(reader_, ReadPacket(NotNull(), _))
       .WillOnce(DoAll(FillBufferFromMessage<0>(message1_.get()),
-                      SetBufferOffset<0>(message1_->ByteSize()),
                       SaveArg<1>(&read_packet_cb)))
       .WillOnce(DoAll(FillBufferFromMessage<0>(message2_.get()),
-                      SetBufferOffset<0>(message2_->ByteSize()),
                       SaveArg<1>(&read_packet_cb)));
   net::CompletionCallback process_msg_cb;
   {
@@ -88,12 +89,12 @@ TEST_F(BlimpMessagePumpTest, ReadTwoPackets) {
   }
   message_pump_->SetMessageProcessor(&receiver_);
   ASSERT_FALSE(read_packet_cb.is_null());
-  base::ResetAndReturn(&read_packet_cb).Run(net::OK);
+  base::ResetAndReturn(&read_packet_cb).Run(message1_->ByteSize());
 
   // Trigger next packet read
   process_msg_cb.Run(net::OK);
   ASSERT_FALSE(read_packet_cb.is_null());
-  base::ResetAndReturn(&read_packet_cb).Run(net::OK);
+  base::ResetAndReturn(&read_packet_cb).Run(message2_->ByteSize());
 }
 
 // Reader completes reading two packets asynchronously.
@@ -103,10 +104,8 @@ TEST_F(BlimpMessagePumpTest, ReadTwoPacketsWithError) {
   net::CompletionCallback read_packet_cb;
   EXPECT_CALL(reader_, ReadPacket(NotNull(), _))
       .WillOnce(DoAll(FillBufferFromMessage<0>(message1_.get()),
-                      SetBufferOffset<0>(message1_->ByteSize()),
                       SaveArg<1>(&read_packet_cb)))
       .WillOnce(DoAll(FillBufferFromMessage<0>(message2_.get()),
-                      SetBufferOffset<0>(message2_->ByteSize()),
                       SaveArg<1>(&read_packet_cb)));
   EXPECT_CALL(receiver_, MockableProcessMessage(EqualsProto(*message1_), _))
       .WillOnce(SaveArg<1>(&process_msg_cb));
@@ -114,7 +113,7 @@ TEST_F(BlimpMessagePumpTest, ReadTwoPacketsWithError) {
 
   message_pump_->SetMessageProcessor(&receiver_);
   ASSERT_FALSE(read_packet_cb.is_null());
-  base::ResetAndReturn(&read_packet_cb).Run(net::OK);
+  base::ResetAndReturn(&read_packet_cb).Run(message1_->ByteSize());
 
   // Trigger next packet read
   process_msg_cb.Run(net::OK);
@@ -128,13 +127,37 @@ TEST_F(BlimpMessagePumpTest, InvalidPacket) {
   std::string test_msg("msg");
   EXPECT_CALL(reader_, ReadPacket(NotNull(), _))
       .WillOnce(DoAll(FillBufferFromString<0>(test_msg),
-                      SetBufferOffset<0>(test_msg.size()),
                       SaveArg<1>(&read_packet_cb)));
   EXPECT_CALL(error_observer_, OnConnectionError(net::ERR_FAILED));
 
   message_pump_->SetMessageProcessor(&receiver_);
   ASSERT_FALSE(read_packet_cb.is_null());
-  base::ResetAndReturn(&read_packet_cb).Run(net::OK);
+  base::ResetAndReturn(&read_packet_cb).Run(message1_->ByteSize());
+}
+
+// Outgoing MessageProcessor can be set to NULL if no read is pending.
+// This test NULLs the outgoing processor from within ProcessMessage().
+TEST_F(BlimpMessagePumpTest, NullMessageProcessor) {
+  // Set up a ReadPacket expectation to return one message to process.
+  net::CompletionCallback read_packet_cb;
+  EXPECT_CALL(reader_, ReadPacket(NotNull(), _))
+      .WillOnce(DoAll(FillBufferFromMessage<0>(message1_.get()),
+                      SaveArg<1>(&read_packet_cb)))
+      .RetiresOnSaturation();
+
+  // Set up a ProcessMessage expectation to NULL the outgoing processor.
+  net::CompletionCallback process_msg_cb;
+  EXPECT_CALL(receiver_, MockableProcessMessage(EqualsProto(*message1_), _))
+      .WillOnce(DoAll(
+          InvokeWithoutArgs(this, &BlimpMessagePumpTest::NullMessageProcessor),
+          SaveArg<1>(&process_msg_cb)));
+
+  // Set the outgoing processor to start the MessagePump.
+  message_pump_->SetMessageProcessor(&receiver_);
+  ASSERT_FALSE(read_packet_cb.is_null());
+  base::ResetAndReturn(&read_packet_cb).Run(message1_->ByteSize());
+  process_msg_cb.Run(net::OK);
+  // Running |process_msg_cb| should NOT trigger another ReadPacket call.
 }
 
 }  // namespace

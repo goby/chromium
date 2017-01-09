@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/ui/echo_dialog_view.h"
 
+#include <stddef.h>
+
 #include "chrome/browser/chromeos/ui/echo_dialog_listener.h"
 #include "chrome/grit/generated_resources.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -169,10 +171,9 @@ gfx::Size EchoDialogView::GetPreferredSize() const {
 }
 
 void EchoDialogView::SetLabelBorderAndBounds() {
-  label_->SetBorder(views::Border::CreateEmptyBorder(kDialogLabelTopInset,
-                                                     kDialogLabelLeftInset,
-                                                     kDialogLabelBottomInset,
-                                                     kDialogLabelRightInset));
+  label_->SetBorder(views::CreateEmptyBorder(
+      kDialogLabelTopInset, kDialogLabelLeftInset, kDialogLabelBottomInset,
+      kDialogLabelRightInset));
 
   label_->SetBounds(label_->x(),
                     label_->y(),

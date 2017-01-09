@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/platform/WebCursorInfo.h"
 
 #include "platform/Cursor.h"
@@ -36,14 +35,15 @@
 namespace blink {
 
 WebCursorInfo::WebCursorInfo(const Cursor& cursor)
-    : type(static_cast<Type>(cursor.type()))
-    , hotSpot(cursor.hotSpot())
-    , imageScaleFactor(cursor.imageScaleFactor())
-    , customImage(cursor.image())
+    : type(static_cast<Type>(cursor.getType())),
+      hotSpot(cursor.hotSpot()),
+      imageScaleFactor(cursor.imageScaleFactor()),
+      customImage(cursor.getImage())
 #ifdef WIN32
-    , externalHandle(0)
+      ,
+      externalHandle(0)
 #endif
 {
 }
 
-} // namespace blink
+}  // namespace blink

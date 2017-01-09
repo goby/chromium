@@ -5,6 +5,8 @@
 #ifndef UI_GFX_GEOMETRY_QUAD_F_H_
 #define UI_GFX_GEOMETRY_QUAD_F_H_
 
+#include <stddef.h>
+
 #include <algorithm>
 #include <cmath>
 #include <iosfwd>
@@ -21,14 +23,14 @@ namespace gfx {
 // axis-aligned, unlike a Rect.
 class GFX_EXPORT QuadF {
  public:
-  QuadF() {}
-  QuadF(const PointF& p1, const PointF& p2, const PointF& p3, const PointF& p4)
-      : p1_(p1),
-        p2_(p2),
-        p3_(p3),
-        p4_(p4) {}
+  constexpr QuadF() = default;
+  constexpr QuadF(const PointF& p1,
+                  const PointF& p2,
+                  const PointF& p3,
+                  const PointF& p4)
+      : p1_(p1), p2_(p2), p3_(p3), p4_(p4) {}
 
-  explicit QuadF(const RectF& rect)
+  constexpr explicit QuadF(const RectF& rect)
       : p1_(rect.x(), rect.y()),
         p2_(rect.right(), rect.y()),
         p3_(rect.right(), rect.bottom()),
@@ -41,10 +43,10 @@ class GFX_EXPORT QuadF {
   void set_p3(const PointF& p) { p3_ = p; }
   void set_p4(const PointF& p) { p4_ = p; }
 
-  const PointF& p1() const { return p1_; }
-  const PointF& p2() const { return p2_; }
-  const PointF& p3() const { return p3_; }
-  const PointF& p4() const { return p4_; }
+  constexpr const PointF& p1() const { return p1_; }
+  constexpr const PointF& p2() const { return p2_; }
+  constexpr const PointF& p3() const { return p3_; }
+  constexpr const PointF& p4() const { return p4_; }
 
   // Returns true if the quad is an axis-aligned rectangle.
   bool IsRectilinear() const;
@@ -119,8 +121,8 @@ GFX_EXPORT QuadF operator+(const QuadF& lhs, const Vector2dF& rhs);
 GFX_EXPORT QuadF operator-(const QuadF& lhs, const Vector2dF& rhs);
 
 // This is declared here for use in gtest-based unit tests but is defined in
-// the gfx_test_support target. Depend on that to use this in your unit test.
-// This should not be used in production code - call ToString() instead.
+// the //ui/gfx:test_support target. Depend on that to use this in your unit
+// test. This should not be used in production code - call ToString() instead.
 void PrintTo(const QuadF& quad, ::std::ostream* os);
 
 }  // namespace gfx

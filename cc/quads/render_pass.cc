@@ -4,9 +4,13 @@
 
 #include "cc/quads/render_pass.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
+#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "base/trace_event/trace_event.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
 #include "cc/base/math_util.h"
@@ -14,7 +18,6 @@
 #include "cc/output/copy_output_request.h"
 #include "cc/quads/debug_border_draw_quad.h"
 #include "cc/quads/draw_quad.h"
-#include "cc/quads/io_surface_draw_quad.h"
 #include "cc/quads/largest_draw_quad.h"
 #include "cc/quads/picture_draw_quad.h"
 #include "cc/quads/render_pass_draw_quad.h"
@@ -33,30 +36,33 @@ const size_t kDefaultNumQuadsToReserve = 128;
 
 namespace cc {
 
+QuadList::QuadList()
+    : ListContainer<DrawQuad>(LargestDrawQuadSize(),
+                              kDefaultNumSharedQuadStatesToReserve) {}
+
 QuadList::QuadList(size_t default_size_to_reserve)
     : ListContainer<DrawQuad>(LargestDrawQuadSize(), default_size_to_reserve) {
 }
 
-scoped_ptr<RenderPass> RenderPass::Create() {
-  return make_scoped_ptr(new RenderPass());
+std::unique_ptr<RenderPass> RenderPass::Create() {
+  return base::WrapUnique(new RenderPass());
 }
 
-scoped_ptr<RenderPass> RenderPass::Create(size_t num_layers) {
-  return make_scoped_ptr(new RenderPass(num_layers));
+std::unique_ptr<RenderPass> RenderPass::Create(size_t num_layers) {
+  return base::WrapUnique(new RenderPass(num_layers));
 }
 
-scoped_ptr<RenderPass> RenderPass::Create(size_t shared_quad_state_list_size,
-                                          size_t quad_list_size) {
-  return make_scoped_ptr(
+std::unique_ptr<RenderPass> RenderPass::Create(
+    size_t shared_quad_state_list_size,
+    size_t quad_list_size) {
+  return base::WrapUnique(
       new RenderPass(shared_quad_state_list_size, quad_list_size));
 }
 
 RenderPass::RenderPass()
-    : has_transparent_background(true),
-      quad_list(kDefaultNumQuadsToReserve),
+    : quad_list(kDefaultNumQuadsToReserve),
       shared_quad_state_list(sizeof(SharedQuadState),
-                             kDefaultNumSharedQuadStatesToReserve) {
-}
+                             kDefaultNumSharedQuadStatesToReserve) {}
 
 // Each layer usually produces one shared quad state, so the number of layers
 // is a good hint for what to reserve here.
@@ -76,12 +82,12 @@ RenderPass::RenderPass(size_t shared_quad_state_list_size,
 
 RenderPass::~RenderPass() {
   TRACE_EVENT_OBJECT_DELETED_WITH_ID(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"),
-      "cc::RenderPass", id.AsTracingId());
+      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), "cc::RenderPass",
+      reinterpret_cast<void*>(id));
 }
 
-scoped_ptr<RenderPass> RenderPass::Copy(RenderPassId new_id) const {
-  scoped_ptr<RenderPass> copy_pass(
+std::unique_ptr<RenderPass> RenderPass::Copy(int new_id) const {
+  std::unique_ptr<RenderPass> copy_pass(
       Create(shared_quad_state_list.size(), quad_list.size()));
   copy_pass->SetAll(new_id,
                     output_rect,
@@ -91,58 +97,57 @@ scoped_ptr<RenderPass> RenderPass::Copy(RenderPassId new_id) const {
   return copy_pass;
 }
 
-// static
-void RenderPass::CopyAll(const std::vector<scoped_ptr<RenderPass>>& in,
-                         std::vector<scoped_ptr<RenderPass>>* out) {
-  for (const auto& source : in) {
-    // Since we can't copy these, it's wrong to use CopyAll in a situation where
-    // you may have copy_requests present.
-    DCHECK_EQ(source->copy_requests.size(), 0u);
+std::unique_ptr<RenderPass> RenderPass::DeepCopy() const {
+  // Since we can't copy these, it's wrong to use DeepCopy in a situation where
+  // you may have copy_requests present.
+  DCHECK_EQ(copy_requests.size(), 0u);
 
-    scoped_ptr<RenderPass> copy_pass(Create(
-        source->shared_quad_state_list.size(), source->quad_list.size()));
-    copy_pass->SetAll(source->id,
-                      source->output_rect,
-                      source->damage_rect,
-                      source->transform_to_root_target,
-                      source->has_transparent_background);
-    for (const auto& shared_quad_state : source->shared_quad_state_list) {
-      SharedQuadState* copy_shared_quad_state =
-          copy_pass->CreateAndAppendSharedQuadState();
-      copy_shared_quad_state->CopyFrom(shared_quad_state);
-    }
-    SharedQuadStateList::Iterator sqs_iter =
-        source->shared_quad_state_list.begin();
-    SharedQuadStateList::Iterator copy_sqs_iter =
-        copy_pass->shared_quad_state_list.begin();
-    for (const auto& quad : source->quad_list) {
-      while (quad->shared_quad_state != *sqs_iter) {
-        ++sqs_iter;
-        ++copy_sqs_iter;
-        DCHECK(sqs_iter != source->shared_quad_state_list.end());
-      }
-      DCHECK(quad->shared_quad_state == *sqs_iter);
-
-      SharedQuadState* copy_shared_quad_state = *copy_sqs_iter;
-
-      if (quad->material == DrawQuad::RENDER_PASS) {
-        const RenderPassDrawQuad* pass_quad =
-            RenderPassDrawQuad::MaterialCast(quad);
-        copy_pass->CopyFromAndAppendRenderPassDrawQuad(
-            pass_quad, copy_shared_quad_state, pass_quad->render_pass_id);
-      } else {
-        copy_pass->CopyFromAndAppendDrawQuad(quad, copy_shared_quad_state);
-      }
-    }
-    out->push_back(std::move(copy_pass));
+  std::unique_ptr<RenderPass> copy_pass(
+      Create(shared_quad_state_list.size(), quad_list.size()));
+  copy_pass->SetAll(id, output_rect, damage_rect, transform_to_root_target,
+                    has_transparent_background);
+  for (auto* shared_quad_state : shared_quad_state_list) {
+    SharedQuadState* copy_shared_quad_state =
+        copy_pass->CreateAndAppendSharedQuadState();
+    *copy_shared_quad_state = *shared_quad_state;
   }
+  SharedQuadStateList::ConstIterator sqs_iter = shared_quad_state_list.begin();
+  SharedQuadStateList::Iterator copy_sqs_iter =
+      copy_pass->shared_quad_state_list.begin();
+  for (auto* quad : quad_list) {
+    while (quad->shared_quad_state != *sqs_iter) {
+      ++sqs_iter;
+      ++copy_sqs_iter;
+      DCHECK(sqs_iter != shared_quad_state_list.end());
+    }
+    DCHECK(quad->shared_quad_state == *sqs_iter);
+
+    SharedQuadState* copy_shared_quad_state = *copy_sqs_iter;
+
+    if (quad->material == DrawQuad::RENDER_PASS) {
+      const RenderPassDrawQuad* pass_quad =
+          RenderPassDrawQuad::MaterialCast(quad);
+      copy_pass->CopyFromAndAppendRenderPassDrawQuad(
+          pass_quad, copy_shared_quad_state, pass_quad->render_pass_id);
+    } else {
+      copy_pass->CopyFromAndAppendDrawQuad(quad, copy_shared_quad_state);
+    }
+  }
+  return copy_pass;
 }
 
-void RenderPass::SetNew(RenderPassId id,
+// static
+void RenderPass::CopyAll(const std::vector<std::unique_ptr<RenderPass>>& in,
+                         std::vector<std::unique_ptr<RenderPass>>* out) {
+  for (const auto& source : in)
+    out->push_back(source->DeepCopy());
+}
+
+void RenderPass::SetNew(int id,
                         const gfx::Rect& output_rect,
                         const gfx::Rect& damage_rect,
                         const gfx::Transform& transform_to_root_target) {
-  DCHECK(id.IsValid());
+  DCHECK(id);
   DCHECK(damage_rect.IsEmpty() || output_rect.Contains(damage_rect))
       << "damage_rect: " << damage_rect.ToString()
       << " output_rect: " << output_rect.ToString();
@@ -156,12 +161,12 @@ void RenderPass::SetNew(RenderPassId id,
   DCHECK(shared_quad_state_list.empty());
 }
 
-void RenderPass::SetAll(RenderPassId id,
+void RenderPass::SetAll(int id,
                         const gfx::Rect& output_rect,
                         const gfx::Rect& damage_rect,
                         const gfx::Transform& transform_to_root_target,
                         bool has_transparent_background) {
-  DCHECK(id.IsValid());
+  DCHECK(id);
 
   this->id = id;
   this->output_rect = output_rect;
@@ -182,7 +187,7 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
                     base::saturated_cast<int>(copy_requests.size()));
 
   value->BeginArray("shared_quad_state_list");
-  for (const auto& shared_quad_state : shared_quad_state_list) {
+  for (auto* shared_quad_state : shared_quad_state_list) {
     value->BeginDictionary();
     shared_quad_state->AsValueInto(value);
     value->EndDictionary();
@@ -190,7 +195,7 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
   value->EndArray();
 
   value->BeginArray("quad_list");
-  for (const auto& quad : quad_list) {
+  for (auto* quad : quad_list) {
     value->BeginDictionary();
     quad->AsValueInto(value);
     value->EndDictionary();
@@ -198,10 +203,8 @@ void RenderPass::AsValueInto(base::trace_event::TracedValue* value) const {
   value->EndArray();
 
   TracedValue::MakeDictIntoImplicitSnapshotWithCategory(
-      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"),
-      value,
-      "cc::RenderPass",
-      id.AsTracingId());
+      TRACE_DISABLED_BY_DEFAULT("cc.debug.quads"), value, "cc::RenderPass",
+      reinterpret_cast<void*>(id));
 }
 
 SharedQuadState* RenderPass::CreateAndAppendSharedQuadState() {
@@ -211,7 +214,7 @@ SharedQuadState* RenderPass::CreateAndAppendSharedQuadState() {
 RenderPassDrawQuad* RenderPass::CopyFromAndAppendRenderPassDrawQuad(
     const RenderPassDrawQuad* quad,
     const SharedQuadState* shared_quad_state,
-    RenderPassId render_pass_id) {
+    int render_pass_id) {
   RenderPassDrawQuad* copy_quad =
       CopyFromAndAppendTypedDrawQuad<RenderPassDrawQuad>(quad);
   copy_quad->shared_quad_state = shared_quad_state;
@@ -225,9 +228,6 @@ DrawQuad* RenderPass::CopyFromAndAppendDrawQuad(
   switch (quad->material) {
     case DrawQuad::DEBUG_BORDER:
       CopyFromAndAppendTypedDrawQuad<DebugBorderDrawQuad>(quad);
-      break;
-    case DrawQuad::IO_SURFACE_CONTENT:
-      CopyFromAndAppendTypedDrawQuad<IOSurfaceDrawQuad>(quad);
       break;
     case DrawQuad::PICTURE_CONTENT:
       CopyFromAndAppendTypedDrawQuad<PictureDrawQuad>(quad);

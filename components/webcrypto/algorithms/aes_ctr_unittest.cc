@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/test_helpers.h"
@@ -20,15 +24,13 @@ blink::WebCryptoAlgorithm CreateAesCtrAlgorithm(
     uint8_t length_bits) {
   return blink::WebCryptoAlgorithm::adoptParamsAndCreate(
       blink::WebCryptoAlgorithmIdAesCtr,
-      new blink::WebCryptoAesCtrParams(
-          length_bits, counter.data(),
-          static_cast<unsigned int>(counter.size())));
+      new blink::WebCryptoAesCtrParams(length_bits, counter));
 }
 
 class WebCryptoAesCtrTest : public WebCryptoTestBase {};
 
 TEST_F(WebCryptoAesCtrTest, EncryptDecryptKnownAnswer) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("aes_ctr.json", &tests));
 
   for (size_t test_index = 0; test_index < tests->GetSize(); ++test_index) {
@@ -73,7 +75,7 @@ TEST_F(WebCryptoAesCtrTest, InvalidCounterBlockLength) {
   const unsigned int kBadCounterBlockLengthBytes[] = {0, 15, 17};
 
   blink::WebCryptoKey key = ImportSecretKeyFromRaw(
-      std::vector<uint8>(16),  // 128-bit key of all zeros.
+      std::vector<uint8_t>(16),  // 128-bit key of all zeros.
       CreateAlgorithm(blink::WebCryptoAlgorithmIdAesCtr),
       blink::WebCryptoKeyUsageEncrypt | blink::WebCryptoKeyUsageDecrypt);
 
@@ -98,7 +100,7 @@ TEST_F(WebCryptoAesCtrTest, InvalidCounterLength) {
   const uint8_t kBadCounterLengthBits[] = {0, 129};
 
   blink::WebCryptoKey key = ImportSecretKeyFromRaw(
-      std::vector<uint8>(16),  // 128-bit key of all zeros.
+      std::vector<uint8_t>(16),  // 128-bit key of all zeros.
       CreateAlgorithm(blink::WebCryptoAlgorithmIdAesCtr),
       blink::WebCryptoKeyUsageEncrypt | blink::WebCryptoKeyUsageDecrypt);
 
@@ -131,7 +133,7 @@ TEST_F(WebCryptoAesCtrTest, OverflowAndRepeatCounter) {
   const uint8_t kStartCounter[] = {0, 1, 15};
 
   blink::WebCryptoKey key = ImportSecretKeyFromRaw(
-      std::vector<uint8>(16),  // 128-bit key of all zeros.
+      std::vector<uint8_t>(16),  // 128-bit key of all zeros.
       CreateAlgorithm(blink::WebCryptoAlgorithmIdAesCtr),
       blink::WebCryptoKeyUsageEncrypt | blink::WebCryptoKeyUsageDecrypt);
 

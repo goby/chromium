@@ -4,6 +4,8 @@
 
 #include "content/browser/web_contents/web_contents_view_guest.h"
 
+#include <utility>
+
 #include "build/build_config.h"
 #include "content/browser/browser_plugin/browser_plugin_embedder.h"
 #include "content/browser/browser_plugin/browser_plugin_guest.h"
@@ -34,11 +36,11 @@ namespace content {
 WebContentsViewGuest::WebContentsViewGuest(
     WebContentsImpl* web_contents,
     BrowserPluginGuest* guest,
-    scoped_ptr<WebContentsView> platform_view,
+    std::unique_ptr<WebContentsView> platform_view,
     RenderViewHostDelegateView** delegate_view)
     : web_contents_(web_contents),
       guest_(guest),
-      platform_view_(platform_view.Pass()),
+      platform_view_(std::move(platform_view)),
       platform_view_delegate_view_(*delegate_view) {
   *delegate_view = this;
 }
@@ -59,6 +61,13 @@ gfx::NativeView WebContentsViewGuest::GetContentNativeView() const {
 
 gfx::NativeWindow WebContentsViewGuest::GetTopLevelNativeWindow() const {
   return guest_->embedder_web_contents()->GetTopLevelNativeWindow();
+}
+
+void WebContentsViewGuest::GetScreenInfo(ScreenInfo* screen_info) const {
+  if (guest_->embedder_web_contents())
+    guest_->embedder_web_contents()->GetView()->GetScreenInfo(screen_info);
+  else
+    WebContentsView::GetDefaultScreenInfo(screen_info);
 }
 
 void WebContentsViewGuest::OnGuestAttached(WebContentsView* parent_view) {
@@ -139,9 +148,8 @@ RenderWidgetHostViewBase* WebContentsViewGuest::CreateViewForWidget(
   RenderWidgetHostViewBase* platform_widget =
       platform_view_->CreateViewForWidget(render_widget_host, true);
 
-  return new RenderWidgetHostViewGuest(render_widget_host,
-                                       guest_,
-                                       platform_widget->GetWeakPtr());
+  return RenderWidgetHostViewGuest::Create(render_widget_host, guest_,
+                                           platform_widget->GetWeakPtr());
 }
 
 RenderWidgetHostViewBase* WebContentsViewGuest::CreateViewForPopupWidget(
@@ -221,7 +229,8 @@ void WebContentsViewGuest::StartDragging(
     WebDragOperationsMask ops,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& image_offset,
-    const DragEventSourceInfo& event_info) {
+    const DragEventSourceInfo& event_info,
+    RenderWidgetHostImpl* source_rwh) {
   WebContentsImpl* embedder_web_contents = guest_->embedder_web_contents();
   embedder_web_contents->GetBrowserPluginEmbedder()->StartDrag(guest_);
   RenderViewHostImpl* embedder_render_view_host =
@@ -232,9 +241,10 @@ void WebContentsViewGuest::StartDragging(
       embedder_render_view_host->GetDelegate()->GetDelegateView();
   if (view) {
     RecordAction(base::UserMetricsAction("BrowserPlugin.Guest.StartDrag"));
-    view->StartDragging(drop_data, ops, image, image_offset, event_info);
+    view->StartDragging(
+        drop_data, ops, image, image_offset, event_info, source_rwh);
   } else {
-    embedder_web_contents->SystemDragEnded();
+    embedder_web_contents->SystemDragEnded(source_rwh);
   }
 }
 

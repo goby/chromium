@@ -4,6 +4,7 @@
 
 #include "extensions/browser/test_extension_registry_observer.h"
 
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "extensions/browser/extension_registry.h"
 
@@ -75,7 +76,6 @@ void TestExtensionRegistryObserver::OnExtensionWillBeInstalled(
     content::BrowserContext* browser_context,
     const Extension* extension,
     bool is_update,
-    bool from_ephemeral,
     const std::string& old_name) {
   if (extension_id_.empty() || extension->id() == extension_id_)
     will_be_installed_waiter_->OnObserved(extension);
@@ -105,7 +105,7 @@ void TestExtensionRegistryObserver::OnExtensionUnloaded(
 }
 
 const Extension* TestExtensionRegistryObserver::Wait(
-    scoped_ptr<Waiter>* waiter) {
+    std::unique_ptr<Waiter>* waiter) {
   waiter->get()->Wait();
   const Extension* extension = waiter->get()->extension();
   // Reset the waiter for future uses.

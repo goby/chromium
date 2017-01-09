@@ -29,9 +29,9 @@ base::string16 GetInfoHelper(const AutofillProfile& profile,
 using ::i18n::addressinput::AddressData;
 using ::i18n::addressinput::AddressField;
 
-scoped_ptr<AddressData> CreateAddressData(
+std::unique_ptr<AddressData> CreateAddressData(
     const base::Callback<base::string16(const AutofillType&)>& get_info) {
-  scoped_ptr<AddressData> address_data(new AddressData());
+  std::unique_ptr<AddressData> address_data(new AddressData());
   address_data->recipient = base::UTF16ToUTF8(
       get_info.Run(AutofillType(NAME_FULL)));
   address_data->organization = base::UTF16ToUTF8(
@@ -52,16 +52,16 @@ scoped_ptr<AddressData> CreateAddressData(
       base::UTF16ToUTF8(
           get_info.Run(AutofillType(ADDRESS_HOME_STREET_ADDRESS))),
       "\n", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  return address_data.Pass();
+  return address_data;
 }
 
-scoped_ptr< ::i18n::addressinput::AddressData>
-    CreateAddressDataFromAutofillProfile(const AutofillProfile& profile,
-                                         const std::string& app_locale) {
-  scoped_ptr< ::i18n::addressinput::AddressData> address_data =
+std::unique_ptr<::i18n::addressinput::AddressData>
+CreateAddressDataFromAutofillProfile(const AutofillProfile& profile,
+                                     const std::string& app_locale) {
+  std::unique_ptr<::i18n::addressinput::AddressData> address_data =
       i18n::CreateAddressData(base::Bind(&GetInfoHelper, profile, app_locale));
   address_data->language_code = profile.language_code();
-  return address_data.Pass();
+  return address_data;
 }
 
 ServerFieldType TypeForField(AddressField address_field, bool billing) {

@@ -22,19 +22,18 @@
  *
  */
 
-#include "config.h"
 #include "core/dom/NodeFilter.h"
 
 namespace blink {
 
-unsigned NodeFilter::acceptNode(Node* node, ExceptionState& exceptionState) const
-{
-    return m_condition ? m_condition->acceptNode(node, exceptionState) : FILTER_ACCEPT;
+unsigned NodeFilter::acceptNode(Node* node,
+                                ExceptionState& exceptionState) const {
+  return m_condition ? m_condition->acceptNode(node, exceptionState)
+                     : kFilterAccept;
 }
 
-DEFINE_TRACE(NodeFilter)
-{
-    visitor->trace(m_condition);
+DEFINE_TRACE(NodeFilter) {
+  visitor->trace(m_condition);
 }
 
-} // namespace blink
+}  // namespace blink

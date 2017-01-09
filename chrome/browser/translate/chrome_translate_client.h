@@ -5,11 +5,11 @@
 #ifndef CHROME_BROWSER_TRANSLATE_CHROME_TRANSLATE_CLIENT_H_
 #define CHROME_BROWSER_TRANSLATE_CHROME_TRANSLATE_CLIENT_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
-#include "components/translate/content/browser/browser_cld_data_provider.h"
 #include "components/translate/content/browser/content_translate_driver.h"
 #include "components/translate/core/browser/translate_client.h"
 #include "components/translate/core/browser/translate_step.h"
@@ -22,18 +22,17 @@ class BrowserContext;
 class WebContents;
 }  // namespace content
 
-namespace test {
-class ScopedCLDDynamicDataHarness;
-}  // namespace test
-
 class PrefService;
 
 namespace translate {
+class LanguageModel;
 class LanguageState;
 class TranslateAcceptLanguages;
 class TranslatePrefs;
 class TranslateManager;
 }  // namespace translate
+
+enum class ShowTranslateBubbleResult;
 
 class ChromeTranslateClient
     : public translate::TranslateClient,
@@ -53,7 +52,7 @@ class ChromeTranslateClient
   }
 
   // Helper method to return a new TranslatePrefs instance.
-  static scoped_ptr<translate::TranslatePrefs> CreateTranslatePrefs(
+  static std::unique_ptr<translate::TranslatePrefs> CreateTranslatePrefs(
       PrefService* prefs);
 
   // Helper method to return the TranslateAcceptLanguages instance associated
@@ -71,6 +70,10 @@ class ChromeTranslateClient
                                     std::string* source,
                                     std::string* target);
 
+  static void BindContentTranslateDriver(
+      content::RenderFrameHost* render_frame_host,
+      translate::mojom::ContentTranslateDriverRequest request);
+
   // Gets the associated TranslateManager.
   translate::TranslateManager* GetTranslateManager();
 
@@ -81,12 +84,13 @@ class ChromeTranslateClient
   // TranslateClient implementation.
   translate::TranslateDriver* GetTranslateDriver() override;
   PrefService* GetPrefs() override;
-  scoped_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
+  std::unique_ptr<translate::TranslatePrefs> GetTranslatePrefs() override;
   translate::TranslateAcceptLanguages* GetTranslateAcceptLanguages() override;
   int GetInfobarIconID() const override;
 #if !defined(USE_AURA)
-  scoped_ptr<infobars::InfoBar> CreateInfoBar(
-      scoped_ptr<translate::TranslateInfoBarDelegate> delegate) const override;
+  std::unique_ptr<infobars::InfoBar> CreateInfoBar(
+      std::unique_ptr<translate::TranslateInfoBarDelegate> delegate)
+      const override;
 #endif
   void ShowTranslateUI(translate::TranslateStep step,
                        const std::string& source_language,
@@ -108,18 +112,19 @@ class ChromeTranslateClient
   friend class content::WebContentsUserData<ChromeTranslateClient>;
 
   // content::WebContentsObserver implementation.
-  bool OnMessageReceived(const IPC::Message& message) override;
   void WebContentsDestroyed() override;
 
   // Shows the translate bubble.
-  void ShowBubble(translate::TranslateStep step,
-                  translate::TranslateErrors::Type error_type);
+  ShowTranslateBubbleResult ShowBubble(
+      translate::TranslateStep step,
+      translate::TranslateErrors::Type error_type);
 
   translate::ContentTranslateDriver translate_driver_;
-  scoped_ptr<translate::TranslateManager> translate_manager_;
+  std::unique_ptr<translate::TranslateManager> translate_manager_;
 
-  // Provides CLD data for this process.
-  scoped_ptr<translate::BrowserCldDataProvider> cld_data_provider_;
+  // Model to be notified about detected language of every page visited. Not
+  // owned here.
+  translate::LanguageModel* language_model_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeTranslateClient);
 };

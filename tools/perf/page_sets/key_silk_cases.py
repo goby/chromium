@@ -418,6 +418,7 @@ class GwsExpansionPage(KeySilkCasesPage):
 
   def ScrollKnowledgeCardToTop(self, action_runner, card_id):
     # scroll until the knowledge card is at the top
+    # TODO(catapult:#3028): Fix interpolation of JavaScript values.
     action_runner.ExecuteJavaScript(
         "document.getElementById('%s').scrollIntoView()" % card_id)
 
@@ -560,6 +561,13 @@ class Page26(KeySilkCasesPage):
     action_runner.Wait(1)
 
   def PerformPageInteractions(self, action_runner):
+    # Add a touch-action: none because this page prevent defaults all
+    # touch moves.
+    action_runner.ExecuteJavaScript('''
+        var style = document.createElement("style");
+        document.head.appendChild(style);
+        style.sheet.insertRule("body { touch-action: none }", 0);
+        ''')
     with action_runner.CreateGestureInteraction('ScrollAction'):
       action_runner.ScrollPage(distance=5000)
 
@@ -640,17 +648,20 @@ class PolymerTopeka(KeySilkCasesPage):
     first_name = profile + 'paper-input#first /deep/ input'
     action_runner.WaitForElement(selector=first_name)
     # Input First Name:
+    # TODO(catapult:#3028): Fix interpolation of JavaScript values.
     action_runner.ExecuteJavaScript('''
         var fn = document.querySelector('%s');
         fn.value = 'Chrome';
         fn.fire('input');''' % first_name)
     # Input Last Initial:
+    # TODO(catapult:#3028): Fix interpolation of JavaScript values.
     action_runner.ExecuteJavaScript('''
         var li = document.querySelector('%s paper-input#last /deep/ input');
         li.value = 'E';
         li.fire('input');''' % profile)
     with action_runner.CreateInteraction('animation_interaction'):
       # Click the check-mark to login:
+      # TODO(catapult:#3028): Fix interpolation of JavaScript values.
       action_runner.ExecuteJavaScript('''
           window.topeka_page_transitions = 0;
           [].forEach.call(document.querySelectorAll(

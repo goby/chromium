@@ -2,18 +2,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//mojo/public/mojo_application.gni")
+import("//services/service_manager/public/cpp/service.gni")
+import("//services/service_manager/public/service_manifest.gni")
+import("//testing/test.gni")
 
-source_set("lib") {
+static_library("lib") {
   sources = [
     "directory_impl.cc",
     "directory_impl.h",
     "file_impl.cc",
     "file_impl.h",
-    "file_system_app.cc",
-    "file_system_app.h",
     "file_system_impl.cc",
     "file_system_impl.h",
+    "lock_table.cc",
+    "lock_table.h",
+    "shared_temp_dir.cc",
+    "shared_temp_dir.h",
     "util.cc",
     "util.h",
   ]
@@ -21,37 +25,44 @@ source_set("lib") {
   deps = [
     "//base",
     "//components/filesystem/public/interfaces",
-    "//mojo/application/public/cpp",
     "//mojo/common",
     "//mojo/common:common_base",
-    "//mojo/platform_handle",
-    "//mojo/services/tracing/public/cpp",
+    "//mojo/public/cpp/system",
+    "//services/service_manager/public/cpp",
+    "//services/service_manager/public/interfaces",
     "//url",
   ]
 }
 
-mojo_native_application("filesystem") {
+service("filesystem") {
   sources = [
+    "file_system_app.cc",
+    "file_system_app.h",
     "main.cc",
   ]
 
   deps = [
     ":lib",
     "//base",
-    "//mojo/application/public/cpp",
+    "//components/filesystem/public/interfaces",
     "//mojo/common",
-    "//mojo/environment:chromium",
-    "//mojo/platform_handle:for_shared_library",
     "//mojo/public/cpp/bindings",
     "//mojo/public/cpp/system",
+    "//services/service_manager/public/cpp",
+    "//services/tracing/public/cpp",
+  ]
+
+  data_deps = [
+    ":manifest",
   ]
 }
 
-mojo_native_application("apptests") {
-  output_name = "filesystem_apptests"
+service_manifest("manifest") {
+  name = "filesystem"
+  source = "manifest.json"
+}
 
-  testonly = true
-
+test("filesystem_service_unittests") {
   sources = [
     "directory_impl_unittest.cc",
     "file_impl_unittest.cc",
@@ -62,12 +73,21 @@ mojo_native_application("apptests") {
   deps = [
     "//base",
     "//components/filesystem/public/interfaces",
-    "//mojo/application/public/cpp:test_support",
-    "//mojo/platform_handle:for_shared_library",
+    "//mojo/common",
     "//mojo/public/cpp/bindings",
+    "//mojo/public/cpp/system",
+    "//services/service_manager/public/cpp:service_test_support",
+    "//services/service_manager/public/cpp:sources",
+    "//services/service_manager/public/cpp/test:run_all_service_tests",
   ]
 
   data_deps = [
+    ":test_manifest",
     ":filesystem",
   ]
+}
+
+service_manifest("test_manifest") {
+  name = "filesystem_service_unittests"
+  source = "test_manifest.json"
 }

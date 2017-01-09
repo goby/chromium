@@ -4,16 +4,16 @@
 
 #include "components/url_formatter/url_fixer.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/logging.h"
-#if defined(OS_POSIX)
-#include "base/path_service.h"
-#endif
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "components/url_formatter/url_formatter.h"
 #include "net/base/escape.h"
 #include "net/base/filename_util.h"
@@ -21,6 +21,10 @@
 #include "url/third_party/mozilla/url_parse.h"
 #include "url/url_file.h"
 #include "url/url_util.h"
+
+#if defined(OS_POSIX)
+#include "base/path_service.h"
+#endif
 
 namespace url_formatter {
 
@@ -183,7 +187,7 @@ std::string FixupPath(const std::string& text) {
   GURL file_url = net::FilePathToFileURL(base::FilePath(filename));
   if (file_url.is_valid()) {
     return base::UTF16ToUTF8(url_formatter::FormatUrl(
-        file_url, std::string(), url_formatter::kFormatUrlOmitUsernamePassword,
+        file_url, url_formatter::kFormatUrlOmitUsernamePassword,
         net::UnescapeRule::NORMAL, nullptr, nullptr, nullptr));
   }
 
@@ -197,20 +201,15 @@ void AddDesiredTLD(const std::string& desired_tld, std::string* domain) {
   if (desired_tld.empty() || domain->empty())
     return;
 
-  // Check the TLD.  If the return value is positive, we already have a TLD, so
-  // abort.  If the return value is std::string::npos, there's no valid host,
-  // but we can try to append a TLD anyway, since the host may become valid once
-  // the TLD is attached -- for example, "999999999999" is detected as a broken
-  // IP address and marked invalid, but attaching ".com" makes it legal.  When
-  // the return value is 0, there's a valid host with no known TLD, so we can
-  // definitely append the user's TLD.  We disallow unknown registries here so
-  // users can input "mail.yahoo" and hit ctrl-enter to get
-  // "www.mail.yahoo.com".
-  const size_t registry_length =
-      net::registry_controlled_domains::GetRegistryLength(
+  // Abort if we already have a known TLD. In the case of an invalid host,
+  // HostHasRegistryControlledDomain will return false and we will try to
+  // append a TLD (which may make it valid). For example, "999999999999" is
+  // detected as a broken IP address and marked invalid, but attaching ".com"
+  // makes it legal.  We disallow unknown registries here so users can input
+  // "mail.yahoo" and hit ctrl-enter to get "www.mail.yahoo.com".
+  if (net::registry_controlled_domains::HostHasRegistryControlledDomain(
           *domain, net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
-          net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES);
-  if ((registry_length != 0) && (registry_length != std::string::npos))
+          net::registry_controlled_domains::EXCLUDE_PRIVATE_REGISTRIES))
     return;
 
   // Add the suffix at the end of the domain.
@@ -407,23 +406,29 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
   int trimmed_length = static_cast<int>(trimmed.length());
   if (url::DoesBeginWindowsDriveSpec(trimmed.data(), 0, trimmed_length) ||
       url::DoesBeginUNCPath(trimmed.data(), 0, trimmed_length, true))
-    return "file";
+    return url::kFileScheme;
 #elif defined(OS_POSIX)
   if (base::FilePath::IsSeparator(trimmed.data()[0]) ||
       trimmed.data()[0] == '~')
-    return "file";
+    return url::kFileScheme;
 #endif
 
   // Otherwise, we need to look at things carefully.
   std::string scheme;
   if (!GetValidScheme(*text, &parts->scheme, &scheme)) {
     // Try again if there is a ';' in the text. If changing it to a ':' results
-    // in a scheme being found, continue processing with the modified text.
+    // in a standard scheme, "about", "chrome" or "file" scheme being found,
+    // continue processing with the modified text.
     bool found_scheme = false;
     size_t semicolon = text->find(';');
     if (semicolon != 0 && semicolon != std::string::npos) {
       (*text)[semicolon] = ':';
-      if (GetValidScheme(*text, &parts->scheme, &scheme))
+      if (GetValidScheme(*text, &parts->scheme, &scheme) &&
+          (url::IsStandard(
+               scheme.c_str(),
+               url::Component(0, static_cast<int>(scheme.length()))) ||
+           scheme == url::kAboutScheme || scheme == kChromeUIScheme ||
+           scheme == url::kFileScheme))
         found_scheme = true;
       else
         (*text)[semicolon] = ';';
@@ -470,7 +475,10 @@ std::string SegmentURLInternal(std::string* text, url::Parsed* parts) {
 
   // Construct the text to parse by inserting the scheme.
   std::string inserted_text(scheme);
-  inserted_text.append(url::kStandardSchemeSeparator);
+  // Assume a leading colon was meant to be a scheme separator (which GURL will
+  // fix up for us into the full "://").  Otherwise add the separator ourselves.
+  if (first_nonwhite == text->end() || *first_nonwhite != ':')
+    inserted_text.append(url::kStandardSchemeSeparator);
   std::string text_to_parse(text->begin(), first_nonwhite);
   text_to_parse.append(inserted_text);
   text_to_parse.append(first_nonwhite, text->end());
@@ -616,11 +624,13 @@ GURL FixupRelativeFile(const base::FilePath& base_dir,
 #if defined(OS_WIN)
     std::wstring unescaped = base::UTF8ToWide(net::UnescapeURLComponent(
         base::WideToUTF8(trimmed),
-        net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS));
+        net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS));
 #elif defined(OS_POSIX)
     std::string unescaped = net::UnescapeURLComponent(
         trimmed,
-        net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS);
+        net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+            net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS);
 #endif
 
     if (!ValidPathForFile(unescaped, &full_path))
@@ -635,8 +645,7 @@ GURL FixupRelativeFile(const base::FilePath& base_dir,
     GURL file_url = net::FilePathToFileURL(full_path);
     if (file_url.is_valid())
       return GURL(base::UTF16ToUTF8(url_formatter::FormatUrl(
-          file_url, std::string(),
-          url_formatter::kFormatUrlOmitUsernamePassword,
+          file_url, url_formatter::kFormatUrlOmitUsernamePassword,
           net::UnescapeRule::NORMAL, nullptr, nullptr, nullptr)));
     // Invalid files fall through to regular processing.
   }

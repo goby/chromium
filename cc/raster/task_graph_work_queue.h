@@ -5,6 +5,9 @@
 #ifndef CC_RASTER_TASK_GRAPH_WORK_QUEUE_H_
 #define CC_RASTER_TASK_GRAPH_WORK_QUEUE_H_
 
+#include <stdint.h>
+
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -16,58 +19,80 @@ namespace cc {
 // Implements a queue of incoming TaskGraph work. Designed for use by
 // implementations of TaskGraphRunner. Not thread safe, so the caller is
 // responsible for all necessary locking.
+//
+// Tasks in the queue are divided into categories. Tasks from a single graph may
+// be put into different categories, each of which is prioritized independently
+// from the others. It is up to the implementation of TaskGraphRunner to
+// define the meaning of the categories and handle them appropriately.
 class CC_EXPORT TaskGraphWorkQueue {
  public:
   struct TaskNamespace;
 
-  struct PrioritizedTask {
+  struct CC_EXPORT PrioritizedTask {
     typedef std::vector<PrioritizedTask> Vector;
 
-    PrioritizedTask(Task* task, TaskNamespace* task_namespace, size_t priority)
-        : task(task), task_namespace(task_namespace), priority(priority) {}
+    PrioritizedTask(scoped_refptr<Task> task,
+                    TaskNamespace* task_namespace,
+                    uint16_t category,
+                    uint16_t priority);
+    PrioritizedTask(PrioritizedTask&& other);
+    ~PrioritizedTask();
 
-    Task* task;
+    PrioritizedTask& operator=(PrioritizedTask&& other) = default;
+
+    scoped_refptr<Task> task;
     TaskNamespace* task_namespace;
-    size_t priority;
+    uint16_t category;
+    uint16_t priority;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(PrioritizedTask);
   };
+
+  using CategorizedTask = std::pair<uint16_t, scoped_refptr<Task>>;
 
   // Helper classes and static methods used by dependent classes.
   struct TaskNamespace {
     typedef std::vector<TaskNamespace*> Vector;
 
     TaskNamespace();
+    TaskNamespace(TaskNamespace&& other);
     ~TaskNamespace();
 
     // Current task graph.
     TaskGraph graph;
 
-    // Ordered set of tasks that are ready to run.
-    PrioritizedTask::Vector ready_to_run_tasks;
+    // Map from category to a vector of tasks that are ready to run for that
+    // category.
+    std::map<uint16_t, PrioritizedTask::Vector> ready_to_run_tasks;
 
     // Completed tasks not yet collected by origin thread.
     Task::Vector completed_tasks;
 
     // This set contains all currently running tasks.
-    Task::Vector running_tasks;
+    std::vector<CategorizedTask> running_tasks;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(TaskNamespace);
   };
 
   TaskGraphWorkQueue();
   virtual ~TaskGraphWorkQueue();
 
-  // Gets a NamespaceToken which is guaranteed to be unique within this
+  // Generates a NamespaceToken which is guaranteed to be unique within this
   // TaskGraphWorkQueue.
-  NamespaceToken GetNamespaceToken();
+  NamespaceToken GenerateNamespaceToken();
 
   // Updates a TaskNamespace with a new TaskGraph to run. This cancels any
   // previous tasks in the graph being replaced.
   void ScheduleTasks(NamespaceToken token, TaskGraph* graph);
 
-  // Returns the next task to run paired with its namespace.
-  PrioritizedTask GetNextTaskToRun();
+  // Returns the next task to run for the given category.
+  PrioritizedTask GetNextTaskToRun(uint16_t category);
 
   // Marks a task as completed, adding it to its namespace's list of completed
   // tasks and updating the list of |ready_to_run_namespaces|.
-  void CompleteTask(const PrioritizedTask& completed_task);
+  void CompleteTask(PrioritizedTask completed_task);
 
   // Helper which populates a vector of completed tasks from the provided
   // namespace.
@@ -84,13 +109,36 @@ class CC_EXPORT TaskGraphWorkQueue {
     return &it->second;
   }
 
+  static bool HasReadyToRunTasksInNamespace(
+      const TaskNamespace* task_namespace) {
+    return std::find_if(
+               task_namespace->ready_to_run_tasks.begin(),
+               task_namespace->ready_to_run_tasks.end(),
+               [](const std::pair<const uint16_t, PrioritizedTask::Vector>&
+                      ready_to_run_tasks) {
+                 return !ready_to_run_tasks.second.empty();
+               }) != task_namespace->ready_to_run_tasks.end();
+  }
+
   static bool HasFinishedRunningTasksInNamespace(
       const TaskNamespace* task_namespace) {
     return task_namespace->running_tasks.empty() &&
-           task_namespace->ready_to_run_tasks.empty();
+           !HasReadyToRunTasksInNamespace(task_namespace);
   }
 
-  bool HasReadyToRunTasks() const { return !ready_to_run_namespaces_.empty(); }
+  bool HasReadyToRunTasks() const {
+    return std::find_if(
+               ready_to_run_namespaces_.begin(), ready_to_run_namespaces_.end(),
+               [](const std::pair<const uint16_t, TaskNamespace::Vector>&
+                      ready_to_run_namespaces) {
+                 return !ready_to_run_namespaces.second.empty();
+               }) != ready_to_run_namespaces_.end();
+  }
+
+  bool HasReadyToRunTasksForCategory(uint16_t category) const {
+    auto found = ready_to_run_namespaces_.find(category);
+    return found != ready_to_run_namespaces_.end() && !found->second.empty();
+  }
 
   bool HasAnyNamespaces() const { return !namespaces_.empty(); }
 
@@ -100,6 +148,24 @@ class CC_EXPORT TaskGraphWorkQueue {
                [](const TaskNamespaceMap::value_type& entry) {
                  return !HasFinishedRunningTasksInNamespace(&entry.second);
                }) == namespaces_.end();
+  }
+
+  const std::map<uint16_t, TaskNamespace::Vector>& ready_to_run_namespaces()
+      const {
+    return ready_to_run_namespaces_;
+  }
+
+  size_t NumRunningTasksForCategory(uint16_t category) const {
+    size_t count = 0;
+    for (const auto& task_namespace_entry : namespaces_) {
+      for (const auto& categorized_task :
+           task_namespace_entry.second.running_tasks) {
+        if (categorized_task.first == category) {
+          ++count;
+        }
+      }
+    }
+    return count;
   }
 
   // Helper function which ensures that graph dependencies were correctly
@@ -116,32 +182,18 @@ class CC_EXPORT TaskGraphWorkQueue {
     }
   };
 
-  static bool CompareTaskPriority(const PrioritizedTask& a,
-                                  const PrioritizedTask& b) {
-    // In this system, numerically lower priority is run first.
-    return a.priority > b.priority;
-  }
-
-  static bool CompareTaskNamespacePriority(const TaskNamespace* a,
-                                           const TaskNamespace* b) {
-    DCHECK(!a->ready_to_run_tasks.empty());
-    DCHECK(!b->ready_to_run_tasks.empty());
-
-    // Compare based on task priority of the ready_to_run_tasks heap .front()
-    // will hold the max element of the heap, except after pop_heap, when max
-    // element is moved to .back().
-    return CompareTaskPriority(a->ready_to_run_tasks.front(),
-                               b->ready_to_run_tasks.front());
-  }
-
   using TaskNamespaceMap =
       std::map<NamespaceToken, TaskNamespace, CompareToken>;
 
   TaskNamespaceMap namespaces_;
-  TaskNamespace::Vector ready_to_run_namespaces_;
+
+  // Map from category to a vector of ready to run namespaces for that category.
+  std::map<uint16_t, TaskNamespace::Vector> ready_to_run_namespaces_;
 
   // Provides a unique id to each NamespaceToken.
   int next_namespace_id_;
+
+  DISALLOW_COPY_AND_ASSIGN(TaskGraphWorkQueue);
 };
 
 }  // namespace cc

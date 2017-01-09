@@ -8,29 +8,35 @@
 #include "modules/EventModules.h"
 #include "modules/ModulesExport.h"
 #include "modules/serviceworkers/ExtendableEvent.h"
+#include "modules/serviceworkers/ForeignFetchOptions.h"
 
 namespace blink {
 
 class MODULES_EXPORT InstallEvent : public ExtendableEvent {
-    DEFINE_WRAPPERTYPEINFO();
+  DEFINE_WRAPPERTYPEINFO();
 
-public:
-    static PassRefPtrWillBeRawPtr<InstallEvent> create();
-    static PassRefPtrWillBeRawPtr<InstallEvent> create(const AtomicString& type, const ExtendableEventInit&);
-    static PassRefPtrWillBeRawPtr<InstallEvent> create(const AtomicString& type, const ExtendableEventInit&, WaitUntilObserver*);
+ public:
+  static InstallEvent* create(const AtomicString& type,
+                              const ExtendableEventInit&);
+  static InstallEvent* create(const AtomicString& type,
+                              const ExtendableEventInit&,
+                              WaitUntilObserver*);
 
-    ~InstallEvent() override;
+  ~InstallEvent() override;
 
-    void registerForeignFetchScopes(ExecutionContext*, const Vector<String>& subScopes, ExceptionState&);
+  void registerForeignFetch(ExecutionContext*,
+                            const ForeignFetchOptions&,
+                            ExceptionState&);
 
-    const AtomicString& interfaceName() const override;
+  const AtomicString& interfaceName() const override;
 
-protected:
-    InstallEvent();
-    InstallEvent(const AtomicString& type, const ExtendableEventInit&);
-    InstallEvent(const AtomicString& type, const ExtendableEventInit&, WaitUntilObserver*);
+ protected:
+  InstallEvent(const AtomicString& type, const ExtendableEventInit&);
+  InstallEvent(const AtomicString& type,
+               const ExtendableEventInit&,
+               WaitUntilObserver*);
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // InstallEvent_h
+#endif  // InstallEvent_h

@@ -6,8 +6,10 @@
 
 #include "base/files/file_util.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "net/dns/dns_util.h"
 
 using base::StringPiece;
 
@@ -133,7 +135,7 @@ void ParseHostsWithCommaMode(const std::string& contents,
   CHECK(dns_hosts);
 
   StringPiece ip_text;
-  IPAddressNumber ip;
+  IPAddress ip;
   AddressFamily family = ADDRESS_FAMILY_IPV4;
   HostsParser parser(contents, comma_mode);
   while (parser.Advance()) {
@@ -143,19 +145,21 @@ void ParseHostsWithCommaMode(const std::string& contents,
       // the same IP address (usually 127.0.0.1).  Don't bother parsing the IP
       // again if it's the same as the one above it.
       if (new_ip_text != ip_text) {
-        IPAddressNumber new_ip;
-        if (ParseIPLiteralToNumber(parser.token().as_string(), &new_ip)) {
+        IPAddress new_ip;
+        if (new_ip.AssignFromIPLiteral(parser.token())) {
           ip_text = new_ip_text;
-          ip.swap(new_ip);
-          family = (ip.size() == 4) ? ADDRESS_FAMILY_IPV4 : ADDRESS_FAMILY_IPV6;
+          ip = new_ip;
+          family = (ip.IsIPv4()) ? ADDRESS_FAMILY_IPV4 : ADDRESS_FAMILY_IPV6;
         } else {
           parser.SkipRestOfLine();
         }
       }
     } else {
       DnsHostsKey key(parser.token().as_string(), family);
+      if (!IsValidDNSDomain(key.first))
+        continue;
       key.first = base::ToLowerASCII(key.first);
-      IPAddressNumber* mapped_ip = &(*dns_hosts)[key];
+      IPAddress* mapped_ip = &(*dns_hosts)[key];
       if (mapped_ip->empty())
         *mapped_ip = ip;
       // else ignore this entry (first hit counts)
@@ -190,7 +194,7 @@ bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
   if (!base::PathExists(path))
     return true;
 
-  int64 size;
+  int64_t size;
   if (!base::GetFileSize(path, &size))
     return false;
 
@@ -198,7 +202,7 @@ bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
                        static_cast<base::HistogramBase::Sample>(size));
 
   // Reject HOSTS files larger than |kMaxHostsSize| bytes.
-  const int64 kMaxHostsSize = 1 << 25;  // 32MB
+  const int64_t kMaxHostsSize = 1 << 25;  // 32MB
   if (size > kMaxHostsSize)
     return false;
 
@@ -211,4 +215,3 @@ bool ParseHostsFile(const base::FilePath& path, DnsHosts* dns_hosts) {
 }
 
 }  // namespace net
-

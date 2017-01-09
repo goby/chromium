@@ -6,15 +6,18 @@
 
 #include "base/command_line.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/location.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
+#include "base/run_loop.h"
+#include "base/single_thread_task_runner.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chromeos/login/login_manager_test.h"
 #include "chrome/browser/chromeos/login/startup_utils.h"
 #include "chrome/browser/chromeos/login/test/oobe_screen_waiter.h"
-#include "chrome/browser/chromeos/login/ui/login_display_host_impl.h"
-#include "chrome/browser/chromeos/login/ui/oobe_display.h"
+#include "chrome/browser/chromeos/login/ui/login_display_host.h"
 #include "chrome/browser/chromeos/login/ui/webui_login_view.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -24,6 +27,7 @@
 #include "chromeos/dbus/fake_debug_daemon_client.h"
 #include "chromeos/dbus/fake_power_manager_client.h"
 #include "chromeos/dbus/fake_update_engine_client.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
@@ -79,9 +83,8 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       const DebugDaemonClient::EnableDebuggingCallback& original_callback,
       bool succeeded) {
     LOG(WARNING) << "OnRemoveRootfsVerification: succeeded = " << succeeded;
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(original_callback, succeeded));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(original_callback, succeeded));
     if (runner_.get())
       runner_->Quit();
     else
@@ -96,9 +99,8 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       int feature_mask) {
     LOG(WARNING) << "OnQueryDebuggingFeatures: succeeded = " << succeeded
                  << ", feature_mask = " << feature_mask;
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(original_callback, succeeded, feature_mask));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(original_callback, succeeded, feature_mask));
     if (runner_.get())
       runner_->Quit();
     else
@@ -112,9 +114,8 @@ class TestDebugDaemonClient : public FakeDebugDaemonClient {
       bool succeeded) {
     LOG(WARNING) << "OnEnableDebuggingFeatures: succeeded = " << succeeded
                  << ", feature_mask = ";
-    base::MessageLoop::current()->PostTask(
-        FROM_HERE,
-        base::Bind(original_callback, succeeded));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(original_callback, succeeded));
     if (runner_.get())
       runner_->Quit();
     else
@@ -176,14 +177,14 @@ class EnableDebuggingTest : public LoginManagerTest {
 
   // LoginManagerTest overrides:
   void SetUpInProcessBrowserTestFixture() override {
-    scoped_ptr<DBusThreadManagerSetter> dbus_setter =
+    std::unique_ptr<DBusThreadManagerSetter> dbus_setter =
         chromeos::DBusThreadManager::GetSetterForTesting();
     power_manager_client_ = new FakePowerManagerClient;
     dbus_setter->SetPowerManagerClient(
-        scoped_ptr<PowerManagerClient>(power_manager_client_));
+        std::unique_ptr<PowerManagerClient>(power_manager_client_));
     debug_daemon_client_ = new TestDebugDaemonClient;
     dbus_setter->SetDebugDaemonClient(
-        scoped_ptr<DebugDaemonClient>(debug_daemon_client_));
+        std::unique_ptr<DebugDaemonClient>(debug_daemon_client_));
 
     LoginManagerTest::SetUpInProcessBrowserTestFixture();
   }
@@ -193,8 +194,7 @@ class EnableDebuggingTest : public LoginManagerTest {
   }
 
   void WaitUntilJSIsReady() {
-    LoginDisplayHostImpl* host = static_cast<LoginDisplayHostImpl*>(
-        LoginDisplayHostImpl::default_host());
+    LoginDisplayHost* host = LoginDisplayHost::default_host();
     if (!host)
       return;
     chromeos::OobeUI* oobe_ui = host->GetOobeUI();
@@ -208,7 +208,7 @@ class EnableDebuggingTest : public LoginManagerTest {
 
   void InvokeEnableDebuggingScreen() {
     ASSERT_TRUE(JSExecuted("cr.ui.Oobe.handleAccelerator('debugging');"));
-    OobeScreenWaiter(OobeDisplay::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
+    OobeScreenWaiter(OobeScreen::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
   }
 
   void CloseEnableDebuggingScreen() {
@@ -235,7 +235,7 @@ class EnableDebuggingTest : public LoginManagerTest {
     InvokeEnableDebuggingScreen();
     JSExpect("!document.querySelector('#debugging.hidden')");
     debug_daemon_client_->WaitUntilCalled();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     VerifyRemoveProtectionScreen();
   }
 
@@ -254,7 +254,7 @@ class EnableDebuggingTest : public LoginManagerTest {
     InvokeEnableDebuggingScreen();
     JSExpect("!document.querySelector('#debugging.hidden')");
     debug_daemon_client_->WaitUntilCalled();
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     JSExpect("!document.querySelector('#debugging.remove-protection-view')");
     JSExpect("!!document.querySelector('#debugging.setup-view')");
     JSExpect("!document.querySelector('#debugging.done-view')");
@@ -285,7 +285,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, ShowAndRemoveProtection) {
   debug_daemon_client_->WaitUntilCalled();
   JSExpect("!!document.querySelector('#debugging.wait-view')");
   // Check if we have rebooted after enabling.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_EQ(debug_daemon_client_->num_remove_protection(), 1);
   EXPECT_EQ(debug_daemon_client_->num_enable_debugging_features(), 0);
   EXPECT_EQ(power_manager_client_->num_request_restart_calls(), 1);
@@ -298,7 +298,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, ShowSetup) {
   debug_daemon_client_->ResetWait();
   ClickEnableButton();
   debug_daemon_client_->WaitUntilCalled();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   JSExpect("!!document.querySelector('#debugging.done-view')");
   EXPECT_EQ(debug_daemon_client_->num_enable_debugging_features(), 1);
   EXPECT_EQ(debug_daemon_client_->num_remove_protection(), 0);
@@ -315,7 +315,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, ShowOnTestImages) {
   InvokeEnableDebuggingScreen();
   JSExpect("!document.querySelector('#debugging.hidden')");
   debug_daemon_client_->WaitUntilCalled();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   VerifyRemoveProtectionScreen();
 
   EXPECT_EQ(debug_daemon_client_->num_query_debugging_features(), 1);
@@ -339,7 +339,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingTest, WaitForDebugDaemon) {
   // Mark service ready and it should proceed to remove protection view.
   debug_daemon_client_->SetServiceIsAvailable(true);
   debug_daemon_client_->WaitUntilCalled();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   VerifyRemoveProtectionScreen();
 }
 
@@ -355,10 +355,10 @@ class EnableDebuggingNonDevTest : public EnableDebuggingTest {
 
   // LoginManagerTest overrides:
   void SetUpInProcessBrowserTestFixture() override {
-    scoped_ptr<DBusThreadManagerSetter> dbus_setter =
+    std::unique_ptr<DBusThreadManagerSetter> dbus_setter =
         chromeos::DBusThreadManager::GetSetterForTesting();
     dbus_setter->SetDebugDaemonClient(
-        scoped_ptr<DebugDaemonClient>(new FakeDebugDaemonClient));
+        std::unique_ptr<DebugDaemonClient>(new FakeDebugDaemonClient));
     LoginManagerTest::SetUpInProcessBrowserTestFixture();
   }
 };
@@ -368,7 +368,7 @@ IN_PROC_BROWSER_TEST_F(EnableDebuggingNonDevTest, NoShowInNonDevMode) {
   JSExpect("!!document.querySelector('#debugging.hidden')");
   InvokeEnableDebuggingScreen();
   JSExpect("!document.querySelector('#debugging.hidden')");
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   JSExpect("!!document.querySelector('#debugging.error-view')");
   JSExpect("!document.querySelector('#debugging.remove-protection-view')");
   JSExpect("!document.querySelector('#debugging.setup-view')");
@@ -405,12 +405,12 @@ class EnableDebuggingRequestedTest : public EnableDebuggingTest {
 
 // Setup screen is automatically shown when the feature is requested.
 IN_PROC_BROWSER_TEST_F(EnableDebuggingRequestedTest, AutoShowSetup) {
-  OobeScreenWaiter(OobeDisplay::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
 }
 
 // Canceling auto shown setup screen should close it.
 IN_PROC_BROWSER_TEST_F(EnableDebuggingRequestedTest, CancelAutoShowSetup) {
-  OobeScreenWaiter(OobeDisplay::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
+  OobeScreenWaiter(OobeScreen::SCREEN_OOBE_ENABLE_DEBUGGING).Wait();
   CloseEnableDebuggingScreen();
   JSExpect("!!document.querySelector('#debugging.hidden')");
 }

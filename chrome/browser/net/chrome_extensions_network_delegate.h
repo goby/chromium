@@ -5,9 +5,10 @@
 #ifndef CHROME_BROWSER_NET_CHROME_EXTENSIONS_NETWORK_DELEGATE_H_
 #define CHROME_BROWSER_NET_CHROME_EXTENSIONS_NETWORK_DELEGATE_H_
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
+#include "extensions/features/features.h"
 #include "net/base/network_delegate_impl.h"
 
 namespace extensions {
@@ -36,7 +37,7 @@ class ChromeExtensionsNetworkDelegate : public net::NetworkDelegateImpl {
 
   // If the |request| failed due to problems with a proxy, forward the error to
   // the proxy extension API.
-  virtual void ForwardProxyErrors(net::URLRequest* request);
+  virtual void ForwardProxyErrors(net::URLRequest* request, int net_error);
 
   // Notifies the extensions::ProcessManager for the associated RenderFrame, if
   // any, that a request has started or stopped.
@@ -47,11 +48,11 @@ class ChromeExtensionsNetworkDelegate : public net::NetworkDelegateImpl {
   int OnBeforeURLRequest(net::URLRequest* request,
                          const net::CompletionCallback& callback,
                          GURL* new_url) override;
-  int OnBeforeSendHeaders(net::URLRequest* request,
-                          const net::CompletionCallback& callback,
-                          net::HttpRequestHeaders* headers) override;
-  void OnSendHeaders(net::URLRequest* request,
-                     const net::HttpRequestHeaders& headers) override;
+  int OnBeforeStartTransaction(net::URLRequest* request,
+                               const net::CompletionCallback& callback,
+                               net::HttpRequestHeaders* headers) override;
+  void OnStartTransaction(net::URLRequest* request,
+                          const net::HttpRequestHeaders& headers) override;
   int OnHeadersReceived(
       net::URLRequest* request,
       const net::CompletionCallback& callback,
@@ -60,8 +61,10 @@ class ChromeExtensionsNetworkDelegate : public net::NetworkDelegateImpl {
       GURL* allowed_unsafe_redirect_url) override;
   void OnBeforeRedirect(net::URLRequest* request,
                         const GURL& new_location) override;
-  void OnResponseStarted(net::URLRequest* request) override;
-  void OnCompleted(net::URLRequest* request, bool started) override;
+  void OnResponseStarted(net::URLRequest* request, int net_error) override;
+  void OnCompleted(net::URLRequest* request,
+                   bool started,
+                   int net_error) override;
   void OnURLRequestDestroyed(net::URLRequest* request) override;
   void OnPACScriptError(int line_number, const base::string16& error) override;
   net::NetworkDelegate::AuthRequiredResponse OnAuthRequired(
@@ -75,7 +78,7 @@ class ChromeExtensionsNetworkDelegate : public net::NetworkDelegateImpl {
 
   void* profile_;
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
   scoped_refptr<extensions::InfoMap> extension_info_map_;
 #endif
 

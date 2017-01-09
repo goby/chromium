@@ -21,8 +21,22 @@
   width: 120px;
 }
 
+.settings-list div[role='listitem'][controlled-by='policy'] .exception-setting,
+.settings-list div[role='listitem'][controlled-by='extension']
+    .exception-setting {
+  width: calc(120px - 8px);
+}
+
 select.exception-setting {
   vertical-align: middle;
+}
+
+.overruled .exception-setting {
+  width: calc(120px - 24px);
+}
+
+.overruled .overruleable {
+  text-decoration: line-through;
 }
 
 #exception-column-headers {
@@ -50,12 +64,6 @@ select.exception-setting {
 #content-settings-exceptions-area list {
   margin-bottom: 10px;
   margin-top: 4px;
-}
-
-#disable-plugins-container {
-  /* Same as .checkbox and .radio padding. Using padding instead of margin
-   * to ensure minimum height for tap target. */
-  padding: 7px 0;
 }
 
 #group-indicator {

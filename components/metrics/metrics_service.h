@@ -8,13 +8,15 @@
 #ifndef COMPONENTS_METRICS_METRICS_SERVICE_H_
 #define COMPONENTS_METRICS_METRICS_SERVICE_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
 #include "base/metrics/field_trial.h"
@@ -23,28 +25,25 @@
 #include "base/metrics/user_metrics.h"
 #include "base/observer_list.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/metrics/clean_exit_beacon.h"
+#include "components/metrics/data_use_tracker.h"
 #include "components/metrics/metrics_log.h"
 #include "components/metrics/metrics_log_manager.h"
 #include "components/metrics/metrics_provider.h"
 #include "components/metrics/net/network_metrics_provider.h"
-#include "components/variations/active_field_trials.h"
+#include "components/variations/synthetic_trials.h"
 
 class PrefService;
 class PrefRegistrySimple;
 
 namespace base {
-class DictionaryValue;
 class HistogramSamples;
 class PrefService;
 }
 
 namespace variations {
 struct ActiveGroupId;
-}
-
-namespace net {
-class URLFetcher;
 }
 
 namespace metrics {
@@ -54,39 +53,6 @@ class MetricsReportingScheduler;
 class MetricsServiceAccessor;
 class MetricsServiceClient;
 class MetricsStateManager;
-
-// A Field Trial and its selected group, which represent a particular
-// Chrome configuration state. For example, the trial name could map to
-// a preference name, and the group name could map to a preference value.
-struct SyntheticTrialGroup {
- public:
-  ~SyntheticTrialGroup();
-
-  variations::ActiveGroupId id;
-  base::TimeTicks start_time;
-
- private:
-  // Synthetic field trial users:
-  friend class MetricsServiceAccessor;
-  friend class MetricsService;
-  FRIEND_TEST_ALL_PREFIXES(MetricsServiceTest, RegisterSyntheticTrial);
-
-  // This constructor is private specifically so as to control which code is
-  // able to access it. New code that wishes to use it should be added as a
-  // friend class.
-  SyntheticTrialGroup(uint32 trial, uint32 group);
-};
-
-// Interface class to observe changes to synthetic trials in MetricsService.
-class SyntheticTrialObserver {
- public:
-  // Called when the list of synthetic field trial groups has changed.
-  virtual void OnSyntheticTrialsChanged(
-      const std::vector<SyntheticTrialGroup>& groups) = 0;
-
- protected:
-  virtual ~SyntheticTrialObserver() {}
-};
 
 // See metrics_service.cc for a detailed description.
 class MetricsService : public base::HistogramFlattener {
@@ -144,23 +110,14 @@ class MetricsService : public base::HistogramFlattener {
   std::string GetClientId();
 
   // Returns the install date of the application, in seconds since the epoch.
-  int64 GetInstallDate();
+  int64_t GetInstallDate();
 
   // Returns the date at which the current metrics client ID was created as
-  // an int64 containing seconds since the epoch.
-  int64 GetMetricsReportingEnabledDate();
+  // an int64_t containing seconds since the epoch.
+  int64_t GetMetricsReportingEnabledDate();
 
   // Returns true if the last session exited cleanly.
   bool WasLastShutdownClean() const;
-
-  // Returns the preferred entropy provider used to seed persistent activities
-  // based on whether or not metrics reporting will be permitted on this client.
-  //
-  // If metrics reporting is enabled, this method returns an entropy provider
-  // that has a high source of entropy, partially based on the client ID.
-  // Otherwise, it returns an entropy provider that is based on a low entropy
-  // source.
-  scoped_ptr<const base::FieldTrial::EntropyProvider> CreateEntropyProvider();
 
   // At startup, prefs needs to be called with a list of all the pref names and
   // types we'll be using.
@@ -216,30 +173,21 @@ class MetricsService : public base::HistogramFlattener {
   // This value should be true when process has completed shutdown.
   static bool UmaMetricsProperlyShutdown();
 
-  // Registers a field trial name and group to be used to annotate a UMA report
-  // with a particular Chrome configuration state. A UMA report will be
-  // annotated with this trial group if and only if all events in the report
-  // were created after the trial is registered. Only one group name may be
-  // registered at a time for a given trial_name. Only the last group name that
-  // is registered for a given trial name will be recorded. The values passed
-  // in must not correspond to any real field trial in the code.
-  // To use this method, SyntheticTrialGroup should friend your class.
-  void RegisterSyntheticFieldTrial(const SyntheticTrialGroup& trial_group);
-
   // Public accessor that returns the list of synthetic field trials. It must
   // only be used for testing.
   void GetCurrentSyntheticFieldTrialsForTesting(
       std::vector<variations::ActiveGroupId>* synthetic_trials);
 
   // Adds an observer to be notified when the synthetic trials list changes.
-  void AddSyntheticTrialObserver(SyntheticTrialObserver* observer);
+  void AddSyntheticTrialObserver(variations::SyntheticTrialObserver* observer);
 
   // Removes an existing observer of synthetic trials list changes.
-  void RemoveSyntheticTrialObserver(SyntheticTrialObserver* observer);
+  void RemoveSyntheticTrialObserver(
+      variations::SyntheticTrialObserver* observer);
 
   // Register the specified |provider| to provide additional metrics into the
   // UMA log. Should be called during MetricsService initialization only.
-  void RegisterMetricsProvider(scoped_ptr<MetricsProvider> provider);
+  void RegisterMetricsProvider(std::unique_ptr<MetricsProvider> provider);
 
   // Check if this install was cloned or imaged from another machine. If a
   // clone is detected, reset the client id and low entropy source. This
@@ -253,11 +201,21 @@ class MetricsService : public base::HistogramFlattener {
   // Pushes a log that has been generated by an external component.
   void PushExternalLog(const std::string& log);
 
+  // Updates data usage tracking prefs with the specified values.
+  void UpdateMetricsUsagePrefs(const std::string& service_name,
+                               int message_size,
+                               bool is_cellular);
+
+  // Merge any data from metrics providers into the global StatisticsRecorder.
+  void MergeHistogramDeltas();
+
  protected:
   // Exposed for testing.
   MetricsLogManager* log_manager() { return &log_manager_; }
 
  private:
+  friend class MetricsServiceAccessor;
+
   // The MetricsService has a lifecycle that is stored as a state.
   // See metrics_service.cc for description of this lifecycle.
   enum State {
@@ -281,7 +239,26 @@ class MetricsService : public base::HistogramFlattener {
     UNSET
   };
 
-  typedef std::vector<SyntheticTrialGroup> SyntheticTrialGroups;
+  typedef std::vector<variations::SyntheticTrialGroup> SyntheticTrialGroups;
+
+  // Registers a field trial name and group to be used to annotate a UMA report
+  // with a particular Chrome configuration state. A UMA report will be
+  // annotated with this trial group if and only if all events in the report
+  // were created after the trial is registered. Only one group name may be
+  // registered at a time for a given trial_name. Only the last group name that
+  // is registered for a given trial name will be recorded. The values passed
+  // in must not correspond to any real field trial in the code.
+  // Note: Should not be used to replace trials that were registered with
+  // RegisterMultiGroupSyntheticFieldTrial().
+  void RegisterSyntheticFieldTrial(
+      const variations::SyntheticTrialGroup& trial_group);
+
+  // Similar to RegisterSyntheticFieldTrial(), but registers a synthetic trial
+  // that has multiple active groups for a given trial name hash. Any previous
+  // groups registered for |trial_name_hash| will be replaced.
+  void RegisterSyntheticMultiGroupFieldTrial(
+      uint32_t trial_name_hash,
+      const std::vector<uint32_t>& group_name_hashes);
 
   // Calls into the client to initialize some system profile metrics.
   void StartInitTask();
@@ -296,7 +273,7 @@ class MetricsService : public base::HistogramFlattener {
   // call to this function.  Also updates the cumulative uptime metric (stored
   // as a pref) for uninstall.  Uptimes are measured using TimeTicks, which
   // guarantees that it is monotonic and does not jump if the user changes
-  // his/her clock.  The TimeTicks implementation also makes the clock not
+  // their clock.  The TimeTicks implementation also makes the clock not
   // count time the computer is suspended.
   void GetUptimes(PrefService* pref,
                   base::TimeDelta* incremental_uptime,
@@ -361,9 +338,10 @@ class MetricsService : public base::HistogramFlattener {
   // Prepares the initial stability log, which is only logged when the previous
   // run of Chrome crashed.  This log contains any stability metrics left over
   // from that previous run, and only these stability metrics.  It uses the
-  // system profile from the previous session.  Returns true if a log was
-  // created.
-  bool PrepareInitialStabilityLog();
+  // system profile from the previous session.  |prefs_previous_version| is used
+  // to validate the version number recovered from the system profile.  Returns
+  // true if a log was created.
+  bool PrepareInitialStabilityLog(const std::string& prefs_previous_version);
 
   // Prepares the initial metrics log, which includes startup histograms and
   // profiler data, as well as incremental stability-related metrics.
@@ -389,9 +367,6 @@ class MetricsService : public base::HistogramFlattener {
   // buffered plugin stability statistics.
   void RecordCurrentState(PrefService* pref);
 
-  // Checks whether events should currently be logged.
-  bool ShouldLogEvents();
-
   // Sets the value of the specified path in prefs and schedules a save.
   void RecordBooleanPrefValue(const char* path, bool value);
 
@@ -404,7 +379,7 @@ class MetricsService : public base::HistogramFlattener {
       std::vector<variations::ActiveGroupId>* synthetic_trials);
 
   // Creates a new MetricsLog instance with the given |log_type|.
-  scoped_ptr<MetricsLog> CreateLog(MetricsLog::LogType log_type);
+  std::unique_ptr<MetricsLog> CreateLog(MetricsLog::LogType log_type);
 
   // Records the current environment (system profile) in |log|.
   void RecordCurrentEnvironment(MetricsLog* log);
@@ -461,10 +436,10 @@ class MetricsService : public base::HistogramFlattener {
   // The initial metrics log, used to record startup metrics (histograms and
   // profiler data). Note that if a crash occurred in the previous session, an
   // initial stability log may be sent before this.
-  scoped_ptr<MetricsLog> initial_metrics_log_;
+  std::unique_ptr<MetricsLog> initial_metrics_log_;
 
   // Instance of the helper class for uploading logs.
-  scoped_ptr<MetricsLogUploader> log_uploader_;
+  std::unique_ptr<MetricsLogUploader> log_uploader_;
 
   // Whether there is a current log upload in progress.
   bool log_upload_in_progress_;
@@ -477,7 +452,7 @@ class MetricsService : public base::HistogramFlattener {
   int session_id_;
 
   // The scheduler for determining when uploads should happen.
-  scoped_ptr<MetricsReportingScheduler> scheduler_;
+  std::unique_ptr<MetricsReportingScheduler> scheduler_;
 
   // Stores the time of the first call to |GetUptimes()|.
   base::TimeTicks first_updated_time_;
@@ -489,12 +464,13 @@ class MetricsService : public base::HistogramFlattener {
   SyntheticTrialGroups synthetic_trial_groups_;
 
   // List of observers of |synthetic_trial_groups_| changes.
-  base::ObserverList<SyntheticTrialObserver> synthetic_trial_observer_list_;
+  base::ObserverList<variations::SyntheticTrialObserver>
+      synthetic_trial_observer_list_;
 
   // Execution phase the browser is in.
   static ExecutionPhase execution_phase_;
 
-  // Reduntant marker to check that we completed our shutdown, and set the
+  // Redundant marker to check that we completed our shutdown, and set the
   // exited-cleanly bit in the prefs.
   static ShutdownCleanliness clean_shutdown_status_;
 
@@ -502,6 +478,11 @@ class MetricsService : public base::HistogramFlattener {
   FRIEND_TEST_ALL_PREFIXES(MetricsServiceTest,
                            PermutedEntropyCacheClearedWhenLowEntropyReset);
   FRIEND_TEST_ALL_PREFIXES(MetricsServiceTest, RegisterSyntheticTrial);
+  FRIEND_TEST_ALL_PREFIXES(MetricsServiceTest,
+                           RegisterSyntheticMultiGroupFieldTrial);
+
+  // Pointer used for obtaining data use pref updater callback on above layers.
+  std::unique_ptr<DataUseTracker> data_use_tracker_;
 
   // Weak pointers factory used to post task on different threads. All weak
   // pointers managed by this factory have the same lifetime as MetricsService.

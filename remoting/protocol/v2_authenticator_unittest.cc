@@ -5,6 +5,8 @@
 #include "remoting/protocol/v2_authenticator.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "net/base/net_errors.h"
 #include "remoting/base/rsa_key_pair.h"
 #include "remoting/protocol/authenticator_test_base.h"
@@ -66,7 +68,7 @@ TEST_F(V2AuthenticatorTest, SuccessfulAuth) {
                                 kMessageSize, kMessages);
 
   tester.Start();
-  message_loop_.Run();
+  base::RunLoop().Run();
   tester.CheckResults();
 }
 
@@ -82,7 +84,7 @@ TEST_F(V2AuthenticatorTest, InvalidSecret) {
   reinterpret_cast<V2Authenticator*>(client_.get())->state_ =
       Authenticator::MESSAGE_READY;
 
-  scoped_ptr<buzz::XmlElement> message(client_->GetNextMessage());
+  std::unique_ptr<buzz::XmlElement> message(client_->GetNextMessage());
   ASSERT_TRUE(message.get());
 
   ASSERT_EQ(Authenticator::WAITING_MESSAGE, client_->state());

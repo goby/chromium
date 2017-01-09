@@ -5,15 +5,19 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_EVENT_QUEUE_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_EVENT_QUEUE_H_
 
-#include <deque>
-#include <map>
+#include <stddef.h>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <deque>
+#include <list>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/browser/renderer_host/event_with_latency_info.h"
 #include "content/common/content_export.h"
 #include "content/common/input/input_event_ack_state.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "ui/gfx/geometry/point_f.h"
 
 namespace content {
@@ -32,6 +36,9 @@ class CONTENT_EXPORT TouchEventQueueClient {
   virtual void OnTouchEventAck(
       const TouchEventWithLatencyInfo& event,
       InputEventAckState ack_result) = 0;
+
+  virtual void OnFilteringTouchEvent(
+      const blink::WebTouchEvent& touch_event) = 0;
 };
 
 // A queue for throttling and coalescing touch-events.
@@ -64,6 +71,10 @@ class CONTENT_EXPORT TouchEventQueue {
   // the renderer (e.g. when there are no other queued touch event).
   void QueueEvent(const TouchEventWithLatencyInfo& event);
 
+  // Insert a TouchScrollStarted event in the queue ahead of all not-in-flight
+  // events.
+  void PrependTouchScrollNotification();
+
   // Notifies the queue that a touch-event has been processed by the renderer.
   // At this point, if the ack is for async touchmove, remove the uncancelable
   // touchmove from the front of the queue and decide if it should dispatch the
@@ -71,7 +82,7 @@ class CONTENT_EXPORT TouchEventQueue {
   // more gesture events and/or additional queued touch-events to the renderer.
   void ProcessTouchAck(InputEventAckState ack_result,
                        const ui::LatencyInfo& latency_info,
-                       const uint32 unique_touch_event_id);
+                       const uint32_t unique_touch_event_id);
 
   // When GestureScrollBegin is received, we send a touch cancel to renderer,
   // route all the following touch events directly to client, and ignore the
@@ -102,8 +113,6 @@ class CONTENT_EXPORT TouchEventQueue {
 
   // Whether ack timeout behavior is supported and enabled for the current site.
   bool IsAckTimeoutEnabled() const;
-
-  bool IsForwardingTouches();
 
   bool empty() const WARN_UNUSED_RESULT {
     return touch_queue_.empty();
@@ -149,14 +158,11 @@ class CONTENT_EXPORT TouchEventQueue {
   void PopTouchEventToClient(InputEventAckState ack_result,
                              const ui::LatencyInfo& renderer_latency_info);
 
-  // Ack all coalesced events in |acked_event| to the client with |ack_result|,
-  // updating the acked events with |optional_latency_info| if it exists.
+  // Ack all coalesced events at the head of the queue to the client with
+  // |ack_result|, updating the acked events with |optional_latency_info| if it
+  // exists, and popping the head of the queue.
   void AckTouchEventToClient(InputEventAckState ack_result,
-                             scoped_ptr<CoalescedWebTouchEvent> acked_event,
                              const ui::LatencyInfo* optional_latency_info);
-
-  // Safely pop the head of the queue.
-  scoped_ptr<CoalescedWebTouchEvent> PopTouchEvent();
 
   // Dispatch |touch| to the client. Before dispatching, updates pointer
   // states in touchmove events for pointers that have not changed position.
@@ -178,8 +184,7 @@ class CONTENT_EXPORT TouchEventQueue {
   // Handles touch event forwarding and ack'ed event dispatch.
   TouchEventQueueClient* client_;
 
-  typedef std::deque<CoalescedWebTouchEvent*> TouchQueue;
-  TouchQueue touch_queue_;
+  std::list<std::unique_ptr<CoalescedWebTouchEvent>> touch_queue_;
 
   // Position of the first touch in the most recent sequence forwarded to the
   // client.
@@ -208,11 +213,11 @@ class CONTENT_EXPORT TouchEventQueue {
   bool drop_remaining_touches_in_sequence_;
 
   // Optional handler for timed-out touch event acks.
-  scoped_ptr<TouchTimeoutHandler> timeout_handler_;
+  std::unique_ptr<TouchTimeoutHandler> timeout_handler_;
 
   // Suppression of TouchMove's within a slop region when a sequence has not yet
   // been preventDefaulted.
-  scoped_ptr<TouchMoveSlopSuppressor> touchmove_slop_suppressor_;
+  std::unique_ptr<TouchMoveSlopSuppressor> touchmove_slop_suppressor_;
 
   // Whether touch events should remain buffered and dispatched asynchronously
   // while a scroll sequence is active.  In this mode, touchmove's are throttled
@@ -220,7 +225,7 @@ class CONTENT_EXPORT TouchEventQueue {
   // until a sufficient time period has elapsed since the last sent touch event.
   // For details see the design doc at http://goo.gl/lVyJAa.
   bool send_touch_events_async_;
-  scoped_ptr<TouchEventWithLatencyInfo> pending_async_touchmove_;
+  std::unique_ptr<TouchEventWithLatencyInfo> pending_async_touchmove_;
 
   // For uncancelable touch moves, not only we send a fake ack, but also a real
   // ack from render, which we use to decide when to send the next async
@@ -230,12 +235,12 @@ class CONTENT_EXPORT TouchEventQueue {
   // uncancelable touchmoves which are still waiting for their acks back from
   // render. We do not put them back to the front the touch_event_queue any
   // more.
-  std::deque<uint32> ack_pending_async_touchmove_ids_;
+  std::deque<uint32_t> ack_pending_async_touchmove_ids_;
 
   double last_sent_touch_timestamp_sec_;
 
   // Event is saved to compare pointer positions for new touchmove events.
-  scoped_ptr<blink::WebTouchEvent> last_sent_touchevent_;
+  std::unique_ptr<blink::WebTouchEvent> last_sent_touchevent_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchEventQueue);
 };

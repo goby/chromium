@@ -13,22 +13,18 @@ namespace benchmark_instrumentation {
 // The benchmarks search for events and their arguments by name.
 
 void IssueImplThreadRenderingStatsEvent(const RenderingStats& stats) {
-  TRACE_EVENT_INSTANT1("benchmark",
-                       "BenchmarkInstrumentation::ImplThreadRenderingStats",
-                       TRACE_EVENT_SCOPE_THREAD,
-                       "data", stats.AsTraceableData());
+  TRACE_EVENT_INSTANT1(
+      "benchmark,rail", "BenchmarkInstrumentation::ImplThreadRenderingStats",
+      TRACE_EVENT_SCOPE_THREAD, "data", stats.AsTraceableData());
 }
 
 void IssueDisplayRenderingStatsEvent() {
-  scoped_refptr<base::trace_event::TracedValue> record_data =
-      new base::trace_event::TracedValue();
+  std::unique_ptr<base::trace_event::TracedValue> record_data(
+      new base::trace_event::TracedValue());
   record_data->SetInteger("frame_count", 1);
   TRACE_EVENT_INSTANT1(
-      "benchmark",
-      "BenchmarkInstrumentation::DisplayRenderingStats",
-      TRACE_EVENT_SCOPE_THREAD,
-      "data",
-      scoped_refptr<base::trace_event::ConvertableToTraceFormat>(record_data));
+      "benchmark", "BenchmarkInstrumentation::DisplayRenderingStats",
+      TRACE_EVENT_SCOPE_THREAD, "data", std::move(record_data));
 }
 
 }  // namespace benchmark_instrumentation

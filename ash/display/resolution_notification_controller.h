@@ -5,31 +5,27 @@
 #ifndef ASH_DISPLAY_RESOLUTION_NOTIFICATION_CONTROLLER_H_
 #define ASH_DISPLAY_RESOLUTION_NOTIFICATION_CONTROLLER_H_
 
+#include <stdint.h>
+
 #include "ash/ash_export.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "base/callback.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
-#include "ui/gfx/display_observer.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/geometry/size.h"
 
 namespace chromeos {
 FORWARD_DECLARE_TEST(DisplayPreferencesTest, PreventStore);
 }  // namespace chromeos
 
-namespace views {
-class Label;
-class Widget;
-}  // namespace views
-
 namespace ash {
-
-struct DisplayMode;
 
 // A class which manages the notification of display resolution change and
 // also manages the timeout in case the new resolution is unusable.
 class ASH_EXPORT ResolutionNotificationController
-    : public gfx::DisplayObserver,
+    : public display::DisplayObserver,
       public WindowTreeHostManager::Observer {
  public:
   ResolutionNotificationController();
@@ -47,10 +43,11 @@ class ASH_EXPORT ResolutionNotificationController
   // asynchronously after the resolution change is requested. So typically this
   // method will be combined with resolution change methods like
   // DisplayManager::SetDisplayMode().
-  void PrepareNotification(int64 display_id,
-                           const DisplayMode& old_resolution,
-                           const DisplayMode& new_resolution,
-                           const base::Closure& accept_callback);
+  void PrepareNotification(
+      int64_t display_id,
+      const scoped_refptr<display::ManagedDisplayMode>& old_resolution,
+      const scoped_refptr<display::ManagedDisplayMode>& new_resolution,
+      const base::Closure& accept_callback);
 
   // Returns true if the notification is visible or scheduled to be visible and
   // the notification times out.
@@ -85,10 +82,10 @@ class ASH_EXPORT ResolutionNotificationController
   // Called every second for timeout.
   void OnTimerTick();
 
-  // gfx::DisplayObserver overrides:
-  void OnDisplayAdded(const gfx::Display& new_display) override;
-  void OnDisplayRemoved(const gfx::Display& old_display) override;
-  void OnDisplayMetricsChanged(const gfx::Display& display,
+  // display::DisplayObserver overrides:
+  void OnDisplayAdded(const display::Display& new_display) override;
+  void OnDisplayRemoved(const display::Display& old_display) override;
+  void OnDisplayMetricsChanged(const display::Display& display,
                                uint32_t metrics) override;
 
   // WindowTreeHostManager::Observer overrides:
@@ -96,7 +93,7 @@ class ASH_EXPORT ResolutionNotificationController
 
   static void SuppressTimerForTest();
 
-  scoped_ptr<ResolutionChangeInfo> change_info_;
+  std::unique_ptr<ResolutionChangeInfo> change_info_;
 
   DISALLOW_COPY_AND_ASSIGN(ResolutionNotificationController);
 };

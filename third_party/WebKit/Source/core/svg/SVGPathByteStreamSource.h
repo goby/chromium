@@ -21,52 +21,49 @@
 #define SVGPathByteStreamSource_h
 
 #include "core/svg/SVGPathByteStream.h"
-#include "core/svg/SVGPathSource.h"
+#include "core/svg/SVGPathData.h"
 #include "platform/geometry/FloatPoint.h"
 
 namespace blink {
 
-class SVGPathByteStreamSource final : public SVGPathSource {
-public:
-    explicit SVGPathByteStreamSource(const SVGPathByteStream& stream)
-        : m_streamCurrent(stream.begin())
-        , m_streamEnd(stream.end())
-    {
-    }
+class SVGPathByteStreamSource {
+  WTF_MAKE_NONCOPYABLE(SVGPathByteStreamSource);
+  STACK_ALLOCATED();
 
-    bool hasMoreData() const override;
-    SVGPathSegType peekSegmentType() override;
-    PathSegmentData parseSegment() override;
+ public:
+  explicit SVGPathByteStreamSource(const SVGPathByteStream& stream)
+      : m_streamCurrent(stream.begin()), m_streamEnd(stream.end()) {}
 
-private:
+  bool hasMoreData() const { return m_streamCurrent < m_streamEnd; }
+  PathSegmentData parseSegment();
+
+ private:
 #if COMPILER(MSVC)
-#pragma warning(disable: 4701)
+#pragma warning(disable : 4701)
 #endif
-    template<typename DataType>
-    DataType readType()
-    {
-        ByteType<DataType> data;
-        size_t typeSize = sizeof(ByteType<DataType>);
-        ASSERT(m_streamCurrent + typeSize <= m_streamEnd);
-        memcpy(data.bytes, m_streamCurrent, typeSize);
-        m_streamCurrent += typeSize;
-        return data.value;
-    }
+  template <typename DataType>
+  DataType readType() {
+    ByteType<DataType> data;
+    size_t typeSize = sizeof(ByteType<DataType>);
+    ASSERT(m_streamCurrent + typeSize <= m_streamEnd);
+    memcpy(data.bytes, m_streamCurrent, typeSize);
+    m_streamCurrent += typeSize;
+    return data.value;
+  }
 
-    bool readFlag() { return readType<bool>(); }
-    float readFloat() { return readType<float>(); }
-    unsigned short readSVGSegmentType() { return readType<unsigned short>(); }
-    FloatPoint readFloatPoint()
-    {
-        float x = readType<float>();
-        float y = readType<float>();
-        return FloatPoint(x, y);
-    }
+  bool readFlag() { return readType<bool>(); }
+  float readFloat() { return readType<float>(); }
+  unsigned short readSVGSegmentType() { return readType<unsigned short>(); }
+  FloatPoint readFloatPoint() {
+    float x = readType<float>();
+    float y = readType<float>();
+    return FloatPoint(x, y);
+  }
 
-    SVGPathByteStream::DataIterator m_streamCurrent;
-    SVGPathByteStream::DataIterator m_streamEnd;
+  SVGPathByteStream::DataIterator m_streamCurrent;
+  SVGPathByteStream::DataIterator m_streamEnd;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SVGPathByteStreamSource_h
+#endif  // SVGPathByteStreamSource_h

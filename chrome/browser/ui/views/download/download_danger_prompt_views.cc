@@ -10,6 +10,7 @@
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/download_danger_type.h"
@@ -26,11 +27,11 @@
 #include "url/gurl.h"
 
 using extensions::ExperienceSamplingEvent;
+using safe_browsing::ClientSafeBrowsingReportRequest;
 
 namespace {
 
 const int kMessageWidth = 320;
-const int kParagraphPadding = 15;
 
 // Views-specific implementation of download danger prompt dialog. We use this
 // class rather than a TabModalConfirmDialog so that we can use custom
@@ -54,7 +55,6 @@ class DownloadDangerPromptViews : public DownloadDangerPrompt,
   bool Cancel() override;
   bool Accept() override;
   bool Close() override;
-  views::View* GetInitiallyFocusedView() override;
   views::View* GetContentsView() override;
   views::Widget* GetWidget() override;
   const views::Widget* GetWidget() const override;
@@ -65,16 +65,17 @@ class DownloadDangerPromptViews : public DownloadDangerPrompt,
  private:
   base::string16 GetAcceptButtonTitle() const;
   base::string16 GetCancelButtonTitle() const;
-  // The message lead is separated from the main text and is bolded.
-  base::string16 GetMessageLead() const;
   base::string16 GetMessageBody() const;
   void RunDone(Action action);
 
   content::DownloadItem* download_;
+  // If show_context_ is true, this is a download confirmation dialog by
+  // download API, otherwise it is download recovery dialog from a regular
+  // download.
   bool show_context_;
   OnDone done_;
 
-  scoped_ptr<ExperienceSamplingEvent> sampling_event_;
+  std::unique_ptr<ExperienceSamplingEvent> sampling_event_;
 
   views::View* contents_view_;
 };
@@ -99,22 +100,6 @@ DownloadDangerPromptViews::DownloadDangerPromptViews(
   column_set->AddColumn(views::GridLayout::FILL, views::GridLayout::FILL, 1,
                         views::GridLayout::FIXED, kMessageWidth, 0);
 
-  const base::string16 message_lead = GetMessageLead();
-
-  if (!message_lead.empty()) {
-    ui::ResourceBundle* rb = &ui::ResourceBundle::GetSharedInstance();
-    views::Label* message_lead_label = new views::Label(
-        message_lead, rb->GetFontList(ui::ResourceBundle::BoldFont));
-    message_lead_label->SetMultiLine(true);
-    message_lead_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-    message_lead_label->SetAllowCharacterBreak(true);
-
-    layout->StartRow(0, 0);
-    layout->AddView(message_lead_label);
-
-    layout->AddPaddingRow(0, kParagraphPadding);
-  }
-
   views::Label* message_body_label = new views::Label(GetMessageBody());
   message_body_label->SetMultiLine(true);
   message_body_label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
@@ -138,12 +123,16 @@ DownloadDangerPromptViews::DownloadDangerPromptViews(
 void DownloadDangerPromptViews::InvokeActionForTesting(Action action) {
   switch (action) {
     case ACCEPT:
-      Accept();
+      // This inversion is intentional.
+      Cancel();
+      break;
+
+    case DISMISS:
+      Close();
       break;
 
     case CANCEL:
-    case DISMISS:
-      Cancel();
+      Accept();
       break;
 
     default:
@@ -170,8 +159,19 @@ base::string16 DownloadDangerPromptViews::GetDialogButtonLabel(
 base::string16 DownloadDangerPromptViews::GetWindowTitle() const {
   if (show_context_)
     return l10n_util::GetStringUTF16(IDS_CONFIRM_KEEP_DANGEROUS_DOWNLOAD_TITLE);
-  else
-    return l10n_util::GetStringUTF16(IDS_RESTORE_KEEP_DANGEROUS_DOWNLOAD_TITLE);
+  switch (download_->GetDangerType()) {
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
+    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
+    case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
+      return l10n_util::GetStringUTF16(IDS_KEEP_DANGEROUS_DOWNLOAD_TITLE);
+    case content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT:
+      return l10n_util::GetStringUTF16(IDS_KEEP_UNCOMMON_DOWNLOAD_TITLE);
+    default: {
+      return l10n_util::GetStringUTF16(
+          IDS_CONFIRM_KEEP_DANGEROUS_DOWNLOAD_TITLE);
+    }
+  }
 }
 
 void DownloadDangerPromptViews::DeleteDelegate() {
@@ -183,17 +183,20 @@ ui::ModalType DownloadDangerPromptViews::GetModalType() const {
   return ui::MODAL_TYPE_CHILD;
 }
 
-bool DownloadDangerPromptViews::Cancel() {
+bool DownloadDangerPromptViews::Accept() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  // ExperienceSampling: User canceled the warning.
+  // ExperienceSampling: User did not proceed down the dangerous path.
   sampling_event_->CreateUserDecisionEvent(ExperienceSamplingEvent::kDeny);
+  // Note that the presentational concept of "Accept/Cancel" is inverted from
+  // the model's concept of ACCEPT/CANCEL. In the UI, the safe path is "Accept"
+  // and the dangerous path is "Cancel".
   RunDone(CANCEL);
   return true;
 }
 
-bool DownloadDangerPromptViews::Accept() {
+bool DownloadDangerPromptViews::Cancel() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  // ExperienceSampling: User proceeded through the warning.
+  // ExperienceSampling: User proceeded down the dangerous path.
   sampling_event_->CreateUserDecisionEvent(ExperienceSamplingEvent::kProceed);
   RunDone(ACCEPT);
   return true;
@@ -201,14 +204,10 @@ bool DownloadDangerPromptViews::Accept() {
 
 bool DownloadDangerPromptViews::Close() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-  // ExperienceSampling: User canceled the warning.
+  // ExperienceSampling: User did not proceed down the dangerous path.
   sampling_event_->CreateUserDecisionEvent(ExperienceSamplingEvent::kDeny);
   RunDone(DISMISS);
   return true;
-}
-
-views::View* DownloadDangerPromptViews::GetInitiallyFocusedView() {
-  return GetDialogClientView()->cancel_button();
 }
 
 views::View* DownloadDangerPromptViews::GetContentsView() {
@@ -236,48 +235,13 @@ void DownloadDangerPromptViews::OnDownloadUpdated(
 }
 
 base::string16 DownloadDangerPromptViews::GetAcceptButtonTitle() const {
-  if (show_context_)
-    return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD);
-  switch (download_->GetDangerType()) {
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST: {
-      return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD_AGAIN_MALICIOUS);
-    }
-    default:
-      return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD_AGAIN);
-  }
+  return l10n_util::GetStringUTF16(IDS_CANCEL);
 }
 
 base::string16 DownloadDangerPromptViews::GetCancelButtonTitle() const {
   if (show_context_)
-    return l10n_util::GetStringUTF16(IDS_CANCEL);
-  switch (download_->GetDangerType()) {
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
-    case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST: {
-      return l10n_util::GetStringUTF16(IDS_CONFIRM_CANCEL_AGAIN_MALICIOUS);
-    }
-    default:
-      return l10n_util::GetStringUTF16(IDS_CANCEL);
-  }
-}
-
-base::string16 DownloadDangerPromptViews::GetMessageLead() const {
-  if (!show_context_) {
-    switch (download_->GetDangerType()) {
-      case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
-      case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
-      case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
-        return l10n_util::GetStringUTF16(
-            IDS_PROMPT_CONFIRM_KEEP_MALICIOUS_DOWNLOAD_LEAD);
-
-      default:
-        break;
-    }
-  }
-
-  return base::string16();
+    return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD);
+  return l10n_util::GetStringUTF16(IDS_CONFIRM_DOWNLOAD_AGAIN);
 }
 
 base::string16 DownloadDangerPromptViews::GetMessageBody() const {
@@ -316,7 +280,9 @@ base::string16 DownloadDangerPromptViews::GetMessageBody() const {
     switch (download_->GetDangerType()) {
       case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_URL:
       case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_CONTENT:
-      case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST: {
+      case content::DOWNLOAD_DANGER_TYPE_DANGEROUS_HOST:
+      case content::DOWNLOAD_DANGER_TYPE_POTENTIALLY_UNWANTED:
+      case content::DOWNLOAD_DANGER_TYPE_UNCOMMON_CONTENT: {
         return l10n_util::GetStringUTF16(
             IDS_PROMPT_CONFIRM_KEEP_MALICIOUS_DOWNLOAD_BODY);
       }
@@ -336,10 +302,19 @@ void DownloadDangerPromptViews::RunDone(Action action) {
   OnDone done = done_;
   done_.Reset();
   if (download_ != NULL) {
-    if (!download_->GetURL().is_empty() &&
-        !download_->GetBrowserContext()->IsOffTheRecord()) {
-      SendSafeBrowsingDownloadRecoveryReport(
-          action == DownloadDangerPrompt::ACCEPT, download_->GetURL());
+    // If this download is no longer dangerous, is already canceled or
+    // completed, don't send any report.
+    if (download_->IsDangerous() && !download_->IsDone()) {
+      const bool accept = action == DownloadDangerPrompt::ACCEPT;
+      RecordDownloadDangerPrompt(accept, *download_);
+      if (!download_->GetURL().is_empty() &&
+          !download_->GetBrowserContext()->IsOffTheRecord()) {
+        ClientSafeBrowsingReportRequest::ReportType report_type
+            = show_context_ ?
+                ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_BY_API :
+                ClientSafeBrowsingReportRequest::DANGEROUS_DOWNLOAD_RECOVERY;
+        SendSafeBrowsingDownloadReport(report_type, accept, *download_);
+      }
     }
     download_->RemoveObserver(this);
     download_ = NULL;

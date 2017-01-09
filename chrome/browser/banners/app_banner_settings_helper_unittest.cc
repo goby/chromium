@@ -8,7 +8,7 @@
 #include "chrome/browser/banners/app_banner_metrics.h"
 #include "chrome/browser/banners/app_banner_settings_helper.h"
 #include "chrome/browser/engagement/site_engagement_service.h"
-#include "chrome/browser/engagement/site_engagement_service_factory.h"
+#include "chrome/browser/installable/installable_logging.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -18,6 +18,7 @@ namespace {
 
 const char kTestURL[] = "https://www.google.com";
 const char kSameOriginTestURL[] = "https://www.google.com/foo.html";
+const char kDifferentOriginTestURL[] = "https://www.example.com";
 const char kTestPackageName[] = "test.package";
 
 base::Time GetReferenceTime() {
@@ -31,7 +32,10 @@ base::Time GetReferenceTime() {
   exploded_reference_time.second = 0;
   exploded_reference_time.millisecond = 0;
 
-  return base::Time::FromLocalExploded(exploded_reference_time);
+  base::Time out_time;
+  EXPECT_TRUE(
+      base::Time::FromLocalExploded(exploded_reference_time, &out_time));
+  return out_time;
 }
 
 bool IsWithinDay(base::Time time1, base::Time time2) {
@@ -44,7 +48,12 @@ bool IsWithinHour(base::Time time1, base::Time time2) {
          time2 - time1 < base::TimeDelta::FromHours(1);
 }
 
-class AppBannerSettingsHelperTest : public ChromeRenderViewHostTestHarness {};
+class AppBannerSettingsHelperTest : public ChromeRenderViewHostTestHarness {
+  void SetUp() override {
+    ChromeRenderViewHostTestHarness::SetUp();
+    AppBannerSettingsHelper::SetDefaultParameters();
+  }
+};
 
 }  // namespace
 
@@ -210,8 +219,6 @@ TEST_F(AppBannerSettingsHelperTest, BucketTimeToResolutionValid) {
 }
 
 TEST_F(AppBannerSettingsHelperTest, CouldShowEvents) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -284,7 +291,6 @@ TEST_F(AppBannerSettingsHelperTest, CouldShowEvents) {
 }
 
 TEST_F(AppBannerSettingsHelperTest, CouldShowEventsDifferentResolution) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
   AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(20);
   GURL url(kTestURL);
   NavigateAndCommit(url);
@@ -377,8 +383,6 @@ TEST_F(AppBannerSettingsHelperTest, CouldShowEventsDifferentResolution) {
 }
 
 TEST_F(AppBannerSettingsHelperTest, SingleEvents) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -447,8 +451,8 @@ TEST_F(AppBannerSettingsHelperTest, CouldShowEventReplacedWithHigherWeight) {
 
   // Record a direct engagement type. This should override the previous value.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
-      web_contents(), url, kTestPackageName,
-      later_same_day, ui::PAGE_TRANSITION_TYPED);
+      web_contents(), url, kTestPackageName, later_same_day,
+      ui::PAGE_TRANSITION_TYPED);
 
   events = AppBannerSettingsHelper::GetCouldShowBannerEvents(
       web_contents(), url, kTestPackageName);
@@ -459,8 +463,8 @@ TEST_F(AppBannerSettingsHelperTest, CouldShowEventReplacedWithHigherWeight) {
 
   // Record an indirect engagement type. This should be ignored.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
-      web_contents(), url, kTestPackageName,
-      later_again_same_day, ui::PAGE_TRANSITION_RELOAD);
+      web_contents(), url, kTestPackageName, later_again_same_day,
+      ui::PAGE_TRANSITION_RELOAD);
 
   events = AppBannerSettingsHelper::GetCouldShowBannerEvents(
       web_contents(), url, kTestPackageName);
@@ -501,7 +505,6 @@ TEST_F(AppBannerSettingsHelperTest, CouldShowEventReplacedWithHigherWeight) {
 
 TEST_F(AppBannerSettingsHelperTest, IndirectEngagementWithLowerWeight) {
   AppBannerSettingsHelper::SetEngagementWeights(2, 0.5);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -511,35 +514,40 @@ TEST_F(AppBannerSettingsHelperTest, IndirectEngagementWithLowerWeight) {
   base::Time fourth_day = reference_time + base::TimeDelta::FromDays(3);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // It should take four indirect visits with a weight of 0.5 to trigger the
   // banner.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_LINK);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, second_day,
       ui::PAGE_TRANSITION_LINK);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, second_day));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, second_day));
 
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, third_day,
       ui::PAGE_TRANSITION_FORM_SUBMIT);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, third_day));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, third_day));
 
   // Visit the site again; now it should be shown.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, fourth_day,
       ui::PAGE_TRANSITION_MANUAL_SUBFRAME);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, fourth_day));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, fourth_day));
 }
 
 TEST_F(AppBannerSettingsHelperTest, DirectEngagementWithHigherWeight) {
@@ -550,20 +558,20 @@ TEST_F(AppBannerSettingsHelperTest, DirectEngagementWithHigherWeight) {
   base::Time reference_time = GetReferenceTime();
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // It should take one direct visit with a weight of 2 to trigger the banner.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ShouldShowFromEngagement) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -572,33 +580,36 @@ TEST_F(AppBannerSettingsHelperTest, ShouldShowFromEngagement) {
   base::Time one_year_ago = reference_time - base::TimeDelta::FromDays(366);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Visit the site once, it still should not be shown.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, one_year_ago,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Visit the site again after a long delay, it still should not be shown.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, one_day_ago,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Visit the site again; now it should be shown.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterBlocking) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -608,8 +619,9 @@ TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterBlocking) {
   base::Time one_year_ago = reference_time - base::TimeDelta::FromDays(366);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Record events such that the banner should show.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
@@ -618,38 +630,47 @@ TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterBlocking) {
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Block the site a long time ago. It should still be shown.
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, kTestPackageName,
       AppBannerSettingsHelper::APP_BANNER_EVENT_DID_BLOCK, one_year_ago);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Block the site more recently. Now it should not be shown.
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, kTestPackageName,
       AppBannerSettingsHelper::APP_BANNER_EVENT_DID_BLOCK, two_months_ago);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(PREVIOUSLY_BLOCKED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
+
+  // Change the number of days enforced.
+  AppBannerSettingsHelper::SetDaysAfterDismissAndIgnoreToTrigger(59, 14);
+
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterShowing) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
   base::Time reference_time = GetReferenceTime();
   base::Time one_day_ago = reference_time - base::TimeDelta::FromDays(1);
-  base::Time three_weeks_ago = reference_time - base::TimeDelta::FromDays(21);
+  base::Time one_week_ago = reference_time - base::TimeDelta::FromDays(7);
   base::Time one_year_ago = reference_time - base::TimeDelta::FromDays(366);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Record events such that the banner should show.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
@@ -658,27 +679,35 @@ TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterShowing) {
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Show the banner a long time ago. It should still be shown.
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, kTestPackageName,
       AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW, one_year_ago);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Show the site more recently. Now it should not be shown.
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, kTestPackageName,
-      AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW, three_weeks_ago);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+      AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW, one_week_ago);
+  EXPECT_EQ(PREVIOUSLY_IGNORED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
+
+  // Change the number of days enforced.
+  AppBannerSettingsHelper::SetDaysAfterDismissAndIgnoreToTrigger(90, 6);
+
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterAdding) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
-  AppBannerSettingsHelper::SetMinimumMinutesBetweenVisits(1440);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -687,8 +716,9 @@ TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterAdding) {
   base::Time one_year_ago = reference_time - base::TimeDelta::FromDays(366);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Record events such that the banner should show.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
@@ -697,20 +727,21 @@ TEST_F(AppBannerSettingsHelperTest, ShouldNotShowAfterAdding) {
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Add the site a long time ago. It should not be shown.
   AppBannerSettingsHelper::RecordBannerEvent(
       web_contents(), url, kTestPackageName,
       AppBannerSettingsHelper::APP_BANNER_EVENT_DID_ADD_TO_HOMESCREEN,
       one_year_ago);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(ALREADY_INSTALLED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, OperatesOnOrigins) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
   GURL url(kTestURL);
   NavigateAndCommit(url);
 
@@ -718,8 +749,9 @@ TEST_F(AppBannerSettingsHelperTest, OperatesOnOrigins) {
   base::Time one_day_ago = reference_time - base::TimeDelta::FromDays(1);
 
   // By default the banner should not be shown.
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Record events such that the banner should show.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
@@ -734,12 +766,12 @@ TEST_F(AppBannerSettingsHelperTest, OperatesOnOrigins) {
   NavigateAndCommit(url);
 
   // The banner should show as settings are per-origin.
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
 TEST_F(AppBannerSettingsHelperTest, ShouldShowWithHigherTotal) {
-  AppBannerSettingsHelper::SetEngagementWeights(1, 1);
   AppBannerSettingsHelper::SetTotalEngagementToTrigger(5);
   GURL url(kTestURL);
   NavigateAndCommit(url);
@@ -750,80 +782,113 @@ TEST_F(AppBannerSettingsHelperTest, ShouldShowWithHigherTotal) {
   base::Time fourth_day = reference_time + base::TimeDelta::FromDays(3);
   base::Time fifth_day = reference_time + base::TimeDelta::FromDays(4);
 
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // It should take five visits to trigger the banner.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, reference_time,
       ui::PAGE_TRANSITION_LINK);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, second_day,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, second_day));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, third_day,
       ui::PAGE_TRANSITION_GENERATED);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, third_day));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, fourth_day,
       ui::PAGE_TRANSITION_LINK);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, fourth_day));
+  EXPECT_EQ(INSUFFICIENT_ENGAGEMENT,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 
   // Visit the site again; now it should be shown.
   AppBannerSettingsHelper::RecordBannerCouldShowEvent(
       web_contents(), url, kTestPackageName, fifth_day,
       ui::PAGE_TRANSITION_TYPED);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, fifth_day));
+  EXPECT_EQ(NO_ERROR_DETECTED,
+            AppBannerSettingsHelper::ShouldShowBanner(
+                web_contents(), url, kTestPackageName, reference_time));
 }
 
-// Test that the banner triggers correctly using site engagement.
-TEST_F(AppBannerSettingsHelperTest, SiteEngagementTrigger) {
-  AppBannerSettingsHelper::SetTotalEngagementToTrigger(2);
-  base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
-  command_line->AppendSwitch(switches::kEnableSiteEngagementAppBanner);
-
-  SiteEngagementService* service =
-      SiteEngagementServiceFactory::GetForProfile(profile());
-  DCHECK(service);
-
-  // Not used, but needed for method call.
-  base::Time reference_time = GetReferenceTime();
+TEST_F(AppBannerSettingsHelperTest, WasLaunchedRecently) {
   GURL url(kTestURL);
+  GURL url_same_origin(kSameOriginTestURL);
+  GURL url2(kDifferentOriginTestURL);
+  NavigateAndCommit(url);
 
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  base::Time reference_time = GetReferenceTime();
+  base::Time first_day = reference_time + base::TimeDelta::FromDays(1);
+  base::Time ninth_day = reference_time + base::TimeDelta::FromDays(9);
+  base::Time tenth_day = reference_time + base::TimeDelta::FromDays(10);
+  base::Time eleventh_day = reference_time + base::TimeDelta::FromDays(11);
 
-  service->AddPoints(url, 1);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_FALSE(AppBannerSettingsHelper::WasLaunchedRecently(profile(), url,
+                                                            reference_time));
 
-  service->AddPoints(url, 1);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  AppBannerSettingsHelper::RecordBannerEvent(
+      web_contents(), url, kTestPackageName,
+      AppBannerSettingsHelper::APP_BANNER_EVENT_DID_ADD_TO_HOMESCREEN,
+      reference_time);
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(profile(), url,
+                                                           reference_time));
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, first_day));
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, ninth_day));
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, tenth_day));
+  EXPECT_FALSE(AppBannerSettingsHelper::WasLaunchedRecently(profile(), url,
+                                                            eleventh_day));
 
-  AppBannerSettingsHelper::SetTotalEngagementToTrigger(5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  // Make sure a different path under the same origin also returns true.
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(
+      profile(), url_same_origin, reference_time));
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(
+      profile(), url_same_origin, first_day));
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(
+      profile(), url_same_origin, ninth_day));
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(
+      profile(), url_same_origin, tenth_day));
+  EXPECT_FALSE(AppBannerSettingsHelper::WasLaunchedRecently(
+      profile(), url_same_origin, eleventh_day));
 
-  service->AddPoints(url, 1.5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  // Check a different event type.
+  AppBannerSettingsHelper::RecordBannerEvent(
+      web_contents(), url2, kTestPackageName,
+      AppBannerSettingsHelper::APP_BANNER_EVENT_DID_SHOW, reference_time);
 
-  service->AddPoints(url, 0.5);
-  EXPECT_FALSE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  EXPECT_FALSE(AppBannerSettingsHelper::WasLaunchedRecently(profile(), url2,
+                                                            reference_time));
+  EXPECT_FALSE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url2, first_day));
+  EXPECT_FALSE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url2, ninth_day));
 
-  service->AddPoints(url, 1.5);
-  EXPECT_TRUE(AppBannerSettingsHelper::ShouldShowBanner(
-      web_contents(), url, kTestPackageName, reference_time));
+  // Make sure that the most recent time the event is recorded is used.
+  AppBannerSettingsHelper::RecordBannerEvent(
+      web_contents(), url, kTestPackageName,
+      AppBannerSettingsHelper::APP_BANNER_EVENT_DID_ADD_TO_HOMESCREEN,
+      first_day);
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, first_day));
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, ninth_day));
+  EXPECT_TRUE(
+      AppBannerSettingsHelper::WasLaunchedRecently(profile(), url, tenth_day));
+  EXPECT_TRUE(AppBannerSettingsHelper::WasLaunchedRecently(profile(), url,
+                                                           eleventh_day));
 }

@@ -14,22 +14,21 @@
 
 namespace ash {
 
-ScreenRotationAnimation::ScreenRotationAnimation(
-    ui::Layer* layer,
-    int start_degrees,
-    int end_degrees,
-    float initial_opacity,
-    float target_opacity,
-    gfx::Point pivot,
-    base::TimeDelta duration,
-    gfx::Tween::Type tween_type)
+ScreenRotationAnimation::ScreenRotationAnimation(ui::Layer* layer,
+                                                 int start_degrees,
+                                                 int end_degrees,
+                                                 float initial_opacity,
+                                                 float target_opacity,
+                                                 gfx::Point pivot,
+                                                 base::TimeDelta duration,
+                                                 gfx::Tween::Type tween_type)
     : ui::LayerAnimationElement(
           LayerAnimationElement::TRANSFORM | LayerAnimationElement::OPACITY,
           duration),
       tween_type_(tween_type),
       initial_opacity_(initial_opacity),
       target_opacity_(target_opacity) {
-  scoped_ptr<ui::InterpolatedTransform> rotation(
+  std::unique_ptr<ui::InterpolatedTransform> rotation(
       new ui::InterpolatedTransformAboutPivot(
           pivot, new ui::InterpolatedRotation(start_degrees, end_degrees)));
 
@@ -40,11 +39,9 @@ ScreenRotationAnimation::ScreenRotationAnimation(
   interpolated_transform_->SetChild(rotation.release());
 }
 
-ScreenRotationAnimation::~ScreenRotationAnimation() {
-}
+ScreenRotationAnimation::~ScreenRotationAnimation() {}
 
-void ScreenRotationAnimation::OnStart(ui::LayerAnimationDelegate* delegate) {
-}
+void ScreenRotationAnimation::OnStart(ui::LayerAnimationDelegate* delegate) {}
 
 bool ScreenRotationAnimation::OnProgress(double current,
                                          ui::LayerAnimationDelegate* delegate) {
@@ -61,6 +58,11 @@ void ScreenRotationAnimation::OnGetTarget(TargetValue* target) const {
 }
 
 void ScreenRotationAnimation::OnAbort(ui::LayerAnimationDelegate* delegate) {
+  // ui::Layer's d'tor passes its ui::LayerAnimator a null delegate before
+  // deleting it. This is then passed here: http://crbug.com/661313
+  if (!delegate)
+    return;
+
   TargetValue target_value;
   OnGetTarget(&target_value);
   delegate->SetTransformFromAnimation(target_value.transform);

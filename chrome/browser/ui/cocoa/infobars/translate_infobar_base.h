@@ -7,8 +7,9 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include <memory>
+
 #import "base/mac/scoped_nsobject.h"
-#include "base/memory/scoped_ptr.h"
 #import "chrome/browser/ui/cocoa/infobars/infobar_controller.h"
 #include "components/translate/core/browser/options_menu_model.h"
 #include "components/translate/core/browser/translate_infobar_delegate.h"
@@ -42,7 +43,7 @@
   // Space between controls in pixels - read from the NIB.
   CGFloat spaceBetweenControls_;
 
-  scoped_ptr<translate::OptionsMenuModel> optionsMenuModel_;
+  std::unique_ptr<translate::OptionsMenuModel> optionsMenuModel_;
 }
 
 // Returns the delegate as a TranslateInfoBarDelegate.  The return
@@ -87,10 +88,13 @@
 - (void)removeOkCancelButtons;
 
 // Called when the source or target language selection changes in a menu.
+// |newLanguageCode| is the ISO language of the newly selected item.
 // |newLanguageIdx| is the index of the newly selected item in the appropriate
 // menu.
-- (void)sourceLanguageModified:(NSInteger)newLanguageIdx;
-- (void)targetLanguageModified:(NSInteger)newLanguageIdx;
+- (void)sourceLanguageModified:(NSString*)newLanguageCode
+             withLanguageIndex:(NSInteger)newLanguageIdx;
+- (void)targetLanguageModified:(NSString*)newLanguageCode
+             withLanguageIndex:(NSInteger)newLanguageIdx;
 
 // Called when an item in one of the toolbar's language or options
 // menus is selected.

@@ -2,14 +2,18 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <cstring>
 
 #include "base/bind.h"
 #include "base/files/memory_mapped_file.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "media/base/audio_decoder_config.h"
 #include "media/base/media.h"
+#include "media/base/media_util.h"
 #include "media/base/test_data_util.h"
 #include "media/base/video_decoder_config.h"
 #include "media/ffmpeg/ffmpeg_common.h"
@@ -38,40 +42,43 @@ void TestConfigConvertExtraData(
   EXPECT_TRUE(converter_fn.Run(stream, decoder_config));
 
   // Store orig to let FFmpeg free whatever it allocated.
-  AVCodecContext* codec_context = stream->codec;
-  uint8_t* orig_extradata = codec_context->extradata;
-  int orig_extradata_size = codec_context->extradata_size;
+  AVCodecParameters* codec_parameters = stream->codecpar;
+  uint8_t* orig_extradata = codec_parameters->extradata;
+  int orig_extradata_size = codec_parameters->extradata_size;
 
-  // Valid combination: extra_data = NULL && size = 0.
-  codec_context->extradata = NULL;
-  codec_context->extradata_size = 0;
+  // Valid combination: extra_data = nullptr && size = 0.
+  codec_parameters->extradata = nullptr;
+  codec_parameters->extradata_size = 0;
   EXPECT_TRUE(converter_fn.Run(stream, decoder_config));
-  EXPECT_EQ(static_cast<size_t>(codec_context->extradata_size),
+  EXPECT_EQ(static_cast<size_t>(codec_parameters->extradata_size),
             decoder_config->extra_data().size());
 
-  // Valid combination: extra_data = non-NULL && size > 0.
-  codec_context->extradata = &kExtraData[0];
-  codec_context->extradata_size = arraysize(kExtraData);
+  // Valid combination: extra_data = non-nullptr && size > 0.
+  codec_parameters->extradata = &kExtraData[0];
+  codec_parameters->extradata_size = arraysize(kExtraData);
   EXPECT_TRUE(converter_fn.Run(stream, decoder_config));
-  EXPECT_EQ(static_cast<size_t>(codec_context->extradata_size),
+  EXPECT_EQ(static_cast<size_t>(codec_parameters->extradata_size),
             decoder_config->extra_data().size());
-  EXPECT_EQ(0, memcmp(codec_context->extradata,
-                      &decoder_config->extra_data()[0],
-                      decoder_config->extra_data().size()));
+  EXPECT_EQ(
+      0, memcmp(codec_parameters->extradata, &decoder_config->extra_data()[0],
+                decoder_config->extra_data().size()));
 
-  // Invalid combination: extra_data = NULL && size != 0.
-  codec_context->extradata = NULL;
-  codec_context->extradata_size = 10;
-  EXPECT_FALSE(converter_fn.Run(stream, decoder_config));
+  // Possible combination: extra_data = nullptr && size != 0, but the converter
+  // function considers this valid and having no extra_data, due to behavior of
+  // avcodec_parameters_to_context().
+  codec_parameters->extradata = nullptr;
+  codec_parameters->extradata_size = 10;
+  EXPECT_TRUE(converter_fn.Run(stream, decoder_config));
+  EXPECT_EQ(0UL, decoder_config->extra_data().size());
 
-  // Invalid combination: extra_data = non-NULL && size = 0.
-  codec_context->extradata = &kExtraData[0];
-  codec_context->extradata_size = 0;
+  // Invalid combination: extra_data = non-nullptr && size = 0.
+  codec_parameters->extradata = &kExtraData[0];
+  codec_parameters->extradata_size = 0;
   EXPECT_FALSE(converter_fn.Run(stream, decoder_config));
 
   // Restore orig values for sane cleanup.
-  codec_context->extradata = orig_extradata;
-  codec_context->extradata_size = orig_extradata_size;
+  codec_parameters->extradata = orig_extradata;
+  codec_parameters->extradata_size = orig_extradata_size;
 }
 
 TEST_F(FFmpegCommonTest, AVStreamToDecoderConfig) {
@@ -91,8 +98,8 @@ TEST_F(FFmpegCommonTest, AVStreamToDecoderConfig) {
        i < format_context->nb_streams && (!found_audio || !found_video);
        ++i) {
     AVStream* stream = format_context->streams[i];
-    AVCodecContext* codec_context = stream->codec;
-    AVMediaType codec_type = codec_context->codec_type;
+    AVCodecParameters* codec_parameters = stream->codecpar;
+    AVMediaType codec_type = codec_parameters->codec_type;
 
     if (codec_type == AVMEDIA_TYPE_AUDIO) {
       if (found_audio)
@@ -118,28 +125,9 @@ TEST_F(FFmpegCommonTest, AVStreamToDecoderConfig) {
   ASSERT_TRUE(found_video);
 }
 
-TEST_F(FFmpegCommonTest, OpusAudioDecoderConfig) {
-  AVCodecContext context = {0};
-  context.codec_type = AVMEDIA_TYPE_AUDIO;
-  context.codec_id = AV_CODEC_ID_OPUS;
-  context.channel_layout = CHANNEL_LAYOUT_STEREO;
-  context.channels = 2;
-  context.sample_fmt = AV_SAMPLE_FMT_FLT;
-
-  // During conversion this sample rate should be changed to 48kHz.
-  context.sample_rate = 44100;
-
-  AudioDecoderConfig decoder_config;
-  ASSERT_TRUE(AVCodecContextToAudioDecoderConfig(&context, false,
-                                                 &decoder_config));
-  EXPECT_EQ(48000, decoder_config.samples_per_second());
-}
-
 TEST_F(FFmpegCommonTest, TimeBaseConversions) {
-  const int64 test_data[][5] = {
-    {1, 2, 1, 500000, 1 },
-    {1, 3, 1, 333333, 1 },
-    {1, 3, 2, 666667, 2 },
+  const int64_t test_data[][5] = {
+      {1, 2, 1, 500000, 1}, {1, 3, 1, 333333, 1}, {1, 3, 2, 666667, 2},
   };
 
   for (size_t i = 0; i < arraysize(test_data); ++i) {
@@ -179,59 +167,6 @@ TEST_F(FFmpegCommonTest, VerifyFormatSizes) {
       int bytes_per_channel = SampleFormatToBytesPerChannel(sample_format);
       EXPECT_EQ(bytes_per_channel, single_buffer_size);
     }
-  }
-}
-
-TEST_F(FFmpegCommonTest, UTCDateToTime_Valid) {
-  base::Time result;
-  EXPECT_TRUE(FFmpegUTCDateToTime("2012-11-10 12:34:56", &result));
-
-  base::Time::Exploded exploded;
-  result.UTCExplode(&exploded);
-  EXPECT_TRUE(exploded.HasValidValues());
-  EXPECT_EQ(2012, exploded.year);
-  EXPECT_EQ(11, exploded.month);
-  EXPECT_EQ(6, exploded.day_of_week);
-  EXPECT_EQ(10, exploded.day_of_month);
-  EXPECT_EQ(12, exploded.hour);
-  EXPECT_EQ(34, exploded.minute);
-  EXPECT_EQ(56, exploded.second);
-  EXPECT_EQ(0, exploded.millisecond);
-}
-
-TEST_F(FFmpegCommonTest, UTCDateToTime_Invalid) {
-  const char* invalid_date_strings[] = {
-    "",
-    "2012-11-10",
-    "12:34:56",
-    "-- ::",
-    "2012-11-10 12:34:",
-    "2012-11-10 12::56",
-    "2012-11-10 :34:56",
-    "2012-11- 12:34:56",
-    "2012--10 12:34:56",
-    "-11-10 12:34:56",
-    "2012-11 12:34:56",
-    "2012-11-10-12 12:34:56",
-    "2012-11-10 12:34",
-    "2012-11-10 12:34:56:78",
-    "ABCD-11-10 12:34:56",
-    "2012-EF-10 12:34:56",
-    "2012-11-GH 12:34:56",
-    "2012-11-10 IJ:34:56",
-    "2012-11-10 12:JL:56",
-    "2012-11-10 12:34:MN",
-    "2012-11-10 12:34:56.123",
-    "2012-11-1012:34:56",
-    "2012-11-10 12:34:56 UTC",
-  };
-
-  for (size_t i = 0; i < arraysize(invalid_date_strings); ++i) {
-    const char* date_string = invalid_date_strings[i];
-    base::Time result;
-    EXPECT_FALSE(FFmpegUTCDateToTime(date_string, &result))
-        << "date_string '" << date_string << "'";
-    EXPECT_TRUE(result.is_null());
   }
 }
 

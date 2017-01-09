@@ -10,19 +10,20 @@
 #include "base/mac/foundation_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
-#include "chrome/browser/ui/chrome_style.h"
+#include "chrome/browser/ui/cocoa/chrome_style.h"
 #import "chrome/browser/ui/cocoa/passwords/base_passwords_content_view_controller.h"
 #import "chrome/browser/ui/cocoa/passwords/password_item_views.h"
 #import "chrome/browser/ui/cocoa/passwords/passwords_bubble_utils.h"
 #include "chrome/browser/ui/passwords/manage_passwords_bubble_model.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
-#include "grit/generated_resources.h"
+#include "chrome/grit/generated_resources.h"
 #include "skia/ext/skia_utils_mac.h"
 #import "ui/base/cocoa/controls/hyperlink_button_cell.h"
 #import "ui/base/cocoa/hover_image_button.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/image/image.h"
 #include "ui/resources/grit/ui_resources.h"
+#include "url/origin.h"
 
 namespace {
 
@@ -59,9 +60,7 @@ NSTextField* FederationLabel(const base::string16& text) {
     base::scoped_nsobject<HyperlinkButtonCell> cell([[HyperlinkButtonCell alloc]
         initTextCell:l10n_util::GetNSString(IDS_MANAGE_PASSWORDS_UNDO)]);
     [cell setControlSize:NSSmallControlSize];
-    [cell setShouldUnderline:NO];
-    [cell setUnderlineOnHover:NO];
-    [cell setTextColor:gfx::SkColorToCalibratedNSColor(
+    [cell setTextColor:skia::SkColorToCalibratedNSColor(
                            chrome_style::GetLinkColor())];
     [undoButton_ setCell:cell.get()];
     [undoButton_ sizeToFit];
@@ -130,6 +129,8 @@ NSTextField* FederationLabel(const base::string16& text) {
         setHoverImage:bundle.GetImageNamed(IDR_CLOSE_2_H).ToNSImage()];
     [deleteButton_
         setPressedImage:bundle.GetImageNamed(IDR_CLOSE_2_P).ToNSImage()];
+    NSString* deleteTitle = l10n_util::GetNSString(IDS_MANAGE_PASSWORDS_DELETE);
+    [deleteButton_ setAccessibilityTitle:deleteTitle];
     [deleteButton_ setTarget:target];
     [deleteButton_ setAction:action];
     [self addSubview:deleteButton_];
@@ -138,12 +139,12 @@ NSTextField* FederationLabel(const base::string16& text) {
     usernameField_.reset([UsernameLabel(GetDisplayUsername(form)) retain]);
     [self addSubview:usernameField_];
 
-    if (form.federation_url.is_empty()) {
+    if (form.federation_origin.unique()) {
       passwordField_.reset([PasswordLabel(form.password_value) retain]);
     } else {
       base::string16 text = l10n_util::GetStringFUTF16(
           IDS_PASSWORDS_VIA_FEDERATION,
-          base::UTF8ToUTF16(form.federation_url.host()));
+          base::UTF8ToUTF16(form.federation_origin.host()));
       passwordField_.reset([FederationLabel(text) retain]);
     }
     [self addSubview:passwordField_];
@@ -209,12 +210,12 @@ NSTextField* FederationLabel(const base::string16& text) {
     usernameField_.reset([UsernameLabel(GetDisplayUsername(form)) retain]);
     [self addSubview:usernameField_];
 
-    if (form.federation_url.is_empty()) {
+    if (form.federation_origin.unique()) {
       passwordField_.reset([PasswordLabel(form.password_value) retain]);
     } else {
       base::string16 text = l10n_util::GetStringFUTF16(
           IDS_PASSWORDS_VIA_FEDERATION,
-          base::UTF8ToUTF16(form.federation_url.host()));
+          base::UTF8ToUTF16(form.federation_origin.host()));
       passwordField_.reset([FederationLabel(text) retain]);
     }
     [self addSubview:passwordField_];
@@ -286,7 +287,9 @@ NSTextField* FederationLabel(const base::string16& text) {
     delegate_ = delegate;
     passwordForm_ = passwordForm;
     if ([delegate_ model]->state() ==
-        password_manager::ui::PENDING_PASSWORD_STATE)
+            password_manager::ui::PENDING_PASSWORD_STATE ||
+        [delegate_ model]->state() ==
+            password_manager::ui::PENDING_PASSWORD_UPDATE_STATE)
       state_ = MANAGE_PASSWORD_ITEM_STATE_PENDING;
     else
       state_ = MANAGE_PASSWORD_ITEM_STATE_MANAGE;
@@ -381,19 +384,34 @@ NSTextField* FederationLabel(const base::string16& text) {
 @synthesize firstColumnMaxWidth = firstColumnMaxWidth_;
 @synthesize secondColumnMaxWidth = secondColumnMaxWidth_;
 
-- (id)initWithModel:(ManagePasswordsBubbleModel*)model
-              forms:(const PasswordFormsVector&)password_forms {
+- (id)initWithModelAndForms:(ManagePasswordsBubbleModel*)model
+                      forms:(const PasswordFormsVector*)password_forms {
   if ((self = [super initWithNibName:nil bundle:nil])) {
     base::scoped_nsobject<NSMutableArray> items(
-        [[NSMutableArray arrayWithCapacity:password_forms.size()] retain]);
+        [[NSMutableArray arrayWithCapacity:password_forms->size()] retain]);
     model_ = model;
     // Create the controllers.
-    for (const autofill::PasswordForm* form : password_forms) {
+    for (const auto& form : *password_forms) {
       base::scoped_nsobject<ManagePasswordItemViewController> item(
           [[ManagePasswordItemViewController alloc] initWithDelegate:self
-                                                        passwordForm:form]);
+                                                        passwordForm:&form]);
       [items addObject:item.get()];
     }
+    itemViews_.reset(items.release());
+  }
+  return self;
+}
+
+- (id)initWithModelAndForm:(ManagePasswordsBubbleModel*)model
+                      form:(const autofill::PasswordForm*)form {
+  if ((self = [super initWithNibName:nil bundle:nil])) {
+    base::scoped_nsobject<NSMutableArray> items(
+        [[NSMutableArray arrayWithCapacity:1] retain]);
+    model_ = model;
+    base::scoped_nsobject<ManagePasswordItemViewController> item(
+        [[ManagePasswordItemViewController alloc] initWithDelegate:self
+                                                      passwordForm:form]);
+    [items addObject:item.get()];
     itemViews_.reset(items.release());
   }
   return self;

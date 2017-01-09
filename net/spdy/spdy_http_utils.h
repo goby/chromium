@@ -26,36 +26,34 @@ class HttpResponseHeaders;
 // incomplete (e.g. missing 'status' or 'version').
 NET_EXPORT bool SpdyHeadersToHttpResponse(
     const SpdyHeaderBlock& headers,
-    SpdyMajorVersion protocol_version,
     HttpResponseInfo* response);
 
 // Create a SpdyHeaderBlock from HttpRequestInfo and HttpRequestHeaders.
 NET_EXPORT void CreateSpdyHeadersFromHttpRequest(
     const HttpRequestInfo& info,
     const HttpRequestHeaders& request_headers,
-    SpdyMajorVersion protocol_version,
     bool direct,
     SpdyHeaderBlock* headers);
 
 // Create a SpdyHeaderBlock from HttpResponseHeaders.
 NET_EXPORT void CreateSpdyHeadersFromHttpResponse(
     const HttpResponseHeaders& response_headers,
-    SpdyMajorVersion protocol_version,
     SpdyHeaderBlock* headers);
+
+// Create HttpRequestHeaders from SpdyHeaderBlock.
+NET_EXPORT void ConvertHeaderBlockToHttpRequestHeaders(
+    const SpdyHeaderBlock& spdy_headers,
+    HttpRequestHeaders* http_headers);
 
 // Returns the URL associated with the |headers| by assembling the
 // scheme, host and path from the protocol specific keys.
-NET_EXPORT GURL GetUrlFromHeaderBlock(const SpdyHeaderBlock& headers,
-                                              SpdyMajorVersion protocol_version,
-                                              bool pushed);
+NET_EXPORT GURL GetUrlFromHeaderBlock(const SpdyHeaderBlock& headers);
 
-NET_EXPORT SpdyPriority ConvertRequestPriorityToSpdyPriority(
-    RequestPriority priority,
-    SpdyMajorVersion protocol_version);
+NET_EXPORT SpdyPriority
+ConvertRequestPriorityToSpdyPriority(RequestPriority priority);
 
-NET_EXPORT RequestPriority ConvertSpdyPriorityToRequestPriority(
-    SpdyPriority priority,
-    SpdyMajorVersion protocol_version);
+NET_EXPORT RequestPriority
+ConvertSpdyPriorityToRequestPriority(SpdyPriority priority);
 
 }  // namespace net
 

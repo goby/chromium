@@ -7,13 +7,12 @@
 #include <cmath>
 
 #include "base/logging.h"
-#include "base/mac/mac_util.h"
 #import "base/mac/scoped_nsobject.h"
 #import "chrome/browser/themes/theme_properties.h"
 #import "chrome/browser/themes/theme_service.h"
 #import "chrome/browser/ui/cocoa/rect_path_utils.h"
 #import "chrome/browser/ui/cocoa/themed_window.h"
-#include "grit/theme_resources.h"
+#include "chrome/grit/theme_resources.h"
 #import "third_party/google_toolbox_for_mac/src/AppKit/GTMNSColor+Luminance.h"
 #import "ui/base/cocoa/nsgraphics_context_additions.h"
 #import "ui/base/cocoa/nsview_additions.h"
@@ -51,8 +50,6 @@ static const NSTimeInterval kAnimationShowDuration = 0.2;
 // now so we don't suck.  -jrg
 static const NSTimeInterval kAnimationHideDuration = 0.4;
 
-static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
-
 @implementation GradientButtonCell
 
 @synthesize hoverAlpha = hoverAlpha_;
@@ -84,8 +81,7 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
 // Return YES if we are pulsing (towards another state or continuously).
 - (BOOL)pulsing {
   if ((pulseState_ == gradient_button_cell::kPulsingOn) ||
-      (pulseState_ == gradient_button_cell::kPulsingOff) ||
-      (pulseState_ == gradient_button_cell::kPulsingContinuous))
+      (pulseState_ == gradient_button_cell::kPulsingOff))
     return YES;
   return NO;
 }
@@ -113,16 +109,8 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
       return;
     }
     break;
-  case gradient_button_cell::kPulsingContinuous:
-    opacity += elapsed / kAnimationContinuousCycleDuration * pulseMultiplier_;
-    if (opacity > 1.0) {
-      opacity = 1.0;
-      pulseMultiplier_ *= -1.0;
-    } else if (opacity < 0.0) {
-      opacity = 0.0;
-      pulseMultiplier_ *= -1.0;
-    }
-    outerStrokeAlphaMult_ = opacity;
+  case gradient_button_cell::kPulsingStuckOn:
+    outerStrokeAlphaMult_ = 1.0;
     break;
   default:
     NOTREACHED() << "unknown pulse state";
@@ -148,7 +136,6 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
 // state change.
 - (void)setPulseState:(gradient_button_cell::PulseState)pstate {
   pulseState_ = pstate;
-  pulseMultiplier_ = 0.0;
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
   lastHoverUpdate_ = [NSDate timeIntervalSinceReferenceDate];
 
@@ -168,10 +155,9 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
                          0.0 : 1.0)];
     [self performOnePulseStep];
     break;
-  case gradient_button_cell::kPulsingContinuous:
+  case gradient_button_cell::kPulsingStuckOn:
     // Semantics of continuous pulsing are that we pulse independent
     // of mouse position.
-    pulseMultiplier_ = 1.0;
     [self performOnePulseStep];
     break;
   default:
@@ -184,19 +170,19 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   [NSObject cancelPreviousPerformRequestsWithTarget:self];
 }
 
-- (void)setIsContinuousPulsing:(BOOL)continuous {
-  if (!continuous && pulseState_ != gradient_button_cell::kPulsingContinuous)
+- (void)setPulseIsStuckOn:(BOOL)on {
+  if (!on && pulseState_ != gradient_button_cell::kPulsingStuckOn)
     return;
-  if (continuous) {
-    [self setPulseState:gradient_button_cell::kPulsingContinuous];
+  if (on) {
+    [self setPulseState:gradient_button_cell::kPulsingStuckOn];
   } else {
     [self setPulseState:(isMouseInside_ ? gradient_button_cell::kPulsedOn :
                          gradient_button_cell::kPulsedOff)];
   }
 }
 
-- (BOOL)isContinuousPulsing {
-  return (pulseState_ == gradient_button_cell::kPulsingContinuous) ?
+- (BOOL)isPulseStuckOn {
+  return (pulseState_ == gradient_button_cell::kPulsingStuckOn) ?
       YES : NO;
 }
 
@@ -205,8 +191,15 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
 // reflect our new state.
 - (void)setMouseInside:(BOOL)flag animate:(BOOL)animated {
   isMouseInside_ = flag;
-  if (pulseState_ != gradient_button_cell::kPulsingContinuous) {
+  if (pulseState_ != gradient_button_cell::kPulsingStuckOn) {
     if (animated) {
+      // In Material Design, if the button is already fully on, don't pulse it
+      // on again if the mouse is within its bounds.
+      if ([self tag] == [self isMaterialDesignButtonType] &&
+          isMouseInside_ && pulseState_ == gradient_button_cell::kPulsedOn) {
+        return;
+      }
+
       [self setPulseState:(isMouseInside_ ? gradient_button_cell::kPulsingOn :
                            gradient_button_cell::kPulsingOff)];
     } else {
@@ -284,7 +277,6 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
 - (void)sharedInit {
   shouldTheme_ = YES;
   pulseState_ = gradient_button_cell::kPulsedOff;
-  pulseMultiplier_ = 1.0;
   outerStrokeAlphaMult_ = 1.0;
   gradient_.reset([[self gradientForHoverAlpha:0.0 isThemed:NO] retain]);
 }
@@ -320,6 +312,19 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   return trackingArea_ && isMouseInside_;
 }
 
+- (BOOL)startTrackingAt:(NSPoint)startPoint inView:(NSView *)controlView {
+  if ([self isMaterialDesignButtonType]) {
+    // The user has just clicked down in the button. In Material Design, set the
+    // pulsed (hover) state to off now so that if the user keeps the mouse held
+    // down while dragging it out of the button's bounds, the button will draw
+    // itself in its normal state. This is unrelated to dragging the button
+    // in the button bar, which takes a different path through the code.
+    [self setPulseState:gradient_button_cell::kPulsedOff];
+  }
+
+  return [super startTrackingAt:startPoint inView:controlView];
+}
+
 // Since we have our own drawWithFrame:, we need to also have our own
 // logic for determining when the mouse is inside for honoring this
 // request.
@@ -340,7 +345,7 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
 }
 
 // TODO(viettrungluu): clean up/reorganize.
-- (void)drawBorderAndFillForTheme:(ui::ThemeProvider*)themeProvider
+- (void)drawBorderAndFillForTheme:(const ui::ThemeProvider*)themeProvider
                       controlView:(NSView*)controlView
                         innerPath:(NSBezierPath*)innerPath
               showClickedGradient:(BOOL)showClickedGradient
@@ -349,6 +354,36 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
                            active:(BOOL)active
                         cellFrame:(NSRect)cellFrame
                   defaultGradient:(NSGradient*)defaultGradient {
+  // For Material Design, draw a solid rounded rect behind the button, based on
+  // the hover and pressed states.
+  if ([self isMaterialDesignButtonType]) {
+    const CGFloat kEightPercentAlpha = 0.08;
+    const CGFloat kFourPercentAlpha = 0.04;
+
+    // The alpha is always at least 8%. Default the color to black.
+    CGFloat alpha = kEightPercentAlpha;
+    CGFloat color = 0.0;
+
+    // If a dark theme, increase the opacity slightly and use white.
+    if ([[controlView window] hasDarkTheme]) {
+      alpha += kFourPercentAlpha;
+      color = 1.0;
+    }
+    // If clicked or highlighted, the background is slightly more opaque. If not
+    // clicked or highlighted, adjust the alpha by the animation fade in
+    // percentage.
+    if (showClickedGradient || showHighlightGradient) {
+      alpha += kFourPercentAlpha;
+    } else {
+      alpha *= hoverAlpha;
+    }
+
+    // Fill the path.
+    [[NSColor colorWithCalibratedWhite:color alpha:alpha] set];
+    [innerPath fill];
+    return;
+  }
+
   BOOL isFlatButton = [self showsBorderOnlyWhileMouseInside];
 
   // For flat (unbordered when not hovered) buttons, never use the toolbar
@@ -375,8 +410,7 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   // The basic gradient shown inside; see above.
   NSGradient* gradient;
   if (hoverAlpha == 0 && !useThemeGradient) {
-    gradient = defaultGradient ? defaultGradient
-                               : gradient_;
+    gradient = defaultGradient ? defaultGradient : gradient_.get();
   } else {
     gradient = [self gradientForHoverAlpha:hoverAlpha
                                   isThemed:useThemeGradient];
@@ -463,14 +497,23 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
                    innerFrame:(NSRect*)returnInnerFrame
                     innerPath:(NSBezierPath**)returnInnerPath
                      clipPath:(NSBezierPath**)returnClipPath {
-  const CGFloat lineWidth = [controlView cr_lineWidth];
-  const CGFloat halfLineWidth = lineWidth / 2.0;
+  const CGFloat kLineWidth = [controlView cr_lineWidth];
+  const CGFloat kHalfLineWidth = kLineWidth / 2.0;
 
-  // Constants from Cole.  Will kConstant them once the feedback loop
-  // is complete.
-  NSRect drawFrame = NSInsetRect(cellFrame, 1.5 * lineWidth, 1.5 * lineWidth);
-  NSRect innerFrame = NSInsetRect(cellFrame, lineWidth, lineWidth);
-  const CGFloat radius = 3;
+  NSRect drawFrame = NSZeroRect;
+  NSRect innerFrame = NSZeroRect;
+  CGFloat cornerRadius = 2;
+  if (![self isMaterialDesignButtonType]) {
+    drawFrame = NSInsetRect(cellFrame, 1.5 * kLineWidth, 1.5 * kLineWidth);
+    innerFrame = NSInsetRect(cellFrame, kLineWidth, kLineWidth);
+    cornerRadius = 3;
+  } else {
+    drawFrame = cellFrame;
+    // Hover and click paths are always 20pt tall, regardless of the button's
+    // height.
+    drawFrame.size.height = 20;
+    innerFrame = NSInsetRect(drawFrame, kLineWidth, kLineWidth);
+  }
 
   ButtonType type = [[(NSControl*)controlView cell] tag];
   switch (type) {
@@ -497,19 +540,26 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
     *returnInnerFrame = innerFrame;
   if (returnInnerPath) {
     DCHECK(*returnInnerPath == nil);
-    *returnInnerPath = [NSBezierPath bezierPathWithRoundedRect:drawFrame
-                                                       xRadius:radius
-                                                       yRadius:radius];
-    [*returnInnerPath setLineWidth:lineWidth];
+    drawFrame.origin.y +=
+        [self hoverBackgroundVerticalOffsetInControlView:controlView];
+
+    if ([self tag] == kMaterialMenuButtonTypeWithLimitedClickFeedback) {
+      *returnInnerPath = [NSBezierPath bezierPathWithRect:drawFrame];
+    } else {
+      *returnInnerPath = [NSBezierPath bezierPathWithRoundedRect:drawFrame
+                                                         xRadius:cornerRadius
+                                                         yRadius:cornerRadius];
+    }
+    [*returnInnerPath setLineWidth:kLineWidth];
   }
   if (returnClipPath) {
     DCHECK(*returnClipPath == nil);
     NSRect clipPathRect =
-        NSInsetRect(drawFrame, -halfLineWidth, -halfLineWidth);
+        NSInsetRect(drawFrame, -kHalfLineWidth, -kHalfLineWidth);
     *returnClipPath = [NSBezierPath
         bezierPathWithRoundedRect:clipPathRect
-                          xRadius:radius + halfLineWidth
-                          yRadius:radius + halfLineWidth];
+                          xRadius:cornerRadius + kHalfLineWidth
+                          yRadius:cornerRadius + kHalfLineWidth];
   }
 }
 
@@ -523,36 +573,34 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
                     innerPath:&innerPath
                      clipPath:NULL];
 
-  BOOL pressed = ([((NSControl*)[self controlView]) isEnabled] &&
-                  [self isHighlighted]);
+  BOOL enabled = [((NSControl*)[self controlView]) isEnabled];
+  BOOL pressed = enabled && [self isHighlighted];
   NSWindow* window = [controlView window];
-  ui::ThemeProvider* themeProvider = [window themeProvider];
+  const ui::ThemeProvider* themeProvider = [window themeProvider];
   BOOL active = [window isKeyWindow] || [window isMainWindow];
-
-  // Draw custom focus ring only if AppKit won't draw one automatically.
-  // The new focus ring APIs became available with 10.7, but did not get
-  // applied to buttons (only editable text fields) until 10.8.
-  BOOL shouldDrawFocusRing = base::mac::IsOSLionOrEarlier() &&
-                             [self showsFirstResponder];
 
   // Stroke the borders and appropriate fill gradient. If we're borderless, the
   // only time we want to draw the inner gradient is if we're highlighted or if
-  // we're drawing the focus ring manually.
+  // we're drawing the focus ring manually. In Material Design, the "border" is
+  // actually a highlight, which should be drawn if
+  // |showsBorderOnlyWhileMouseInside| is true.
+  BOOL hasMaterialHighlight =
+      [self isMaterialDesignButtonType] &&
+      ![self showsBorderOnlyWhileMouseInside] &&
+      enabled;
   if (([self isBordered] && ![self showsBorderOnlyWhileMouseInside]) ||
-      pressed ||
-      [self isMouseInside] ||
-      [self isContinuousPulsing] ||
-      shouldDrawFocusRing) {
-
+      pressed || [self isMouseInside] || [self isPulseStuckOn] ||
+      hasMaterialHighlight) {
     // When pulsing we want the bookmark to stand out a little more.
     BOOL showClickedGradient = pressed ||
-        (pulseState_ == gradient_button_cell::kPulsingContinuous);
+        (pulseState_ == gradient_button_cell::kPulsingStuckOn);
+    BOOL showHighlightGradient = [self isHighlighted] || hasMaterialHighlight;
 
     [self drawBorderAndFillForTheme:themeProvider
                         controlView:controlView
                           innerPath:innerPath
                 showClickedGradient:showClickedGradient
-              showHighlightGradient:[self isHighlighted]
+              showHighlightGradient:showHighlightGradient
                          hoverAlpha:[self hoverAlpha]
                              active:active
                           cellFrame:cellFrame
@@ -575,22 +623,12 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
                              NSCompositeSourceOver);
   }
   [self drawInteriorWithFrame:innerFrame inView:controlView];
+}
 
-  if (shouldDrawFocusRing) {
-    gfx::ScopedNSGraphicsContextSaveGState scoped_state;
-    const CGFloat lineWidth = [controlView cr_lineWidth];
-    // insetX = 1.0 is used for the drawing of blue highlight so that this
-    // highlight won't be too near the bookmark toolbar itself, in case we
-    // draw bookmark buttons in bookmark toolbar.
-    rect_path_utils::FrameRectWithInset(rect_path_utils::RoundedCornerAll,
-                                        NSInsetRect(cellFrame, 0, lineWidth),
-                                        1.0,            // insetX
-                                        0.0,            // insetY
-                                        3.0,            // outerRadius
-                                        lineWidth * 2,  // lineWidth
-                                        [controlView
-                                            cr_keyboardFocusIndicatorColor]);
-  }
+- (CGFloat)textStartXOffset {
+  // 11 is the magic number needed to make this match the native
+  // NSButtonCell's label display.
+  return [[self image] size].width + 11;
 }
 
 - (void)drawInteriorWithFrame:(NSRect)cellFrame inView:(NSView*)controlView {
@@ -604,13 +642,13 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
     CGContextRef context =
         (CGContextRef)([[NSGraphicsContext currentContext] graphicsPort]);
 
-    ThemeService* themeProvider = static_cast<ThemeService*>(
-        [[controlView window] themeProvider]);
+    const ui::ThemeProvider* themeProvider =
+        [[controlView window] themeProvider];
     NSColor* color = themeProvider ?
         themeProvider->GetNSColorTint(ThemeProperties::TINT_BUTTONS) :
         [NSColor blackColor];
 
-    if (isTemplate && themeProvider && themeProvider->UsingDefaultTheme()) {
+    if (isTemplate && themeProvider && themeProvider->UsingSystemTheme()) {
       base::scoped_nsobject<NSShadow> shadow([[NSShadow alloc] init]);
       [shadow.get() setShadowColor:themeProvider->GetNSColor(
           ThemeProperties::COLOR_TOOLBAR_BEZEL)];
@@ -657,6 +695,15 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   return 1;
 }
 
+- (CGFloat)hoverBackgroundVerticalOffsetInControlView:(NSView*)controlView {
+  return 0.0;
+}
+
+- (BOOL)isMaterialDesignButtonType {
+  return [self tag] == kMaterialStandardButtonTypeWithLimitedClickFeedback ||
+         [self tag] == kMaterialMenuButtonTypeWithLimitedClickFeedback;
+}
+
 // Overriden from NSButtonCell so we can display a nice fadeout effect for
 // button titles that overflow.
 // This method is copied in the most part from GTMFadeTruncatingTextFieldCell,
@@ -673,10 +720,13 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   // Empirically, Cocoa will draw an extra 2 pixels past NSWidth(cellFrame)
   // before it clips the text.
   const CGFloat kOverflowBeforeClip = 2;
-  BOOL clipping = YES;
+  BOOL isModeMaterial = [self isMaterialDesignButtonType];
+  // For Material Design we don't want to clip the text. For all other button
+  // cell modes, we do.
+  BOOL shouldClipTheTitle = !isModeMaterial;
   if (std::floor(size.width) <= (NSWidth(cellFrame) + kOverflowBeforeClip)) {
     cellFrame.origin.y += ([self verticalTextOffset] - 1);
-    clipping = NO;
+    shouldClipTheTitle = NO;
   }
 
   // Gradient is about twice our line height long.
@@ -690,12 +740,10 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
   NSPoint textOffset = NSZeroPoint;
   {
     gfx::ScopedNSGraphicsContextSaveGState scopedGState;
-    if (clipping)
+    if (shouldClipTheTitle)
       [NSBezierPath clipRect:solidPart];
 
-    // 11 is the magic number needed to make this match the native
-    // NSButtonCell's label display.
-    CGFloat textLeft = [[self image] size].width + 11;
+    CGFloat textLeft = [self textStartXOffset];
 
     // For some reason, the height of cellFrame as passed in is totally bogus.
     // For vertical centering purposes, we need the bounds of the containing
@@ -706,10 +754,20 @@ static const NSTimeInterval kAnimationContinuousCycleDuration = 0.4;
     textOffset = NSMakePoint(textLeft,
                              (NSHeight(buttonFrame) - size.height) / 2 +
                              [self verticalTextOffset]);
-    [title drawAtPoint:textOffset];
+    // WIth Material Design we want an ellipsis if the title is too long to fit,
+    // so have to use drawInRect: instead of drawAtPoint:.
+    if (isModeMaterial) {
+      NSRect textBounds = NSMakeRect(textOffset.x,
+                                     textOffset.y,
+                                     NSWidth(buttonFrame) - textOffset.x,
+                                     NSHeight(buttonFrame));
+      [title drawInRect:textBounds];
+    } else {
+      [title drawAtPoint:textOffset];
+    }
   }
 
-  if (!clipping)
+  if (!shouldClipTheTitle)
     return cellFrame;
 
   // Draw the gradient part with a transparency layer. This makes the text look

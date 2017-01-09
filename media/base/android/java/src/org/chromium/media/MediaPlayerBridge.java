@@ -6,6 +6,7 @@ package org.chromium.media;
 
 import android.content.Context;
 import android.media.MediaPlayer;
+import android.media.MediaPlayer.TrackInfo;
 import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
@@ -16,6 +17,7 @@ import android.util.Base64InputStream;
 import android.view.Surface;
 
 import org.chromium.base.Log;
+import org.chromium.base.StreamUtil;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
 
@@ -94,6 +96,38 @@ public class MediaPlayerBridge {
     @CalledByNative
     protected boolean isPlaying() {
         return getLocalPlayer().isPlaying();
+    }
+
+    @CalledByNative
+    protected boolean hasVideo() {
+        return hasTrack(TrackInfo.MEDIA_TRACK_TYPE_VIDEO);
+    }
+
+    @CalledByNative
+    protected boolean hasAudio() {
+        return hasTrack(TrackInfo.MEDIA_TRACK_TYPE_AUDIO);
+    }
+
+    private boolean hasTrack(int trackType) {
+        try {
+            TrackInfo trackInfo[] = getLocalPlayer().getTrackInfo();
+
+            // HLS media does not have the track info, so we treat them conservatively.
+            if (trackInfo.length == 0) return true;
+
+            for (TrackInfo info : trackInfo) {
+                // TODO(zqzhang): may be we can have a histogram recording
+                // media track types in the future.
+                // See http://crbug.com/571411
+                if (trackType == info.getTrackType()) return true;
+                if (TrackInfo.MEDIA_TRACK_TYPE_UNKNOWN == info.getTrackType()) return true;
+            }
+        } catch (RuntimeException e) {
+            // Exceptions may come from getTrackInfo (IllegalStateException/RuntimeException), or
+            // from some customized OS returning null TrackInfos (NullPointerException).
+            return true;
+        }
+        return false;
     }
 
     @CalledByNative
@@ -227,11 +261,7 @@ public class MediaPlayerBridge {
             } catch (IOException e) {
                 return false;
             } finally {
-                try {
-                    if (fos != null) fos.close();
-                } catch (IOException e) {
-                    // Can't do anything.
-                }
+                StreamUtil.closeQuietly(fos);
             }
         }
 
@@ -242,10 +272,12 @@ public class MediaPlayerBridge {
                 return;
             }
 
-            try {
-                getLocalPlayer().setDataSource(mContext, Uri.fromFile(mTempFile));
-            } catch (IOException e) {
-                result = false;
+            if (result) {
+                try {
+                    getLocalPlayer().setDataSource(mContext, Uri.fromFile(mTempFile));
+                } catch (IOException e) {
+                    result = false;
+                }
             }
 
             deleteFile();

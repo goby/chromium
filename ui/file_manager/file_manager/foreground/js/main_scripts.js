@@ -88,7 +88,7 @@
 //<include src="ui/commandbutton.js">
 //<include src="ui/file_manager_dialog_base.js">
 //<include src="metadata/metadata_cache_set.js">
-//<include src="metadata/new_metadata_provider.js">
+//<include src="metadata/metadata_provider.js">
 //
 //<include src="../../../../../components/chrome_apps/webstore_widget/cws_widget/app_installer.js">
 //<include src="../../../../../components/chrome_apps/webstore_widget/cws_widget/cws_webview_client.js">
@@ -104,9 +104,11 @@
 //<include src="directory_contents.js">
 //<include src="directory_model.js">
 //<include src="directory_tree_naming_controller.js">
+//<include src="drop_effect_and_label.js">
 //<include src="empty_folder_controller.js">
 //<include src="file_manager.js">
 //<include src="file_manager_commands.js">
+//<include src="file_list_model.js">
 //<include src="file_selection.js">
 //<include src="file_tasks.js">
 //<include src="file_transfer_controller.js">
@@ -124,10 +126,14 @@
 //<include src="metadata/metadata_model.js">
 //<include src="metadata/multi_metadata_provider.js">
 //<include src="metadata/thumbnail_model.js">
+//<include src="metadata_box_controller.js">
 //<include src="metadata_update_controller.js">
 //<include src="naming_controller.js">
 //<include src="navigation_list_model.js">
 //<include src="progress_center_item_group.js">
+//<include src="quick_view_controller.js">
+//<include src="quick_view_model.js">
+//<include src="quick_view_uma.js">
 //<include src="scan_controller.js">
 //<include src="search_controller.js">
 //<include src="share_client.js">
@@ -139,7 +145,6 @@
 //<include src="providers_model.js">
 //<include src="ui/actions_submenu.js">
 //<include src="ui/banners.js" >
-//<include src="ui/conflict_dialog.js">
 //<include src="ui/default_task_dialog.js">
 //<include src="ui/dialog_footer.js">
 //<include src="ui/directory_tree.js">
@@ -148,9 +153,12 @@
 //<include src="ui/error_dialog.js">
 //<include src="ui/file_grid.js">
 //<include src="ui/file_manager_ui.js">
+//<include src="ui/file_metadata_formatter.js">
 //<include src="ui/file_list_selection_model.js">
 //<include src="ui/file_table.js">
 //<include src="ui/file_table_list.js">
+//<include src="ui/files_alert_dialog.js">
+//<include src="ui/files_confirm_dialog.js">
 //<include src="ui/files_menu.js">
 //<include src="ui/gear_menu.js">
 //<include src="ui/list_container.js">
@@ -158,7 +166,6 @@
 //<include src="ui/multi_profile_share_dialog.js">
 //<include src="ui/progress_center_panel.js">
 //<include src="ui/providers_menu.js">
-//<include src="ui/scrollbar.js">
 //<include src="ui/search_box.js">
 //<include src="ui/share_dialog.js">
 //<include src="ui/suggest_apps_dialog.js">

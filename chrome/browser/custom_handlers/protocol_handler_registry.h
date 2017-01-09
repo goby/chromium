@@ -6,12 +6,12 @@
 #define CHROME_BROWSER_CUSTOM_HANDLERS_PROTOCOL_HANDLER_REGISTRY_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/values.h"
 #include "chrome/browser/profiles/profile.h"
@@ -34,43 +34,10 @@ class PrefRegistrySyncable;
 // Profile::InitRegisteredProtocolHandlers(), and they should be the only
 // instances of this class.
 class ProtocolHandlerRegistry : public KeyedService {
-
  public:
   enum HandlerSource {
     USER,    // The handler was installed by user
     POLICY,  // The handler was installed by policy
-  };
-  // Provides notification of when the OS level user agent settings
-  // are changed.
-  class DefaultClientObserver
-      : public ShellIntegration::DefaultWebClientObserver {
-   public:
-    explicit DefaultClientObserver(ProtocolHandlerRegistry* registry);
-    ~DefaultClientObserver() override;
-
-    // Get response from the worker regarding whether Chrome is the default
-    // handler for the protocol.
-    void SetDefaultWebClientUIState(
-        ShellIntegration::DefaultWebClientUIState state) override;
-
-    bool IsInteractiveSetDefaultPermitted() override;
-
-    // Give the observer a handle to the worker, so we can find out the protocol
-    // when we're called and also tell the worker if we get deleted.
-    void SetWorker(ShellIntegration::DefaultProtocolClientWorker* worker);
-
-   protected:
-    ShellIntegration::DefaultProtocolClientWorker* worker_;
-
-   private:
-    bool IsOwnedByWorker() override;
-
-    // This is a raw pointer, not reference counted, intentionally. In general
-    // subclasses of DefaultWebClientObserver are not able to be refcounted
-    // e.g. the browser options page
-    ProtocolHandlerRegistry* registry_;
-
-    DISALLOW_COPY_AND_ASSIGN(DefaultClientObserver);
   };
 
   // |Delegate| provides an interface for interacting asynchronously
@@ -82,11 +49,10 @@ class ProtocolHandlerRegistry : public KeyedService {
     virtual void RegisterExternalHandler(const std::string& protocol);
     virtual void DeregisterExternalHandler(const std::string& protocol);
     virtual bool IsExternalHandlerRegistered(const std::string& protocol);
-    virtual ShellIntegration::DefaultProtocolClientWorker* CreateShellWorker(
-        ShellIntegration::DefaultWebClientObserver* observer,
+    virtual scoped_refptr<shell_integration::DefaultProtocolClientWorker>
+    CreateShellWorker(
+        const shell_integration::DefaultWebClientWorkerCallback& callback,
         const std::string& protocol);
-    virtual DefaultClientObserver* CreateShellObserver(
-        ProtocolHandlerRegistry* registry);
     virtual void RegisterWithOSAsDefaultClient(
         const std::string& protocol,
         ProtocolHandlerRegistry* registry);
@@ -109,7 +75,7 @@ class ProtocolHandlerRegistry : public KeyedService {
 
     // |job_factory| is set as the URLRequestJobFactory where requests are
     // forwarded if JobInterceptorFactory decides to pass on them.
-    void Chain(scoped_ptr<net::URLRequestJobFactory> job_factory);
+    void Chain(std::unique_ptr<net::URLRequestJobFactory> job_factory);
 
     // URLRequestJobFactory implementation.
     net::URLRequestJob* MaybeCreateJobWithProtocolHandler(
@@ -133,7 +99,7 @@ class ProtocolHandlerRegistry : public KeyedService {
    private:
     // When JobInterceptorFactory decides to pass on particular requests,
     // they're forwarded to the chained URLRequestJobFactory, |job_factory_|.
-    scoped_ptr<URLRequestJobFactory> job_factory_;
+    std::unique_ptr<URLRequestJobFactory> job_factory_;
     // |io_thread_delegate_| performs the actual job creation decisions by
     // mirroring the ProtocolHandlerRegistry on the IO thread.
     scoped_refptr<IOThreadDelegate> io_thread_delegate_;
@@ -144,7 +110,6 @@ class ProtocolHandlerRegistry : public KeyedService {
   typedef std::map<std::string, ProtocolHandler> ProtocolHandlerMap;
   typedef std::vector<ProtocolHandler> ProtocolHandlerList;
   typedef std::map<std::string, ProtocolHandlerList> ProtocolHandlerMultiMap;
-  typedef std::vector<DefaultClientObserver*> DefaultClientObserverList;
 
   // Creates a new instance. Assumes ownership of |delegate|.
   ProtocolHandlerRegistry(content::BrowserContext* context, Delegate* delegate);
@@ -152,7 +117,7 @@ class ProtocolHandlerRegistry : public KeyedService {
 
   // Returns a net::URLRequestJobFactory suitable for use on the IO thread, but
   // is initialized on the UI thread.
-  scoped_ptr<JobInterceptorFactory> CreateJobInterceptorFactory();
+  std::unique_ptr<JobInterceptorFactory> CreateJobInterceptorFactory();
 
   // Called when a site tries to register as a protocol handler. If the request
   // can be handled silently by the registry - either to ignore the request
@@ -265,6 +230,11 @@ class ProtocolHandlerRegistry : public KeyedService {
   // load command was issued, otherwise the command will be ignored.
   void AddPredefinedHandler(const ProtocolHandler& handler);
 
+  // Gets the callback for DefaultProtocolClientWorker. Allows the Delegate to
+  // create the worker on behalf of ProtocolHandlerRegistry.
+  shell_integration::DefaultWebClientWorkerCallback GetDefaultWebClientCallback(
+      const std::string& protocol);
+
  private:
   friend class base::DeleteHelper<ProtocolHandlerRegistry>;
   friend struct content::BrowserThread::DeleteOnThread<
@@ -344,6 +314,12 @@ class ProtocolHandlerRegistry : public KeyedService {
   // Erases the handler that is guaranteed to exist from the list.
   void EraseHandler(const ProtocolHandler& handler, ProtocolHandlerList* list);
 
+  // Called with the default state when the default protocol client worker is
+  // done.
+  void OnSetAsDefaultProtocolClientFinished(
+      const std::string& protocol,
+      shell_integration::DefaultWebClientState state);
+
   // Map from protocols (strings) to protocol handlers.
   ProtocolHandlerMultiMap protocol_handlers_;
 
@@ -371,7 +347,7 @@ class ProtocolHandlerRegistry : public KeyedService {
   content::BrowserContext* context_;
 
   // The Delegate that registers / deregisters external handlers on our behalf.
-  scoped_ptr<Delegate> delegate_;
+  std::unique_ptr<Delegate> delegate_;
 
   // If false then registered protocol handlers will not be used to handle
   // requests.
@@ -388,7 +364,9 @@ class ProtocolHandlerRegistry : public KeyedService {
   // are posted to the IO thread where updates are applied to this object.
   scoped_refptr<IOThreadDelegate> io_thread_delegate_;
 
-  DefaultClientObserverList default_client_observers_;
+  // Makes it possible to invalidate the callback for the
+  // DefaultProtocolClientWorker.
+  base::WeakPtrFactory<ProtocolHandlerRegistry> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(ProtocolHandlerRegistry);
 };

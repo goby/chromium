@@ -4,26 +4,21 @@
 
 package org.chromium.base;
 
-import android.annotation.TargetApi;
-import android.content.Context;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.AsyncTask;
-import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.os.Trace;
-
-import org.chromium.base.annotations.SuppressFBWarnings;
 
 import java.io.File;
 import java.io.FileOutputStream;
-import java.io.FilenameFilter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 
@@ -37,23 +32,8 @@ public class ResourceExtractor {
     private static final String ICU_DATA_FILENAME = "icudtl.dat";
     private static final String V8_NATIVES_DATA_FILENAME = "natives_blob.bin";
     private static final String V8_SNAPSHOT_DATA_FILENAME = "snapshot_blob.bin";
-
-    private static ResourceEntry[] sResourcesToExtract = new ResourceEntry[0];
-
-    /**
-     * Holds information about a res/raw file (e.g. locale .pak files).
-     */
-    public static final class ResourceEntry {
-        public final int resourceId;
-        public final String pathWithinApk;
-        public final String extractedFileName;
-
-        public ResourceEntry(int resourceId, String pathWithinApk, String extractedFileName) {
-            this.resourceId = resourceId;
-            this.pathWithinApk = pathWithinApk;
-            this.extractedFileName = extractedFileName;
-        }
-    }
+    private static final String APP_VERSION_PREF = "org.chromium.base.ResourceExtractor.Version";
+    private static final String FALLBACK_LOCALE = "en-US";
 
     private class ExtractTask extends AsyncTask<Void, Void, Void> {
         private static final int BUFFER_SIZE = 16 * 1024;
@@ -71,20 +51,14 @@ public class ResourceExtractor {
                 while ((count = is.read(buffer, 0, BUFFER_SIZE)) != -1) {
                     os.write(buffer, 0, count);
                 }
-                os.flush();
-
-                // Ensure something reasonable was written.
-                if (outFile.length() == 0) {
-                    throw new IOException(outFile + " extracted with 0 length!");
-                }
             } finally {
                 try {
-                    if (is != null) {
-                        is.close();
-                    }
-                } finally {
                     if (os != null) {
                         os.close();
+                    }
+                } finally {
+                    if (is != null) {
+                        is.close();
                     }
                 }
             }
@@ -97,33 +71,38 @@ public class ResourceExtractor {
                 return;
             }
 
-            String timestampFile = null;
-            beginTraceSection("checkPakTimeStamp");
-            try {
-                timestampFile = checkPakTimestamp(outputDir);
-            } finally {
-                endTraceSection();
-            }
-            if (timestampFile != null) {
+            TraceEvent.begin("checkPakTimeStamp");
+            long curAppVersion = getApkVersion();
+            SharedPreferences sharedPrefs = ContextUtils.getAppSharedPreferences();
+            long prevAppVersion = sharedPrefs.getLong(APP_VERSION_PREF, 0);
+            boolean versionChanged = curAppVersion != prevAppVersion;
+            TraceEvent.end("checkPakTimeStamp");
+
+            if (versionChanged) {
                 deleteFiles();
+                // Use the version only to see if files should be deleted, not to skip extraction.
+                // We've seen files be corrupted, so always attempt extraction.
+                // http://crbug.com/606413
+                sharedPrefs.edit().putLong(APP_VERSION_PREF, curAppVersion).apply();
             }
 
-            beginTraceSection("WalkAssets");
+            TraceEvent.begin("WalkAssets");
             byte[] buffer = new byte[BUFFER_SIZE];
             try {
-                // Extract all files that don't already exist.
-                for (ResourceEntry entry : sResourcesToExtract) {
-                    File output = new File(outputDir, entry.extractedFileName);
-                    if (output.exists()) {
+                for (String assetName : mAssetsToExtract) {
+                    File output = new File(outputDir, assetName);
+                    // TODO(agrieve): It would be better to check that .length == expectedLength.
+                    //     http://crbug.com/606413
+                    if (output.length() != 0) {
                         continue;
                     }
-                    beginTraceSection("ExtractResource");
-                    InputStream inputStream = mContext.getResources().openRawResource(
-                            entry.resourceId);
+                    TraceEvent.begin("ExtractResource");
+                    InputStream inputStream =
+                            ContextUtils.getApplicationContext().getAssets().open(assetName);
                     try {
                         extractResourceHelper(inputStream, output, buffer);
                     } finally {
-                        endTraceSection(); // ExtractResource
+                        TraceEvent.end("ExtractResource");
                     }
                 }
             } catch (IOException e) {
@@ -131,36 +110,21 @@ public class ResourceExtractor {
                 // Try to recover here, can we try again after deleting files instead of
                 // returning null? It might be useful to gather UMA here too to track if
                 // this happens with regularity.
-                Log.w(TAG, "Exception unpacking required pak resources: %s", e.getMessage());
+                Log.w(TAG, "Exception unpacking required pak asset: %s", e.getMessage());
                 deleteFiles();
                 return;
             } finally {
-                endTraceSection(); // WalkAssets
-            }
-
-            // Finished, write out a timestamp file if we need to.
-            if (timestampFile != null) {
-                try {
-                    new File(outputDir, timestampFile).createNewFile();
-                } catch (IOException e) {
-                    // Worst case we don't write a timestamp, so we'll re-extract the resource
-                    // paks next start up.
-                    Log.w(TAG, "Failed to write resource pak timestamp!");
-                }
+                TraceEvent.end("WalkAssets");
             }
         }
 
         @Override
         protected Void doInBackground(Void... unused) {
-            // TODO(lizeb): Use chrome tracing here (and above in
-            // doInBackgroundImpl) when it will be possible. This is currently
-            // not doable since the native library is not loaded yet, and the
-            // TraceEvent calls are dropped before this point.
-            beginTraceSection("ResourceExtractor.ExtractTask.doInBackground");
+            TraceEvent.begin("ResourceExtractor.ExtractTask.doInBackground");
             try {
                 doInBackgroundImpl();
             } finally {
-                endTraceSection();
+                TraceEvent.end("ResourceExtractor.ExtractTask.doInBackground");
             }
             return null;
         }
@@ -174,102 +138,52 @@ public class ResourceExtractor {
 
         @Override
         protected void onPostExecute(Void result) {
-            beginTraceSection("ResourceExtractor.ExtractTask.onPostExecute");
+            TraceEvent.begin("ResourceExtractor.ExtractTask.onPostExecute");
             try {
                 onPostExecuteImpl();
             } finally {
-                endTraceSection();
+                TraceEvent.end("ResourceExtractor.ExtractTask.onPostExecute");
             }
         }
 
-        // Looks for a timestamp file on disk that indicates the version of the APK that
-        // the resource paks were extracted from. Returns null if a timestamp was found
-        // and it indicates that the resources match the current APK. Otherwise returns
-        // a String that represents the filename of a timestamp to create.
-        // Note that we do this to avoid adding a BroadcastReceiver on
-        // android.content.Intent#ACTION_PACKAGE_CHANGED as that causes process churn
-        // on (re)installation of *all* APK files.
-        private String checkPakTimestamp(File outputDir) {
-            final String timestampPrefix = "pak_timestamp-";
-            PackageManager pm = mContext.getPackageManager();
-            PackageInfo pi = null;
-
+        /** Returns a number that is different each time the apk changes. */
+        private long getApkVersion() {
+            PackageManager pm = ContextUtils.getApplicationContext().getPackageManager();
             try {
-                pi = pm.getPackageInfo(mContext.getPackageName(), 0);
+                // More appropriate would be versionCode, but it doesn't change while developing.
+                PackageInfo pi =
+                        pm.getPackageInfo(ContextUtils.getApplicationContext().getPackageName(), 0);
+                return pi.lastUpdateTime;
             } catch (PackageManager.NameNotFoundException e) {
-                return timestampPrefix;
+                throw new RuntimeException(e);
             }
-
-            if (pi == null) {
-                return timestampPrefix;
-            }
-
-            String expectedTimestamp = timestampPrefix + pi.versionCode + "-" + pi.lastUpdateTime;
-
-            String[] timestamps = outputDir.list(new FilenameFilter() {
-                @Override
-                public boolean accept(File dir, String name) {
-                    return name.startsWith(timestampPrefix);
-                }
-            });
-
-            if (timestamps == null || timestamps.length != 1) {
-                // If there's no timestamp, nuke to be safe as we can't tell the age of the files.
-                // If there's multiple timestamps, something's gone wrong so nuke.
-                return expectedTimestamp;
-            }
-
-            if (!expectedTimestamp.equals(timestamps[0])) {
-                return expectedTimestamp;
-            }
-
-            // timestamp file is already up-to date.
-            return null;
-        }
-
-        @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
-        private void beginTraceSection(String section) {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) return;
-            Trace.beginSection(section);
-        }
-
-        @TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR2)
-        private void endTraceSection() {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR2) return;
-            Trace.endSection();
         }
     }
 
-    private final Context mContext;
     private ExtractTask mExtractTask;
+    private final String[] mAssetsToExtract = detectFilesToExtract();
 
     private static ResourceExtractor sInstance;
 
-    public static ResourceExtractor get(Context context) {
+    public static ResourceExtractor get() {
         if (sInstance == null) {
-            sInstance = new ResourceExtractor(context);
+            sInstance = new ResourceExtractor();
         }
         return sInstance;
     }
 
-    /**
-     * Specifies the files that should be extracted from the APK.
-     * and moved to {@link #getOutputDir()}.
-     */
-    @SuppressFBWarnings("EI_EXPOSE_STATIC_REP2")
-    public static void setResourcesToExtract(ResourceEntry[] entries) {
-        assert (sInstance == null || sInstance.mExtractTask == null)
-                : "Must be called before startExtractingResources is called";
-        sResourcesToExtract = entries;
-    }
-
-    // TODO(agrieve): Delete this method ones all usages of it are updated.
-    public static void setMandatoryPaksToExtract(String... paths) {
-        assert paths.length == 1 && "".equals(paths[0]);
-    }
-
-    private ResourceExtractor(Context context) {
-        mContext = context.getApplicationContext();
+    private static String[] detectFilesToExtract() {
+        Locale defaultLocale = Locale.getDefault();
+        String language = LocaleUtils.getUpdatedLanguageForChromium(defaultLocale.getLanguage());
+        // Currenty (Oct 2016), this array can be as big as 4 entries, so using a capacity
+        // that allows a bit of growth, but is still in the right ballpark..
+        ArrayList<String> activeLocalePakFiles = new ArrayList<String>(6);
+        for (String locale : BuildConfig.COMPRESSED_LOCALES) {
+            if (locale.startsWith(language)) {
+                activeLocalePakFiles.add(locale + ".pak");
+            }
+        }
+        return activeLocalePakFiles.toArray(new String[activeLocalePakFiles.size()]);
     }
 
     /**
@@ -350,7 +264,7 @@ public class ResourceExtractor {
     }
 
     private File getAppDataDir() {
-        return new File(PathUtils.getDataDirectory(mContext));
+        return new File(PathUtils.getDataDirectory());
     }
 
     private File getOutputDir() {
@@ -397,6 +311,6 @@ public class ResourceExtractor {
      * Pak extraction not necessarily required by the embedder.
      */
     private static boolean shouldSkipPakExtraction() {
-        return sResourcesToExtract.length == 0;
+        return get().mAssetsToExtract.length == 0;
     }
 }

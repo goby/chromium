@@ -4,6 +4,11 @@
 
 #include "content/renderer/p2p/port_allocator.h"
 
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "content/public/common/content_switches.h"
@@ -11,36 +16,27 @@
 
 namespace content {
 
-P2PPortAllocator::Config::Config() {}
-
-P2PPortAllocator::Config::~Config() {
-}
-
-P2PPortAllocator::Config::RelayServerConfig::RelayServerConfig()
-    : port(0) {
-}
-
-P2PPortAllocator::Config::RelayServerConfig::~RelayServerConfig() {
-}
-
 P2PPortAllocator::P2PPortAllocator(
     const scoped_refptr<P2PSocketDispatcher>& socket_dispatcher,
-    scoped_ptr<rtc::NetworkManager> network_manager,
+    std::unique_ptr<rtc::NetworkManager> network_manager,
     rtc::PacketSocketFactory* socket_factory,
     const Config& config,
-    const GURL& origin,
-    const scoped_refptr<base::SingleThreadTaskRunner> task_runner)
+    const GURL& origin)
     : cricket::BasicPortAllocator(network_manager.get(), socket_factory),
-      network_manager_(network_manager.Pass()),
+      network_manager_(std::move(network_manager)),
       socket_dispatcher_(socket_dispatcher),
       config_(config),
-      origin_(origin),
-      network_manager_task_runner_(task_runner) {
-  uint32 flags = 0;
-  if (!config_.enable_multiple_routes)
+      origin_(origin) {
+  DCHECK(socket_dispatcher);
+  DCHECK(network_manager_);
+  DCHECK(socket_factory);
+  uint32_t flags = 0;
+  if (!config_.enable_multiple_routes) {
     flags |= cricket::PORTALLOCATOR_DISABLE_ADAPTER_ENUMERATION;
-  if (!config_.enable_default_local_candidate)
+  }
+  if (!config_.enable_default_local_candidate) {
     flags |= cricket::PORTALLOCATOR_DISABLE_DEFAULT_LOCAL_CANDIDATE;
+  }
   if (!config_.enable_nonproxied_udp) {
     flags |= cricket::PORTALLOCATOR_DISABLE_UDP |
              cricket::PORTALLOCATOR_DISABLE_STUN |
@@ -56,70 +52,11 @@ P2PPortAllocator::P2PPortAllocator(
   }
 }
 
-// TODO(guoweis): P2PPortAllocator is also deleted in the wrong thread
-// here. It's created in signaling thread, and held by webrtc::PeerConnection,
-// only used on worker thread. The destructor is invoked on signaling thread
-// again. crbug.com/535761. DeleteSoon can be removed once the bug is fixed.
-P2PPortAllocator::~P2PPortAllocator() {
-  network_manager_task_runner_->DeleteSoon(FROM_HERE,
-                                           network_manager_.release());
-}
+P2PPortAllocator::~P2PPortAllocator() {}
 
-cricket::PortAllocatorSession* P2PPortAllocator::CreateSessionInternal(
-    const std::string& content_name,
-    int component,
-    const std::string& ice_username_fragment,
-    const std::string& ice_password) {
-  return new P2PPortAllocatorSession(
-      this, content_name, component, ice_username_fragment, ice_password);
-}
-
-P2PPortAllocatorSession::P2PPortAllocatorSession(
-    P2PPortAllocator* allocator,
-    const std::string& content_name,
-    int component,
-    const std::string& ice_username_fragment,
-    const std::string& ice_password)
-    : cricket::BasicPortAllocatorSession(allocator,
-                                         content_name,
-                                         component,
-                                         ice_username_fragment,
-                                         ice_password),
-      allocator_(allocator) {
-}
-
-P2PPortAllocatorSession::~P2PPortAllocatorSession() {
-}
-
-void P2PPortAllocatorSession::GetPortConfigurations() {
-  const P2PPortAllocator::Config& config = allocator_->config_;
-  cricket::PortConfiguration* port_config = new cricket::PortConfiguration(
-      config.stun_servers, std::string(), std::string());
-
-  for (size_t i = 0; i < config.relays.size(); ++i) {
-    cricket::RelayCredentials credentials(config.relays[i].username,
-                                          config.relays[i].password);
-    cricket::RelayServerConfig relay_server(cricket::RELAY_TURN);
-    cricket::ProtocolType protocol;
-    if (!cricket::StringToProto(config.relays[i].transport_type.c_str(),
-                                &protocol)) {
-      DLOG(WARNING) << "Ignoring TURN server "
-                    << config.relays[i].server_address << ". "
-                    << "Reason= Incorrect "
-                    << config.relays[i].transport_type
-                    << " transport parameter.";
-      continue;
-    }
-
-    relay_server.ports.push_back(cricket::ProtocolAddress(
-        rtc::SocketAddress(config.relays[i].server_address,
-                                 config.relays[i].port),
-        protocol,
-        config.relays[i].secure));
-    relay_server.credentials = credentials;
-    port_config->AddRelay(relay_server);
-  }
-  ConfigReady(port_config);
+void P2PPortAllocator::Initialize() {
+  BasicPortAllocator::Initialize();
+  network_manager_->Initialize();
 }
 
 }  // namespace content

@@ -2,11 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "components/metrics/profiler/tracking_synchronizer.h"
+
+#include <utility>
+
 #include "base/bind.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/test/simple_test_tick_clock.h"
 #include "base/tracked_objects.h"
-#include "components/metrics/profiler/tracking_synchronizer.h"
 #include "components/metrics/profiler/tracking_synchronizer_delegate.h"
 #include "components/metrics/profiler/tracking_synchronizer_observer.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -22,9 +27,9 @@ class TestDelegate : public TrackingSynchronizerDelegate {
  public:
   ~TestDelegate() override {}
 
-  static scoped_ptr<TrackingSynchronizerDelegate> Create(
+  static std::unique_ptr<TrackingSynchronizerDelegate> Create(
       TrackingSynchronizer* synchronizer) {
-    return make_scoped_ptr(new TestDelegate());
+    return base::WrapUnique(new TestDelegate());
   }
 
  private:
@@ -50,7 +55,7 @@ class TestObserver : public TrackingSynchronizerObserver {
       const tracked_objects::ProcessDataPhaseSnapshot& process_data_phase,
       const ProfilerEvents& past_events) override {
     EXPECT_EQ(static_cast<base::ProcessId>(239), attributes.process_id);
-    EXPECT_EQ(ProfilerEventProto::TrackedObject::PLUGIN,
+    EXPECT_EQ(ProfilerEventProto::TrackedObject::PPAPI_PLUGIN,
               attributes.process_type);
     ASSERT_EQ(1u, process_data_phase.tasks.size());
 
@@ -64,8 +69,8 @@ class TestObserver : public TrackingSynchronizerObserver {
         EXPECT_EQ(base::TimeTicks() + base::TimeDelta::FromMilliseconds(333),
                   attributes.phase_finish);
 
-        EXPECT_EQ("death_thread0",
-                  process_data_phase.tasks[0].death_thread_name);
+        EXPECT_EQ("death_threadA",
+                  process_data_phase.tasks[0].death_sanitized_thread_name);
         EXPECT_EQ(0u, past_events.size());
         break;
 
@@ -78,8 +83,8 @@ class TestObserver : public TrackingSynchronizerObserver {
         EXPECT_EQ(base::TimeTicks() + base::TimeDelta::FromMilliseconds(777),
                   attributes.phase_finish);
 
-        EXPECT_EQ("death_thread1",
-                  process_data_phase.tasks[0].death_thread_name);
+        EXPECT_EQ("death_threadB",
+                  process_data_phase.tasks[0].death_sanitized_thread_name);
         ASSERT_EQ(1u, past_events.size());
         EXPECT_EQ(ProfilerEventProto::EVENT_FIRST_NONEMPTY_PAINT,
                   past_events[0]);
@@ -100,8 +105,9 @@ class TestObserver : public TrackingSynchronizerObserver {
 
 class TestTrackingSynchronizer : public TrackingSynchronizer {
  public:
-  explicit TestTrackingSynchronizer(scoped_ptr<base::TickClock> clock)
-      : TrackingSynchronizer(clock.Pass(), base::Bind(&TestDelegate::Create)) {}
+  explicit TestTrackingSynchronizer(std::unique_ptr<base::TickClock> clock)
+      : TrackingSynchronizer(std::move(clock),
+                             base::Bind(&TestDelegate::Create)) {}
 
   using TrackingSynchronizer::RegisterPhaseCompletion;
   using TrackingSynchronizer::SendData;
@@ -114,12 +120,12 @@ class TestTrackingSynchronizer : public TrackingSynchronizer {
 
 TEST(TrackingSynchronizerTest, ProfilerData) {
   // Testing how TrackingSynchronizer reports 2 phases of profiling.
-  auto clock = new base::SimpleTestTickClock();  // Will be owned by
-                                                 // |tracking_synchronizer|.
+  auto* clock = new base::SimpleTestTickClock();  // Will be owned by
+                                                  // |tracking_synchronizer|.
   clock->Advance(base::TimeDelta::FromMilliseconds(111));
 
   scoped_refptr<TestTrackingSynchronizer> tracking_synchronizer =
-      new TestTrackingSynchronizer(make_scoped_ptr(clock));
+      new TestTrackingSynchronizer(base::WrapUnique(clock));
 
   clock->Advance(base::TimeDelta::FromMilliseconds(222));
 
@@ -129,12 +135,12 @@ TEST(TrackingSynchronizerTest, ProfilerData) {
   tracked_objects::ProcessDataSnapshot profiler_data;
   ProcessDataPhaseSnapshot snapshot0;
   tracked_objects::TaskSnapshot task_snapshot0;
-  task_snapshot0.death_thread_name = "death_thread0";
+  task_snapshot0.death_sanitized_thread_name = "death_threadA";
   snapshot0.tasks.push_back(task_snapshot0);
   ProcessDataPhaseSnapshot snapshot1;
   profiler_data.phased_snapshots[0] = snapshot0;
   tracked_objects::TaskSnapshot task_snapshot1;
-  task_snapshot1.death_thread_name = "death_thread1";
+  task_snapshot1.death_sanitized_thread_name = "death_threadB";
   snapshot1.tasks.push_back(task_snapshot1);
   profiler_data.phased_snapshots[1] = snapshot1;
   profiler_data.process_id = 239;
@@ -142,7 +148,8 @@ TEST(TrackingSynchronizerTest, ProfilerData) {
   clock->Advance(base::TimeDelta::FromMilliseconds(444));
   TestObserver test_observer;
   tracking_synchronizer->SendData(
-      profiler_data, ProfilerEventProto::TrackedObject::PLUGIN, &test_observer);
+      profiler_data, ProfilerEventProto::TrackedObject::PPAPI_PLUGIN,
+      &test_observer);
 }
 
 }  // namespace metrics

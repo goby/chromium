@@ -33,7 +33,8 @@
 #include "net/base/io_buffer.h"
 #include "net/base/load_flags.h"
 #include "net/base/mime_util.h"
-#include "net/filter/filter.h"
+#include "net/filter/gzip_source_stream.h"
+#include "net/filter/source_stream.h"
 #include "net/http/http_util.h"
 #include "net/url_request/url_request_error_job.h"
 #include "net/url_request/url_request_file_dir_job.h"
@@ -133,7 +134,7 @@ bool URLRequestFileJob::IsRedirectResponse(GURL* location,
   bool resolved;
   resolved = base::win::ResolveShortcut(new_path, &new_path, NULL);
 
-  // If shortcut is not resolved succesfully, do not redirect.
+  // If shortcut is not resolved successfully, do not redirect.
   if (!resolved)
     return false;
 
@@ -143,13 +144,6 @@ bool URLRequestFileJob::IsRedirectResponse(GURL* location,
 #else
   return false;
 #endif
-}
-
-Filter* URLRequestFileJob::SetupFilter() const {
-  // Bug 9936 - .svgz files needs to be decompressed.
-  return base::LowerCaseEqualsASCII(file_path_.Extension(), ".svgz")
-             ? Filter::GZipFactory()
-             : NULL;
 }
 
 bool URLRequestFileJob::GetMimeType(std::string* mime_type) const {
@@ -184,13 +178,20 @@ void URLRequestFileJob::SetExtraRequestHeaders(
   }
 }
 
-void URLRequestFileJob::OnSeekComplete(int64 result) {
-}
+void URLRequestFileJob::OnSeekComplete(int64_t result) {}
 
 void URLRequestFileJob::OnReadComplete(IOBuffer* buf, int result) {
 }
 
 URLRequestFileJob::~URLRequestFileJob() {
+}
+
+std::unique_ptr<SourceStream> URLRequestFileJob::SetUpSourceStream() {
+  std::unique_ptr<SourceStream> source = URLRequestJob::SetUpSourceStream();
+  if (!base::LowerCaseEqualsASCII(file_path_.Extension(), ".svgz"))
+    return source;
+
+  return GzipSourceStream::Create(std::move(source), SourceStream::TYPE_GZIP);
 }
 
 void URLRequestFileJob::FetchMetaInfo(const base::FilePath& file_path,
@@ -276,7 +277,7 @@ void URLRequestFileJob::DidOpen(int result) {
   }
 }
 
-void URLRequestFileJob::DidSeek(int64 result) {
+void URLRequestFileJob::DidSeek(int64_t result) {
   OnSeekComplete(result);
   if (result != byte_range_.first_byte_position()) {
     NotifyStartError(URLRequestStatus(URLRequestStatus::FAILED,

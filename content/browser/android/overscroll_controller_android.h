@@ -5,6 +5,9 @@
 #ifndef CONTENT_BROWSER_ANDROID_OVERSCROLL_CONTROLLER_ANDROID_H_
 #define CONTENT_BROWSER_ANDROID_OVERSCROLL_CONTROLLER_ANDROID_H_
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "content/common/input/input_event_ack_state.h"
 #include "ui/android/overscroll_glow.h"
@@ -22,19 +25,20 @@ class Layer;
 
 namespace ui {
 class WindowAndroidCompositor;
+struct DidOverscrollParams;
 }
 
 namespace content {
 
 class ContentViewCoreImpl;
-struct DidOverscrollParams;
 
 // Glue class for handling all inputs into Android-specific overscroll effects,
 // both the passive overscroll glow and the active overscroll pull-to-refresh.
 // Note that all input coordinates (both for events and overscroll) are in DIPs.
 class OverscrollControllerAndroid : public ui::OverscrollGlowClient {
  public:
-  explicit OverscrollControllerAndroid(ContentViewCoreImpl* content_view_core);
+  explicit OverscrollControllerAndroid(ContentViewCoreImpl* content_view_core,
+                                       float dpi_scale);
   ~OverscrollControllerAndroid() override;
 
   // Returns true if |event| is consumed by an overscroll effect, in which
@@ -46,7 +50,7 @@ class OverscrollControllerAndroid : public ui::OverscrollGlowClient {
                          InputEventAckState ack_result);
 
   // To be called upon receipt of an overscroll event.
-  void OnOverscrolled(const DidOverscrollParams& overscroll_params);
+  void OnOverscrolled(const ui::DidOverscrollParams& overscroll_params);
 
   // Returns true if the effect still needs animation ticks.
   // Note: The effect will detach itself when no further animation is required.
@@ -62,7 +66,7 @@ class OverscrollControllerAndroid : public ui::OverscrollGlowClient {
 
  private:
   // OverscrollGlowClient implementation.
-  scoped_ptr<ui::EdgeEffectBase> CreateEdgeEffect() override;
+  std::unique_ptr<ui::EdgeEffectBase> CreateEdgeEffect() override;
 
   void SetNeedsAnimate();
 
@@ -72,8 +76,8 @@ class OverscrollControllerAndroid : public ui::OverscrollGlowClient {
   bool enabled_;
 
   // TODO(jdduke): Factor out a common API from the two overscroll effects.
-  scoped_ptr<ui::OverscrollGlow> glow_effect_;
-  scoped_ptr<ui::OverscrollRefresh> refresh_effect_;
+  std::unique_ptr<ui::OverscrollGlow> glow_effect_;
+  std::unique_ptr<ui::OverscrollRefresh> refresh_effect_;
 
   DISALLOW_COPY_AND_ASSIGN(OverscrollControllerAndroid);
 };

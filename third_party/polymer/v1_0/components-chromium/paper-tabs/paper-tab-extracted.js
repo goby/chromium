@@ -1,37 +1,64 @@
 Polymer({
+      is: 'paper-tab',
 
-    is: 'paper-tab',
+      behaviors: [
+        Polymer.IronControlState,
+        Polymer.IronButtonState,
+        Polymer.PaperRippleBehavior
+      ],
 
-    behaviors: [
-      Polymer.IronControlState,
-      Polymer.IronButtonState,
-      Polymer.PaperRippleBehavior
-    ],
+      properties: {
 
-    hostAttributes: {
-      role: 'tab'
-    },
+        /**
+         * If true, the tab will forward keyboard clicks (enter/space) to
+         * the first anchor element found in its descendants
+         */
+        link: {
+          type: Boolean,
+          value: false,
+          reflectToAttribute: true
+        }
 
-    listeners: {
-      down: '_updateNoink'
-    },
+      },
 
-    ready: function() {
-      var ripple = this.getRipple();
-      ripple.initialOpacity = 0.95;
-      ripple.opacityDecayVelocity = 0.98;
-    },
+      hostAttributes: {
+        role: 'tab'
+      },
 
-    attached: function() {
-      this._updateNoink();
-    },
+      listeners: {
+        down: '_updateNoink',
+        tap: '_onTap'
+      },
 
-    get _parentNoink () {
-      var parent = Polymer.dom(this).parentNode;
-      return !!parent && !!parent.noink;
-    },
+      attached: function() {
+        this._updateNoink();
+      },
 
-    _updateNoink: function() {
-      this.noink = !!this.noink || !!this._parentNoink;
-    }
-  });
+      get _parentNoink () {
+        var parent = Polymer.dom(this).parentNode;
+        return !!parent && !!parent.noink;
+      },
+
+      _updateNoink: function() {
+        this.noink = !!this.noink || !!this._parentNoink;
+      },
+
+      _onTap: function(event) {
+        if (this.link) {
+          var anchor = this.queryEffectiveChildren('a');
+
+          if (!anchor) {
+            return;
+          }
+
+          // Don't get stuck in a loop delegating
+          // the listener from the child anchor
+          if (event.target === anchor) {
+            return;
+          }
+
+          anchor.click();
+        }
+      }
+
+    });

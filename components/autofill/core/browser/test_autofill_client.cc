@@ -11,9 +11,8 @@ namespace autofill {
 TestAutofillClient::TestAutofillClient()
     : token_service_(new FakeOAuth2TokenService()),
       identity_provider_(new FakeIdentityProvider(token_service_.get())),
-      rappor_service_(new rappor::TestRapporService()),
-      is_context_secure_(true) {
-}
+      rappor_service_(new rappor::TestRapporServiceImpl()) {}
+
 TestAutofillClient::~TestAutofillClient() {
 }
 
@@ -29,15 +28,16 @@ PrefService* TestAutofillClient::GetPrefs() {
   return prefs_.get();
 }
 
+syncer::SyncService* TestAutofillClient::GetSyncService() {
+  return nullptr;
+}
+
 IdentityProvider* TestAutofillClient::GetIdentityProvider() {
   return identity_provider_.get();
 }
 
-rappor::RapporService* TestAutofillClient::GetRapporService() {
+rappor::RapporServiceImpl* TestAutofillClient::GetRapporServiceImpl() {
   return rappor_service_.get();
-}
-
-void TestAutofillClient::HideRequestAutocompleteDialog() {
 }
 
 void TestAutofillClient::ShowAutofillSettings() {
@@ -45,17 +45,28 @@ void TestAutofillClient::ShowAutofillSettings() {
 
 void TestAutofillClient::ShowUnmaskPrompt(
     const CreditCard& card,
+    UnmaskCardReason reason,
     base::WeakPtr<CardUnmaskDelegate> delegate) {
 }
 
-void TestAutofillClient::OnUnmaskVerificationResult(PaymentsRpcResult result) {}
+void TestAutofillClient::OnUnmaskVerificationResult(PaymentsRpcResult result) {
+}
 
 void TestAutofillClient::ConfirmSaveCreditCardLocally(
-    const base::Closure& callback) {}
+    const CreditCard& card,
+    const base::Closure& callback) {
+}
 
 void TestAutofillClient::ConfirmSaveCreditCardToCloud(
-    const base::Closure& callback,
-    scoped_ptr<base::DictionaryValue> legal_message) {
+    const CreditCard& card,
+    std::unique_ptr<base::DictionaryValue> legal_message,
+    const base::Closure& callback) {
+  callback.Run();
+}
+
+void TestAutofillClient::ConfirmCreditCardFillAssist(
+    const CreditCard& card,
+    const base::Closure& callback) {
   callback.Run();
 }
 
@@ -70,12 +81,6 @@ bool TestAutofillClient::HasCreditCardScanFeature() {
 
 void TestAutofillClient::ScanCreditCard(
     const CreditCardScanCallback& callback) {
-}
-
-void TestAutofillClient::ShowRequestAutocompleteDialog(
-    const FormData& form,
-    content::RenderFrameHost* rfh,
-    const ResultCallback& callback) {
 }
 
 void TestAutofillClient::ShowAutofillPopup(
@@ -111,6 +116,16 @@ void TestAutofillClient::OnFirstUserGestureObserved() {
 }
 
 bool TestAutofillClient::IsContextSecure(const GURL& form_origin) {
-  return is_context_secure_;
+  // Simplified secure context check for tests.
+  return form_origin.SchemeIs("https");
 }
+
+bool TestAutofillClient::ShouldShowSigninPromo() {
+  return false;
+}
+
+void TestAutofillClient::StartSigninFlow() {}
+
+void TestAutofillClient::ShowHttpNotSecureExplanation() {}
+
 }  // namespace autofill

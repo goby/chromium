@@ -8,6 +8,7 @@
 #include "chrome/browser/ui/views/frame/native_browser_frame.h"
 
 #import "base/mac/scoped_nsobject.h"
+#include "base/macros.h"
 #include "ui/views/widget/native_widget_mac.h"
 
 class BrowserFrame;
@@ -24,7 +25,6 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   BrowserFrameMac(BrowserFrame* browser_frame, BrowserView* browser_view);
 
   // Overridden from views::NativeWidgetMac:
-  void OnWindowWillClose() override;
   int SheetPositionY() override;
   void InitNativeWidget(const views::Widget::InitParams& params) override;
 
@@ -35,6 +35,10 @@ class BrowserFrameMac : public views::NativeWidgetMac,
   bool ShouldSaveWindowPlacement() const override;
   void GetWindowPlacement(gfx::Rect* bounds,
                           ui::WindowShowState* show_state) const override;
+  bool PreHandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
+  bool HandleKeyboardEvent(
+      const content::NativeWebKeyboardEvent& event) override;
 
  protected:
   ~BrowserFrameMac() override;

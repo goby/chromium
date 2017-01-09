@@ -5,9 +5,11 @@
 #ifndef CC_DEBUG_RENDERING_STATS_H_
 #define CC_DEBUG_RENDERING_STATS_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event_argument.h"
 #include "base/values.h"
@@ -21,6 +23,7 @@ struct CC_EXPORT RenderingStats {
   class CC_EXPORT TimeDeltaList {
    public:
     TimeDeltaList();
+    TimeDeltaList(const TimeDeltaList& other);
     ~TimeDeltaList();
 
     void Append(base::TimeDelta value);
@@ -36,26 +39,26 @@ struct CC_EXPORT RenderingStats {
   };
 
   RenderingStats();
+  RenderingStats(const RenderingStats& other);
   ~RenderingStats();
 
   // Note: when adding new members, please remember to update Add in
   // rendering_stats.cc.
 
-  int64 frame_count;
-  int64 visible_content_area;
-  int64 approximated_visible_content_area;
-  int64 checkerboarded_visible_content_area;
-  int64 checkerboarded_no_recording_content_area;
-  int64 checkerboarded_needs_raster_content_area;
+  int64_t frame_count;
+  int64_t visible_content_area;
+  int64_t approximated_visible_content_area;
+  int64_t checkerboarded_visible_content_area;
+  int64_t checkerboarded_no_recording_content_area;
+  int64_t checkerboarded_needs_raster_content_area;
 
   TimeDeltaList draw_duration;
   TimeDeltaList draw_duration_estimate;
   TimeDeltaList begin_main_frame_to_commit_duration;
-  TimeDeltaList begin_main_frame_to_commit_duration_estimate;
   TimeDeltaList commit_to_activate_duration;
   TimeDeltaList commit_to_activate_duration_estimate;
 
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat> AsTraceableData()
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat> AsTraceableData()
       const;
   void Add(const RenderingStats& other);
 };

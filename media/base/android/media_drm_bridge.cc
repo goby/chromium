@@ -4,7 +4,9 @@
 
 #include "media/base/android/media_drm_bridge.h"
 
+#include <stddef.h>
 #include <algorithm>
+#include <utility>
 
 #include "base/android/build_info.h"
 #include "base/android/jni_array.h"
@@ -15,24 +17,26 @@
 #include "base/lazy_instance.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/sys_byteorder.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "jni/MediaDrmBridge_jni.h"
 #include "media/base/android/media_client_android.h"
+#include "media/base/android/media_codec_util.h"
 #include "media/base/android/media_drm_bridge_delegate.h"
-#include "media/base/android/provision_fetcher.h"
 #include "media/base/cdm_key_information.h"
-
+#include "media/base/provision_fetcher.h"
 #include "widevine_cdm_version.h"  // In SHARED_INTERMEDIATE_DIR.
 
 using base::android::AttachCurrentThread;
 using base::android::ConvertUTF8ToJavaString;
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaByteArrayToByteVector;
+using base::android::JavaParamRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
 
@@ -65,7 +69,7 @@ std::string AsString(JNIEnv* env, jbyteArray j_byte_array) {
   return std::string(byte_vector.begin(), byte_vector.end());
 }
 
-const uint8 kWidevineUuid[16] = {
+const uint8_t kWidevineUuid[16] = {
     0xED, 0xEF, 0x8B, 0xA9, 0x79, 0xD6, 0x4A, 0xCE,  //
     0xA3, 0xC8, 0x27, 0xDC, 0xD5, 0x1D, 0x21, 0xED};
 
@@ -172,8 +176,12 @@ base::LazyInstance<KeySystemManager>::Leaky g_key_system_manager =
 // resolved.
 bool IsKeySystemSupportedWithTypeImpl(const std::string& key_system,
                                       const std::string& container_mime_type) {
-  if (!MediaDrmBridge::IsAvailable())
+  DCHECK(MediaDrmBridge::IsAvailable());
+
+  if (key_system.empty()) {
+    NOTREACHED();
     return false;
+  }
 
   UUID scheme_uuid = g_key_system_manager.Get().GetUUID(key_system);
   if (scheme_uuid.empty())
@@ -184,8 +192,8 @@ bool IsKeySystemSupportedWithTypeImpl(const std::string& key_system,
       base::android::ToJavaByteArray(env, &scheme_uuid[0], scheme_uuid.size());
   ScopedJavaLocalRef<jstring> j_container_mime_type =
       ConvertUTF8ToJavaString(env, container_mime_type);
-  return Java_MediaDrmBridge_isCryptoSchemeSupported(
-      env, j_scheme_uuid.obj(), j_container_mime_type.obj());
+  return Java_MediaDrmBridge_isCryptoSchemeSupported(env, j_scheme_uuid,
+                                                     j_container_mime_type);
 }
 
 MediaDrmBridge::SecurityLevel GetSecurityLevelFromString(
@@ -195,13 +203,15 @@ MediaDrmBridge::SecurityLevel GetSecurityLevelFromString(
   if (0 == security_level_str.compare("L3"))
     return MediaDrmBridge::SECURITY_LEVEL_3;
   DCHECK(security_level_str.empty());
-  return MediaDrmBridge::SECURITY_LEVEL_NONE;
+  return MediaDrmBridge::SECURITY_LEVEL_DEFAULT;
 }
 
+// Do not change the return values as they are part of Android MediaDrm API for
+// Widevine.
 std::string GetSecurityLevelString(
     MediaDrmBridge::SecurityLevel security_level) {
   switch (security_level) {
-    case MediaDrmBridge::SECURITY_LEVEL_NONE:
+    case MediaDrmBridge::SECURITY_LEVEL_DEFAULT:
       return "";
     case MediaDrmBridge::SECURITY_LEVEL_1:
       return "L1";
@@ -211,22 +221,28 @@ std::string GetSecurityLevelString(
   return "";
 }
 
-}  // namespace
-
-// static
-bool MediaDrmBridge::IsAvailable() {
+bool AreMediaDrmApisAvailable() {
   if (base::android::BuildInfo::GetInstance()->sdk_int() < 19)
     return false;
 
-  int32 os_major_version = 0;
-  int32 os_minor_version = 0;
-  int32 os_bugfix_version = 0;
+  int32_t os_major_version = 0;
+  int32_t os_minor_version = 0;
+  int32_t os_bugfix_version = 0;
   base::SysInfo::OperatingSystemVersionNumbers(
       &os_major_version, &os_minor_version, &os_bugfix_version);
   if (os_major_version == 4 && os_minor_version == 4 && os_bugfix_version == 0)
     return false;
 
   return true;
+}
+
+}  // namespace
+
+// MediaDrm is not generally usable without MediaCodec. Thus, both the MediaDrm
+// APIs and MediaCodec APIs must be enabled and not blacklisted.
+// static
+bool MediaDrmBridge::IsAvailable() {
+  return AreMediaDrmApisAvailable() && MediaCodecUtil::IsMediaCodecAvailable();
 }
 
 // static
@@ -236,7 +252,9 @@ bool MediaDrmBridge::RegisterMediaDrmBridge(JNIEnv* env) {
 
 // static
 bool MediaDrmBridge::IsKeySystemSupported(const std::string& key_system) {
-  DCHECK(!key_system.empty());
+  if (!MediaDrmBridge::IsAvailable())
+    return false;
+
   return IsKeySystemSupportedWithTypeImpl(key_system, "");
 }
 
@@ -244,37 +262,41 @@ bool MediaDrmBridge::IsKeySystemSupported(const std::string& key_system) {
 bool MediaDrmBridge::IsKeySystemSupportedWithType(
     const std::string& key_system,
     const std::string& container_mime_type) {
-  DCHECK(!key_system.empty() && !container_mime_type.empty());
+  DCHECK(!container_mime_type.empty()) << "Call IsKeySystemSupported instead";
+
+  if (!MediaDrmBridge::IsAvailable())
+    return false;
+
   return IsKeySystemSupportedWithTypeImpl(key_system, container_mime_type);
 }
 
 // static
 std::vector<std::string> MediaDrmBridge::GetPlatformKeySystemNames() {
+  if (!MediaDrmBridge::IsAvailable())
+    return std::vector<std::string>();
+
   return g_key_system_manager.Get().GetPlatformKeySystemNames();
 }
 
 // static
-scoped_refptr<MediaDrmBridge> MediaDrmBridge::Create(
+scoped_refptr<MediaDrmBridge> MediaDrmBridge::CreateInternal(
     const std::string& key_system,
+    SecurityLevel security_level,
     const CreateFetcherCB& create_fetcher_cb,
     const SessionMessageCB& session_message_cb,
     const SessionClosedCB& session_closed_cb,
-    const LegacySessionErrorCB& legacy_session_error_cb,
     const SessionKeysChangeCB& session_keys_change_cb,
     const SessionExpirationUpdateCB& session_expiration_update_cb) {
-  DVLOG(1) << __FUNCTION__;
-
-  if (!IsAvailable())
-    return nullptr;
+  // All paths requires the MediaDrmApis.
+  DCHECK(AreMediaDrmApisAvailable());
 
   UUID scheme_uuid = g_key_system_manager.Get().GetUUID(key_system);
   if (scheme_uuid.empty())
     return nullptr;
 
-  scoped_refptr<MediaDrmBridge> media_drm_bridge(
-      new MediaDrmBridge(scheme_uuid, create_fetcher_cb, session_message_cb,
-                         session_closed_cb, legacy_session_error_cb,
-                         session_keys_change_cb, session_expiration_update_cb));
+  scoped_refptr<MediaDrmBridge> media_drm_bridge(new MediaDrmBridge(
+      scheme_uuid, security_level, create_fetcher_cb, session_message_cb,
+      session_closed_cb, session_keys_change_cb, session_expiration_update_cb));
 
   if (media_drm_bridge->j_media_drm_.is_null())
     media_drm_bridge = nullptr;
@@ -283,29 +305,57 @@ scoped_refptr<MediaDrmBridge> MediaDrmBridge::Create(
 }
 
 // static
+scoped_refptr<MediaDrmBridge> MediaDrmBridge::Create(
+    const std::string& key_system,
+    SecurityLevel security_level,
+    const CreateFetcherCB& create_fetcher_cb,
+    const SessionMessageCB& session_message_cb,
+    const SessionClosedCB& session_closed_cb,
+    const SessionKeysChangeCB& session_keys_change_cb,
+    const SessionExpirationUpdateCB& session_expiration_update_cb) {
+  DVLOG(1) << __func__;
+
+  if (!IsAvailable())
+    return nullptr;
+
+  return CreateInternal(key_system, security_level, create_fetcher_cb,
+                        session_message_cb, session_closed_cb,
+                        session_keys_change_cb, session_expiration_update_cb);
+}
+
+// static
 scoped_refptr<MediaDrmBridge> MediaDrmBridge::CreateWithoutSessionSupport(
     const std::string& key_system,
+    SecurityLevel security_level,
     const CreateFetcherCB& create_fetcher_cb) {
-  return MediaDrmBridge::Create(key_system, create_fetcher_cb,
-                                SessionMessageCB(), SessionClosedCB(),
-                                LegacySessionErrorCB(), SessionKeysChangeCB(),
-                                SessionExpirationUpdateCB());
+  DVLOG(1) << __func__;
+
+  // Sessions won't be used so decoding capability is not required.
+  if (!AreMediaDrmApisAvailable())
+    return nullptr;
+
+  return MediaDrmBridge::Create(
+      key_system, security_level, create_fetcher_cb, SessionMessageCB(),
+      SessionClosedCB(), SessionKeysChangeCB(), SessionExpirationUpdateCB());
 }
 
 void MediaDrmBridge::SetServerCertificate(
     const std::vector<uint8_t>& certificate,
-    scoped_ptr<media::SimpleCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+    std::unique_ptr<media::SimpleCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__ << "(" << certificate.size() << " bytes)";
 
   DCHECK(!certificate.empty());
 
   JNIEnv* env = AttachCurrentThread();
-  ScopedJavaLocalRef<jbyteArray> j_certificate;
-  if (Java_MediaDrmBridge_setServerCertificate(env, j_media_drm_.obj(),
-                                               j_certificate.obj())) {
+  ScopedJavaLocalRef<jbyteArray> j_certificate = base::android::ToJavaByteArray(
+      env, certificate.data(), certificate.size());
+  if (Java_MediaDrmBridge_setServerCertificate(env, j_media_drm_,
+                                               j_certificate)) {
     promise->resolve();
   } else {
-    promise->reject(INVALID_ACCESS_ERROR, 0, "Set server certificate failed.");
+    promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
+                    "Set server certificate failed.");
   }
 }
 
@@ -313,12 +363,13 @@ void MediaDrmBridge::CreateSessionAndGenerateRequest(
     SessionType session_type,
     media::EmeInitDataType init_data_type,
     const std::vector<uint8_t>& init_data,
-    scoped_ptr<media::NewSessionCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+    std::unique_ptr<media::NewSessionCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__;
 
   if (session_type != media::MediaKeys::TEMPORARY_SESSION) {
     NOTIMPLEMENTED() << "EME persistent sessions not yet supported on Android.";
-    promise->reject(NOT_SUPPORTED_ERROR, 0,
+    promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
                     "Only the temporary session type is supported.");
     return;
   }
@@ -332,12 +383,14 @@ void MediaDrmBridge::CreateSessionAndGenerateRequest(
     MediaDrmBridgeDelegate* delegate =
         client->GetMediaDrmBridgeDelegate(scheme_uuid_);
     if (delegate) {
-      std::vector<uint8> init_data_from_delegate;
+      std::vector<uint8_t> init_data_from_delegate;
       std::vector<std::string> optional_parameters_from_delegate;
       if (!delegate->OnCreateSession(init_data_type, init_data,
                                      &init_data_from_delegate,
                                      &optional_parameters_from_delegate)) {
-        promise->reject(INVALID_ACCESS_ERROR, 0, "Invalid init data.");
+        promise->reject(CdmPromise::INVALID_ACCESS_ERROR, 0,
+                        "Invalid init data.");
+        return;
       }
       if (!init_data_from_delegate.empty()) {
         j_init_data =
@@ -358,27 +411,30 @@ void MediaDrmBridge::CreateSessionAndGenerateRequest(
 
   ScopedJavaLocalRef<jstring> j_mime =
       ConvertUTF8ToJavaString(env, ConvertInitDataType(init_data_type));
-  uint32_t promise_id = cdm_promise_adapter_.SavePromise(promise.Pass());
-  Java_MediaDrmBridge_createSessionFromNative(
-      env, j_media_drm_.obj(), j_init_data.obj(), j_mime.obj(),
-      j_optional_parameters.obj(), promise_id);
+  uint32_t promise_id = cdm_promise_adapter_.SavePromise(std::move(promise));
+  Java_MediaDrmBridge_createSessionFromNative(env, j_media_drm_, j_init_data,
+                                              j_mime, j_optional_parameters,
+                                              promise_id);
 }
 
 void MediaDrmBridge::LoadSession(
     SessionType session_type,
     const std::string& session_id,
-    scoped_ptr<media::NewSessionCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+    std::unique_ptr<media::NewSessionCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__;
 
   NOTIMPLEMENTED() << "EME persistent sessions not yet supported on Android.";
-  promise->reject(NOT_SUPPORTED_ERROR, 0, "LoadSession() is not supported.");
+  promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+                  "LoadSession() is not supported.");
 }
 
 void MediaDrmBridge::UpdateSession(
     const std::string& session_id,
     const std::vector<uint8_t>& response,
-    scoped_ptr<media::SimpleCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+    std::unique_ptr<media::SimpleCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__;
 
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jbyteArray> j_response =
@@ -386,35 +442,44 @@ void MediaDrmBridge::UpdateSession(
   ScopedJavaLocalRef<jbyteArray> j_session_id = base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(session_id.data()),
       session_id.size());
-  uint32_t promise_id = cdm_promise_adapter_.SavePromise(promise.Pass());
-  Java_MediaDrmBridge_updateSession(env, j_media_drm_.obj(), j_session_id.obj(),
-                                    j_response.obj(), promise_id);
+  uint32_t promise_id = cdm_promise_adapter_.SavePromise(std::move(promise));
+  Java_MediaDrmBridge_updateSession(env, j_media_drm_, j_session_id, j_response,
+                                    promise_id);
 }
 
-void MediaDrmBridge::CloseSession(const std::string& session_id,
-                                  scoped_ptr<media::SimpleCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+void MediaDrmBridge::CloseSession(
+    const std::string& session_id,
+    std::unique_ptr<media::SimpleCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__;
 
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jbyteArray> j_session_id = base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(session_id.data()),
       session_id.size());
-  uint32_t promise_id = cdm_promise_adapter_.SavePromise(promise.Pass());
-  Java_MediaDrmBridge_closeSession(env, j_media_drm_.obj(), j_session_id.obj(),
-                                   promise_id);
+  uint32_t promise_id = cdm_promise_adapter_.SavePromise(std::move(promise));
+  Java_MediaDrmBridge_closeSession(env, j_media_drm_, j_session_id, promise_id);
 }
 
 void MediaDrmBridge::RemoveSession(
     const std::string& session_id,
-    scoped_ptr<media::SimpleCdmPromise> promise) {
-  DVLOG(2) << __FUNCTION__;
+    std::unique_ptr<media::SimpleCdmPromise> promise) {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(2) << __func__;
 
   NOTIMPLEMENTED() << "EME persistent sessions not yet supported on Android.";
-  promise->reject(NOT_SUPPORTED_ERROR, 0, "RemoveSession() is not supported.");
+  promise->reject(CdmPromise::NOT_SUPPORTED_ERROR, 0,
+                  "RemoveSession() is not supported.");
+}
+
+CdmContext* MediaDrmBridge::GetCdmContext() {
+  DVLOG(2) << __func__;
+
+  return &media_drm_bridge_cdm_context_;
 }
 
 void MediaDrmBridge::DeleteOnCorrectThread() const {
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   if (!task_runner_->BelongsToCurrentThread()) {
     // When DeleteSoon returns false, |this| will be leaked, which is okay.
@@ -435,26 +500,6 @@ void MediaDrmBridge::UnregisterPlayer(int registration_id) {
   player_tracker_.UnregisterPlayer(registration_id);
 }
 
-bool MediaDrmBridge::SetSecurityLevel(SecurityLevel security_level) {
-  if (security_level != SECURITY_LEVEL_NONE &&
-      !std::equal(scheme_uuid_.begin(), scheme_uuid_.end(), kWidevineUuid)) {
-    NOTREACHED() << "Widevine security level " << security_level
-                 << "used with another key system";
-    return false;
-  }
-
-  JNIEnv* env = AttachCurrentThread();
-
-  std::string security_level_str = GetSecurityLevelString(security_level);
-  if (security_level_str.empty())
-    return false;
-
-  ScopedJavaLocalRef<jstring> j_security_level =
-      ConvertUTF8ToJavaString(env, security_level_str);
-  return Java_MediaDrmBridge_setSecurityLevel(env, j_media_drm_.obj(),
-                                              j_security_level.obj());
-}
-
 bool MediaDrmBridge::IsProtectedSurfaceRequired() {
   // For Widevine, this depends on the security level.
   if (std::equal(scheme_uuid_.begin(), scheme_uuid_.end(), kWidevineUuid))
@@ -466,37 +511,30 @@ bool MediaDrmBridge::IsProtectedSurfaceRequired() {
 
 void MediaDrmBridge::ResetDeviceCredentials(
     const ResetCredentialsCB& callback) {
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   DCHECK(reset_credentials_cb_.is_null());
   reset_credentials_cb_ = callback;
   JNIEnv* env = AttachCurrentThread();
-  Java_MediaDrmBridge_resetDeviceCredentials(env, j_media_drm_.obj());
+  Java_MediaDrmBridge_resetDeviceCredentials(env, j_media_drm_);
 }
 
 void MediaDrmBridge::ResolvePromise(uint32_t promise_id) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   cdm_promise_adapter_.ResolvePromise(promise_id);
 }
 
 void MediaDrmBridge::ResolvePromiseWithSession(uint32_t promise_id,
                                                const std::string& session_id) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   cdm_promise_adapter_.ResolvePromise(promise_id, session_id);
 }
 
 void MediaDrmBridge::RejectPromise(uint32_t promise_id,
                                    const std::string& error_message) {
-  DVLOG(2) << __FUNCTION__;
-  cdm_promise_adapter_.RejectPromise(promise_id, MediaKeys::UNKNOWN_ERROR, 0,
+  DVLOG(2) << __func__;
+  cdm_promise_adapter_.RejectPromise(promise_id, CdmPromise::UNKNOWN_ERROR, 0,
                                      error_message);
-}
-
-ScopedJavaLocalRef<jobject> MediaDrmBridge::GetMediaCrypto() {
-  DCHECK(task_runner_->BelongsToCurrentThread());
-
-  JNIEnv* env = AttachCurrentThread();
-  return Java_MediaDrmBridge_getMediaCrypto(env, j_media_drm_.obj());
 }
 
 void MediaDrmBridge::SetMediaCryptoReadyCB(
@@ -509,7 +547,7 @@ void MediaDrmBridge::SetMediaCryptoReadyCB(
     return;
   }
 
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   if (media_crypto_ready_cb.is_null()) {
     media_crypto_ready_cb_.Reset();
@@ -517,15 +555,14 @@ void MediaDrmBridge::SetMediaCryptoReadyCB(
   }
 
   DCHECK(media_crypto_ready_cb_.is_null());
-
-  // |media_crypto_ready_cb| is already bound to the correct thread
-  // (either UI or Media).
-  if (!GetMediaCrypto().is_null()) {
-    NotifyMediaCryptoReady(media_crypto_ready_cb);
-    return;
-  }
-
   media_crypto_ready_cb_ = media_crypto_ready_cb;
+
+  if (!j_media_crypto_)
+    return;
+
+  base::ResetAndReturn(&media_crypto_ready_cb_)
+      .Run(CreateJavaObjectPtr(j_media_crypto_->obj()),
+           IsProtectedSurfaceRequired());
 }
 
 //------------------------------------------------------------------------------
@@ -534,17 +571,16 @@ void MediaDrmBridge::SetMediaCryptoReadyCB(
 
 void MediaDrmBridge::OnMediaCryptoReady(
     JNIEnv* env,
-    const JavaParamRef<jobject>& j_media_drm) {
+    const JavaParamRef<jobject>& j_media_drm,
+    const JavaParamRef<jobject>& j_media_crypto) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  DVLOG(1) << __FUNCTION__;
-
-  if (media_crypto_ready_cb_.is_null())
-    return;
+  DVLOG(1) << __func__;
 
   task_runner_->PostTask(
-      FROM_HERE, base::Bind(&MediaDrmBridge::NotifyMediaCryptoReady,
-                            weak_factory_.GetWeakPtr(),
-                            base::ResetAndReturn(&media_crypto_ready_cb_)));
+      FROM_HERE,
+      base::Bind(&MediaDrmBridge::NotifyMediaCryptoReady,
+                 weak_factory_.GetWeakPtr(),
+                 base::Passed(CreateJavaObjectPtr(j_media_crypto.obj()))));
 }
 
 void MediaDrmBridge::OnStartProvisioning(
@@ -552,7 +588,7 @@ void MediaDrmBridge::OnStartProvisioning(
     const JavaParamRef<jobject>& j_media_drm,
     const JavaParamRef<jstring>& j_default_url,
     const JavaParamRef<jbyteArray>& j_request_data) {
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   task_runner_->PostTask(FROM_HERE,
                          base::Bind(&MediaDrmBridge::SendProvisioningRequest,
@@ -596,27 +632,24 @@ void MediaDrmBridge::OnSessionMessage(
     const JavaParamRef<jobject>& j_media_drm,
     const JavaParamRef<jbyteArray>& j_session_id,
     jint j_message_type,
-    const JavaParamRef<jbyteArray>& j_message,
-    const JavaParamRef<jstring>& j_legacy_destination_url) {
-  DVLOG(2) << __FUNCTION__;
+    const JavaParamRef<jbyteArray>& j_message) {
+  DVLOG(2) << __func__;
 
-  std::vector<uint8> message;
+  std::vector<uint8_t> message;
   JavaByteArrayToByteVector(env, j_message, &message);
-  GURL legacy_destination_url =
-      GURL(ConvertJavaStringToUTF8(env, j_legacy_destination_url));
   MediaKeys::MessageType message_type =
       GetMessageType(static_cast<RequestType>(j_message_type));
 
   task_runner_->PostTask(
       FROM_HERE, base::Bind(session_message_cb_, AsString(env, j_session_id),
-                            message_type, message, legacy_destination_url));
+                            message_type, message));
 }
 
 void MediaDrmBridge::OnSessionClosed(
     JNIEnv* env,
     const JavaParamRef<jobject>& j_media_drm,
     const JavaParamRef<jbyteArray>& j_session_id) {
-  DVLOG(2) << __FUNCTION__;
+  DVLOG(2) << __func__;
   std::string session_id = AsString(env, j_session_id);
   task_runner_->PostTask(FROM_HERE, base::Bind(session_closed_cb_, session_id));
 }
@@ -627,10 +660,7 @@ void MediaDrmBridge::OnSessionKeysChange(
     const JavaParamRef<jbyteArray>& j_session_id,
     const JavaParamRef<jobjectArray>& j_keys_info,
     bool has_additional_usable_key) {
-  DVLOG(2) << __FUNCTION__;
-
-  if (has_additional_usable_key)
-    player_tracker_.NotifyNewKey();
+  DVLOG(2) << __func__;
 
   CdmKeysInfo cdm_keys_info;
 
@@ -642,16 +672,16 @@ void MediaDrmBridge::OnSessionKeysChange(
         env, env->GetObjectArrayElement(j_keys_info, i));
 
     ScopedJavaLocalRef<jbyteArray> j_key_id =
-        Java_KeyStatus_getKeyId(env, j_key_status.obj());
-    std::vector<uint8> key_id;
+        Java_KeyStatus_getKeyId(env, j_key_status);
+    std::vector<uint8_t> key_id;
     JavaByteArrayToByteVector(env, j_key_id.obj(), &key_id);
     DCHECK(!key_id.empty());
 
-    jint j_status_code = Java_KeyStatus_getStatusCode(env, j_key_status.obj());
+    jint j_status_code = Java_KeyStatus_getStatusCode(env, j_key_status);
     CdmKeyInformation::KeyStatus key_status =
         ConvertKeyStatus(static_cast<KeyStatus>(j_status_code));
 
-    DVLOG(2) << __FUNCTION__ << "Key status change: "
+    DVLOG(2) << __func__ << "Key status change: "
              << base::HexEncode(&key_id[0], key_id.size()) << ", "
              << key_status;
 
@@ -662,6 +692,12 @@ void MediaDrmBridge::OnSessionKeysChange(
       FROM_HERE,
       base::Bind(session_keys_change_cb_, AsString(env, j_session_id),
                  has_additional_usable_key, base::Passed(&cdm_keys_info)));
+
+  if (has_additional_usable_key) {
+    task_runner_->PostTask(FROM_HERE,
+                           base::Bind(&MediaDrmBridge::OnHasAdditionalUsableKey,
+                                      weak_factory_.GetWeakPtr()));
+  }
 }
 
 // According to MeidaDrm documentation [1], zero |expiry_time_ms| means the keys
@@ -680,33 +716,18 @@ void MediaDrmBridge::OnSessionExpirationUpdate(
     const JavaParamRef<jobject>& j_media_drm,
     const JavaParamRef<jbyteArray>& j_session_id,
     jlong expiry_time_ms) {
-  DVLOG(2) << __FUNCTION__ << ": " << expiry_time_ms << " ms";
+  DVLOG(2) << __func__ << ": " << expiry_time_ms << " ms";
   task_runner_->PostTask(
       FROM_HERE,
       base::Bind(session_expiration_update_cb_, AsString(env, j_session_id),
                  base::Time::FromDoubleT(expiry_time_ms / 1000.0)));
 }
 
-void MediaDrmBridge::OnLegacySessionError(
-    JNIEnv* env,
-    const JavaParamRef<jobject>& j_media_drm,
-    const JavaParamRef<jbyteArray>& j_session_id,
-    const JavaParamRef<jstring>& j_error_message) {
-  std::string error_message = ConvertJavaStringToUTF8(env, j_error_message);
-
-  DVLOG(2) << __FUNCTION__ << ": " << error_message;
-
-  task_runner_->PostTask(
-      FROM_HERE,
-      base::Bind(legacy_session_error_cb_, AsString(env, j_session_id),
-                 MediaKeys::UNKNOWN_ERROR, 0, error_message));
-}
-
 void MediaDrmBridge::OnResetDeviceCredentialsCompleted(
     JNIEnv* env,
     const JavaParamRef<jobject>&,
     bool success) {
-  DVLOG(2) << __FUNCTION__ << ": success:" << success;
+  DVLOG(2) << __func__ << ": success:" << success;
   DCHECK(!reset_credentials_cb_.is_null());
   task_runner_->PostTask(
       FROM_HERE,
@@ -717,23 +738,23 @@ void MediaDrmBridge::OnResetDeviceCredentialsCompleted(
 // The following are private methods.
 
 MediaDrmBridge::MediaDrmBridge(
-    const std::vector<uint8>& scheme_uuid,
+    const std::vector<uint8_t>& scheme_uuid,
+    SecurityLevel security_level,
     const CreateFetcherCB& create_fetcher_cb,
     const SessionMessageCB& session_message_cb,
     const SessionClosedCB& session_closed_cb,
-    const LegacySessionErrorCB& legacy_session_error_cb,
     const SessionKeysChangeCB& session_keys_change_cb,
     const SessionExpirationUpdateCB& session_expiration_update_cb)
     : scheme_uuid_(scheme_uuid),
       create_fetcher_cb_(create_fetcher_cb),
       session_message_cb_(session_message_cb),
       session_closed_cb_(session_closed_cb),
-      legacy_session_error_cb_(legacy_session_error_cb),
       session_keys_change_cb_(session_keys_change_cb),
       session_expiration_update_cb_(session_expiration_update_cb),
       task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      media_drm_bridge_cdm_context_(this),
       weak_factory_(this) {
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   DCHECK(!create_fetcher_cb_.is_null());
 
@@ -742,22 +763,33 @@ MediaDrmBridge::MediaDrmBridge(
 
   ScopedJavaLocalRef<jbyteArray> j_scheme_uuid =
       base::android::ToJavaByteArray(env, &scheme_uuid[0], scheme_uuid.size());
+
+  std::string security_level_str = GetSecurityLevelString(security_level);
+  ScopedJavaLocalRef<jstring> j_security_level =
+      ConvertUTF8ToJavaString(env, security_level_str);
+
+  // Note: OnMediaCryptoReady() could be called in this call.
   j_media_drm_.Reset(Java_MediaDrmBridge_create(
-      env, j_scheme_uuid.obj(), reinterpret_cast<intptr_t>(this)));
+      env, j_scheme_uuid, j_security_level, reinterpret_cast<intptr_t>(this)));
 }
 
 MediaDrmBridge::~MediaDrmBridge() {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   JNIEnv* env = AttachCurrentThread();
 
   // After the call to Java_MediaDrmBridge_destroy() Java won't call native
   // methods anymore, this is ensured by MediaDrmBridge.java.
   if (!j_media_drm_.is_null())
-    Java_MediaDrmBridge_destroy(env, j_media_drm_.obj());
+    Java_MediaDrmBridge_destroy(env, j_media_drm_);
 
   player_tracker_.NotifyCdmUnset();
+
+  if (!media_crypto_ready_cb_.is_null()) {
+    base::ResetAndReturn(&media_crypto_ready_cb_)
+        .Run(CreateJavaObjectPtr(nullptr), IsProtectedSurfaceRequired());
+  }
 
   // Rejects all pending promises.
   cdm_promise_adapter_.Clear();
@@ -773,30 +805,41 @@ bool MediaDrmBridge::IsSecureDecoderRequired(SecurityLevel security_level) {
 MediaDrmBridge::SecurityLevel MediaDrmBridge::GetSecurityLevel() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jstring> j_security_level =
-      Java_MediaDrmBridge_getSecurityLevel(env, j_media_drm_.obj());
+      Java_MediaDrmBridge_getSecurityLevel(env, j_media_drm_);
   std::string security_level_str =
       ConvertJavaStringToUTF8(env, j_security_level.obj());
   return GetSecurityLevelFromString(security_level_str);
 }
 
-void MediaDrmBridge::NotifyMediaCryptoReady(const MediaCryptoReadyCB& cb) {
+// We have to use scoped_ptr to pass ScopedJavaGlobalRef with a callback.
+// TODO(timav): Check whether we can simply pass j_media_crypto_->obj() in the
+// callback.
+MediaDrmBridge::JavaObjectPtr MediaDrmBridge::CreateJavaObjectPtr(
+    jobject object) {
+  JavaObjectPtr j_object_ptr(new ScopedJavaGlobalRef<jobject>());
+  j_object_ptr->Reset(AttachCurrentThread(), object);
+  return j_object_ptr;
+}
+
+void MediaDrmBridge::NotifyMediaCryptoReady(JavaObjectPtr j_media_crypto) {
   DCHECK(task_runner_->BelongsToCurrentThread());
+  DCHECK(j_media_crypto);
+  DCHECK(!j_media_crypto_);
 
-  DCHECK(!cb.is_null());
-  DCHECK(!GetMediaCrypto().is_null());
+  j_media_crypto_ = std::move(j_media_crypto);
 
-  // We can use scoped_ptr to pass ScopedJavaGlobalRef with a callback.
-  scoped_ptr<ScopedJavaGlobalRef<jobject>> j_object_ptr(
-      new ScopedJavaGlobalRef<jobject>());
-  j_object_ptr->Reset(AttachCurrentThread(), GetMediaCrypto().obj());
+  if (media_crypto_ready_cb_.is_null())
+    return;
 
-  cb.Run(j_object_ptr.Pass(), IsProtectedSurfaceRequired());
+  base::ResetAndReturn(&media_crypto_ready_cb_)
+      .Run(CreateJavaObjectPtr(j_media_crypto_->obj()),
+           IsProtectedSurfaceRequired());
 }
 
 void MediaDrmBridge::SendProvisioningRequest(const std::string& default_url,
                                              const std::string& request_data) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   DCHECK(!provision_fetcher_) << "At most one provision request at any time.";
   provision_fetcher_ = create_fetcher_cb_.Run();
@@ -810,7 +853,7 @@ void MediaDrmBridge::SendProvisioningRequest(const std::string& default_url,
 void MediaDrmBridge::ProcessProvisionResponse(bool success,
                                               const std::string& response) {
   DCHECK(task_runner_->BelongsToCurrentThread());
-  DVLOG(1) << __FUNCTION__;
+  DVLOG(1) << __func__;
 
   DCHECK(provision_fetcher_) << "No provision request pending.";
   provision_fetcher_.reset();
@@ -823,8 +866,15 @@ void MediaDrmBridge::ProcessProvisionResponse(bool success,
   ScopedJavaLocalRef<jbyteArray> j_response = base::android::ToJavaByteArray(
       env, reinterpret_cast<const uint8_t*>(response.data()), response.size());
 
-  Java_MediaDrmBridge_processProvisionResponse(env, j_media_drm_.obj(), success,
-                                               j_response.obj());
+  Java_MediaDrmBridge_processProvisionResponse(env, j_media_drm_, success,
+                                               j_response);
+}
+
+void MediaDrmBridge::OnHasAdditionalUsableKey() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  DVLOG(1) << __func__;
+
+  player_tracker_.NotifyNewKey();
 }
 
 }  // namespace media

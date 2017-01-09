@@ -5,11 +5,16 @@
 #ifndef SKIA_EXT_BITMAP_PLATFORM_DEVICE_SKIA_H_
 #define SKIA_EXT_BITMAP_PLATFORM_DEVICE_SKIA_H_
 
+#include <stdint.h>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "skia/ext/platform_device.h"
 
 namespace skia {
+
+class ScopedPlatformPaint;
 
 // -----------------------------------------------------------------------------
 // For now we just use SkBitmap for SkBitmapDevice
@@ -37,13 +42,16 @@ class BitmapPlatformDevice : public SkBitmapDevice, public PlatformDevice {
   explicit BitmapPlatformDevice(const SkBitmap& other);
   ~BitmapPlatformDevice() override;
 
-  PlatformSurface BeginPlatformPaint() override;
-
  protected:
   SkBaseDevice* onCreateDevice(const CreateInfo&, const SkPaint*) override;
 
  private:
+  NativeDrawingContext BeginPlatformPaint(const SkMatrix& transform,
+                                          const SkIRect& clip_bounds) override;
+
   DISALLOW_COPY_AND_ASSIGN(BitmapPlatformDevice);
+
+  friend class ScopedPlatformPaint;
 };
 
 }  // namespace skia

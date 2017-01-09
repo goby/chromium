@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_MOCK_EXTENSION_SYSTEM_H_
 #define EXTENSIONS_BROWSER_MOCK_EXTENSION_SYSTEM_H_
 
+#include "base/macros.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "extensions/browser/extension_registry_factory.h"
 #include "extensions/browser/extension_system.h"
@@ -34,12 +35,13 @@ class MockExtensionSystem : public ExtensionSystem {
   SharedUserScriptMaster* shared_user_script_master() override;
   StateStore* state_store() override;
   StateStore* rules_store() override;
+  scoped_refptr<ValueStoreFactory> store_factory() override;
   InfoMap* info_map() override;
   QuotaService* quota_service() override;
   AppSorting* app_sorting() override;
   const OneShotEvent& ready() const override;
   ContentVerifier* content_verifier() override;
-  scoped_ptr<ExtensionSet> GetDependentExtensions(
+  std::unique_ptr<ExtensionSet> GetDependentExtensions(
       const Extension* extension) override;
   void InstallUpdate(const std::string& extension_id,
                      const base::FilePath& temp_dir) override;

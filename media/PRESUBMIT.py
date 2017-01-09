@@ -8,6 +8,19 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details about the presubmit API built into depot_tools.
 """
 
+import re
+import string
+
+# Well-defined simple classes containing only <= 4 ints, or <= 2 floats.
+BASE_TIME_TYPES = [
+    'base::Time',
+    'base::TimeDelta',
+    'base::TimeTicks',
+]
+
+BASE_TIME_TYPES_RE = re.compile(r'\bconst (%s)&' %
+                                string.join(BASE_TIME_TYPES, '|'))
+
 def _FilterFile(affected_file):
   """Return true if the file could contain code requiring a presubmit check."""
   return affected_file.LocalPath().endswith(
@@ -32,7 +45,7 @@ def _CheckForUseOfWrongClock(input_api, output_api):
   #
   #   using base::Time;
   #   ...
-  #   int64 foo_us = foo_s * Time::kMicrosecondsPerSecond;
+  #   int64_t foo_us = foo_s * Time::kMicrosecondsPerSecond;
   using_base_time_decl_pattern = r'^\s*using\s+(::)?base::Time\s*;'
 
   # Regular expression to detect references to the kXXX constants in the
@@ -62,29 +75,6 @@ def _CheckForUseOfWrongClock(input_api, output_api):
         '\n'.join(problems))]
   else:
     return []
-
-
-def _CheckForMessageLoopProxy(input_api, output_api):
-  """Make sure media code only uses MessageLoopProxy for accessing the current
-  loop."""
-
-  message_loop_proxy_re = input_api.re.compile(
-      r'\bMessageLoopProxy(?!::current\(\))')
-
-  problems = []
-  for f in input_api.AffectedSourceFiles(_FilterFile):
-    for line_number, line in f.ChangedContents():
-      if message_loop_proxy_re.search(line):
-        problems.append('%s:%d' % (f.LocalPath(), line_number))
-
-  if problems:
-    return [output_api.PresubmitError(
-      'MessageLoopProxy should only be used for accessing the current loop.\n'
-      'Use the TaskRunner interfaces instead as they are more explicit about\n'
-      'the run-time characteristics. In most cases, SingleThreadTaskRunner\n'
-      'is a drop-in replacement for MessageLoopProxy.', problems)]
-
-  return []
 
 
 def _CheckForHistogramOffByOne(input_api, output_api):
@@ -159,10 +149,28 @@ def _CheckForHistogramOffByOne(input_api, output_api):
   return []
 
 
+def _CheckPassByValue(input_api, output_api):
+  """Check that base::Time and derived classes are passed by value, and not by
+  const reference """
+
+  problems = []
+
+  for f in input_api.AffectedSourceFiles(_FilterFile):
+    for line_number, line in f.ChangedContents():
+      if BASE_TIME_TYPES_RE.search(line):
+        problems.append('%s:%d' % (f, line_number))
+
+  if problems:
+    return [output_api.PresubmitError(
+      'base::Time and derived classes should be passed by value and not by\n'
+      'const ref, see base/time/time.h for more information.', problems)]
+  return []
+
+
 def _CheckChange(input_api, output_api):
   results = []
   results.extend(_CheckForUseOfWrongClock(input_api, output_api))
-  results.extend(_CheckForMessageLoopProxy(input_api, output_api))
+  results.extend(_CheckPassByValue(input_api, output_api))
   results.extend(_CheckForHistogramOffByOne(input_api, output_api))
   results += input_api.canned_checks.CheckPatchFormatted(input_api, output_api)
   return results

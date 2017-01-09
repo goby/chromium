@@ -31,135 +31,147 @@
 #ifndef SourceBuffer_h
 #define SourceBuffer_h
 
-#include "core/dom/ActiveDOMObject.h"
-#include "core/fileapi/FileReaderLoaderClient.h"
+#include "bindings/core/v8/ActiveScriptWrappable.h"
+#include "core/dom/SuspendableObject.h"
 #include "modules/EventTargetModules.h"
 #include "modules/mediasource/TrackDefaultList.h"
 #include "platform/AsyncMethodRunner.h"
 #include "platform/weborigin/KURL.h"
 #include "public/platform/WebSourceBufferClient.h"
-#include "wtf/RefCounted.h"
 #include "wtf/text/WTFString.h"
+#include <memory>
 
 namespace blink {
 
+class AudioTrackList;
 class DOMArrayBuffer;
 class DOMArrayBufferView;
 class ExceptionState;
-class FileReaderLoader;
 class GenericEventQueue;
 class MediaSource;
-class Stream;
 class TimeRanges;
+class VideoTrackList;
 class WebSourceBuffer;
 
-class SourceBuffer final
-    : public RefCountedGarbageCollectedEventTargetWithInlineData<SourceBuffer>
-    , public ActiveDOMObject
-    , public FileReaderLoaderClient
-    , public WebSourceBufferClient {
-    REFCOUNTED_GARBAGE_COLLECTED_EVENT_TARGET(SourceBuffer);
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(SourceBuffer);
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static SourceBuffer* create(PassOwnPtr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
-    static const AtomicString& segmentsKeyword();
-    static const AtomicString& sequenceKeyword();
+class SourceBuffer final : public EventTargetWithInlineData,
+                           public ActiveScriptWrappable,
+                           public SuspendableObject,
+                           public WebSourceBufferClient {
+  USING_GARBAGE_COLLECTED_MIXIN(SourceBuffer);
+  DEFINE_WRAPPERTYPEINFO();
+  USING_PRE_FINALIZER(SourceBuffer, dispose);
 
-    ~SourceBuffer() override;
+ public:
+  static SourceBuffer* create(std::unique_ptr<WebSourceBuffer>,
+                              MediaSource*,
+                              GenericEventQueue*);
+  static const AtomicString& segmentsKeyword();
+  static const AtomicString& sequenceKeyword();
 
-    // SourceBuffer.idl methods
-    const AtomicString& mode() const { return m_mode; }
-    void setMode(const AtomicString&, ExceptionState&);
-    bool updating() const { return m_updating; }
-    TimeRanges* buffered(ExceptionState&) const;
-    double timestampOffset() const;
-    void setTimestampOffset(double, ExceptionState&);
-    void appendBuffer(PassRefPtr<DOMArrayBuffer> data, ExceptionState&);
-    void appendBuffer(PassRefPtr<DOMArrayBufferView> data, ExceptionState&);
-    void appendStream(Stream*, ExceptionState&);
-    void appendStream(Stream*, unsigned long long maxSize, ExceptionState&);
-    void abort(ExceptionState&);
-    void remove(double start, double end, ExceptionState&);
-    double appendWindowStart() const;
-    void setAppendWindowStart(double, ExceptionState&);
-    double appendWindowEnd() const;
-    void setAppendWindowEnd(double, ExceptionState&);
-    TrackDefaultList* trackDefaults() const { return m_trackDefaults.get(); }
-    void setTrackDefaults(TrackDefaultList*, ExceptionState&);
+  ~SourceBuffer() override;
 
-    void abortIfUpdating();
-    void removedFromMediaSource();
+  // SourceBuffer.idl methods
+  const AtomicString& mode() const { return m_mode; }
+  void setMode(const AtomicString&, ExceptionState&);
+  bool updating() const { return m_updating; }
+  TimeRanges* buffered(ExceptionState&) const;
+  double timestampOffset() const;
+  void setTimestampOffset(double, ExceptionState&);
+  void appendBuffer(DOMArrayBuffer* data, ExceptionState&);
+  void appendBuffer(DOMArrayBufferView* data, ExceptionState&);
+  void abort(ExceptionState&);
+  void remove(double start, double end, ExceptionState&);
+  double appendWindowStart() const;
+  void setAppendWindowStart(double, ExceptionState&);
+  double appendWindowEnd() const;
+  void setAppendWindowEnd(double, ExceptionState&);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(updatestart);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(update);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(updateend);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(error);
+  DEFINE_ATTRIBUTE_EVENT_LISTENER(abort);
+  TrackDefaultList* trackDefaults() const { return m_trackDefaults.get(); }
+  void setTrackDefaults(TrackDefaultList*, ExceptionState&);
 
-    // ActiveDOMObject interface
-    bool hasPendingActivity() const override;
-    void suspend() override;
-    void resume() override;
-    void stop() override;
+  AudioTrackList& audioTracks();
+  VideoTrackList& videoTracks();
 
-    // EventTarget interface
-    ExecutionContext* executionContext() const override;
-    const AtomicString& interfaceName() const override;
+  void removedFromMediaSource();
+  double highestPresentationTimestamp();
 
-    // WebSourceBufferClient interface
-    void initializationSegmentReceived() override;
+  // ScriptWrappable
+  bool hasPendingActivity() const final;
 
-    // Oilpan: eagerly release owned m_webSourceBuffer
-    EAGERLY_FINALIZE();
-    DECLARE_VIRTUAL_TRACE();
+  // SuspendableObject
+  void suspend() override;
+  void resume() override;
+  void contextDestroyed() override;
 
-private:
-    SourceBuffer(PassOwnPtr<WebSourceBuffer>, MediaSource*, GenericEventQueue*);
+  // EventTarget interface
+  ExecutionContext* getExecutionContext() const override;
+  const AtomicString& interfaceName() const override;
 
-    bool isRemoved() const;
-    void scheduleEvent(const AtomicString& eventName);
+  // WebSourceBufferClient interface
+  bool initializationSegmentReceived(const WebVector<MediaTrackInfo>&) override;
 
-    bool prepareAppend(size_t newDataSize, ExceptionState&);
-    bool evictCodedFrames(size_t newDataSize);
-    void appendBufferInternal(const unsigned char*, unsigned, ExceptionState&);
-    void appendBufferAsyncPart();
-    void appendError(bool decodeError);
+  DECLARE_VIRTUAL_TRACE();
 
-    void removeAsyncPart();
+ private:
+  enum AppendError { NoDecodeError, DecodeError };
 
-    void appendStreamInternal(Stream*, ExceptionState&);
-    void appendStreamAsyncPart();
-    void appendStreamDone(bool success);
-    void clearAppendStreamState();
+  SourceBuffer(std::unique_ptr<WebSourceBuffer>,
+               MediaSource*,
+               GenericEventQueue*);
+  void dispose();
 
-    // FileReaderLoaderClient interface
-    void didStartLoading() override;
-    void didReceiveDataForClient(const char* data, unsigned dataLength) override;
-    void didFinishLoading() override;
-    void didFail(FileError::ErrorCode) override;
+  bool isRemoved() const;
+  void scheduleEvent(const AtomicString& eventName);
 
-    OwnPtr<WebSourceBuffer> m_webSourceBuffer;
-    Member<MediaSource> m_source;
-    Member<TrackDefaultList> m_trackDefaults;
-    RawPtrWillBeMember<GenericEventQueue> m_asyncEventQueue;
+  bool prepareAppend(size_t newDataSize, ExceptionState&);
+  bool evictCodedFrames(size_t newDataSize);
+  void appendBufferInternal(const unsigned char*, unsigned, ExceptionState&);
+  void appendBufferAsyncPart();
+  void appendError(AppendError);
 
-    AtomicString m_mode;
-    bool m_updating;
-    double m_timestampOffset;
-    double m_appendWindowStart;
-    double m_appendWindowEnd;
-    bool m_firstInitializationSegmentReceived;
+  void removeAsyncPart();
 
-    Vector<unsigned char> m_pendingAppendData;
-    size_t m_pendingAppendDataOffset;
-    AsyncMethodRunner<SourceBuffer> m_appendBufferAsyncPartRunner;
+  void cancelRemove();
+  void abortIfUpdating();
 
-    double m_pendingRemoveStart;
-    double m_pendingRemoveEnd;
-    AsyncMethodRunner<SourceBuffer> m_removeAsyncPartRunner;
+  void removeMediaTracks();
 
-    bool m_streamMaxSizeValid;
-    unsigned long long m_streamMaxSize;
-    AsyncMethodRunner<SourceBuffer> m_appendStreamAsyncPartRunner;
-    Member<Stream> m_stream;
-    OwnPtr<FileReaderLoader> m_loader;
+  const TrackDefault* getTrackDefault(
+      const AtomicString& trackType,
+      const AtomicString& byteStreamTrackID) const;
+  AtomicString defaultTrackLabel(const AtomicString& trackType,
+                                 const AtomicString& byteStreamTrackID) const;
+  AtomicString defaultTrackLanguage(
+      const AtomicString& trackType,
+      const AtomicString& byteStreamTrackID) const;
+
+  std::unique_ptr<WebSourceBuffer> m_webSourceBuffer;
+  Member<MediaSource> m_source;
+  Member<TrackDefaultList> m_trackDefaults;
+  Member<GenericEventQueue> m_asyncEventQueue;
+
+  AtomicString m_mode;
+  bool m_updating;
+  double m_timestampOffset;
+  Member<AudioTrackList> m_audioTracks;
+  Member<VideoTrackList> m_videoTracks;
+  double m_appendWindowStart;
+  double m_appendWindowEnd;
+  bool m_firstInitializationSegmentReceived;
+
+  Vector<unsigned char> m_pendingAppendData;
+  size_t m_pendingAppendDataOffset;
+  Member<AsyncMethodRunner<SourceBuffer>> m_appendBufferAsyncPartRunner;
+
+  double m_pendingRemoveStart;
+  double m_pendingRemoveEnd;
+  Member<AsyncMethodRunner<SourceBuffer>> m_removeAsyncPartRunner;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // SourceBuffer_h
+#endif  // SourceBuffer_h

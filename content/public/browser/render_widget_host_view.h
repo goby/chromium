@@ -5,25 +5,24 @@
 #ifndef CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_VIEW_H_
 #define CONTENT_PUBLIC_BROWSER_RENDER_WIDGET_HOST_VIEW_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
-#include "third_party/skia/include/core/SkBitmap.h"
+#include "third_party/WebKit/public/platform/WebInputEvent.h"
 #include "third_party/skia/include/core/SkColor.h"
-#include "third_party/skia/include/core/SkRegion.h"
-#include "third_party/WebKit/public/web/WebInputEvent.h"
 #include "ui/gfx/native_widget_types.h"
 
-class GURL;
-
 namespace gfx {
+class Point;
 class Rect;
 class Size;
 }
 
 namespace ui {
 class TextInputClient;
+class AcceleratedWidgetMac;
 }
 
 namespace content {
@@ -65,10 +64,25 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // Retrieves the last known scroll position.
   virtual gfx::Vector2dF GetLastScrollOffset() const = 0;
 
+  // Tells the renderer whether to show the overscroll glow.
+  virtual void SetShowingOverscrollGlow(bool showing) = 0;
+
+  // Coordinate points received from a renderer process need to be transformed
+  // to the top-level frame's coordinate space. For coordinates received from
+  // the top-level frame's renderer this is a no-op as they are already
+  // properly transformed; however, coordinates received from an out-of-process
+  // iframe renderer process require transformation.
+  virtual gfx::Point TransformPointToRootCoordSpace(
+      const gfx::Point& point) = 0;
+
+  // A floating point variant of the above. PointF values will be snapped to
+  // integral points before transformation.
+  virtual gfx::PointF TransformPointToRootCoordSpaceF(
+      const gfx::PointF& point) = 0;
+
   // Retrieves the native view used to contain plugins and identify the
   // renderer in IPC messages.
   virtual gfx::NativeView GetNativeView() const = 0;
-  virtual gfx::NativeViewId GetNativeViewId() const = 0;
   virtual gfx::NativeViewAccessible GetNativeViewAccessible() = 0;
 
   // Returns a ui::TextInputClient to support text input or nullptr if this RWHV
@@ -111,13 +125,14 @@ class CONTENT_EXPORT RenderWidgetHostView {
   virtual void SetShowingContextMenu(bool showing) = 0;
 
   // Returns the currently selected text.
-  virtual base::string16 GetSelectedText() const = 0;
+  virtual base::string16 GetSelectedText() = 0;
 
   // Subclasses should override this method to set the background color. |color|
   // could be transparent or opaque.
   virtual void SetBackgroundColor(SkColor color) = 0;
   // Convenience method to fill the background layer with the default color by
   // calling |SetBackgroundColor|.
+  virtual SkColor background_color() = 0;
   virtual void SetBackgroundColorToDefault() = 0;
   virtual bool GetBackgroundOpaque() = 0;
 
@@ -140,26 +155,32 @@ class CONTENT_EXPORT RenderWidgetHostView {
   // |subscriber| is now owned by this object, it will be called only on the
   // UI thread.
   virtual void BeginFrameSubscription(
-      scoped_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) = 0;
+      std::unique_ptr<RenderWidgetHostViewFrameSubscriber> subscriber) = 0;
 
   // End subscribing for frame presentation events. FrameSubscriber will be
   // deleted after this call.
   virtual void EndFrameSubscription() = 0;
 
+  // Notification that a node was touched.
+  // The |location_dips_screen| parameter contains the location where the touch
+  // occurred in DIPs in screen coordinates.
+  // The |editable| parameter indicates if the node is editable, for e.g.
+  // an input field, etc.
+  virtual void FocusedNodeTouched(const gfx::Point& location_dips_screen,
+                                  bool editable) = 0;
+
+  // Informs the view that its associated render widget has frames to draw and
+  // wants to have BeginFrame messages sent to it.  This should only be called
+  // when the value has changed.  Views must initially default to false.
+  virtual void SetNeedsBeginFrames(bool needs_begin_frames) = 0;
+
 #if defined(OS_MACOSX)
+  // Return the accelerated widget which hosts the CALayers that draw the
+  // content of the view in GetNativeView. This may be null.
+  virtual ui::AcceleratedWidgetMac* GetAcceleratedWidgetMac() const = 0;
+
   // Set the view's active state (i.e., tint state of controls).
   virtual void SetActive(bool active) = 0;
-
-  // Notifies the view that its enclosing window has changed visibility
-  // (minimized/unminimized, app hidden/unhidden, etc).
-  // TODO(stuartmorgan): This is a temporary plugin-specific workaround for
-  // <http://crbug.com/34266>. Once that is fixed, this (and the corresponding
-  // message and renderer-side handling) can be removed in favor of using
-  // WasHidden/WasShown.
-  virtual void SetWindowVisibility(bool visible) = 0;
-
-  // Informs the view that its containing window's frame changed.
-  virtual void WindowFrameChanged() = 0;
 
   // Brings up the dictionary showing a definition for the selected text.
   virtual void ShowDefinitionForSelection() = 0;

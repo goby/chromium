@@ -5,10 +5,13 @@
 #ifndef PPAPI_PROXY_UDP_SOCKET_FILTER_H_
 #define PPAPI_PROXY_UDP_SOCKET_FILTER_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/containers/scoped_ptr_hash_map.h"
 #include "base/memory/ref_counted.h"
@@ -128,7 +131,7 @@ class PPAPI_PROXY_EXPORT UDPSocketFilter : public ResourceMessageFilter {
   // 1 ppapi::ProxyLock
   // \-->2 Filter lock_
   mutable base::Lock lock_;
-  base::ScopedPtrHashMap<PP_Resource, scoped_ptr<RecvQueue>> queues_;
+  base::ScopedPtrHashMap<PP_Resource, std::unique_ptr<RecvQueue>> queues_;
 };
 
 }  // namespace proxy

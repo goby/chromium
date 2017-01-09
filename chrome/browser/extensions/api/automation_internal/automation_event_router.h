@@ -5,14 +5,16 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_API_AUTOMATION_INTERNAL_AUTOMATION_EVENT_ROUTER_H_
 #define CHROME_BROWSER_EXTENSIONS_API_AUTOMATION_INTERNAL_AUTOMATION_EVENT_ROUTER_H_
 
+#include <set>
 #include <vector>
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "chrome/common/extensions/api/automation_internal.h"
 #include "content/public/browser/ax_event_notification_details.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
-#include "extensions/common/extension.h"
+#include "extensions/common/extension_id.h"
 
 class Profile;
 
@@ -21,9 +23,9 @@ class BrowserContext;
 }  // namespace content
 
 struct ExtensionMsg_AccessibilityEventParams;
+struct ExtensionMsg_AccessibilityLocationChangeParams;
 
 namespace extensions {
-
 struct AutomationListener;
 
 class AutomationEventRouter : public content::NotificationObserver {
@@ -49,6 +51,9 @@ class AutomationEventRouter : public content::NotificationObserver {
   void DispatchAccessibilityEvent(
       const ExtensionMsg_AccessibilityEventParams& params);
 
+  void DispatchAccessibilityLocationChange(
+      const ExtensionMsg_AccessibilityLocationChangeParams& params);
+
   // Notify all automation extensions that an accessibility tree was
   // destroyed. If |browser_context| is null,
   void DispatchTreeDestroyedEvent(
@@ -58,6 +63,7 @@ class AutomationEventRouter : public content::NotificationObserver {
  private:
   struct AutomationListener {
     AutomationListener();
+    AutomationListener(const AutomationListener& other);
     ~AutomationListener();
 
     ExtensionId extension_id;

@@ -5,15 +5,18 @@
 #ifndef GOOGLE_APIS_DRIVE_TEST_UTIL_H_
 #define GOOGLE_APIS_DRIVE_TEST_UTIL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
-#include "base/template_util.h"
 #include "google_apis/drive/base_requests.h"
 #include "google_apis/drive/drive_api_error_codes.h"
 #include "google_apis/drive/task_util.h"
@@ -78,17 +81,17 @@ bool CreateFileOfSpecifiedSize(const base::FilePath& temp_dir,
 
 // Loads a test JSON file as a base::Value, from a test file stored under
 // chrome/test/data.
-scoped_ptr<base::Value> LoadJSONFile(const std::string& relative_path);
+std::unique_ptr<base::Value> LoadJSONFile(const std::string& relative_path);
 
 // Returns a HttpResponse created from the given file path.
-scoped_ptr<net::test_server::BasicHttpResponse> CreateHttpResponseFromFile(
+std::unique_ptr<net::test_server::BasicHttpResponse> CreateHttpResponseFromFile(
     const base::FilePath& file_path);
 
 // Handles a request for downloading a file. Reads a file from the test
 // directory and returns the content. Also, copies the |request| to the memory
 // pointed by |out_request|.
 // |base_url| must be set to the server's base url.
-scoped_ptr<net::test_server::HttpResponse> HandleDownloadFileRequest(
+std::unique_ptr<net::test_server::HttpResponse> HandleDownloadFileRequest(
     const GURL& base_url,
     net::test_server::HttpRequest* out_request,
     const net::test_server::HttpRequest& request);
@@ -97,9 +100,9 @@ scoped_ptr<net::test_server::HttpResponse> HandleDownloadFileRequest(
 // "bytes <start_position>-<end_position>/<length>".
 // Returns true on success.
 bool ParseContentRangeHeader(const std::string& value,
-                             int64* start_position,
-                             int64* end_position,
-                             int64* length);
+                             int64_t* start_position,
+                             int64_t* end_position,
+                             int64_t* length);
 
 // Google API related code and Drive File System code work on asynchronous
 // architecture and return the results via callbacks.
@@ -133,9 +136,9 @@ namespace internal {
 
 // Declare if the type is movable or not. Currently limited to scoped_ptr only.
 // We can add more types upon the usage.
-template<typename T> struct IsMovable : base::false_type {};
-template<typename T, typename D>
-struct IsMovable<scoped_ptr<T, D> > : base::true_type {};
+template<typename T> struct IsMovable : std::false_type {};
+template <typename T, typename D>
+struct IsMovable<std::unique_ptr<T, D>> : std::true_type {};
 
 // InType is const T& if |UseConstRef| is true, otherwise |T|.
 template<bool UseConstRef, typename T> struct InTypeHelper {
@@ -151,7 +154,7 @@ template<bool IsMovable, typename T> struct MoveHelper {
   static const T& Move(const T* in) { return *in; }
 };
 template<typename T> struct MoveHelper<true, T> {
-  static T Move(T* in) { return in->Pass(); }
+  static T Move(T* in) { return std::move(*in); }
 };
 
 // Helper to handle Chrome's move semantics correctly.
@@ -165,7 +168,7 @@ struct CopyResultCallbackHelper
       //    |InType| is const T&.
       // 2) Otherwise, |T| as is.
     : InTypeHelper<
-          base::is_class<T>::value && !IsMovable<T>::value,  // UseConstRef
+          std::is_class<T>::value && !IsMovable<T>::value,  // UseConstRef
           T>,
       MoveHelper<IsMovable<T>::value, T> {
 };
@@ -265,12 +268,12 @@ CreateCopyResultCallback(T1* out1, T2* out2, T3* out3, T4* out4) {
       internal::OutputParams<T1, T2, T3, T4>(out1, out2, out3, out4));
 }
 
-typedef std::pair<int64, int64> ProgressInfo;
+typedef std::pair<int64_t, int64_t> ProgressInfo;
 
 // Helper utility for recording the results via ProgressCallback.
 void AppendProgressCallbackResult(std::vector<ProgressInfo>* progress_values,
-                                  int64 progress,
-                                  int64 total);
+                                  int64_t progress,
+                                  int64_t total);
 
 // Helper utility for recording the content via GetContentCallback.
 class TestGetContentCallback {
@@ -285,7 +288,7 @@ class TestGetContentCallback {
 
  private:
   void OnGetContent(google_apis::DriveApiErrorCode error,
-                    scoped_ptr<std::string> data);
+                    std::unique_ptr<std::string> data);
 
   const GetContentCallback callback_;
   ScopedVector<std::string> data_;

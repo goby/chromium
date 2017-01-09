@@ -6,6 +6,7 @@ from core import perf_benchmark
 
 import ct_benchmarks_util
 import page_sets
+from page_sets import repaint_helpers
 from telemetry import benchmark
 from telemetry.core import discover
 from telemetry import story
@@ -22,14 +23,18 @@ def _MatchPageSetName(story_set_name, story_set_base_dir):
   return None
 
 
+# Disabled because we do not plan on running this SKP benchmark on the perf
+# waterfall any time soon.
 @benchmark.Disabled('all')
 class SkpicturePrinter(perf_benchmark.PerfBenchmark):
+
   @classmethod
   def AddBenchmarkCommandLineArgs(cls, parser):
     parser.add_option('--page-set-name',  action='store', type='string')
     parser.add_option('--page-set-base-dir', action='store', type='string')
     parser.add_option('-s', '--skp-outdir',
                       help='Output directory for the SKP files')
+
   @classmethod
   def ProcessCommandLineArgs(cls, parser, args):
     if not args.page_set_name:
@@ -78,4 +83,5 @@ class SkpicturePrinterCT(perf_benchmark.PerfBenchmark):
 
   def CreateStorySet(self, options):
     return page_sets.CTPageSet(
-        options.urls_list, options.user_agent, options.archive_data_file)
+        options.urls_list, options.user_agent, options.archive_data_file,
+        run_page_interaction_callback=repaint_helpers.WaitThenRepaint)

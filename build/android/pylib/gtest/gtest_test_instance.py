@@ -2,20 +2,22 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
+import HTMLParser
 import logging
 import os
 import re
-import sys
 import tempfile
+import threading
+import xml.etree.ElementTree
 
 from devil.android import apk_helper
 from pylib import constants
+from pylib.constants import host_paths
 from pylib.base import base_test_result
 from pylib.base import test_instance
 
-sys.path.append(os.path.join(
-    constants.DIR_SOURCE_ROOT, 'build', 'util', 'lib', 'common'))
-import unittest_util # pylint: disable=import-error
+with host_paths.SysPath(host_paths.BUILD_COMMON_PATH):
+  import unittest_util # pylint: disable=import-error
 
 
 BROWSER_TEST_SUITES = [
@@ -24,29 +26,6 @@ BROWSER_TEST_SUITES = [
 ]
 
 RUN_IN_SUB_THREAD_TEST_SUITES = ['net_unittests']
-
-
-_DEFAULT_ISOLATE_FILE_PATHS = {
-    'base_unittests': 'base/base_unittests.isolate',
-    'blink_heap_unittests':
-      'third_party/WebKit/Source/platform/heap/BlinkHeapUnitTests.isolate',
-    'breakpad_unittests': 'breakpad/breakpad_unittests.isolate',
-    'cc_perftests': 'cc/cc_perftests.isolate',
-    'components_browsertests': 'components/components_browsertests.isolate',
-    'components_unittests': 'components/components_unittests.isolate',
-    'content_browsertests': 'content/content_browsertests.isolate',
-    'content_unittests': 'content/content_unittests.isolate',
-    'media_perftests': 'media/media_perftests.isolate',
-    'media_unittests': 'media/media_unittests.isolate',
-    'midi_unittests': 'media/midi/midi_unittests.isolate',
-    'net_unittests': 'net/net_unittests.isolate',
-    'sql_unittests': 'sql/sql_unittests.isolate',
-    'sync_unit_tests': 'sync/sync_unit_tests.isolate',
-    'ui_base_unittests': 'ui/base/ui_base_tests.isolate',
-    'unit_tests': 'chrome/unit_tests.isolate',
-    'webkit_unit_tests':
-      'third_party/WebKit/Source/web/WebKitUnitTests.isolate',
-}
 
 
 # Used for filtering large data deps at a finer grain than what's allowed in
@@ -76,7 +55,7 @@ _EXTRA_NATIVE_TEST_ACTIVITY = (
     'org.chromium.native_test.NativeTestInstrumentationTestRunner.'
         'NativeTestActivity')
 _EXTRA_RUN_IN_SUB_THREAD = (
-    'org.chromium.native_test.NativeTestActivity.RunInSubThread')
+    'org.chromium.native_test.NativeTest.RunInSubThread')
 EXTRA_SHARD_NANO_TIMEOUT = (
     'org.chromium.native_test.NativeTestInstrumentationTestRunner.'
         'ShardNanoTimeout')
@@ -87,13 +66,16 @@ _EXTRA_SHARD_SIZE_LIMIT = (
 # TODO(jbudorick): Remove these once we're no longer parsing stdout to generate
 # results.
 _RE_TEST_STATUS = re.compile(
-    r'\[ +((?:RUN)|(?:FAILED)|(?:OK)) +\] ?([^ ]+)(?: \((\d+) ms\))?$')
-_RE_TEST_RUN_STATUS = re.compile(
-    r'\[ +(PASSED|RUNNER_FAILED|CRASHED) \] ?[^ ]+')
+    r'\[ +((?:RUN)|(?:FAILED)|(?:OK)|(?:CRASHED)) +\]'
+    r' ?([^ ]+)?(?: \((\d+) ms\))?$')
+# Crash detection constants.
+_RE_TEST_ERROR = re.compile(r'FAILURES!!! Tests run: \d+,'
+                                    r' Failures: \d+, Errors: 1')
+_RE_TEST_CURRENTLY_RUNNING = re.compile(r'\[ERROR:.*?\]'
+                                    r' Currently running: (.*)')
+_RE_DISABLED = re.compile(r'DISABLED_')
+_RE_FLAKY = re.compile(r'FLAKY_')
 
-
-# TODO(jbudorick): Make this a class method of GtestTestInstance once
-# test_package_apk and test_package_exe are gone.
 def ParseGTestListTests(raw_list):
   """Parses a raw test list as provided by --gtest_list_tests.
 
@@ -127,23 +109,174 @@ def ParseGTestListTests(raw_list):
   return ret
 
 
+def ParseGTestOutput(output):
+  """Parses raw gtest output and returns a list of results.
+
+  Args:
+    output: A list of output lines.
+  Returns:
+    A list of base_test_result.BaseTestResults.
+  """
+  duration = 0
+  fallback_result_type = None
+  log = []
+  result_type = None
+  results = []
+  test_name = None
+
+  def handle_possibly_unknown_test():
+    if test_name is not None:
+      results.append(base_test_result.BaseTestResult(
+          test_name,
+          fallback_result_type or base_test_result.ResultType.UNKNOWN,
+          duration, log=('\n'.join(log) if log else '')))
+
+  for l in output:
+    logging.info(l)
+    matcher = _RE_TEST_STATUS.match(l)
+    if matcher:
+      if matcher.group(1) == 'RUN':
+        handle_possibly_unknown_test()
+        duration = 0
+        fallback_result_type = None
+        log = []
+        result_type = None
+      elif matcher.group(1) == 'OK':
+        result_type = base_test_result.ResultType.PASS
+      elif matcher.group(1) == 'FAILED':
+        result_type = base_test_result.ResultType.FAIL
+      elif matcher.group(1) == 'CRASHED':
+        fallback_result_type = base_test_result.ResultType.CRASH
+      # Be aware that test name and status might not appear on same line.
+      test_name = matcher.group(2) if matcher.group(2) else test_name
+      duration = int(matcher.group(3)) if matcher.group(3) else 0
+
+    else:
+      # Needs another matcher here to match crashes, like those of DCHECK.
+      matcher = _RE_TEST_CURRENTLY_RUNNING.match(l)
+      if matcher:
+        test_name = matcher.group(1)
+        result_type = base_test_result.ResultType.CRASH
+        duration = 0 # Don't know.
+
+    if log is not None:
+      log.append(l)
+
+    if result_type and test_name:
+      results.append(base_test_result.BaseTestResult(
+          test_name, result_type, duration,
+          log=('\n'.join(log) if log else '')))
+      test_name = None
+
+  handle_possibly_unknown_test()
+
+  return results
+
+
+def ParseGTestXML(xml_content):
+  """Parse gtest XML result."""
+  results = []
+
+  html = HTMLParser.HTMLParser()
+
+  # TODO(jbudorick): Unclear how this handles crashes.
+  testsuites = xml.etree.ElementTree.fromstring(xml_content)
+  for testsuite in testsuites:
+    suite_name = testsuite.attrib['name']
+    for testcase in testsuite:
+      case_name = testcase.attrib['name']
+      result_type = base_test_result.ResultType.PASS
+      log = []
+      for failure in testcase:
+        result_type = base_test_result.ResultType.FAIL
+        log.append(html.unescape(failure.attrib['message']))
+
+      results.append(base_test_result.BaseTestResult(
+          '%s.%s' % (suite_name, case_name),
+          result_type,
+          int(float(testcase.attrib['time']) * 1000),
+          log=('\n'.join(log) if log else '')))
+
+  return results
+
+
+def ConvertTestFilterFileIntoGTestFilterArgument(input_lines):
+  """Converts test filter file contents into --gtest_filter argument.
+
+  See //testing/buildbot/filters/README.md for description of the
+  syntax that |input_lines| are expected to follow.
+
+  See
+  https://github.com/google/googletest/blob/master/googletest/docs/AdvancedGuide.md#running-a-subset-of-the-tests
+  for description of the syntax that --gtest_filter argument should follow.
+
+  Args:
+    input_lines: An iterable (e.g. a list or a file) containing input lines.
+  Returns:
+    a string suitable for feeding as an argument of --gtest_filter parameter.
+  """
+  # Strip whitespace + skip empty lines and lines beginning with '#'.
+  stripped_lines = (l.strip() for l in input_lines)
+  filter_lines = list(l for l in stripped_lines if l and l[0] != '#')
+
+  # Split the tests into positive and negative patterns (gtest treats
+  # every pattern after the first '-' sign as an exclusion).
+  positive_patterns = ':'.join(l for l in filter_lines if l[0] != '-')
+  negative_patterns = ':'.join(l[1:] for l in filter_lines if l[0] == '-')
+  if negative_patterns:
+    negative_patterns = '-' + negative_patterns
+
+  # Join the filter lines into one, big --gtest_filter argument.
+  return positive_patterns + negative_patterns
+
+def TestNameWithoutDisabledPrefix(test_name):
+  """Modify the test name without disabled prefix if prefix 'DISABLED_' or
+  'FLAKY_' presents.
+
+  Args:
+    test_name: The name of a test.
+  Returns:
+    A test name without prefix 'DISABLED_' or 'FLAKY_'.
+  """
+  disabled_prefixes = [_RE_DISABLED, _RE_FLAKY]
+  for dp in disabled_prefixes:
+    test_name = dp.sub('', test_name)
+  return test_name
+
 class GtestTestInstance(test_instance.TestInstance):
 
-  def __init__(self, args, isolate_delegate, error_func):
+  def __init__(self, args, data_deps_delegate, error_func):
     super(GtestTestInstance, self).__init__()
     # TODO(jbudorick): Support multiple test suites.
     if len(args.suite_name) > 1:
       raise ValueError('Platform mode currently supports only 1 gtest suite')
-    self._suite = args.suite_name[0]
-
+    self._exe_dist_dir = None
+    self._extract_test_list_from_filter = args.extract_test_list_from_filter
     self._shard_timeout = args.shard_timeout
+    self._store_tombstones = args.store_tombstones
+    self._suite = args.suite_name[0]
+    self._filter_tests_lock = threading.Lock()
 
-    incremental_part = '_incremental' if args.incremental_install else ''
+    # GYP:
+    if args.executable_dist_dir:
+      self._exe_dist_dir = os.path.abspath(args.executable_dist_dir)
+    else:
+      # TODO(agrieve): Remove auto-detection once recipes pass flag explicitly.
+      exe_dist_dir = os.path.join(constants.GetOutDirectory(),
+                                  '%s__dist' % self._suite)
+
+      if os.path.exists(exe_dist_dir):
+        self._exe_dist_dir = exe_dist_dir
+
+    incremental_part = ''
+    if args.test_apk_incremental_install_script:
+      incremental_part = '_incremental'
+
     apk_path = os.path.join(
         constants.GetOutDirectory(), '%s_apk' % self._suite,
         '%s-debug%s.apk' % (self._suite, incremental_part))
-    self._exe_path = os.path.join(constants.GetOutDirectory(),
-                                  self._suite)
+    self._test_apk_incremental_install_script = (
+        args.test_apk_incremental_install_script)
     if not os.path.exists(apk_path):
       self._apk_helper = None
     else:
@@ -156,11 +289,9 @@ class GtestTestInstance(test_instance.TestInstance):
       if self._suite in BROWSER_TEST_SUITES:
         self._extras[_EXTRA_SHARD_SIZE_LIMIT] = 1
         self._extras[EXTRA_SHARD_NANO_TIMEOUT] = int(1e9 * self._shard_timeout)
-        self._shard_timeout = 900
+        self._shard_timeout = 10 * self._shard_timeout
 
-    if not os.path.exists(self._exe_path):
-      self._exe_path = None
-    if not self._apk_helper and not self._exe_path:
+    if not self._apk_helper and not self._exe_dist_dir:
       error_func('Could not find apk or executable for %s' % self._suite)
 
     self._data_deps = []
@@ -168,24 +299,16 @@ class GtestTestInstance(test_instance.TestInstance):
       self._gtest_filter = args.test_filter
     elif args.test_filter_file:
       with open(args.test_filter_file, 'r') as f:
-        self._gtest_filter = ':'.join(l.strip() for l in f)
+        self._gtest_filter = ConvertTestFilterFileIntoGTestFilterArgument(f)
     else:
       self._gtest_filter = None
 
-    if not args.isolate_file_path:
-      default_isolate_file_path = _DEFAULT_ISOLATE_FILE_PATHS.get(self._suite)
-      if default_isolate_file_path:
-        args.isolate_file_path = os.path.join(
-            constants.DIR_SOURCE_ROOT, default_isolate_file_path)
+    self._run_disabled = args.run_disabled
 
-    if args.isolate_file_path:
-      self._isolate_abs_path = os.path.abspath(args.isolate_file_path)
-      self._isolate_delegate = isolate_delegate
-      self._isolated_abs_path = os.path.join(
-          constants.GetOutDirectory(), '%s.isolated' % self._suite)
-    else:
-      logging.warning('No isolate file provided. No data deps will be pushed.')
-      self._isolate_delegate = None
+    self._data_deps_delegate = data_deps_delegate
+    self._runtime_deps_path = args.runtime_deps_path
+    if not self._runtime_deps_path:
+      logging.warning('No data dependencies will be pushed.')
 
     if args.app_data_files:
       self._app_data_files = args.app_data_files
@@ -199,6 +322,9 @@ class GtestTestInstance(test_instance.TestInstance):
       self._app_data_file_dir = None
 
     self._test_arguments = args.test_arguments
+
+    # TODO(jbudorick): Remove this once it's deployed.
+    self._enable_xml_result_parsing = args.enable_xml_result_parsing
 
   @property
   def activity(self):
@@ -221,12 +347,20 @@ class GtestTestInstance(test_instance.TestInstance):
     return self._app_data_files
 
   @property
-  def exe(self):
-    return self._exe_path
+  def enable_xml_result_parsing(self):
+    return self._enable_xml_result_parsing
+
+  @property
+  def exe_dist_dir(self):
+    return self._exe_dist_dir
 
   @property
   def extras(self):
     return self._extras
+
+  @property
+  def gtest_also_run_disabled_tests(self):
+    return self._run_disabled
 
   @property
   def gtest_filter(self):
@@ -249,12 +383,24 @@ class GtestTestInstance(test_instance.TestInstance):
     return self._shard_timeout
 
   @property
+  def store_tombstones(self):
+    return self._store_tombstones
+
+  @property
   def suite(self):
     return self._suite
 
   @property
+  def test_apk_incremental_install_script(self):
+    return self._test_apk_incremental_install_script
+
+  @property
   def test_arguments(self):
     return self._test_arguments
+
+  @property
+  def extract_test_list_from_filter(self):
+    return self._extract_test_list_from_filter
 
   #override
   def TestType(self):
@@ -263,17 +409,8 @@ class GtestTestInstance(test_instance.TestInstance):
   #override
   def SetUp(self):
     """Map data dependencies via isolate."""
-    if self._isolate_delegate:
-      self._isolate_delegate.Remap(
-          self._isolate_abs_path, self._isolated_abs_path)
-      self._isolate_delegate.PurgeExcluded(_DEPS_EXCLUSION_LIST)
-      self._isolate_delegate.MoveOutputDeps()
-      dest_dir = None
-      if self._suite == 'breakpad_unittests':
-        dest_dir = '/data/local/tmp/'
-      self._data_deps.extend([
-          (self._isolate_delegate.isolate_deps_dir, dest_dir)])
-
+    self._data_deps.extend(
+        self._data_deps_delegate(self._runtime_deps_path))
 
   def GetDataDependencies(self):
     """Returns the test suite's data dependencies.
@@ -300,22 +437,36 @@ class GtestTestInstance(test_instance.TestInstance):
       gtest_filter_strings.append(self._gtest_filter)
 
     filtered_test_list = test_list
-    for gtest_filter_string in gtest_filter_strings:
-      logging.debug('Filtering tests using: %s', gtest_filter_string)
-      filtered_test_list = unittest_util.FilterTestNames(
-          filtered_test_list, gtest_filter_string)
+    # This lock is required because on older versions of Python
+    # |unittest_util.FilterTestNames| use of |fnmatch| is not threadsafe.
+    with self._filter_tests_lock:
+      for gtest_filter_string in gtest_filter_strings:
+        logging.debug('Filtering tests using: %s', gtest_filter_string)
+        filtered_test_list = unittest_util.FilterTestNames(
+            filtered_test_list, gtest_filter_string)
+
+      if self._run_disabled and self._gtest_filter:
+        out_filtered_test_list = list(set(test_list)-set(filtered_test_list))
+        for test in out_filtered_test_list:
+          test_name_no_disabled = TestNameWithoutDisabledPrefix(test)
+          if test_name_no_disabled != test and unittest_util.FilterTestNames(
+              [test_name_no_disabled], self._gtest_filter):
+            filtered_test_list.append(test)
     return filtered_test_list
 
   def _GenerateDisabledFilterString(self, disabled_prefixes):
     disabled_filter_items = []
 
     if disabled_prefixes is None:
-      disabled_prefixes = ['DISABLED_', 'FLAKY_', 'FAILS_', 'PRE_', 'MANUAL_']
+      disabled_prefixes = ['FAILS_', 'PRE_', 'MANUAL_']
+      if not self._run_disabled:
+        disabled_prefixes += ['DISABLED_', 'FLAKY_']
+
     disabled_filter_items += ['%s*' % dp for dp in disabled_prefixes]
     disabled_filter_items += ['*.%s*' % dp for dp in disabled_prefixes]
 
     disabled_tests_file_path = os.path.join(
-        constants.DIR_SOURCE_ROOT, 'build', 'android', 'pylib', 'gtest',
+        host_paths.DIR_SOURCE_ROOT, 'build', 'android', 'pylib', 'gtest',
         'filter', '%s_disabled' % self._suite)
     if disabled_tests_file_path and os.path.exists(disabled_tests_file_path):
       with open(disabled_tests_file_path) as disabled_tests_file:
@@ -325,46 +476,8 @@ class GtestTestInstance(test_instance.TestInstance):
 
     return '*-%s' % ':'.join(disabled_filter_items)
 
-  # pylint: disable=no-self-use
-  def ParseGTestOutput(self, output):
-    """Parses raw gtest output and returns a list of results.
-
-    Args:
-      output: A list of output lines.
-    Returns:
-      A list of base_test_result.BaseTestResults.
-    """
-    log = []
-    result_type = None
-    results = []
-    for l in output:
-      logging.info(l)
-      matcher = _RE_TEST_STATUS.match(l)
-      if matcher:
-        if matcher.group(1) == 'RUN':
-          log = []
-        elif matcher.group(1) == 'OK':
-          result_type = base_test_result.ResultType.PASS
-        elif matcher.group(1) == 'FAILED':
-          result_type = base_test_result.ResultType.FAIL
-
-      if log is not None:
-        log.append(l)
-
-      if result_type:
-        test_name = matcher.group(2)
-        duration = int(matcher.group(3)) if matcher.group(3) else 0
-        results.append(base_test_result.BaseTestResult(
-            test_name, result_type, duration,
-            log=('\n'.join(log) if log else '')))
-        log = None
-        result_type = None
-
-    return results
-
   #override
   def TearDown(self):
-    """Clear the mappings created by SetUp."""
-    if self._isolate_delegate:
-      self._isolate_delegate.Clear()
+    """Do nothing."""
+    pass
 

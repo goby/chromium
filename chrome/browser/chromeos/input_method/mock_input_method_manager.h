@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_CHROMEOS_INPUT_METHOD_MOCK_INPUT_METHOD_MANAGER_H_
 #define CHROME_BROWSER_CHROMEOS_INPUT_METHOD_MOCK_INPUT_METHOD_MANAGER_H_
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "chrome/browser/chromeos/input_method/input_method_util.h"
 #include "ui/base/ime/chromeos/component_extension_ime_manager.h"
 #include "ui/base/ime/chromeos/fake_ime_keyboard.h"
@@ -37,7 +40,8 @@ class MockInputMethodManager : public InputMethodManager {
         const std::vector<std::string>& initial_layouts) override;
     void EnableLockScreenLayouts() override;
     void GetInputMethodExtensions(InputMethodDescriptors* result) override;
-    scoped_ptr<InputMethodDescriptors> GetActiveInputMethods() const override;
+    std::unique_ptr<InputMethodDescriptors> GetActiveInputMethods()
+        const override;
     const std::vector<std::string>& GetActiveInputMethodIds() const override;
     const InputMethodDescriptor* GetInputMethodFromId(
         const std::string& input_method_id) const override;
@@ -76,10 +80,15 @@ class MockInputMethodManager : public InputMethodManager {
   void AddObserver(InputMethodManager::Observer* observer) override;
   void AddCandidateWindowObserver(
       InputMethodManager::CandidateWindowObserver* observer) override;
+  void AddImeMenuObserver(
+      InputMethodManager::ImeMenuObserver* observer) override;
   void RemoveObserver(InputMethodManager::Observer* observer) override;
   void RemoveCandidateWindowObserver(
       InputMethodManager::CandidateWindowObserver* observer) override;
-  scoped_ptr<InputMethodDescriptors> GetSupportedInputMethods() const override;
+  void RemoveImeMenuObserver(
+      InputMethodManager::ImeMenuObserver* observer) override;
+  std::unique_ptr<InputMethodDescriptors> GetSupportedInputMethods()
+      const override;
   void ActivateInputMethodMenuItem(const std::string& key) override;
   bool IsISOLevel5ShiftUsedByCurrentInputMethod() const override;
   bool IsAltGrUsedByCurrentInputMethod() const override;
@@ -92,12 +101,19 @@ class MockInputMethodManager : public InputMethodManager {
       Profile* profile) override;
   scoped_refptr<InputMethodManager::State> GetActiveIMEState() override;
   void SetState(scoped_refptr<InputMethodManager::State> state) override;
+  void ImeMenuActivationChanged(bool is_active) override;
+  void NotifyImeMenuItemsChanged(
+      const std::string& engine_id,
+      const std::vector<InputMethodManager::MenuItem>& items) override;
+  void MaybeNotifyImeMenuActivationChanged() override;
+  void OverrideKeyboardUrlRef(const std::string& keyset) override;
+  bool IsEmojiHandwritingVoiceOnImeMenuEnabled() override;
 
   // Sets an input method ID which will be returned by GetCurrentInputMethod().
   void SetCurrentInputMethodId(const std::string& input_method_id);
 
   void SetComponentExtensionIMEManager(
-      scoped_ptr<ComponentExtensionIMEManager> comp_ime_manager);
+      std::unique_ptr<ComponentExtensionIMEManager> comp_ime_manager);
 
   // Set values that will be provided to the InputMethodUtil.
   void set_application_locale(const std::string& value);
@@ -117,7 +133,7 @@ class MockInputMethodManager : public InputMethodManager {
   InputMethodUtil util_;
   FakeImeKeyboard keyboard_;
   bool mod3_used_;
-  scoped_ptr<ComponentExtensionIMEManager> comp_ime_manager_;
+  std::unique_ptr<ComponentExtensionIMEManager> comp_ime_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MockInputMethodManager);
 };

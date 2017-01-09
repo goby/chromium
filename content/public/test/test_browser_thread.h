@@ -5,13 +5,13 @@
 #ifndef CONTENT_PUBLIC_TEST_TEST_BROWSER_THREAD_H_
 #define CONTENT_PUBLIC_TEST_TEST_BROWSER_THREAD_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace base {
 class MessageLoop;
-class Thread;
 }
 
 namespace content {
@@ -49,12 +49,8 @@ class TestBrowserThread {
   // Returns true if the thread is running.
   bool IsRunning();
 
-  // Returns a Thread pointer for the thread. This should not be used
-  // in new tests.
-  base::Thread* DeprecatedGetThreadObject();
-
  private:
-  scoped_ptr<TestBrowserThreadImpl> impl_;
+  std::unique_ptr<TestBrowserThreadImpl> impl_;
 
   DISALLOW_COPY_AND_ASSIGN(TestBrowserThread);
 };

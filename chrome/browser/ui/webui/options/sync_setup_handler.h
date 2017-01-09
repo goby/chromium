@@ -5,20 +5,29 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_SYNC_SETUP_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_SYNC_SETUP_HANDLER_H_
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/timer/timer.h"
+#include "build/build_config.h"
 #include "chrome/browser/sync/sync_startup_tracker.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
 #include "chrome/browser/ui/webui/signin/login_ui_service.h"
 
 class LoginUIService;
-class ProfileSyncService;
-class SigninManagerBase;
 
-namespace content {
-class WebContents;
-}
+namespace browser_sync {
+class ProfileSyncService;
+}  // namespace browser_sync
+
+namespace signin_metrics {
+enum class AccessPoint;
+}  // namespace signin_metrics
+
+namespace syncer {
+class SyncSetupInProgressHandle;
+}  // namespace syncer
 
 class SyncSetupHandler : public options::OptionsPageUIHandler,
                          public SyncStartupTracker::Observer,
@@ -37,17 +46,16 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
 
   // LoginUIService::LoginUI implementation.
   void FocusUI() override;
-  void CloseUI() override;
 
   static void GetStaticLocalizedValues(
       base::DictionaryValue* localized_strings,
       content::WebUI* web_ui);
 
   // Initializes the sync setup flow and shows the setup UI.
-  void OpenSyncSetup();
+  void OpenSyncSetup(bool creating_supervised_user);
 
   // Shows advanced configuration dialog without going through sign in dialog.
-  // Kicks the sync backend if necessary with showing spinner dialog until it
+  // Kicks the sync engine if necessary with showing spinner dialog until it
   // gets ready.
   void OpenConfigureSync();
 
@@ -57,7 +65,7 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
  protected:
   friend class SyncSetupHandlerTest;
   FRIEND_TEST_ALL_PREFIXES(SyncSetupHandlerTest,
-                           DisplayConfigureWithBackendDisabledAndCancel);
+                           DisplayConfigureWithEngineDisabledAndCancel);
   FRIEND_TEST_ALL_PREFIXES(SyncSetupHandlerTest, HandleSetupUIWhenSyncDisabled);
   FRIEND_TEST_ALL_PREFIXES(SyncSetupHandlerTest, SelectCustomEncryption);
   FRIEND_TEST_ALL_PREFIXES(SyncSetupHandlerTest, ShowSyncSetupWhenNotSignedIn);
@@ -87,7 +95,7 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
 
   // Helper routine that gets the ProfileSyncService associated with the parent
   // profile.
-  ProfileSyncService* GetSyncService() const;
+  browser_sync::ProfileSyncService* GetSyncService() const;
 
   // Returns the LoginUIService for the parent profile.
   LoginUIService* GetLoginUIService() const;
@@ -99,17 +107,18 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
   void HandlePassphraseEntry(const base::ListValue* args);
   void HandlePassphraseCancel(const base::ListValue* args);
   void HandleShowSetupUI(const base::ListValue* args);
-  void HandleDoSignOutOnAuthError(const base::ListValue* args);
+  void HandleAttemptUserExit(const base::ListValue* args);
   void HandleStartSignin(const base::ListValue* args);
   void HandleStopSyncing(const base::ListValue* args);
   void HandleCloseTimeout(const base::ListValue* args);
 #if !defined(OS_CHROMEOS)
   // Displays the GAIA login form.
-  void DisplayGaiaLogin();
+  void DisplayGaiaLogin(signin_metrics::AccessPoint access_point);
 
   // When web-flow is enabled, displays the Gaia login form in a new tab.
   // This function is virtual so that tests can override.
-  virtual void DisplayGaiaLoginInNewTabOrWindow();
+  virtual void DisplayGaiaLoginInNewTabOrWindow(
+      signin_metrics::AccessPoint access_point);
 #endif
 
   // Helper routine that gets the Profile associated with this object (virtual
@@ -126,8 +135,11 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
   // is running in the background.
   void DisplaySpinner();
 
-  // Displays an error dialog which shows timeout of starting the sync backend.
+  // Displays an error dialog which shows timeout of starting the sync engine.
   void DisplayTimeout();
+
+  // Closes the associated sync settings page.
+  void CloseUI();
 
   // Returns true if this object is the active login object.
   bool IsActiveLogin() const;
@@ -142,17 +154,20 @@ class SyncSetupHandler : public options::OptionsPageUIHandler,
   // requires a passphrase and one hasn't been provided or it was invalid.
   void DisplayConfigureSync(bool passphrase_failed);
 
-  // Helper object used to wait for the sync backend to startup.
-  scoped_ptr<SyncStartupTracker> sync_startup_tracker_;
+  // Helper object used to wait for the sync engine to startup.
+  std::unique_ptr<SyncStartupTracker> sync_startup_tracker_;
+
+  // Prevents Sync from running until configuration is complete.
+  std::unique_ptr<syncer::SyncSetupInProgressHandle> sync_blocker_;
 
   // Set to true whenever the sync configure UI is visible. This is used to tell
   // what stage of the setup wizard the user was in and to update the UMA
   // histograms in the case that the user cancels out.
   bool configuring_sync_;
 
-  // The OneShotTimer object used to timeout of starting the sync backend
+  // The OneShotTimer object used to timeout of starting the sync engine
   // service.
-  scoped_ptr<base::OneShotTimer> backend_start_timer_;
+  std::unique_ptr<base::OneShotTimer> engine_start_timer_;
 
   DISALLOW_COPY_AND_ASSIGN(SyncSetupHandler);
 };

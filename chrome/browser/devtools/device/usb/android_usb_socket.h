@@ -5,27 +5,29 @@
 #ifndef CHROME_BROWSER_DEVTOOLS_DEVICE_USB_ANDROID_USB_SOCKET_H_
 #define CHROME_BROWSER_DEVTOOLS_DEVICE_USB_ANDROID_USB_SOCKET_H_
 
+#include <stdint.h>
+
+#include <string>
+
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "chrome/browser/devtools/device/usb/android_usb_device.h"
 #include "net/base/ip_endpoint.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
-
-namespace base {
-class MessageLoop;
-}
 
 class AndroidUsbSocket : public net::StreamSocket,
                          public base::NonThreadSafe {
  public:
   AndroidUsbSocket(scoped_refptr<AndroidUsbDevice> device,
-                   uint32 socket_id,
+                   uint32_t socket_id,
                    const std::string& command,
                    base::Closure delete_callback);
   ~AndroidUsbSocket() override;
 
-  void HandleIncoming(scoped_ptr<AdbMessage> message);
+  void HandleIncoming(std::unique_ptr<AdbMessage> message);
 
   void Terminated(bool closed_by_device);
 
@@ -36,19 +38,18 @@ class AndroidUsbSocket : public net::StreamSocket,
   int Write(net::IOBuffer* buf,
             int buf_len,
             const net::CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
   int Connect(const net::CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(net::IPEndPoint* address) const override;
   int GetLocalAddress(net::IPEndPoint* address) const override;
-  const net::BoundNetLog& NetLog() const override;
+  const net::NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
@@ -64,9 +65,9 @@ class AndroidUsbSocket : public net::StreamSocket,
 
   scoped_refptr<AndroidUsbDevice> device_;
   std::string command_;
-  uint32 local_id_;
-  uint32 remote_id_;
-  net::BoundNetLog net_log_;
+  uint32_t local_id_;
+  uint32_t remote_id_;
+  net::NetLogWithSource net_log_;
   bool is_connected_;
   std::string read_buffer_;
   scoped_refptr<net::IOBuffer> read_io_buffer_;

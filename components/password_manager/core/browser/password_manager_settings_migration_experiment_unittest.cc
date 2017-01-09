@@ -4,6 +4,7 @@
 
 #include "components/password_manager/core/browser/password_manager_settings_migration_experiment.h"
 
+#include "base/macros.h"
 #include "base/metrics/field_trial.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -14,13 +15,6 @@ const char kPasswordManagerSettingMigrationFieldTrialName[] =
     "PasswordManagerSettingsMigration";
 const char kEnabledPasswordManagerSettingsMigrationGroupName[] = "Enable";
 const char kDisablePasswordManagerSettingsMigrationGroupName[] = "Disable";
-
-const char kPasswordManagerSettingsBehaviourChangeFieldTrialName[] =
-    "PasswordManagerSettingsBehaviourChange";
-const char kPasswordManagerSettingsBehaviourChangeEnabledGroupName[] =
-    "PasswordManagerSettingsBehaviourChange.Active";
-const char kPasswordManagerSettingsBehaviourChangeDisabledGroupName[] =
-    "PasswordManagerSettingsBehaviourChange.NotActive";
 
 }  // namespace
 
@@ -36,12 +30,6 @@ class PasswordManagerSettingsMigrationExperimentTest : public testing::Test {
         kPasswordManagerSettingMigrationFieldTrialName, name));
   }
 
-  void EnforcePasswordManagerSettingsBehaviourChangeExperimentGroup(
-      const char* name) {
-    ASSERT_TRUE(base::FieldTrialList::CreateFieldTrial(
-        kPasswordManagerSettingsBehaviourChangeFieldTrialName, name));
-  }
-
  protected:
   base::FieldTrialList field_trial_list_;
 
@@ -55,23 +43,9 @@ TEST_F(PasswordManagerSettingsMigrationExperimentTest, IsSettingsMigrationOn) {
 }
 
 TEST_F(PasswordManagerSettingsMigrationExperimentTest, IsSettingsMigrationOff) {
-  EnforcePasswordManagerSettingsBehaviourChangeExperimentGroup(
+  EnforcePasswordManagerSettingMigrationExperimentGroup(
       kDisablePasswordManagerSettingsMigrationGroupName);
   EXPECT_FALSE(IsSettingsMigrationActive());
-}
-
-TEST_F(PasswordManagerSettingsMigrationExperimentTest,
-       IsBehaviourChangeEnabled) {
-  EnforcePasswordManagerSettingsBehaviourChangeExperimentGroup(
-      kPasswordManagerSettingsBehaviourChangeEnabledGroupName);
-  EXPECT_TRUE(IsSettingsBehaviorChangeActive());
-}
-
-TEST_F(PasswordManagerSettingsMigrationExperimentTest,
-       IsBehaviourChangeDisabled) {
-  EnforcePasswordManagerSettingsBehaviourChangeExperimentGroup(
-      kPasswordManagerSettingsBehaviourChangeDisabledGroupName);
-  EXPECT_FALSE(IsSettingsBehaviorChangeActive());
 }
 
 }  // namespace password_manager

@@ -5,6 +5,8 @@
 #ifndef BLIMP_NET_STREAM_PACKET_READER_H_
 #define BLIMP_NET_STREAM_PACKET_READER_H_
 
+#include <stddef.h>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -55,6 +57,12 @@ class BLIMP_NET_EXPORT StreamPacketReader : public PacketReader {
 
   // Reads payload bytes until the payload is complete.
   int DoReadPayload(int result);
+
+  // Executes a socket read.
+  // Returns a positive value indicating the number of bytes read on success.
+  // Returns a negative net::Error value if the socket was closed or an error
+  // occurred.
+  int DoRead(net::IOBuffer* buf, int buf_len);
 
   // Processes an asynchronous header or payload read, and invokes |callback_|
   // on packet read completion.

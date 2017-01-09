@@ -7,6 +7,10 @@
 
 #include "content/common/content_export.h"
 
+namespace IPC {
+class Message;
+}
+
 namespace blink {
 class WebMouseEvent;
 }
@@ -24,6 +28,10 @@ struct NativeWebKeyboardEvent;
 //  and http://crbug.com/478281.
 class CONTENT_EXPORT RenderWidgetHostOwnerDelegate {
  public:
+  // The RenderWidgetHost received an IPC message. Return true if this delegate
+  // handles it.
+  virtual bool OnMessageReceived(const IPC::Message& msg) = 0;
+
   // The RenderWidgetHost has been initialized.
   virtual void RenderWidgetDidInit() = 0;
 
@@ -32,10 +40,6 @@ class CONTENT_EXPORT RenderWidgetHostOwnerDelegate {
 
   // The RenderWidgetHost got the focus.
   virtual void RenderWidgetGotFocus() = 0;
-
-  // The RenderWidgetHost will be hidden or shown.
-  virtual void RenderWidgetWillBeHidden() = 0;
-  virtual void RenderWidgetWillBeShown() = 0;
 
   // The RenderWidgetHost forwarded a mouse event.
   virtual void RenderWidgetDidForwardMouseEvent(

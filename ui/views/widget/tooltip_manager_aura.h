@@ -6,8 +6,10 @@
 #define UI_VIEWS_WIDGET_TOOLTIP_MANAGER_AURA_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/gfx/geometry/point.h"
+#include "ui/views/views_export.h"
 #include "ui/views/widget/tooltip_manager.h"
 
 namespace aura {
@@ -23,7 +25,7 @@ namespace views {
 class Widget;
 
 // TooltipManager implementation for Aura.
-class TooltipManagerAura : public TooltipManager {
+class VIEWS_EXPORT TooltipManagerAura : public TooltipManager {
  public:
   explicit TooltipManagerAura(Widget* widget);
   ~TooltipManagerAura() override;
@@ -38,8 +40,7 @@ class TooltipManagerAura : public TooltipManager {
   static const gfx::FontList& GetDefaultFontList();
 
   // TooltipManager:
-  int GetMaxWidth(const gfx::Point& location,
-                  aura::Window* context) const override;
+  int GetMaxWidth(const gfx::Point& location) const override;
   const gfx::FontList& GetFontList() const override;
   void UpdateTooltip() override;
   void TooltipTextChanged(View* view) override;

@@ -5,11 +5,15 @@
 #ifndef GOOGLE_APIS_DRIVE_DRIVE_API_PARSER_H_
 #define GOOGLE_APIS_DRIVE_DRIVE_API_PARSER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/strings/string_piece.h"
 #include "base/time/time.h"
@@ -41,26 +45,26 @@ class AboutResource {
       base::JSONValueConverter<AboutResource>* converter);
 
   // Creates about resource from parsed JSON.
-  static scoped_ptr<AboutResource> CreateFrom(const base::Value& value);
+  static std::unique_ptr<AboutResource> CreateFrom(const base::Value& value);
 
   // Returns the largest change ID number.
-  int64 largest_change_id() const { return largest_change_id_; }
+  int64_t largest_change_id() const { return largest_change_id_; }
   // Returns total number of quota bytes.
-  int64 quota_bytes_total() const { return quota_bytes_total_; }
+  int64_t quota_bytes_total() const { return quota_bytes_total_; }
   // Returns the number of quota bytes used.
-  int64 quota_bytes_used_aggregate() const {
+  int64_t quota_bytes_used_aggregate() const {
     return quota_bytes_used_aggregate_;
   }
   // Returns root folder ID.
   const std::string& root_folder_id() const { return root_folder_id_; }
 
-  void set_largest_change_id(int64 largest_change_id) {
+  void set_largest_change_id(int64_t largest_change_id) {
     largest_change_id_ = largest_change_id;
   }
-  void set_quota_bytes_total(int64 quota_bytes_total) {
+  void set_quota_bytes_total(int64_t quota_bytes_total) {
     quota_bytes_total_ = quota_bytes_total;
   }
-  void set_quota_bytes_used_aggregate(int64 quota_bytes_used_aggregate) {
+  void set_quota_bytes_used_aggregate(int64_t quota_bytes_used_aggregate) {
     quota_bytes_used_aggregate_ = quota_bytes_used_aggregate;
   }
   void set_root_folder_id(const std::string& root_folder_id) {
@@ -75,9 +79,9 @@ class AboutResource {
   // Return false if parsing fails.
   bool Parse(const base::Value& value);
 
-  int64 largest_change_id_;
-  int64 quota_bytes_total_;
-  int64 quota_bytes_used_aggregate_;
+  int64_t largest_change_id_;
+  int64_t quota_bytes_total_;
+  int64_t quota_bytes_used_aggregate_;
   std::string root_folder_id_;
 
   // This class is copyable on purpose.
@@ -103,7 +107,7 @@ class DriveAppIcon {
       base::JSONValueConverter<DriveAppIcon>* converter);
 
   // Creates drive app icon instance from parsed JSON.
-  static scoped_ptr<DriveAppIcon> CreateFrom(const base::Value& value);
+  static std::unique_ptr<DriveAppIcon> CreateFrom(const base::Value& value);
 
   // Category of the icon.
   IconCategory category() const { return category_; }
@@ -157,7 +161,7 @@ class AppResource {
       base::JSONValueConverter<AppResource>* converter);
 
   // Creates app resource from parsed JSON.
-  static scoped_ptr<AppResource> CreateFrom(const base::Value& value);
+  static std::unique_ptr<AppResource> CreateFrom(const base::Value& value);
 
   // Returns application ID, which is 12-digit decimals (e.g. "123456780123").
   const std::string& application_id() const { return application_id_; }
@@ -231,22 +235,22 @@ class AppResource {
   void set_removable(bool removable) { removable_ = removable; }
   void set_primary_mimetypes(
       ScopedVector<std::string> primary_mimetypes) {
-    primary_mimetypes_ = primary_mimetypes.Pass();
+    primary_mimetypes_ = std::move(primary_mimetypes);
   }
   void set_secondary_mimetypes(
       ScopedVector<std::string> secondary_mimetypes) {
-    secondary_mimetypes_ = secondary_mimetypes.Pass();
+    secondary_mimetypes_ = std::move(secondary_mimetypes);
   }
   void set_primary_file_extensions(
       ScopedVector<std::string> primary_file_extensions) {
-    primary_file_extensions_ = primary_file_extensions.Pass();
+    primary_file_extensions_ = std::move(primary_file_extensions);
   }
   void set_secondary_file_extensions(
       ScopedVector<std::string> secondary_file_extensions) {
-    secondary_file_extensions_ = secondary_file_extensions.Pass();
+    secondary_file_extensions_ = std::move(secondary_file_extensions);
   }
   void set_icons(ScopedVector<DriveAppIcon> icons) {
-    icons_ = icons.Pass();
+    icons_ = std::move(icons);
   }
   void set_create_url(const GURL& url) {
     create_url_ = url;
@@ -289,7 +293,7 @@ class AppList {
       base::JSONValueConverter<AppList>* converter);
 
   // Creates app list from parsed JSON.
-  static scoped_ptr<AppList> CreateFrom(const base::Value& value);
+  static std::unique_ptr<AppList> CreateFrom(const base::Value& value);
 
   // ETag for this resource.
   const std::string& etag() const { return etag_; }
@@ -300,9 +304,7 @@ class AppList {
   void set_etag(const std::string& etag) {
     etag_ = etag;
   }
-  void set_items(ScopedVector<AppResource> items) {
-    items_ = items.Pass();
-  }
+  void set_items(ScopedVector<AppResource> items) { items_ = std::move(items); }
 
  private:
   friend class DriveAPIParserTest;
@@ -331,18 +333,12 @@ class ParentReference {
       base::JSONValueConverter<ParentReference>* converter);
 
   // Creates parent reference from parsed JSON.
-  static scoped_ptr<ParentReference> CreateFrom(const base::Value& value);
+  static std::unique_ptr<ParentReference> CreateFrom(const base::Value& value);
 
   // Returns the file id of the reference.
   const std::string& file_id() const { return file_id_; }
 
-  // Returns the URL for the parent in Drive.
-  const GURL& parent_link() const { return parent_link_; }
-
   void set_file_id(const std::string& file_id) { file_id_ = file_id; }
-  void set_parent_link(const GURL& parent_link) {
-    parent_link_ = parent_link;
-  }
 
  private:
   // Parses and initializes data members from content of |value|.
@@ -350,7 +346,6 @@ class ParentReference {
   bool Parse(const base::Value& value);
 
   std::string file_id_;
-  GURL parent_link_;
 };
 
 // FileLabels represents labels for file or folder.
@@ -366,12 +361,15 @@ class FileLabels {
       base::JSONValueConverter<FileLabels>* converter);
 
   // Creates about resource from parsed JSON.
-  static scoped_ptr<FileLabels> CreateFrom(const base::Value& value);
+  static std::unique_ptr<FileLabels> CreateFrom(const base::Value& value);
 
   // Whether this file has been trashed.
   bool is_trashed() const { return trashed_; }
+  // Whether this file is starred by the user.
+  bool is_starred() const { return starred_; }
 
   void set_trashed(bool trashed) { trashed_ = trashed; }
+  void set_starred(bool starred) { starred_ = starred; }
 
  private:
   friend class FileResource;
@@ -381,6 +379,7 @@ class FileLabels {
   bool Parse(const base::Value& value);
 
   bool trashed_;
+  bool starred_;
 };
 
 // ImageMediaMetadata represents image metadata for a file.
@@ -396,7 +395,8 @@ class ImageMediaMetadata {
       base::JSONValueConverter<ImageMediaMetadata>* converter);
 
   // Creates about resource from parsed JSON.
-  static scoped_ptr<ImageMediaMetadata> CreateFrom(const base::Value& value);
+  static std::unique_ptr<ImageMediaMetadata> CreateFrom(
+      const base::Value& value);
 
   // Width of the image in pixels.
   int width() const { return width_; }
@@ -432,6 +432,7 @@ class FileResource {
   };
 
   FileResource();
+  FileResource(const FileResource& other);
   ~FileResource();
 
   // Registers the mapping between JSON field names and the members in this
@@ -440,7 +441,7 @@ class FileResource {
       base::JSONValueConverter<FileResource>* converter);
 
   // Creates file resource from parsed JSON.
-  static scoped_ptr<FileResource> CreateFrom(const base::Value& value);
+  static std::unique_ptr<FileResource> CreateFrom(const base::Value& value);
 
   // Returns true if this is a directory.
   // Note: "folder" is used elsewhere in this file to match Drive API reference,
@@ -496,7 +497,7 @@ class FileResource {
   const std::string& md5_checksum() const { return md5_checksum_; }
 
   // Returns the size of this file in bytes.
-  int64 file_size() const { return file_size_; }
+  int64_t file_size() const { return file_size_; }
 
   // Return the link to open the file in Google editor or viewer.
   // E.g. Google Document, Google Spreadsheet.
@@ -549,9 +550,7 @@ class FileResource {
   void set_md5_checksum(const std::string& md5_checksum) {
     md5_checksum_ = md5_checksum;
   }
-  void set_file_size(int64 file_size) {
-    file_size_ = file_size;
-  }
+  void set_file_size(int64_t file_size) { file_size_ = file_size; }
   void set_alternate_link(const GURL& alternate_link) {
     alternate_link_ = alternate_link;
   }
@@ -584,7 +583,7 @@ class FileResource {
   base::Time shared_with_me_date_;
   bool shared_;
   std::string md5_checksum_;
-  int64 file_size_;
+  int64_t file_size_;
   GURL alternate_link_;
   GURL share_link_;
   std::vector<ParentReference> parents_;
@@ -607,7 +606,7 @@ class FileList {
   static bool HasFileListKind(const base::Value& value);
 
   // Creates file list from parsed JSON.
-  static scoped_ptr<FileList> CreateFrom(const base::Value& value);
+  static std::unique_ptr<FileList> CreateFrom(const base::Value& value);
 
   // Returns a link to the next page of files.  The URL includes the next page
   // token.
@@ -648,11 +647,11 @@ class ChangeResource {
       base::JSONValueConverter<ChangeResource>* converter);
 
   // Creates change resource from parsed JSON.
-  static scoped_ptr<ChangeResource> CreateFrom(const base::Value& value);
+  static std::unique_ptr<ChangeResource> CreateFrom(const base::Value& value);
 
   // Returns change ID for this change.  This is a monotonically increasing
   // number.
-  int64 change_id() const { return change_id_; }
+  int64_t change_id() const { return change_id_; }
 
   // Returns a string file ID for corresponding file of the change.
   const std::string& file_id() const { return file_id_; }
@@ -667,18 +666,14 @@ class ChangeResource {
   // Returns the time of this modification.
   const base::Time& modification_date() const { return modification_date_; }
 
-  void set_change_id(int64 change_id) {
-    change_id_ = change_id;
-  }
+  void set_change_id(int64_t change_id) { change_id_ = change_id; }
   void set_file_id(const std::string& file_id) {
     file_id_ = file_id;
   }
   void set_deleted(bool deleted) {
     deleted_ = deleted;
   }
-  void set_file(scoped_ptr<FileResource> file) {
-    file_ = file.Pass();
-  }
+  void set_file(std::unique_ptr<FileResource> file) { file_ = std::move(file); }
   void set_modification_date(const base::Time& modification_date) {
     modification_date_ = modification_date;
   }
@@ -691,10 +686,10 @@ class ChangeResource {
   // Return false if parsing fails.
   bool Parse(const base::Value& value);
 
-  int64 change_id_;
+  int64_t change_id_;
   std::string file_id_;
   bool deleted_;
-  scoped_ptr<FileResource> file_;
+  std::unique_ptr<FileResource> file_;
   base::Time modification_date_;
 
   DISALLOW_COPY_AND_ASSIGN(ChangeResource);
@@ -716,14 +711,14 @@ class ChangeList {
   static bool HasChangeListKind(const base::Value& value);
 
   // Creates change list from parsed JSON.
-  static scoped_ptr<ChangeList> CreateFrom(const base::Value& value);
+  static std::unique_ptr<ChangeList> CreateFrom(const base::Value& value);
 
   // Returns a link to the next page of files.  The URL includes the next page
   // token.
   const GURL& next_link() const { return next_link_; }
 
   // Returns the largest change ID number.
-  int64 largest_change_id() const { return largest_change_id_; }
+  int64_t largest_change_id() const { return largest_change_id_; }
 
   // Returns a set of changes in this list.
   const ScopedVector<ChangeResource>& items() const { return items_; }
@@ -732,7 +727,7 @@ class ChangeList {
   void set_next_link(const GURL& next_link) {
     next_link_ = next_link;
   }
-  void set_largest_change_id(int64 largest_change_id) {
+  void set_largest_change_id(int64_t largest_change_id) {
     largest_change_id_ = largest_change_id;
   }
 
@@ -745,7 +740,7 @@ class ChangeList {
   bool Parse(const base::Value& value);
 
   GURL next_link_;
-  int64 largest_change_id_;
+  int64_t largest_change_id_;
   ScopedVector<ChangeResource> items_;
 
   DISALLOW_COPY_AND_ASSIGN(ChangeList);

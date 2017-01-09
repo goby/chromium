@@ -4,8 +4,10 @@
 
 #include "ui/base/ime/input_method_base.h"
 
+#include <memory>
+
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
@@ -125,7 +127,7 @@ class InputMethodBaseTest : public testing::Test {
   void TearDown() override { message_loop_.reset(); }
 
  private:
-  scoped_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::MessageLoop> message_loop_;
   DISALLOW_COPY_AND_ASSIGN(InputMethodBaseTest);
 };
 
@@ -147,7 +149,7 @@ class MockInputMethodBase : public InputMethodBase {
   void OnCaretBoundsChanged(const TextInputClient* client) override {}
   void CancelComposition(const TextInputClient* client) override {}
   void OnInputLocaleChanged() override {}
-  std::string GetInputLocale() override { return ""; }
+  bool IsInputLocaleCJK() const override { return false; }
   bool IsCandidatePopupOpen() const override { return false; }
   // Overriden from InputMethodBase.
   void OnWillChangeFocusedClient(TextInputClient* focused_before,

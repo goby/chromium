@@ -14,8 +14,9 @@
 
 #include <string>
 
+#include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/sequenced_task_runner_helpers.h"
 #include "base/threading/non_thread_safe.h"
 #include "content/common/content_export.h"
 
@@ -40,7 +41,7 @@ struct ResourceResponse;
 class CONTENT_EXPORT ResourceHandler
     : public NON_EXPORTED_BASE(base::NonThreadSafe) {
  public:
-  virtual ~ResourceHandler() {}
+  virtual ~ResourceHandler();
 
   // Sets the controller for this handler.
   virtual void SetController(ResourceController* controller);
@@ -67,13 +68,6 @@ class CONTENT_EXPORT ResourceHandler
   // ResourceDispatcherHost::StartDeferredRequest().
   virtual bool OnWillStart(const GURL& url, bool* defer) = 0;
 
-  // Called before the net::URLRequest (whose url is |url|} uses the network for
-  // the first time to load the resource. If the handler returns false, then the
-  // request is cancelled. Otherwise if the return value is true, the
-  // ResourceHandler can delay the request from starting by setting |*defer =
-  // true|. Call controller()->Resume() to continue if deferred.
-  virtual bool OnBeforeNetworkStart(const GURL& url, bool* defer) = 0;
-
   // Data will be read for the response.  Upon success, this method places the
   // size and address of the buffer where the data is to be written in its
   // out-params.  This call will be followed by either OnReadCompleted (on
@@ -99,7 +93,6 @@ class CONTENT_EXPORT ResourceHandler
   // |*defer| to true to defer destruction to a later time.  Otherwise, the
   // request will be destroyed upon return.
   virtual void OnResponseCompleted(const net::URLRequestStatus& status,
-                                   const std::string& security_info,
                                    bool* defer) = 0;
 
   // This notification is synthesized by the RedirectToFileResourceHandler
@@ -122,6 +115,8 @@ class CONTENT_EXPORT ResourceHandler
  private:
   ResourceController* controller_;
   net::URLRequest* request_;
+
+  DISALLOW_COPY_AND_ASSIGN(ResourceHandler);
 };
 
 }  // namespace content

@@ -5,10 +5,12 @@
 #ifndef NET_SOCKET_SERVER_SOCKET_H_
 #define NET_SOCKET_SERVER_SOCKET_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/base/completion_callback.h"
 #include "net/base/net_export.h"
 
@@ -28,10 +30,8 @@ class NET_EXPORT ServerSocket {
 
   // Binds the socket with address and port, and starts listening. It expects
   // a valid IPv4 or IPv6 address. Otherwise, it returns ERR_ADDRESS_INVALID.
-  // Subclasses may override this function if |address_string| is in a different
-  // format, for example, unix domain socket path.
   virtual int ListenWithAddressAndPort(const std::string& address_string,
-                                       uint16 port,
+                                       uint16_t port,
                                        int backlog);
 
   // Gets current address the socket is bound to.
@@ -39,7 +39,7 @@ class NET_EXPORT ServerSocket {
 
   // Accepts connection. Callback is called when new connection is
   // accepted.
-  virtual int Accept(scoped_ptr<StreamSocket>* socket,
+  virtual int Accept(std::unique_ptr<StreamSocket>* socket,
                      const CompletionCallback& callback) = 0;
 
  private:

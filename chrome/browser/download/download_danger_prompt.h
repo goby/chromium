@@ -6,8 +6,7 @@
 #define CHROME_BROWSER_DOWNLOAD_DOWNLOAD_DANGER_PROMPT_H_
 
 #include "base/callback_forward.h"
-
-class GURL;
+#include "chrome/common/safe_browsing/csd.pb.h"
 
 namespace content {
 class DownloadItem;
@@ -25,8 +24,11 @@ class DownloadDangerPrompt {
  public:
   // Actions resulting from showing the danger prompt.
   enum Action {
+    // The user chose to proceed down the dangerous path.
     ACCEPT,
+    // The user chose not to proceed down the dangerous path.
     CANCEL,
+    // The user dismissed the dialog without making an explicit choice.
     DISMISS,
   };
   typedef base::Callback<void(Action)> OnDone;
@@ -48,14 +50,21 @@ class DownloadDangerPrompt {
   // respective button click handler.
   virtual void InvokeActionForTesting(Action action) = 0;
 
- protected:
   // Sends download recovery report to safe browsing backend.
-  // Since it only records download url (DownloadItem::GetURL()) and user's
-  // action (click through or not), it isn't gated by user's extended reporting
-  // preference (i.e. prefs::kSafeBrowsingExtendedReportingEnabled). We
-  // should not put any extra information in this report.
-  static void SendSafeBrowsingDownloadRecoveryReport(bool did_proceed,
-                                                     const GURL& url);
+  // Since it only records download url (DownloadItem::GetURL()), user's
+  // action (click through or not) and its download danger type, it isn't gated
+  // by user's extended reporting preference (i.e.
+  // prefs::kSafeBrowsingExtendedReportingEnabled). We should not put any extra
+  // information in this report.
+  static void SendSafeBrowsingDownloadReport(
+      safe_browsing::ClientSafeBrowsingReportRequest::ReportType report_type,
+      bool did_proceed,
+      const content::DownloadItem& download);
+
+ protected:
+  // Records UMA stats for a download danger prompt event.
+  static void RecordDownloadDangerPrompt(bool did_proceed,
+                                         const content::DownloadItem& download);
 };
 
 #endif  // CHROME_BROWSER_DOWNLOAD_DOWNLOAD_DANGER_PROMPT_H_

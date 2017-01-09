@@ -4,15 +4,21 @@
 
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider_service.h"
 
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "base/task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/chromeos/certificate_provider/certificate_provider.h"
 #include "net/base/net_errors.h"
 #include "net/ssl/client_key_store.h"
@@ -79,7 +85,7 @@ class CertificateProviderService::CertificateProviderImpl
   void GetCertificates(const base::Callback<void(const net::CertificateList&)>&
                            callback) override;
 
-  scoped_ptr<CertificateProvider> Copy() override;
+  std::unique_ptr<CertificateProvider> Copy() override;
 
  private:
   static void GetCertificatesOnServiceThread(
@@ -188,9 +194,9 @@ void CertificateProviderService::CertificateProviderImpl::GetCertificates(
                             callback_from_service_thread));
 }
 
-scoped_ptr<CertificateProvider>
+std::unique_ptr<CertificateProvider>
 CertificateProviderService::CertificateProviderImpl::Copy() {
-  return make_scoped_ptr(
+  return base::WrapUnique(
       new CertificateProviderImpl(service_task_runner_, service_));
 }
 
@@ -305,12 +311,13 @@ CertificateProviderService::~CertificateProviderService() {
   cert_key_provider_.reset();
 }
 
-void CertificateProviderService::SetDelegate(scoped_ptr<Delegate> delegate) {
+void CertificateProviderService::SetDelegate(
+    std::unique_ptr<Delegate> delegate) {
   DCHECK(thread_checker_.CalledOnValidThread());
   DCHECK(!delegate_);
   DCHECK(delegate);
 
-  delegate_ = delegate.Pass();
+  delegate_ = std::move(delegate);
   cert_key_provider_.reset(
       new CertKeyProviderImpl(base::ThreadTaskRunnerHandle::Get(),
                               weak_factory_.GetWeakPtr(), &certificate_map_));
@@ -368,12 +375,12 @@ bool CertificateProviderService::LookUpCertificate(
                                             extension_id);
 }
 
-scoped_ptr<CertificateProvider>
+std::unique_ptr<CertificateProvider>
 CertificateProviderService::CreateCertificateProvider() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
-  return make_scoped_ptr(new CertificateProviderImpl(
-      base::ThreadTaskRunnerHandle::Get(), weak_factory_.GetWeakPtr()));
+  return base::MakeUnique<CertificateProviderImpl>(
+      base::ThreadTaskRunnerHandle::Get(), weak_factory_.GetWeakPtr());
 }
 
 void CertificateProviderService::OnExtensionUnloaded(
@@ -393,6 +400,8 @@ void CertificateProviderService::OnExtensionUnloaded(
 
   for (auto callback : sign_requests_.RemoveAllRequests(extension_id))
     callback.Run(net::ERR_FAILED, std::vector<uint8_t>());
+
+  pin_dialog_manager_.ExtensionUnloaded(extension_id);
 }
 
 void CertificateProviderService::GetCertificatesFromExtensions(

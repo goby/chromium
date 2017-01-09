@@ -7,7 +7,6 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "net/base/net_export.h"
 #include "net/base/privacy_mode.h"
 #include "net/http/http_request_headers.h"
@@ -29,6 +28,7 @@ struct NET_EXPORT HttpRequestInfo {
   };
 
   HttpRequestInfo();
+  HttpRequestInfo(const HttpRequestInfo& other);
   ~HttpRequestInfo();
 
   // The requested URL.
@@ -52,6 +52,10 @@ struct NET_EXPORT HttpRequestInfo {
   // If enabled, then request must be sent over connection that cannot be
   // tracked by the server (e.g. without channel id).
   PrivacyMode privacy_mode;
+
+  // If present, the host of the referrer whose TokenBindingID should be
+  // included in a referred TokenBinding.
+  std::string token_binding_referrer;
 };
 
 }  // namespace net

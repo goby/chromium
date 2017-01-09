@@ -4,6 +4,11 @@
 
 #include "components/policy/core/browser/browser_policy_connector_ios.h"
 
+#include <stdint.h>
+
+#include <utility>
+
+#include "base/macros.h"
 #include "base/sequenced_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_info.h"
@@ -34,9 +39,9 @@ class DeviceManagementServiceConfiguration
     std::string os_name = base::SysInfo::OperatingSystemName();
     std::string os_hardware = base::SysInfo::OperatingSystemArchitecture();
     std::string os_version("-");
-    int32 os_major_version = 0;
-    int32 os_minor_version = 0;
-    int32 os_bugfix_version = 0;
+    int32_t os_major_version = 0;
+    int32_t os_minor_version = 0;
+    int32_t os_bugfix_version = 0;
     base::SysInfo::OperatingSystemVersionNumbers(&os_major_version,
                                                  &os_minor_version,
                                                  &os_bugfix_version);
@@ -62,11 +67,11 @@ BrowserPolicyConnectorIOS::BrowserPolicyConnectorIOS(
     scoped_refptr<base::SequencedTaskRunner> background_task_runner)
     : BrowserPolicyConnector(handler_list_factory),
       user_agent_(user_agent) {
-  scoped_ptr<AsyncPolicyLoader> loader(
+  std::unique_ptr<AsyncPolicyLoader> loader(
       new PolicyLoaderIOS(background_task_runner));
-  scoped_ptr<ConfigurationPolicyProvider> provider(
-      new AsyncPolicyProvider(GetSchemaRegistry(), loader.Pass()));
-  SetPlatformPolicyProvider(provider.Pass());
+  std::unique_ptr<ConfigurationPolicyProvider> provider(
+      new AsyncPolicyProvider(GetSchemaRegistry(), std::move(loader)));
+  SetPlatformPolicyProvider(std::move(provider));
 }
 
 BrowserPolicyConnectorIOS::~BrowserPolicyConnectorIOS() {}
@@ -74,17 +79,17 @@ BrowserPolicyConnectorIOS::~BrowserPolicyConnectorIOS() {}
 void BrowserPolicyConnectorIOS::Init(
     PrefService* local_state,
     scoped_refptr<net::URLRequestContextGetter> request_context) {
-  scoped_ptr<DeviceManagementService::Configuration> configuration(
+  std::unique_ptr<DeviceManagementService::Configuration> configuration(
       new DeviceManagementServiceConfiguration(user_agent_));
-  scoped_ptr<DeviceManagementService> device_management_service(
-      new DeviceManagementService(configuration.Pass()));
+  std::unique_ptr<DeviceManagementService> device_management_service(
+      new DeviceManagementService(std::move(configuration)));
 
   // Delay initialization of the cloud policy requests by 5 seconds.
-  const int64 kServiceInitializationStartupDelay = 5000;
+  const int64_t kServiceInitializationStartupDelay = 5000;
   device_management_service->ScheduleInitialization(
       kServiceInitializationStartupDelay);
 
-  InitInternal(local_state, device_management_service.Pass());
+  InitInternal(local_state, std::move(device_management_service));
 }
 
 }  // namespace policy

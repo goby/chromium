@@ -6,13 +6,14 @@
 
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/login/screens/network_error.h"
+#include "chrome/browser/ui/webui/chromeos/login/oobe_screen.h"
 #include "chrome/browser/ui/webui/chromeos/login/oobe_ui.h"
+#include "chrome/grit/chrome_unscaled_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "chromeos/network/network_state.h"
 #include "chromeos/network/network_state_handler.h"
 #include "components/login/localized_values_builder.h"
-#include "grit/chrome_unscaled_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/base/webui/web_ui_util.h"
@@ -95,7 +96,7 @@ void AppLaunchSplashScreenHandler::Show(const std::string& app_id) {
   data.Set("appInfo", app_info);
 
   SetLaunchText(l10n_util::GetStringUTF8(GetProgressMessageFromState(state_)));
-  ShowScreen(OobeUI::kScreenAppLaunchSplash, &data);
+  ShowScreenWithData(OobeScreen::SCREEN_APP_LAUNCH_SPLASH, &data);
 }
 
 void AppLaunchSplashScreenHandler::RegisterMessages() {
@@ -107,9 +108,6 @@ void AppLaunchSplashScreenHandler::RegisterMessages() {
               &AppLaunchSplashScreenHandler::HandleContinueAppLaunch);
   AddCallback("networkConfigRequest",
               &AppLaunchSplashScreenHandler::HandleNetworkConfigRequested);
-}
-
-void AppLaunchSplashScreenHandler::PrepareToShow() {
 }
 
 void AppLaunchSplashScreenHandler::Hide() {
@@ -183,13 +181,8 @@ void AppLaunchSplashScreenHandler::ShowNetworkConfigureUI() {
       break;
   }
 
-  OobeUI::Screen screen = OobeUI::SCREEN_UNKNOWN;
-  OobeUI* oobe_ui = static_cast<OobeUI*>(web_ui()->GetController());
-  if (oobe_ui)
-    screen = oobe_ui->current_screen();
-
-  if (screen != OobeUI::SCREEN_ERROR_MESSAGE)
-    network_error_model_->SetParentScreen(OobeUI::SCREEN_APP_LAUNCH_SPLASH);
+  if (GetCurrentScreen() != OobeScreen::SCREEN_ERROR_MESSAGE)
+    network_error_model_->SetParentScreen(OobeScreen::SCREEN_APP_LAUNCH_SPLASH);
   network_error_model_->Show();
 }
 
@@ -253,6 +246,8 @@ int AppLaunchSplashScreenHandler::GetProgressMessageFromState(
       return IDS_APP_START_WAIT_FOR_APP_WINDOW_MESSAGE;
     case APP_LAUNCH_STATE_NETWORK_WAIT_TIMEOUT:
       return IDS_APP_START_NETWORK_WAIT_TIMEOUT_MESSAGE;
+    case APP_LAUNCH_STATE_SHOWING_NETWORK_CONFIGURE_UI:
+      return IDS_APP_START_SHOWING_NETWORK_CONFIGURE_UI_MESSAGE;
   }
   return IDS_APP_START_NETWORK_WAIT_MESSAGE;
 }

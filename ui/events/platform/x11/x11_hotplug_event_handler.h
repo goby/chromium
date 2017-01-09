@@ -5,12 +5,11 @@
 #ifndef UI_EVENTS_PLATFORM_X11_X11_HOTPLUG_EVENT_HANDLER_H_
 #define UI_EVENTS_PLATFORM_X11_X11_HOTPLUG_EVENT_HANDLER_H_
 
+#include "base/macros.h"
 #include "ui/events/devices/x11/device_list_cache_x11.h"
 #include "ui/gfx/x/x11_atom_cache.h"
 
 namespace ui {
-
-class DeviceHotplugEventObserver;
 
 // Parses X11 native devices and propagates the list of active devices to an
 // observer.

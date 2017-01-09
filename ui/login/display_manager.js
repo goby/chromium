@@ -29,19 +29,21 @@
 /** @const */ var SCREEN_FATAL_ERROR = 'fatal-error';
 /** @const */ var SCREEN_KIOSK_ENABLE = 'kiosk-enable';
 /** @const */ var SCREEN_TERMS_OF_SERVICE = 'terms-of-service';
+/** @const */ var SCREEN_ARC_TERMS_OF_SERVICE = 'arc-tos';
 /** @const */ var SCREEN_WRONG_HWID = 'wrong-hwid';
 /** @const */ var SCREEN_DEVICE_DISABLED = 'device-disabled';
+/** @const */ var SCREEN_UNRECOVERABLE_CRYPTOHOME_ERROR =
+    'unrecoverable-cryptohome-error';
 
 /* Accelerator identifiers. Must be kept in sync with webui_login_view.cc. */
 /** @const */ var ACCELERATOR_CANCEL = 'cancel';
 /** @const */ var ACCELERATOR_ENABLE_DEBBUGING = 'debugging';
 /** @const */ var ACCELERATOR_TOGGLE_EASY_BOOTSTRAP = 'toggle_easy_bootstrap';
 /** @const */ var ACCELERATOR_ENROLLMENT = 'enrollment';
+/** @const */ var ACCELERATOR_ENROLLMENT_AD = 'enrollment_ad';
 /** @const */ var ACCELERATOR_KIOSK_ENABLE = 'kiosk_enable';
 /** @const */ var ACCELERATOR_VERSION = 'version';
 /** @const */ var ACCELERATOR_RESET = 'reset';
-/** @const */ var ACCELERATOR_FOCUS_PREV = 'focus_prev';
-/** @const */ var ACCELERATOR_FOCUS_NEXT = 'focus_next';
 /** @const */ var ACCELERATOR_DEVICE_REQUISITION = 'device_requisition';
 /** @const */ var ACCELERATOR_DEVICE_REQUISITION_REMORA =
     'device_requisition_remora';
@@ -50,6 +52,7 @@
 /** @const */ var ACCELERATOR_APP_LAUNCH_BAILOUT = 'app_launch_bailout';
 /** @const */ var ACCELERATOR_APP_LAUNCH_NETWORK_CONFIG =
     'app_launch_network_config';
+/** @const */ var ACCELERATOR_BOOTSTRAPPING_SLAVE = "bootstrapping_slave";
 
 /* Signin UI state constants. Used to control header bar UI. */
 /** @const */ var SIGNIN_UI_STATE = {
@@ -132,6 +135,7 @@ cr.define('cr.ui.login', function() {
     SCREEN_TPM_ERROR,
     SCREEN_PASSWORD_CHANGED,
     SCREEN_TERMS_OF_SERVICE,
+    SCREEN_ARC_TERMS_OF_SERVICE,
     SCREEN_WRONG_HWID,
     SCREEN_CONFIRM_PASSWORD,
     SCREEN_FATAL_ERROR
@@ -202,6 +206,12 @@ cr.define('cr.ui.login', function() {
     forceKeyboardFlow_: false,
 
     /**
+     * Whether the virtual keyboard is displayed.
+     * @type {boolean}
+     */
+    virtualKeyboardShown: false,
+
+    /**
      * Type of UI.
      * @type {string}
      */
@@ -254,6 +264,11 @@ cr.define('cr.ui.login', function() {
       $('login-header-bar').hidden = hidden;
     },
 
+    set pinHidden(hidden) {
+      this.virtualKeyboardShown = hidden;
+      $('pod-row').setFocusedPodPinVisibility(!hidden);
+    },
+
     /**
      * Sets the current size of the client area (display size).
      * @param {number} width client area width
@@ -283,7 +298,7 @@ cr.define('cr.ui.login', function() {
     set forceKeyboardFlow(value) {
       this.forceKeyboardFlow_ = value;
       if (value) {
-        keyboard.initializeKeyboardFlow();
+        keyboard.initializeKeyboardFlow(false);
         cr.ui.DropDown.enableKeyboardFlow();
         for (var i = 0; i < this.screens_.length; ++i) {
           var screen = $(this.screens_[i]);
@@ -339,6 +354,11 @@ cr.define('cr.ui.login', function() {
           // proceed straight to enrollment screen when EULA is accepted.
           chrome.send('skipUpdateEnrollAfterEula');
         }
+      } else if (name == ACCELERATOR_ENROLLMENT_AD) {
+        if (currentStepId == SCREEN_GAIA_SIGNIN ||
+            currentStepId == SCREEN_ACCOUNT_PICKER) {
+          chrome.send('toggleEnrollmentAd');
+        }
       } else if (name == ACCELERATOR_KIOSK_ENABLE) {
         if (currentStepId == SCREEN_GAIA_SIGNIN ||
             currentStepId == SCREEN_ACCOUNT_PICKER) {
@@ -373,14 +393,8 @@ cr.define('cr.ui.login', function() {
       } else if (name == ACCELERATOR_TOGGLE_EASY_BOOTSTRAP) {
         if (currentStepId == SCREEN_GAIA_SIGNIN)
           chrome.send('toggleEasyBootstrap');
-      }
-
-      // Handle special accelerators for keyboard enhanced navigation flow.
-      if (this.forceKeyboardFlow_) {
-        if (name == ACCELERATOR_FOCUS_PREV)
-          keyboard.raiseKeyFocusPrevious(document.activeElement);
-        else if (name == ACCELERATOR_FOCUS_NEXT)
-          keyboard.raiseKeyFocusNext(document.activeElement);
+      } else if (name == ACCELERATOR_BOOTSTRAPPING_SLAVE) {
+          chrome.send('setOobeBootstrappingSlave');
       }
     },
 
@@ -570,6 +584,9 @@ cr.define('cr.ui.login', function() {
 
       $('step-logo').hidden = newStep.classList.contains('no-logo');
 
+      $('oobe').dispatchEvent(
+          new CustomEvent('screenchanged',
+                          {detail: this.currentScreen.id}));
       chrome.send('updateCurrentScreen', [this.currentScreen.id]);
     },
 
@@ -604,11 +621,12 @@ cr.define('cr.ui.login', function() {
 
 
       // Show sign-in screen instead of account picker if pod row is empty.
-      if (screenId == SCREEN_ACCOUNT_PICKER && $('pod-row').pods.length == 0) {
+      if (screenId == SCREEN_ACCOUNT_PICKER && $('pod-row').pods.length == 0 &&
+          cr.isChromeOS) {
         // Manually hide 'add-user' header bar, because of the case when
         // 'Cancel' button is used on the offline login page.
         $('add-user-header-bar-item').hidden = true;
-        Oobe.showSigninUI(true);
+        Oobe.showSigninUI();
         return;
       }
 
@@ -917,8 +935,9 @@ cr.define('cr.ui.login', function() {
   DisplayManager.resetSigninUI = function(forceOnline) {
     var currentScreenId = Oobe.getInstance().currentScreen.id;
 
-    $(SCREEN_GAIA_SIGNIN).reset(
-        currentScreenId == SCREEN_GAIA_SIGNIN, forceOnline);
+    if ($(SCREEN_GAIA_SIGNIN))
+      $(SCREEN_GAIA_SIGNIN).reset(
+          currentScreenId == SCREEN_GAIA_SIGNIN, forceOnline);
     $('login-header-bar').disabled = false;
     $('pod-row').reset(currentScreenId == SCREEN_ACCOUNT_PICKER);
   };
@@ -1012,7 +1031,6 @@ cr.define('cr.ui.login', function() {
    * @param {string} assetId The device asset ID.
    */
   DisplayManager.setEnterpriseInfo = function(messageText, assetId) {
-    $('offline-gaia').enterpriseInfo = messageText;
     $('asset-id').textContent = ((assetId == "") ? "" :
         loadTimeData.getStringF('assetIdLabel', assetId));
   };

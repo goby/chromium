@@ -15,9 +15,9 @@ import android.content.Context;
 import android.os.Bundle;
 import android.text.TextUtils;
 
-import org.chromium.sync.signin.ChromeSigninController;
-import org.chromium.sync.test.util.AccountHolder;
-import org.chromium.sync.test.util.MockAccountManager;
+import org.chromium.components.signin.ChromeSigninController;
+import org.chromium.components.signin.test.util.AccountHolder;
+import org.chromium.components.signin.test.util.MockAccountManager;
 
 import java.io.IOException;
 
@@ -47,7 +47,7 @@ public class ChromeSigninUtils {
     public ChromeSigninUtils(Instrumentation instrumentation) {
         mContext = instrumentation.getContext();
         mTargetContext = instrumentation.getTargetContext();
-        mAccountManager = AccountManager.get(mContext);
+        mAccountManager = AccountManager.get(mTargetContext);
         mMockAccountManager = new MockAccountManager(mContext, mTargetContext);
     }
 

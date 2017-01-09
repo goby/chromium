@@ -6,11 +6,14 @@
 
 #include <windows.h>
 #include <sddl.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <wtsapi32.h>
 #include <vector>
 
 #include "base/command_line.h"
 #include "base/files/file_path.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/process/launch.h"
 #include "base/rand_util.h"
@@ -31,8 +34,6 @@
 #include "chrome/installer/util/install_util.h"
 #include "chrome/installer/util/product.h"
 #include "content/public/common/result_codes.h"
-
-#pragma comment(lib, "wtsapi32.lib")
 
 namespace installer {
 
@@ -228,12 +229,12 @@ bool LaunchSetupAsConsoleUser(base::CommandLine* cmd_line) {
 
   DWORD console_id = ::WTSGetActiveConsoleSessionId();
   if (console_id == 0xFFFFFFFF) {
-    PLOG(ERROR) << __FUNCTION__ << " failed to get active session id";
+    PLOG(ERROR) << __func__ << " failed to get active session id";
     return false;
   }
   HANDLE user_token;
   if (!::WTSQueryUserToken(console_id, &user_token)) {
-    PLOG(ERROR) << __FUNCTION__ << " failed to get user token for console_id "
+    PLOG(ERROR) << __func__ << " failed to get user token for console_id "
                 << console_id;
     return false;
   }
@@ -243,10 +244,10 @@ bool LaunchSetupAsConsoleUser(base::CommandLine* cmd_line) {
   options.as_user = user_token;
   options.inherit_handles = true;
   options.empty_desktop_name = true;
-  VLOG(1) << __FUNCTION__ << " launching " << cmd_line->GetCommandLineString();
+  VLOG(1) << __func__ << " launching " << cmd_line->GetCommandLineString();
   base::Process process = base::LaunchProcess(*cmd_line, options);
   ::CloseHandle(user_token);
-  VLOG(1) << __FUNCTION__ << "   result: " << process.IsValid();
+  VLOG(1) << __func__ << "   result: " << process.IsValid();
   return process.IsValid();
 }
 
@@ -350,7 +351,7 @@ bool CreateExperimentDetails(int flavor, ExperimentDetails* experiment) {
   if (!GoogleUpdateSettings::GetBrand(&brand))
     brand.clear();  // Could still be viable for catch-all rules
 
-  for (int i = 0; i < arraysize(kExperiments); ++i) {
+  for (size_t i = 0; i < arraysize(kExperiments); ++i) {
     base::string16 experiment_locale = kExperiments[i].locale;
     if (experiment_locale != locale && experiment_locale != L"*")
       continue;
@@ -499,7 +500,7 @@ void InactiveUserToastExperiment(int flavor,
             options.GetCommandLineString().find(L" -- " + url));
 
   // Launch chrome now. It will show the toast UI.
-  int32 exit_code = 0;
+  int32_t exit_code = 0;
   if (!product.LaunchChromeAndWait(application_path, options, &exit_code))
     return;
 

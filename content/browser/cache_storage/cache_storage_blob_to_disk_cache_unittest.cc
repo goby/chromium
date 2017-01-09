@@ -5,14 +5,18 @@
 #include "content/browser/cache_storage/cache_storage_blob_to_disk_cache.h"
 
 #include <string>
+#include <utility>
 
 #include "base/files/file_path.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/test/null_task_runner.h"
-#include "base/thread_task_runner_handle.h"
-#include "content/browser/fileapi/chrome_blob_storage_context.h"
+#include "base/threading/thread_task_runner_handle.h"
+#include "content/browser/blob_storage/chrome_blob_storage_context.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/browser/storage_partition.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "net/disk_cache/disk_cache.h"
@@ -55,13 +59,12 @@ class NullURLRequestContextGetter : public net::URLRequestContextGetter {
 
 // Returns a BlobProtocolHandler that uses |blob_storage_context|. Caller owns
 // the memory.
-scoped_ptr<storage::BlobProtocolHandler> CreateMockBlobProtocolHandler(
+std::unique_ptr<storage::BlobProtocolHandler> CreateMockBlobProtocolHandler(
     storage::BlobStorageContext* blob_storage_context) {
   // The FileSystemContext and thread task runner are not actually used but a
   // task runner is needed to avoid a DCHECK in BlobURLRequestJob ctor.
-  return make_scoped_ptr(new storage::BlobProtocolHandler(
-      blob_storage_context, nullptr,
-      base::ThreadTaskRunnerHandle::Get().get()));
+  return base::MakeUnique<storage::BlobProtocolHandler>(
+      blob_storage_context, nullptr, base::ThreadTaskRunnerHandle::Get().get());
 }
 
 // A CacheStorageBlobToDiskCache that can delay reading from blobs.
@@ -90,10 +93,11 @@ class TestCacheStorageBlobToDiskCache : public CacheStorageBlobToDiskCache {
 class CacheStorageBlobToDiskCacheTest : public testing::Test {
  protected:
   CacheStorageBlobToDiskCacheTest()
-      : browser_context_(new TestBrowserContext()),
-        browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
-
-        url_request_context_getter_(browser_context_->GetRequestContext()),
+      : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP),
+        browser_context_(new TestBrowserContext()),
+        url_request_context_getter_(
+            BrowserContext::GetDefaultStoragePartition(browser_context_.get())->
+                GetURLRequestContext()),
         cache_storage_blob_to_disk_cache_(
             new TestCacheStorageBlobToDiskCache()),
         data_(kTestData),
@@ -127,7 +131,7 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
   }
 
   void InitBlob() {
-    scoped_ptr<storage::BlobDataBuilder> blob_data(
+    std::unique_ptr<storage::BlobDataBuilder> blob_data(
         new storage::BlobDataBuilder("blob-id:myblob"));
     blob_data->AppendData(data_);
 
@@ -145,7 +149,7 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
     EXPECT_EQ(net::OK, rv);
     EXPECT_TRUE(cache_backend_);
 
-    scoped_ptr<disk_cache::Entry*> entry(new disk_cache::Entry*());
+    std::unique_ptr<disk_cache::Entry*> entry(new disk_cache::Entry*());
     disk_cache::Entry** entry_ptr = entry.get();
     rv = cache_backend_->CreateEntry(kEntryKey, entry_ptr,
                                      base::Bind(&DoNothingCompletion));
@@ -166,12 +170,12 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
   }
 
   bool Stream() {
-    scoped_ptr<storage::BlobDataHandle> new_data_handle(
+    std::unique_ptr<storage::BlobDataHandle> new_data_handle(
         blob_storage_context_->GetBlobDataFromUUID(blob_handle_->uuid()));
 
     cache_storage_blob_to_disk_cache_->StreamBlobToCache(
-        disk_cache_entry_.Pass(), kCacheEntryIndex, url_request_context_getter_,
-        new_data_handle.Pass(),
+        std::move(disk_cache_entry_), kCacheEntryIndex,
+        url_request_context_getter_.get(), std::move(new_data_handle),
         base::Bind(&CacheStorageBlobToDiskCacheTest::StreamCallback,
                    base::Unretained(this)));
 
@@ -181,20 +185,21 @@ class CacheStorageBlobToDiskCacheTest : public testing::Test {
   }
 
   void StreamCallback(disk_cache::ScopedEntryPtr entry_ptr, bool success) {
-    disk_cache_entry_ = entry_ptr.Pass();
+    disk_cache_entry_ = std::move(entry_ptr);
     callback_success_ = success;
     callback_called_ = true;
   }
 
-  scoped_ptr<TestBrowserContext> browser_context_;
   TestBrowserThreadBundle browser_thread_bundle_;
-  scoped_ptr<net::URLRequestJobFactoryImpl> url_request_job_factory_;
+  std::unique_ptr<TestBrowserContext> browser_context_;
+  std::unique_ptr<net::URLRequestJobFactoryImpl> url_request_job_factory_;
   storage::BlobStorageContext* blob_storage_context_;
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
-  scoped_ptr<storage::BlobDataHandle> blob_handle_;
-  scoped_ptr<disk_cache::Backend> cache_backend_;
+  std::unique_ptr<storage::BlobDataHandle> blob_handle_;
+  std::unique_ptr<disk_cache::Backend> cache_backend_;
   disk_cache::ScopedEntryPtr disk_cache_entry_;
-  scoped_ptr<TestCacheStorageBlobToDiskCache> cache_storage_blob_to_disk_cache_;
+  std::unique_ptr<TestCacheStorageBlobToDiskCache>
+      cache_storage_blob_to_disk_cache_;
   std::string data_;
 
   bool callback_success_;

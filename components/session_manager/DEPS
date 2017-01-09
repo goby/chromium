@@ -1,3 +1,3 @@
 include_rules = [
- '+chromeos/chromeos_switches.h',
+  "+components/signin/core/account_id",
 ]

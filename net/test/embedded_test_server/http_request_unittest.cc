@@ -4,7 +4,8 @@
 
 #include "net/test/embedded_test_server/http_request.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -34,7 +35,7 @@ TEST(HttpRequestTest, ParseRequest) {
 
   // Fetch the first request and validate it.
   {
-    scoped_ptr<HttpRequest> request = parser.GetRequest();
+    std::unique_ptr<HttpRequest> request = parser.GetRequest();
     EXPECT_EQ("/foobar.html", request->relative_url);
     EXPECT_EQ("POST", request->method_string);
     EXPECT_EQ(METHOD_POST, request->method);
@@ -70,7 +71,7 @@ TEST(HttpRequestTest, ParseRequestWithEmptyBody) {
   parser.ProcessChunk("Content-Length: 0\r\n\r\n");
   ASSERT_EQ(HttpRequestParser::ACCEPTED, parser.ParseRequest());
 
-  scoped_ptr<HttpRequest> request = parser.GetRequest();
+  std::unique_ptr<HttpRequest> request = parser.GetRequest();
   EXPECT_EQ("", request->content);
   EXPECT_TRUE(request->has_content);
   EXPECT_EQ(1u, request->headers.count("Content-Length"));
@@ -88,7 +89,7 @@ TEST(HttpRequestTest, ParseRequestWithChunkedBody) {
   parser.ProcessChunk("0\r\n\r\n");
   ASSERT_EQ(HttpRequestParser::ACCEPTED, parser.ParseRequest());
 
-  scoped_ptr<HttpRequest> request = parser.GetRequest();
+  std::unique_ptr<HttpRequest> request = parser.GetRequest();
   EXPECT_EQ("hello world", request->content);
   EXPECT_TRUE(request->has_content);
   EXPECT_EQ(1u, request->headers.count("Transfer-Encoding"));
@@ -112,7 +113,7 @@ TEST(HttpRequestTest, ParseRequestWithChunkedBodySlow) {
   }
   // All chunked data has been sent, the last ParseRequest should give ACCEPTED.
   ASSERT_EQ(HttpRequestParser::ACCEPTED, parser.ParseRequest());
-  scoped_ptr<HttpRequest> request = parser.GetRequest();
+  std::unique_ptr<HttpRequest> request = parser.GetRequest();
   EXPECT_EQ("hello", request->content);
   EXPECT_TRUE(request->has_content);
   EXPECT_EQ(1u, request->headers.count("Transfer-Encoding"));
@@ -125,7 +126,7 @@ TEST(HttpRequestTest, ParseRequestWithoutBody) {
   parser.ProcessChunk("POST /foobar.html HTTP/1.1\r\n\r\n");
   ASSERT_EQ(HttpRequestParser::ACCEPTED, parser.ParseRequest());
 
-  scoped_ptr<HttpRequest> request = parser.GetRequest();
+  std::unique_ptr<HttpRequest> request = parser.GetRequest();
   EXPECT_EQ("", request->content);
   EXPECT_FALSE(request->has_content);
 }
@@ -136,12 +137,26 @@ TEST(HttpRequestTest, ParseGet) {
   parser.ProcessChunk("GET /foobar.html HTTP/1.1\r\n\r\n");
   ASSERT_EQ(HttpRequestParser::ACCEPTED, parser.ParseRequest());
 
-  scoped_ptr<HttpRequest> request = parser.GetRequest();
+  std::unique_ptr<HttpRequest> request = parser.GetRequest();
   EXPECT_EQ("/foobar.html", request->relative_url);
   EXPECT_EQ("GET", request->method_string);
   EXPECT_EQ(METHOD_GET, request->method);
   EXPECT_EQ("", request->content);
   EXPECT_FALSE(request->has_content);
+}
+
+TEST(HttpRequestTest, GetURL) {
+  HttpRequest request;
+  request.relative_url = "/foobar.html?q=foo";
+  request.base_url = GURL("https://127.0.0.1:8080");
+  EXPECT_EQ("https://127.0.0.1:8080/foobar.html?q=foo",
+            request.GetURL().spec());
+}
+
+TEST(HttpRequestTest, GetURLFallback) {
+  HttpRequest request;
+  request.relative_url = "/foobar.html?q=foo";
+  EXPECT_EQ("http://localhost/foobar.html?q=foo", request.GetURL().spec());
 }
 
 }  // namespace test_server

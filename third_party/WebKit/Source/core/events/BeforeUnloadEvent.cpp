@@ -21,29 +21,21 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/events/BeforeUnloadEvent.h"
-
 
 namespace blink {
 
 BeforeUnloadEvent::BeforeUnloadEvent()
-    : Event(EventTypeNames::beforeunload, false, true)
-{
+    : Event(EventTypeNames::beforeunload, false, true) {}
+
+BeforeUnloadEvent::~BeforeUnloadEvent() {}
+
+bool BeforeUnloadEvent::isBeforeUnloadEvent() const {
+  return true;
 }
 
-BeforeUnloadEvent::~BeforeUnloadEvent()
-{
+DEFINE_TRACE(BeforeUnloadEvent) {
+  Event::trace(visitor);
 }
 
-bool BeforeUnloadEvent::isBeforeUnloadEvent() const
-{
-    return true;
-}
-
-DEFINE_TRACE(BeforeUnloadEvent)
-{
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

@@ -6,6 +6,7 @@
 #define CHROME_INSTALLER_UTIL_SET_REG_VALUE_WORK_ITEM_H__
 
 #include <windows.h>
+#include <stdint.h>
 
 #include <string>
 #include <vector>
@@ -36,7 +37,7 @@ class SetRegValueWorkItem : public WorkItem {
                       const std::wstring& key_path,
                       REGSAM wow64_access,
                       const std::wstring& value_name,
-                      int64 value_data,
+                      int64_t value_data,
                       bool overwrite);
 
   // Implies |overwrite_| and TYPE_SZ for now.
@@ -47,10 +48,6 @@ class SetRegValueWorkItem : public WorkItem {
                       const GetValueFromExistingCallback& get_value_callback);
 
   ~SetRegValueWorkItem() override;
-
-  bool Do() override;
-
-  void Rollback() override;
 
  private:
   enum SettingStatus {
@@ -68,6 +65,10 @@ class SetRegValueWorkItem : public WorkItem {
     // The status after Do and Rollback is called.
     VALUE_ROLL_BACK
   };
+
+  // WorkItem:
+  bool DoImpl() override;
+  void RollbackImpl() override;
 
   // Root key of the target key under which the value is set. The root key can
   // only be one of the predefined keys on Windows.
@@ -91,9 +92,9 @@ class SetRegValueWorkItem : public WorkItem {
 
   // Type of data to store
   DWORD type_;
-  std::vector<uint8> value_;
+  std::vector<uint8_t> value_;
   DWORD previous_type_;
-  std::vector<uint8> previous_value_;
+  std::vector<uint8_t> previous_value_;
 
   SettingStatus status_;
 };

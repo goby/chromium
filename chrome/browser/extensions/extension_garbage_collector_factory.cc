@@ -4,7 +4,9 @@
 
 #include "chrome/browser/extensions/extension_garbage_collector_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/singleton.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/extension_garbage_collector.h"
 #include "chrome/browser/extensions/extension_system_factory.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
@@ -42,12 +44,13 @@ ExtensionGarbageCollectorFactory::ExtensionGarbageCollectorFactory()
 ExtensionGarbageCollectorFactory::~ExtensionGarbageCollectorFactory() {}
 
 // static
-scoped_ptr<KeyedService> ExtensionGarbageCollectorFactory::BuildInstanceFor(
+std::unique_ptr<KeyedService>
+ExtensionGarbageCollectorFactory::BuildInstanceFor(
     content::BrowserContext* context) {
 #if defined(OS_CHROMEOS)
-  return make_scoped_ptr(new ExtensionGarbageCollectorChromeOS(context));
+  return base::MakeUnique<ExtensionGarbageCollectorChromeOS>(context);
 #else
-  return make_scoped_ptr(new ExtensionGarbageCollector(context));
+  return base::MakeUnique<ExtensionGarbageCollector>(context);
 #endif
 }
 

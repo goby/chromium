@@ -11,8 +11,6 @@
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/site_instance.h"
-#include "content/public/common/service_registry.h"
-#include "extensions/browser/api/serial/serial_service_factory.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extensions_browser_client.h"
 #include "extensions/browser/mojo/keep_alive_impl.h"
@@ -20,10 +18,18 @@
 #include "extensions/common/constants.h"
 #include "extensions/common/extension_api.h"
 #include "extensions/common/switches.h"
+#include "extensions/features/features.h"
+#include "services/service_manager/public/cpp/interface_registry.h"
+
+#if BUILDFLAG(ENABLE_WIFI_DISPLAY)
+#include "extensions/browser/api/display_source/wifi_display/wifi_display_media_service_impl.h"
+#include "extensions/browser/api/display_source/wifi_display/wifi_display_session_service_impl.h"
+#endif
 
 namespace extensions {
 namespace {
 
+#if BUILDFLAG(ENABLE_WIFI_DISPLAY)
 bool ExtensionHasPermission(const Extension* extension,
                             content::RenderProcessHost* render_process_host,
                             const std::string& permission_name) {
@@ -35,6 +41,7 @@ bool ExtensionHasPermission(const Extension* extension,
       ->IsAvailable(permission_name, extension, context, extension->url())
       .is_available();
 }
+#endif
 
 }  // namespace
 
@@ -42,18 +49,22 @@ void RegisterServicesForFrame(content::RenderFrameHost* render_frame_host,
                               const Extension* extension) {
   DCHECK(extension);
 
-  content::ServiceRegistry* service_registry =
-      render_frame_host->GetServiceRegistry();
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableMojoSerialService)) {
-    if (ExtensionHasPermission(extension, render_frame_host->GetProcess(),
-                               "serial")) {
-      service_registry->AddService(base::Bind(&BindToSerialServiceRequest));
-    }
-  }
-  service_registry->AddService(base::Bind(
+  service_manager::InterfaceRegistry* registry =
+      render_frame_host->GetInterfaceRegistry();
+  registry->AddInterface(base::Bind(
       KeepAliveImpl::Create,
       render_frame_host->GetProcess()->GetBrowserContext(), extension));
+
+#if BUILDFLAG(ENABLE_WIFI_DISPLAY)
+  if (ExtensionHasPermission(extension, render_frame_host->GetProcess(),
+                             "displaySource")) {
+    registry->AddInterface(
+        base::Bind(WiFiDisplaySessionServiceImpl::BindToRequest,
+                   render_frame_host->GetProcess()->GetBrowserContext()));
+    registry->AddInterface(
+        base::Bind(WiFiDisplayMediaServiceImpl::BindToRequest));
+  }
+#endif
 }
 
 }  // namespace extensions

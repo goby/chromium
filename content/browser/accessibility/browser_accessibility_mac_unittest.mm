@@ -2,9 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "content/browser/accessibility/browser_accessibility_mac.h"
+
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "content/browser/accessibility/browser_accessibility_cocoa.h"
@@ -53,12 +56,12 @@ class BrowserAccessibilityTest : public ui::CocoaTest {
             nil,
             MakeAXTreeUpdate(root, child1, child2),
             NULL));
-    accessibility_.reset([manager_->GetRoot()->ToBrowserAccessibilityCocoa()
+    accessibility_.reset([ToBrowserAccessibilityCocoa(manager_->GetRoot())
         retain]);
   }
 
   base::scoped_nsobject<BrowserAccessibilityCocoa> accessibility_;
-  scoped_ptr<BrowserAccessibilityManager> manager_;
+  std::unique_ptr<BrowserAccessibilityManager> manager_;
 };
 
 // Standard hit test.

@@ -5,8 +5,10 @@
 #ifndef COMPONENTS_TRANSLATE_CORE_BROWSER_TRANSLATE_URL_FETCHER_H_
 #define COMPONENTS_TRANSLATE_CORE_BROWSER_TRANSLATE_URL_FETCHER_H_
 
+#include <memory>
+
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/url_request/url_fetcher_delegate.h"
 #include "url/gurl.h"
 
@@ -67,7 +69,7 @@ class TranslateURLFetcher : public net::URLFetcherDelegate {
   enum State state_;
 
   // URLFetcher instance.
-  scoped_ptr<net::URLFetcher> fetcher_;
+  std::unique_ptr<net::URLFetcher> fetcher_;
 
   // Callback passed at Request(). It will be invoked when an asynchronous
   // fetch operation is finished.

@@ -8,6 +8,7 @@
 #include "base/files/file_path.h"
 #include "base/path_service.h"
 #include "base/run_loop.h"
+#include "base/threading/thread_restrictions.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/web_contents.h"
@@ -23,9 +24,11 @@ namespace content {
 
 base::FilePath GetTestFilePath(const char* dir, const char* file) {
   base::FilePath path;
+  base::ThreadRestrictions::ScopedAllowIO allow_io_for_path_service;
   PathService::Get(DIR_TEST_DATA, &path);
-  return path.Append(base::FilePath().AppendASCII(dir).Append(
-      base::FilePath().AppendASCII(file)));
+  if (dir)
+    path = path.AppendASCII(dir);
+  return path.AppendASCII(file);
 }
 
 GURL GetTestUrl(const char* dir, const char* file) {
@@ -50,6 +53,17 @@ void ReloadBlockUntilNavigationsComplete(Shell* window,
                                            number_of_navigations);
 
   window->Reload();
+  same_tab_observer.Wait();
+}
+
+void ReloadBypassingCacheBlockUntilNavigationsComplete(
+    Shell* window,
+    int number_of_navigations) {
+  WaitForLoadStop(window->web_contents());
+  TestNavigationObserver same_tab_observer(window->web_contents(),
+                                           number_of_navigations);
+
+  window->ReloadBypassingCache();
   same_tab_observer.Wait();
 }
 
@@ -91,6 +105,10 @@ void WaitForAppModalDialog(Shell* window) {
   runner->Run();
 }
 
+RenderFrameHost* ConvertToRenderFrameHost(Shell* shell) {
+  return shell->web_contents()->GetMainFrame();
+}
+
 ShellAddedObserver::ShellAddedObserver()
     : shell_(NULL) {
   Shell::SetShellCreatedCallback(
@@ -115,6 +133,5 @@ void ShellAddedObserver::ShellCreated(Shell* shell) {
   if (runner_.get())
     runner_->QuitClosure().Run();
 }
-
 
 }  // namespace content

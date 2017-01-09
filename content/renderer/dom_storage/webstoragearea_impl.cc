@@ -5,7 +5,7 @@
 #include "content/renderer/dom_storage/webstoragearea_impl.h"
 
 #include "base/lazy_instance.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
 #include "content/common/dom_storage/dom_storage_messages.h"
@@ -20,7 +20,7 @@ using blink::WebURL;
 namespace content {
 
 namespace {
-typedef IDMap<WebStorageAreaImpl> AreaImplMap;
+using AreaImplMap = IDMap<WebStorageAreaImpl*>;
 base::LazyInstance<AreaImplMap>::Leaky
     g_all_areas_map = LAZY_INSTANCE_INITIALIZER;
 
@@ -34,12 +34,11 @@ WebStorageAreaImpl* WebStorageAreaImpl::FromConnectionId(int id) {
   return g_all_areas_map.Pointer()->Lookup(id);
 }
 
-WebStorageAreaImpl::WebStorageAreaImpl(
-    int64 namespace_id, const GURL& origin)
+WebStorageAreaImpl::WebStorageAreaImpl(int64_t namespace_id, const GURL& origin)
     : connection_id_(g_all_areas_map.Pointer()->Add(this)),
-      cached_area_(dispatcher()->
-          OpenCachedArea(connection_id_, namespace_id, origin)) {
-}
+      cached_area_(dispatcher()->OpenCachedArea(connection_id_,
+                                                namespace_id,
+                                                origin)) {}
 
 WebStorageAreaImpl::~WebStorageAreaImpl() {
   g_all_areas_map.Pointer()->Remove(connection_id_);
@@ -75,10 +74,6 @@ void WebStorageAreaImpl::removeItem(
 
 void WebStorageAreaImpl::clear(const WebURL& page_url) {
   cached_area_->Clear(connection_id_, page_url);
-}
-
-size_t WebStorageAreaImpl::memoryBytesUsedByCache() const {
-  return cached_area_->MemoryBytesUsedByCache();
 }
 
 }  // namespace content

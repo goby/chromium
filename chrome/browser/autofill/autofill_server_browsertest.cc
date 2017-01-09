@@ -7,7 +7,6 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/message_loop/message_loop.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autofill/personal_data_manager_factory.h"
 #include "chrome/browser/profiles/profile.h"
@@ -19,8 +18,6 @@
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/personal_data_manager_observer.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
-#include "components/compression/compression_utils.h"
 #include "content/public/test/browser_test_utils.h"
 #include "content/public/test/test_utils.h"
 #include "net/url_request/test_url_fetcher_factory.h"
@@ -77,27 +74,20 @@ class WindowedNetworkObserver : public net::TestURLFetcher::DelegateForTests {
       message_loop_runner_->Quit();
 
     // Not interested in any further status updates from this fetcher.
-    fetcher->SetDelegateForTests(NULL);
+    fetcher->SetDelegateForTests(nullptr);
   }
   void OnChunkUpload(int fetcher_id) override {}
   void OnRequestEnd(int fetcher_id) override {}
 
  private:
   // Mocks out network requests.
-  scoped_ptr<net::TestURLFetcherFactory> factory_;
+  std::unique_ptr<net::TestURLFetcherFactory> factory_;
 
   const std::string expected_upload_data_;
   scoped_refptr<content::MessageLoopRunner> message_loop_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(WindowedNetworkObserver);
 };
-
-// Compresses |data| and returns the result.
-std::string Compress(const std::string& data) {
-  std::string compressed_data;
-  EXPECT_TRUE(compression::GzipCompress(data, &compressed_data));
-  return compressed_data;
-}
 
 }  // namespace
 
@@ -107,18 +97,6 @@ class AutofillServerTest : public InProcessBrowserTest  {
     // Enable finch experiment for sending field metadata.
     command_line->AppendSwitchASCII(
         ::switches::kForceFieldTrials, "AutofillFieldMetadata/Enabled/");
-  }
-
-  void SetUpOnMainThread() override {
-    // Disable interactions with the Mac Keychain.
-    PrefService* pref_service = browser()->profile()->GetPrefs();
-    test::DisableSystemServices(pref_service);
-
-    // Enable uploads, and load a new tab to force the AutofillDownloadManager
-    // to update its cached view of the prefs.
-    pref_service->SetDouble(prefs::kAutofillPositiveUploadRate, 1.0);
-    pref_service->SetDouble(prefs::kAutofillNegativeUploadRate, 1.0);
-    AddBlankTabAndShow(browser());
   }
 };
 
@@ -148,16 +126,22 @@ IN_PROC_BROWSER_TEST_F(AutofillServerTest,
       "    document.getElementById('test_form').submit();"
       "  };"
       "</script>";
-  const char kQueryRequest[] =
-      "<?xml version=\"1.0\"?>\n"
-      "<autofillquery clientversion=\"6.1.1715.1442/en (GGLL)\">"
-      "<form signature=\"15916856893790176210\">"
-      "<field signature=\"2594484045\" name=\"one\" type=\"text\"/>"
-      "<field signature=\"2750915947\" name=\"two\" type=\"text\"/>"
-      "<field signature=\"3494787134\" name=\"three\" type=\"text\"/>"
-      "<field signature=\"1236501728\" name=\"four\" type=\"text\"/></form>"
-      "</autofillquery>\n";
-  WindowedNetworkObserver query_network_observer(Compress(kQueryRequest));
+
+  AutofillQueryContents query;
+  query.set_client_version("6.1.1715.1442/en (GGLL)");
+  AutofillQueryContents::Form* query_form = query.add_form();
+  query_form->set_signature(15916856893790176210U);
+
+  test::FillQueryField(query_form->add_field(), 2594484045U, "one", "text");
+  test::FillQueryField(query_form->add_field(), 2750915947U, "two", "text");
+  test::FillQueryField(query_form->add_field(), 3494787134U, "three", "text");
+  test::FillQueryField(query_form->add_field(), 1236501728U, "four", "text");
+
+  std::string expected_query_string;
+  ASSERT_TRUE(query.SerializeToString(&expected_query_string));
+
+  WindowedNetworkObserver query_network_observer(expected_query_string);
+
   ui_test_utils::NavigateToURL(
       browser(), GURL(std::string(kDataURIPrefix) + kFormHtml));
   query_network_observer.Wait();
@@ -165,28 +149,32 @@ IN_PROC_BROWSER_TEST_F(AutofillServerTest,
   // Submit the form, using a simulated mouse click because form submissions not
   // triggered by user gestures are ignored. Expect an upload request upon form
   // submission, with form fields matching those from the query request.
-  const char kUploadRequest[] =
-      "<?xml version=\"1.0\"?>\n"
-      "<autofillupload clientversion=\"6.1.1715.1442/en (GGLL)\""
-      " formsignature=\"15916856893790176210\""
-      " autofillused=\"false\""
-      " datapresent=\"1f7e0003780000080004\""
-      " actionsignature=\"15724779818122431245\" formname=\"test_form\">"
-      "<field signature=\"2594484045\" name=\"one\" type=\"text\""
-      " autofilltype=\"2\"/>"
-      "<field signature=\"2750915947\" name=\"two\" type=\"text\""
-      " autocomplete=\"off\" autofilltype=\"2\"/>"
-      "<field signature=\"3494787134\" name=\"three\" type=\"text\""
-      " autofilltype=\"2\"/>"
-      "<field signature=\"1236501728\" name=\"four\" type=\"text\""
-      " autocomplete=\"off\" autofilltype=\"2\"/>"
-      "</autofillupload>\n";
+  AutofillUploadContents upload;
+  upload.set_submission(true);
+  upload.set_client_version("6.1.1715.1442/en (GGLL)");
+  upload.set_form_signature(15916856893790176210U);
+  upload.set_autofill_used(false);
+  upload.set_data_present("1f7e0003780000080004");
+  upload.set_action_signature(15724779818122431245U);
+  upload.set_form_name("test_form");
 
-  WindowedNetworkObserver upload_network_observer(Compress(kUploadRequest));
+  test::FillUploadField(upload.add_field(), 2594484045U, "one", "text", nullptr,
+                        2U, nullptr);
+  test::FillUploadField(upload.add_field(), 2750915947U, "two", "text", "off",
+                        2U, nullptr);
+  test::FillUploadField(upload.add_field(), 3494787134U, "three", "text",
+                        nullptr, 2U, nullptr);
+  test::FillUploadField(upload.add_field(), 1236501728U, "four", "text", "off",
+                        2U, nullptr);
+
+  std::string expected_upload_string;
+  ASSERT_TRUE(upload.SerializeToString(&expected_upload_string));
+
+  WindowedNetworkObserver upload_network_observer(expected_upload_string);
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   content::SimulateMouseClick(
-      web_contents, 0, blink::WebMouseEvent::ButtonLeft);
+      web_contents, 0, blink::WebMouseEvent::Button::Left);
   upload_network_observer.Wait();
 }
 
@@ -203,15 +191,21 @@ IN_PROC_BROWSER_TEST_F(AutofillServerTest,
       "  <input type='password' id='three'>"
       "  <input type='submit'>"
       "</form>";
-  const char kQueryRequest[] =
-      "<?xml version=\"1.0\"?>\n"
-      "<autofillquery clientversion=\"6.1.1715.1442/en (GGLL)\">"
-      "<form signature=\"8900697631820480876\">"
-      "<field signature=\"2594484045\" name=\"one\" type=\"text\"/>"
-      "<field signature=\"2750915947\" name=\"two\" type=\"text\"/>"
-      "<field signature=\"116843943\" name=\"three\" type=\"password\"/>"
-      "</form></autofillquery>\n";
-  WindowedNetworkObserver query_network_observer(Compress(kQueryRequest));
+
+  AutofillQueryContents query;
+  query.set_client_version("6.1.1715.1442/en (GGLL)");
+  AutofillQueryContents::Form* query_form = query.add_form();
+  query_form->set_signature(8900697631820480876U);
+
+  test::FillQueryField(query_form->add_field(), 2594484045U, "one", "text");
+  test::FillQueryField(query_form->add_field(), 2750915947U, "two", "text");
+  test::FillQueryField(query_form->add_field(), 116843943U, "three",
+                       "password");
+
+  std::string expected_query_string;
+  ASSERT_TRUE(query.SerializeToString(&expected_query_string));
+
+  WindowedNetworkObserver query_network_observer(expected_query_string);
   ui_test_utils::NavigateToURL(
       browser(), GURL(std::string(kDataURIPrefix) + kFormHtml));
   query_network_observer.Wait();

@@ -28,32 +28,26 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/ButtonInputType.h"
 
 #include "core/InputTypeNames.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<InputType> ButtonInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new ButtonInputType(element));
+InputType* ButtonInputType::create(HTMLInputElement& element) {
+  return new ButtonInputType(element);
 }
 
-const AtomicString& ButtonInputType::formControlType() const
-{
-    return InputTypeNames::button;
+const AtomicString& ButtonInputType::formControlType() const {
+  return InputTypeNames::button;
 }
 
-bool ButtonInputType::supportsValidation() const
-{
-    return false;
+bool ButtonInputType::supportsValidation() const {
+  return false;
 }
 
-bool ButtonInputType::isTextButton() const
-{
-    return true;
+bool ButtonInputType::isTextButton() const {
+  return true;
 }
 
-} // namespace blink
+}  // namespace blink

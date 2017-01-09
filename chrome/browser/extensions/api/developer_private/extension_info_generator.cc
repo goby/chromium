@@ -4,11 +4,16 @@
 
 #include "chrome/browser/extensions/api/developer_private/extension_info_generator.h"
 
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "base/base64.h"
+#include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/api/commands/command_service.h"
 #include "chrome/browser/extensions/api/developer_private/inspectable_views_finder.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
@@ -44,6 +49,7 @@
 #include "extensions/common/manifest_url_handlers.h"
 #include "extensions/common/permissions/permissions_data.h"
 #include "extensions/grit/extensions_browser_resources.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 #include "ui/gfx/codec/png_codec.h"
@@ -101,13 +107,12 @@ void PopulateErrorBase(const ExtensionError& error, ErrorType* out) {
 
 // Given a ManifestError object, converts it into its developer_private
 // counterpart.
-linked_ptr<developer::ManifestError> ConstructManifestError(
-    const ManifestError& error) {
-  linked_ptr<developer::ManifestError> result(new developer::ManifestError());
-  PopulateErrorBase(error, result.get());
-  result->manifest_key = base::UTF16ToUTF8(error.manifest_key());
+developer::ManifestError ConstructManifestError(const ManifestError& error) {
+  developer::ManifestError result;
+  PopulateErrorBase(error, &result);
+  result.manifest_key = base::UTF16ToUTF8(error.manifest_key());
   if (!error.manifest_specific().empty()) {
-    result->manifest_specific.reset(
+    result.manifest_specific.reset(
         new std::string(base::UTF16ToUTF8(error.manifest_specific())));
   }
   return result;
@@ -115,40 +120,39 @@ linked_ptr<developer::ManifestError> ConstructManifestError(
 
 // Given a RuntimeError object, converts it into its developer_private
 // counterpart.
-linked_ptr<developer::RuntimeError> ConstructRuntimeError(
-    const RuntimeError& error) {
-  linked_ptr<developer::RuntimeError> result(new developer::RuntimeError());
-  PopulateErrorBase(error, result.get());
+developer::RuntimeError ConstructRuntimeError(const RuntimeError& error) {
+  developer::RuntimeError result;
+  PopulateErrorBase(error, &result);
   switch (error.level()) {
     case logging::LOG_VERBOSE:
     case logging::LOG_INFO:
-      result->severity = developer::ERROR_LEVEL_LOG;
+      result.severity = developer::ERROR_LEVEL_LOG;
       break;
     case logging::LOG_WARNING:
-      result->severity = developer::ERROR_LEVEL_WARN;
+      result.severity = developer::ERROR_LEVEL_WARN;
       break;
     case logging::LOG_FATAL:
     case logging::LOG_ERROR:
-      result->severity = developer::ERROR_LEVEL_ERROR;
+      result.severity = developer::ERROR_LEVEL_ERROR;
       break;
     default:
       NOTREACHED();
   }
-  result->occurrences = error.occurrences();
+  result.occurrences = error.occurrences();
   // NOTE(devlin): This is called "render_view_id" in the api for legacy
   // reasons, but it's not a high priority to change.
-  result->render_view_id = error.render_frame_id();
-  result->render_process_id = error.render_process_id();
-  result->can_inspect =
+  result.render_view_id = error.render_frame_id();
+  result.render_process_id = error.render_process_id();
+  result.can_inspect =
       content::RenderFrameHost::FromID(error.render_process_id(),
                                        error.render_frame_id()) != nullptr;
   for (const StackFrame& f : error.stack_trace()) {
-    linked_ptr<developer::StackFrame> frame(new developer::StackFrame());
-    frame->line_number = f.line_number;
-    frame->column_number = f.column_number;
-    frame->url = base::UTF16ToUTF8(f.source);
-    frame->function_name = base::UTF16ToUTF8(f.function);
-    result->stack_trace.push_back(frame);
+    developer::StackFrame frame;
+    frame.line_number = f.line_number;
+    frame.column_number = f.column_number;
+    frame.url = base::UTF16ToUTF8(f.source);
+    frame.function_name = base::UTF16ToUTF8(f.function);
+    result.stack_trace.push_back(std::move(frame));
   }
   return result;
 }
@@ -157,21 +161,21 @@ linked_ptr<developer::RuntimeError> ConstructRuntimeError(
 // to the list of |commands|.
 void ConstructCommands(CommandService* command_service,
                        const std::string& extension_id,
-                       std::vector<linked_ptr<developer::Command>>* commands) {
-  auto construct_command = [](const Command& command,
-                              bool active,
+                       std::vector<developer::Command>* commands) {
+  auto construct_command = [](const Command& command, bool active,
                               bool is_extension_action) {
-    developer::Command* command_value = new developer::Command();
-    command_value->description = is_extension_action ?
-        l10n_util::GetStringUTF8(IDS_EXTENSION_COMMANDS_GENERIC_ACTIVATE) :
-        base::UTF16ToUTF8(command.description());
-    command_value->keybinding =
+    developer::Command command_value;
+    command_value.description =
+        is_extension_action
+            ? l10n_util::GetStringUTF8(IDS_EXTENSION_COMMANDS_GENERIC_ACTIVATE)
+            : base::UTF16ToUTF8(command.description());
+    command_value.keybinding =
         base::UTF16ToUTF8(command.accelerator().GetShortcutText());
-    command_value->name = command.command_name();
-    command_value->is_active = active;
-    command_value->scope = command.global() ? developer::COMMAND_SCOPE_GLOBAL :
-        developer::COMMAND_SCOPE_CHROME;
-    command_value->is_extension_action = is_extension_action;
+    command_value.name = command.command_name();
+    command_value.is_active = active;
+    command_value.scope = command.global() ? developer::COMMAND_SCOPE_GLOBAL
+                                           : developer::COMMAND_SCOPE_CHROME;
+    command_value.is_extension_action = is_extension_action;
     return command_value;
   };
   bool active = false;
@@ -180,8 +184,7 @@ void ConstructCommands(CommandService* command_service,
                                                CommandService::ALL,
                                                &browser_action,
                                                &active)) {
-    commands->push_back(
-        make_linked_ptr(construct_command(browser_action, active, true)));
+    commands->push_back(construct_command(browser_action, active, true));
   }
 
   Command page_action;
@@ -189,8 +192,7 @@ void ConstructCommands(CommandService* command_service,
                                             CommandService::ALL,
                                             &page_action,
                                             &active)) {
-    commands->push_back(
-        make_linked_ptr(construct_command(page_action, active, true)));
+    commands->push_back(construct_command(page_action, active, true));
   }
 
   CommandMap named_commands;
@@ -212,8 +214,7 @@ void ConstructCommands(CommandService* command_service,
       command_to_use.set_accelerator(active_command.accelerator());
       command_to_use.set_global(active_command.global());
       bool active = command_to_use.accelerator().key_code() != ui::VKEY_UNKNOWN;
-      commands->push_back(
-          make_linked_ptr(construct_command(command_to_use, active, false)));
+      commands->push_back(construct_command(command_to_use, active, false));
     }
   }
 }
@@ -258,8 +259,8 @@ void ExtensionInfoGenerator::CreateExtensionInfo(
 
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                  base::Bind(callback, list_));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, base::Passed(&list_)));
     list_.clear();
   } else {
     callback_ = callback;
@@ -286,6 +287,8 @@ void ExtensionInfoGenerator::CreateExtensionsInfo(
   if (include_disabled) {
     add_to_list(registry->disabled_extensions(),
                 developer::EXTENSION_STATE_DISABLED);
+    add_to_list(registry->blacklisted_extensions(),
+                developer::EXTENSION_STATE_BLACKLISTED);
   }
   if (include_terminated) {
     add_to_list(registry->terminated_extensions(),
@@ -294,8 +297,8 @@ void ExtensionInfoGenerator::CreateExtensionsInfo(
 
   if (pending_image_loads_ == 0) {
     // Don't call the callback re-entrantly.
-    base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
-                                                  base::Bind(callback, list_));
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::Bind(callback, base::Passed(&list_)));
     list_.clear();
   } else {
     callback_ = callback;
@@ -305,7 +308,8 @@ void ExtensionInfoGenerator::CreateExtensionsInfo(
 void ExtensionInfoGenerator::CreateExtensionInfoHelper(
     const Extension& extension,
     developer::ExtensionState state) {
-  scoped_ptr<developer::ExtensionInfo> info(new developer::ExtensionInfo());
+  std::unique_ptr<developer::ExtensionInfo> info(
+      new developer::ExtensionInfo());
 
   // Don't consider the button hidden with the redesign, because "hidden"
   // buttons are now just hidden in the wrench menu.
@@ -316,6 +320,9 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
   // Blacklist text.
   int blacklist_text = -1;
   switch (extension_prefs_->GetExtensionBlacklistState(extension.id())) {
+    case BLACKLISTED_MALWARE:
+      blacklist_text = IDS_OPTIONS_BLACKLISTED_MALWARE;
+      break;
     case BLACKLISTED_SECURITY_VULNERABILITY:
       blacklist_text = IDS_OPTIONS_BLACKLISTED_SECURITY_VULNERABILITY;
       break;
@@ -363,12 +370,17 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
 
   // Dependent extensions.
   if (extension.is_shared_module()) {
-    scoped_ptr<ExtensionSet> dependent_extensions =
-        extension_system_->extension_service()->
-            shared_module_service()->GetDependentExtensions(&extension);
+    std::unique_ptr<ExtensionSet> dependent_extensions =
+        extension_system_->extension_service()
+            ->shared_module_service()
+            ->GetDependentExtensions(&extension);
     for (const scoped_refptr<const Extension>& dependent :
-             *dependent_extensions)
-      info->dependent_extensions.push_back(dependent->id());
+             *dependent_extensions) {
+      developer::DependentExtension extension;
+      extension.id = dependent->id();
+      extension.name = dependent->name();
+      info->dependent_extensions.push_back(std::move(extension));
+    }
   }
 
   info->description = extension.description();
@@ -454,7 +466,7 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
   if (error_console_enabled) {
     const ErrorList& errors =
         error_console_->GetErrorsForExtension(extension.id());
-    for (const ExtensionError* error : errors) {
+    for (const auto& error : errors) {
       switch (error->type()) {
         case ExtensionError::MANIFEST_ERROR:
           info->manifest_errors.push_back(ConstructManifestError(
@@ -498,6 +510,14 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
       extensions::path_util::PrettifyPath(extension.path()).AsUTF8Unsafe()));
   }
 
+  // Permissions.
+  PermissionMessages messages =
+      extension.permissions_data()->GetPermissionMessages();
+  // TODO(devlin): We need to include retained device/file info. We also need
+  // to indicate which can be removed and which can't.
+  for (const PermissionMessage& message : messages)
+    info->permissions.push_back(base::UTF16ToUTF8(message.message()));
+
   // Runs on all urls.
   ScriptingPermissionsModifier permissions_modifier(
       browser_context_, make_scoped_refptr(&extension));
@@ -506,8 +526,7 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
        permissions_modifier.CanAffectExtension(
            extension.permissions_data()->active_permissions())) ||
       permissions_modifier.HasAffectedExtension();
-  info->run_on_all_urls.is_active =
-      util::AllowedScriptingOnAllUrls(extension.id(), browser_context_);
+  info->run_on_all_urls.is_active = permissions_modifier.IsAllowedOnAllUrls();
 
   // Runtime warnings.
   std::vector<std::string> warnings =
@@ -538,7 +557,7 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
                                  ExtensionIconSet::MATCH_BIGGER);
   if (icon.empty()) {
     info->icon_url = GetDefaultIconUrl(extension.is_app(), !is_enabled);
-    list_.push_back(make_linked_ptr(info.release()));
+    list_.push_back(std::move(*info));
   } else {
     ++pending_image_loads_;
     // Max size of 128x128 is a random guess at a nice balance between being
@@ -546,12 +565,9 @@ void ExtensionInfoGenerator::CreateExtensionInfoHelper(
     // used by the url is 48x48).
     gfx::Size max_size(128, 128);
     image_loader_->LoadImageAsync(
-        &extension,
-        icon,
-        max_size,
+        &extension, icon, max_size,
         base::Bind(&ExtensionInfoGenerator::OnImageLoaded,
-                   weak_factory_.GetWeakPtr(),
-                   base::Passed(info.Pass())));
+                   weak_factory_.GetWeakPtr(), base::Passed(&info)));
   }
 }
 
@@ -595,14 +611,14 @@ std::string ExtensionInfoGenerator::GetIconUrlFromImage(
   }
 
   std::string base_64;
-  base::Base64Encode(std::string(data->front_as<char>(), data->size()),
+  base::Base64Encode(base::StringPiece(data->front_as<char>(), data->size()),
                      &base_64);
   const char kDataUrlPrefix[] = "data:image/png;base64,";
   return GURL(kDataUrlPrefix + base_64).spec();
 }
 
 void ExtensionInfoGenerator::OnImageLoaded(
-    scoped_ptr<developer::ExtensionInfo> info,
+    std::unique_ptr<developer::ExtensionInfo> info,
     const gfx::Image& icon) {
   if (!icon.IsEmpty()) {
     info->icon_url = GetIconUrlFromImage(
@@ -616,18 +632,15 @@ void ExtensionInfoGenerator::OnImageLoaded(
         is_app, info->state != developer::EXTENSION_STATE_ENABLED);
   }
 
-  list_.push_back(make_linked_ptr(info.release()));
+  list_.push_back(std::move(*info));
 
   --pending_image_loads_;
 
   if (pending_image_loads_ == 0) {  // All done!
-    // We assign to a temporary callback and list and reset the stored values so
-    // that at the end of the method, any stored refs are destroyed.
-    ExtensionInfoList list;
-    list.swap(list_);
-    ExtensionInfosCallback callback = callback_;
-    callback_.Reset();
-    callback.Run(list);  // WARNING: |this| is possibly deleted after this line!
+    ExtensionInfoList list = std::move(list_);
+    list_.clear();
+    base::ResetAndReturn(&callback_).Run(std::move(list));
+    // WARNING: |this| is possibly deleted after this line!
   }
 }
 

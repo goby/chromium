@@ -14,11 +14,20 @@ namespace {
 // Creates an ADTS header and stores in |hdr|
 // Assumes |hdr| points to an array of length |kAdtsHeaderSize|
 // Returns false if parameter values are for an unsupported configuration.
-bool GenerateAdtsHeader(
-    int codec, int layer, int audio_profile, int sample_rate_index,
-    int private_stream, int channel_configuration, int originality, int home,
-    int copyrighted_stream, int copyright_start, int frame_length,
-    int buffer_fullness, int number_of_frames_minus_one, uint8* hdr) {
+bool GenerateAdtsHeader(int codec,
+                        int layer,
+                        int audio_profile,
+                        int sample_rate_index,
+                        int private_stream,
+                        int channel_configuration,
+                        int originality,
+                        int home,
+                        int copyrighted_stream,
+                        int copyright_start,
+                        int frame_length,
+                        int buffer_fullness,
+                        int number_of_frames_minus_one,
+                        uint8_t* hdr) {
   DCHECK_EQ(codec, AV_CODEC_ID_AAC);
 
   memset(reinterpret_cast<void *>(hdr), 0,
@@ -57,6 +66,7 @@ bool GenerateAdtsHeader(
     case FF_PROFILE_AAC_MAIN:
       break;
     case FF_PROFILE_AAC_HE:
+    case FF_PROFILE_AAC_HE_V2:
     case FF_PROFILE_AAC_LOW:
       hdr[2] |= (1 << 6);
       break;
@@ -67,9 +77,8 @@ bool GenerateAdtsHeader(
       hdr[2] |= (3 << 6);
       break;
     default:
-      DLOG(ERROR) << "[" << __FUNCTION__ << "] "
-                  << "unsupported audio profile:"
-                  << audio_profile;
+      DLOG(ERROR) << "[" << __func__ << "] "
+                  << "unsupported audio profile:" << audio_profile;
       return false;
   }
 
@@ -106,14 +115,14 @@ bool GenerateAdtsHeader(
       hdr[2] |= 1;
       hdr[3] |= (2 << 6);
       break;
-    case 7:
+    case 8:
       // front-center, front-left, front-right, side-left, side-right,
       // back-left, back-right, LFE-channel
       hdr[2] |= 1;
       hdr[3] |= (3 << 6);
       break;
     default:
-      DLOG(ERROR) << "[" << __FUNCTION__ << "] "
+      DLOG(ERROR) << "[" << __func__ << "] "
                   << "unsupported number of audio channels:"
                   << channel_configuration;
       return false;
@@ -148,15 +157,15 @@ bool GenerateAdtsHeader(
 }
 
 FFmpegAACBitstreamConverter::FFmpegAACBitstreamConverter(
-    AVCodecContext* stream_codec_context)
-    : stream_codec_context_(stream_codec_context),
+    AVCodecParameters* stream_codec_parameters)
+    : stream_codec_parameters_(stream_codec_parameters),
       header_generated_(false),
       codec_(),
       audio_profile_(),
       sample_rate_index_(),
       channel_configuration_(),
       frame_length_() {
-  CHECK(stream_codec_context_);
+  CHECK(stream_codec_parameters_);
 }
 
 FFmpegAACBitstreamConverter::~FFmpegAACBitstreamConverter() {
@@ -169,45 +178,44 @@ bool FFmpegAACBitstreamConverter::ConvertPacket(AVPacket* packet) {
 
   int header_plus_packet_size =
       packet->size + kAdtsHeaderSize;
-  if (!stream_codec_context_->extradata) {
+  if (!stream_codec_parameters_->extradata) {
     DLOG(ERROR) << "extradata is null";
     return false;
   }
-  if (stream_codec_context_->extradata_size < 2) {
+  if (stream_codec_parameters_->extradata_size < 2) {
     DLOG(ERROR) << "extradata too small to contain MP4A header";
     return false;
   }
   int sample_rate_index =
-      ((stream_codec_context_->extradata[0] & 0x07) << 1) |
-      ((stream_codec_context_->extradata[1] & 0x80) >> 7);
+      ((stream_codec_parameters_->extradata[0] & 0x07) << 1) |
+      ((stream_codec_parameters_->extradata[1] & 0x80) >> 7);
   if (sample_rate_index > 12) {
     sample_rate_index = 4;
   }
 
-  if (!header_generated_ ||
-      codec_ != stream_codec_context_->codec_id ||
-      audio_profile_ != stream_codec_context_->profile ||
+  if (!header_generated_ || codec_ != stream_codec_parameters_->codec_id ||
+      audio_profile_ != stream_codec_parameters_->profile ||
       sample_rate_index_ != sample_rate_index ||
-      channel_configuration_ != stream_codec_context_->channels ||
+      channel_configuration_ != stream_codec_parameters_->channels ||
       frame_length_ != header_plus_packet_size) {
-    header_generated_ = GenerateAdtsHeader(stream_codec_context_->codec_id,
-                                           0,  // layer
-                                           stream_codec_context_->profile,
-                                           sample_rate_index,
-                                           0,  // private stream
-                                           stream_codec_context_->channels,
-                                           0,  // originality
-                                           0,  // home
-                                           0,  // copyrighted_stream
-                                           0,  // copyright_ start
-                                           header_plus_packet_size,
-                                           0x7FF,  // buffer fullness
-                                           0,  // one frame per packet
-                                           hdr_);
-    codec_ = stream_codec_context_->codec_id;
-    audio_profile_ = stream_codec_context_->profile;
+    header_generated_ =
+        GenerateAdtsHeader(stream_codec_parameters_->codec_id,
+                           0,  // layer
+                           stream_codec_parameters_->profile, sample_rate_index,
+                           0,  // private stream
+                           stream_codec_parameters_->channels,
+                           0,  // originality
+                           0,  // home
+                           0,  // copyrighted_stream
+                           0,  // copyright_ start
+                           header_plus_packet_size,
+                           0x7FF,  // buffer fullness
+                           0,      // one frame per packet
+                           hdr_);
+    codec_ = stream_codec_parameters_->codec_id;
+    audio_profile_ = stream_codec_parameters_->profile;
     sample_rate_index_ = sample_rate_index;
-    channel_configuration_ = stream_codec_context_->channels;
+    channel_configuration_ = stream_codec_parameters_->channels;
     frame_length_ = header_plus_packet_size;
   }
 

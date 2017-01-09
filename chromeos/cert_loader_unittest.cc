@@ -4,17 +4,21 @@
 
 #include "chromeos/cert_loader.h"
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file_util.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "crypto/scoped_nss_types.h"
 #include "crypto/scoped_test_nss_db.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/nss_cert_database_chromeos.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace chromeos {
@@ -37,11 +41,12 @@ class TestNSSCertDatabase : public net::NSSCertDatabaseChromeOS {
  public:
   TestNSSCertDatabase(crypto::ScopedPK11Slot public_slot,
                       crypto::ScopedPK11Slot private_slot)
-      : NSSCertDatabaseChromeOS(public_slot.Pass(), private_slot.Pass()) {}
+      : NSSCertDatabaseChromeOS(std::move(public_slot),
+                                std::move(private_slot)) {}
   ~TestNSSCertDatabase() override {}
 
   void NotifyOfCertAdded(const net::X509Certificate* cert) {
-    NSSCertDatabaseChromeOS::NotifyObserversOfCertAdded(cert);
+    NSSCertDatabaseChromeOS::NotifyObserversCertDBChanged(nullptr);
   }
 };
 
@@ -92,7 +97,7 @@ class CertLoaderTest : public testing::Test,
   }
 
   void CreateCertDatabase(crypto::ScopedTestNSSDB* db,
-                          scoped_ptr<TestNSSCertDatabase>* certdb) {
+                          std::unique_ptr<TestNSSCertDatabase>* certdb) {
     ASSERT_TRUE(db->is_open());
 
     certdb->reset(new TestNSSCertDatabase(
@@ -137,7 +142,7 @@ class CertLoaderTest : public testing::Test,
   // has nothing to do with crypto::InitializeNSSForChromeOSUser is_primary_user
   // parameter (which is irrelevant for these tests).
   crypto::ScopedTestNSSDB primary_db_;
-  scoped_ptr<TestNSSCertDatabase> primary_certdb_;
+  std::unique_ptr<TestNSSCertDatabase> primary_certdb_;
 
   base::MessageLoop message_loop_;
 
@@ -193,7 +198,7 @@ TEST_F(CertLoaderTest, CertLoaderUpdatesCertListOnNewCert) {
 
 TEST_F(CertLoaderTest, CertLoaderNoUpdateOnSecondaryDbChanges) {
   crypto::ScopedTestNSSDB secondary_db;
-  scoped_ptr<TestNSSCertDatabase> secondary_certdb;
+  std::unique_ptr<TestNSSCertDatabase> secondary_certdb;
 
   StartCertLoaderWithPrimaryDB();
   CreateCertDatabase(&secondary_db, &secondary_certdb);
@@ -222,7 +227,7 @@ TEST_F(CertLoaderTest, ClientLoaderUpdateOnNewClientCert) {
 
 TEST_F(CertLoaderTest, CertLoaderNoUpdateOnNewClientCertInSecondaryDb) {
   crypto::ScopedTestNSSDB secondary_db;
-  scoped_ptr<TestNSSCertDatabase> secondary_certdb;
+  std::unique_ptr<TestNSSCertDatabase> secondary_certdb;
 
   StartCertLoaderWithPrimaryDB();
   CreateCertDatabase(&secondary_db, &secondary_certdb);

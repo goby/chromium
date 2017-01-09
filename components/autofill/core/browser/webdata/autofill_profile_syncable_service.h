@@ -5,12 +5,12 @@
 #define COMPONENTS_AUTOFILL_CORE_BROWSER_WEBDATA_AUTOFILL_PROFILE_SYNCABLE_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/scoped_observer.h"
 #include "base/supports_user_data.h"
 #include "base/synchronization/lock.h"
@@ -20,13 +20,15 @@
 #include "components/autofill/core/browser/webdata/autofill_entry.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_backend.h"
 #include "components/autofill/core/browser/webdata/autofill_webdata_service_observer.h"
-#include "sync/api/sync_change.h"
-#include "sync/api/sync_data.h"
-#include "sync/api/sync_error.h"
-#include "sync/api/syncable_service.h"
-#include "sync/protocol/autofill_specifics.pb.h"
+#include "components/sync/model/sync_change.h"
+#include "components/sync/model/sync_data.h"
+#include "components/sync/model/sync_error.h"
+#include "components/sync/model/syncable_service.h"
+#include "components/sync/protocol/autofill_specifics.pb.h"
 
+namespace browser_sync {
 class ProfileSyncServiceAutofillTest;
+}  // namespace browser_sync
 
 namespace autofill {
 
@@ -69,8 +71,8 @@ class AutofillProfileSyncableService
   syncer::SyncMergeResult MergeDataAndStartSyncing(
       syncer::ModelType type,
       const syncer::SyncDataList& initial_sync_data,
-      scoped_ptr<syncer::SyncChangeProcessor> sync_processor,
-      scoped_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
+      std::unique_ptr<syncer::SyncChangeProcessor> sync_processor,
+      std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory) override;
   void StopSyncing(syncer::ModelType type) override;
   syncer::SyncDataList GetAllSyncData(syncer::ModelType type) const override;
   syncer::SyncError ProcessSyncChanges(
@@ -97,8 +99,8 @@ class AutofillProfileSyncableService
 
   // Helper to query WebDatabase for the current autofill state.
   // Made virtual for ease of mocking in unit tests.
-  // Caller owns returned |profiles|.
-  virtual bool LoadAutofillData(std::vector<AutofillProfile*>* profiles);
+  virtual bool LoadAutofillData(
+      std::vector<std::unique_ptr<AutofillProfile>>* profiles);
 
   // Helper to persist any changes that occured during model association to
   // the WebDatabase.
@@ -116,11 +118,17 @@ class AutofillProfileSyncableService
   static syncer::SyncData CreateData(const AutofillProfile& profile);
 
  private:
-  friend class ::ProfileSyncServiceAutofillTest;
+  friend class browser_sync::ProfileSyncServiceAutofillTest;
   FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
                            UpdateField);
   FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
-                           MergeProfile);
+                           MergeSimilarProfiles_AdditionalInfoInBothProfiles);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_DifferentUseDates);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_DifferentNames);
+  FRIEND_TEST_ALL_PREFIXES(AutofillProfileSyncableServiceTest,
+                           MergeSimilarProfiles_NonZeroUseCounts);
 
   // The map of the guid to profiles owned by the |profiles_| vector.
   typedef std::map<std::string, AutofillProfile*> GUIDToProfileMap;
@@ -129,8 +137,7 @@ class AutofillProfileSyncableService
   // |specifics|.
   static bool OverwriteProfileWithServerData(
       const sync_pb::AutofillProfileSpecifics& specifics,
-      AutofillProfile* profile,
-      const std::string& app_locale);
+      AutofillProfile* profile);
 
   // Writes |profile| data into supplied |profile_specifics|.
   static void WriteAutofillProfile(const AutofillProfile& profile,
@@ -138,8 +145,9 @@ class AutofillProfileSyncableService
 
   // Creates |profile_map| from the supplied |profiles| vector. Necessary for
   // fast processing of the changes.
-  void CreateGUIDToProfileMap(const std::vector<AutofillProfile*>& profiles,
-                              GUIDToProfileMap* profile_map);
+  void CreateGUIDToProfileMap(
+      const std::vector<std::unique_ptr<AutofillProfile>>& profiles,
+      GUIDToProfileMap* profile_map);
 
   // Creates or updates a profile based on |data|. Looks at the guid of the data
   // and if a profile with such guid is present in |profile_map| updates it. If
@@ -162,14 +170,13 @@ class AutofillProfileSyncableService
                           const std::string& new_value,
                           AutofillProfile* autofill_profile);
 
-  // Calls merge_into->OverwriteWithOrAddTo() and then checks if the
-  // |merge_into| has extra data. Returns true if |merge_from| needs updating to
-  // be in sync with |merge_into|.
-  // TODO(isherman): Seems like this should return |true| if |merge_into| was
-  // modified at all: http://crbug.com/248440
-  static bool MergeProfile(const AutofillProfile& merge_from,
-                           AutofillProfile* merge_into,
-                           const std::string& app_locale);
+  // Calls merge_into->OverwriteWith() and then checks if the
+  // |merge_into| has extra data. Returns true if the merge has made a change to
+  // |merge_into|. This should be used only for similar profiles ie. profiles
+  // where the PrimaryValue() matches.
+  static bool MergeSimilarProfiles(const AutofillProfile& merge_from,
+                                   AutofillProfile* merge_into,
+                                   const std::string& app_locale);
 
   AutofillWebDataBackend* webdata_backend_;  // WEAK
   std::string app_locale_;
@@ -178,12 +185,12 @@ class AutofillProfileSyncableService
 
   // Cached Autofill profiles. *Warning* deleted profiles are still in the
   // vector - use the |profiles_map_| to iterate through actual profiles.
-  ScopedVector<AutofillProfile> profiles_;
+  std::vector<std::unique_ptr<AutofillProfile>> profiles_;
   GUIDToProfileMap profiles_map_;
 
-  scoped_ptr<syncer::SyncChangeProcessor> sync_processor_;
+  std::unique_ptr<syncer::SyncChangeProcessor> sync_processor_;
 
-  scoped_ptr<syncer::SyncErrorFactory> sync_error_factory_;
+  std::unique_ptr<syncer::SyncErrorFactory> sync_error_factory_;
 
   syncer::SyncableService::StartSyncFlare flare_;
 
@@ -193,6 +200,7 @@ class AutofillProfileSyncableService
 // This object is used in unit tests as well, so it defined here.
 struct AutofillProfileSyncableService::DataBundle {
   DataBundle();
+  DataBundle(const DataBundle& other);
   ~DataBundle();
 
   std::vector<std::string> profiles_to_delete;

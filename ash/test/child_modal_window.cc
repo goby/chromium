@@ -49,11 +49,10 @@ const SkColor kChildColor = SK_ColorWHITE;
 
 void CreateChildModalParent(gfx::NativeView context) {
   Widget::CreateWindowWithContextAndBounds(
-      new ChildModalParent(context),
-      context,
-      gfx::Rect(kWindowLeft, kWindowTop, kWindowWidth, kWindowHeight))->Show();
+      new ChildModalParent(context), context,
+      gfx::Rect(kWindowLeft, kWindowTop, kWindowWidth, kWindowHeight))
+      ->Show();
 }
-
 
 class ChildModalWindow : public views::WidgetDelegateView {
  public:
@@ -66,7 +65,6 @@ class ChildModalWindow : public views::WidgetDelegateView {
   gfx::Size GetPreferredSize() const override;
 
   // Overridden from WidgetDelegate:
-  View* GetContentsView() override;
   base::string16 GetWindowTitle() const override;
   bool CanResize() const override;
   ui::ModalType GetModalType() const override;
@@ -77,13 +75,11 @@ class ChildModalWindow : public views::WidgetDelegateView {
 ChildModalWindow::ChildModalWindow() {
   views::Textfield* textfield = new views::Textfield;
   AddChildView(textfield);
-  textfield->SetBounds(
-      kChildTextfieldLeft, kChildTextfieldTop,
-      kChildTextfieldWidth, kChildTextfieldHeight);
+  textfield->SetBounds(kChildTextfieldLeft, kChildTextfieldTop,
+                       kChildTextfieldWidth, kChildTextfieldHeight);
 }
 
-ChildModalWindow::~ChildModalWindow() {
-}
+ChildModalWindow::~ChildModalWindow() {}
 
 void ChildModalWindow::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), kChildColor);
@@ -91,10 +87,6 @@ void ChildModalWindow::OnPaint(gfx::Canvas* canvas) {
 
 gfx::Size ChildModalWindow::GetPreferredSize() const {
   return gfx::Size(kChildWindowWidth, kChildWindowHeight);
-}
-
-views::View* ChildModalWindow::GetContentsView() {
-  return this;
 }
 
 base::string16 ChildModalWindow::GetWindowTitle() const {
@@ -110,9 +102,9 @@ ui::ModalType ChildModalWindow::GetModalType() const {
 }
 
 ChildModalParent::ChildModalParent(gfx::NativeView context)
-    : button_(new views::LabelButton(this,
-                                     base::ASCIIToUTF16(
-                                         "Show/Hide Child Modal Window"))),
+    : button_(new views::LabelButton(
+          this,
+          base::ASCIIToUTF16("Show/Hide Child Modal Window"))),
       textfield_(new views::Textfield),
       host_(new views::NativeViewHost),
       modal_parent_(NULL),
@@ -130,8 +122,7 @@ ChildModalParent::ChildModalParent(gfx::NativeView context)
   AddChildView(host_);
 }
 
-ChildModalParent::~ChildModalParent() {
-}
+ChildModalParent::~ChildModalParent() {}
 
 void ChildModalParent::ShowChild() {
   if (!child_)
@@ -150,16 +141,12 @@ gfx::NativeWindow ChildModalParent::GetChild() const {
 }
 
 Widget* ChildModalParent::CreateChild() {
-  Widget* child = Widget::CreateWindowWithParent(
-      new ChildModalWindow, GetWidget()->GetNativeView());
+  Widget* child = Widget::CreateWindowWithParent(new ChildModalWindow,
+                                                 GetWidget()->GetNativeView());
   wm::SetModalParent(child->GetNativeView(), GetModalParent());
   child->AddObserver(this);
   child->GetNativeView()->SetName("ChildModalWindow");
   return child;
-}
-
-views::View* ChildModalParent::GetContentsView() {
-  return this;
 }
 
 base::string16 ChildModalParent::GetWindowTitle() const {

@@ -2,21 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "media/cast/receiver/frame_receiver.h"
+
+#include <stddef.h>
+#include <stdint.h>
+
 #include <deque>
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/test/simple_test_tick_clock.h"
+#include "media/base/fake_single_thread_task_runner.h"
 #include "media/cast/cast_environment.h"
 #include "media/cast/logging/simple_event_subscriber.h"
-#include "media/cast/net/cast_transport_sender_impl.h"
-#include "media/cast/net/mock_cast_transport_sender.h"
+#include "media/cast/net/cast_transport_impl.h"
+#include "media/cast/net/mock_cast_transport.h"
 #include "media/cast/net/rtcp/rtcp_utility.h"
 #include "media/cast/net/rtcp/test_rtcp_packet_builder.h"
-#include "media/cast/receiver/frame_receiver.h"
-#include "media/cast/test/fake_single_thread_task_runner.h"
 #include "media/cast/test/utility/default_config.h"
 #include "testing/gmock/include/gmock/gmock.h"
 
@@ -28,21 +33,24 @@ namespace cast {
 namespace {
 
 const int kPacketSize = 1500;
-const uint32 kFirstFrameId = 1234;
 const int kPlayoutDelayMillis = 100;
+
+FrameId GetFirstTestFrameId() {
+  return FrameId::first() + 1234;
+}
 
 class FakeFrameClient {
  public:
   FakeFrameClient() : num_called_(0) {}
   virtual ~FakeFrameClient() {}
 
-  void AddExpectedResult(uint32 expected_frame_id,
+  void AddExpectedResult(FrameId expected_frame_id,
                          const base::TimeTicks& expected_playout_time) {
     expected_results_.push_back(
         std::make_pair(expected_frame_id, expected_playout_time));
   }
 
-  void DeliverEncodedFrame(scoped_ptr<EncodedFrame> frame) {
+  void DeliverEncodedFrame(std::unique_ptr<EncodedFrame> frame) {
     SCOPED_TRACE(::testing::Message() << "num_called_ is " << num_called_);
     ASSERT_TRUE(frame)
         << "If at shutdown: There were unsatisfied requests enqueued.";
@@ -56,7 +64,7 @@ class FakeFrameClient {
   int number_times_called() const { return num_called_; }
 
  private:
-  std::deque<std::pair<uint32, base::TimeTicks> > expected_results_;
+  std::deque<std::pair<FrameId, base::TimeTicks>> expected_results_;
   int num_called_;
 
   DISALLOW_COPY_AND_ASSIGN(FakeFrameClient);
@@ -69,13 +77,11 @@ class FrameReceiverTest : public ::testing::Test {
     testing_clock_ = new base::SimpleTestTickClock();
     testing_clock_->Advance(base::TimeTicks::Now() - base::TimeTicks());
     start_time_ = testing_clock_->NowTicks();
-    task_runner_ = new test::FakeSingleThreadTaskRunner(testing_clock_);
+    task_runner_ = new FakeSingleThreadTaskRunner(testing_clock_);
 
     cast_environment_ =
-        new CastEnvironment(scoped_ptr<base::TickClock>(testing_clock_).Pass(),
-                            task_runner_,
-                            task_runner_,
-                            task_runner_);
+        new CastEnvironment(std::unique_ptr<base::TickClock>(testing_clock_),
+                            task_runner_, task_runner_, task_runner_);
   }
 
   ~FrameReceiverTest() override {}
@@ -85,11 +91,11 @@ class FrameReceiverTest : public ::testing::Test {
 
     // Always start with a key frame.
     rtp_header_.is_key_frame = true;
-    rtp_header_.frame_id = kFirstFrameId;
+    rtp_header_.frame_id = GetFirstTestFrameId();
     rtp_header_.packet_id = 0;
     rtp_header_.max_packet_id = 0;
     rtp_header_.reference_frame_id = rtp_header_.frame_id;
-    rtp_header_.rtp_timestamp = 0;
+    rtp_header_.rtp_timestamp = RtpTimeTicks();
   }
 
   void CreateFrameReceiverOfAudio() {
@@ -119,45 +125,47 @@ class FrameReceiverTest : public ::testing::Test {
 
   void FeedLipSyncInfoIntoReceiver() {
     const base::TimeTicks now = testing_clock_->NowTicks();
-    const int64 rtp_timestamp = (now - start_time_) *
-        config_.rtp_timebase / base::TimeDelta::FromSeconds(1);
-    CHECK_LE(0, rtp_timestamp);
-    uint32 ntp_seconds;
-    uint32 ntp_fraction;
+    const RtpTimeTicks rtp_timestamp =
+        RtpTimeTicks::FromTimeDelta(now - start_time_, config_.rtp_timebase);
+    CHECK_LE(RtpTimeTicks(), rtp_timestamp);
+    uint32_t ntp_seconds;
+    uint32_t ntp_fraction;
     ConvertTimeTicksToNtp(now, &ntp_seconds, &ntp_fraction);
     TestRtcpPacketBuilder rtcp_packet;
-    rtcp_packet.AddSrWithNtp(config_.sender_ssrc,
-                             ntp_seconds, ntp_fraction,
-                             static_cast<uint32>(rtp_timestamp));
-    ASSERT_TRUE(receiver_->ProcessPacket(rtcp_packet.GetPacket().Pass()));
+    rtcp_packet.AddSrWithNtp(config_.sender_ssrc, ntp_seconds, ntp_fraction,
+                             rtp_timestamp.lower_32_bits());
+    ASSERT_TRUE(receiver_->ProcessPacket(rtcp_packet.GetPacket()));
   }
 
   FrameReceiverConfig config_;
-  std::vector<uint8> payload_;
+  std::vector<uint8_t> payload_;
   RtpCastHeader rtp_header_;
   base::SimpleTestTickClock* testing_clock_;  // Owned by CastEnvironment.
   base::TimeTicks start_time_;
-  MockCastTransportSender mock_transport_;
-  scoped_refptr<test::FakeSingleThreadTaskRunner> task_runner_;
+  MockCastTransport mock_transport_;
+  scoped_refptr<FakeSingleThreadTaskRunner> task_runner_;
   scoped_refptr<CastEnvironment> cast_environment_;
   FakeFrameClient frame_client_;
 
   // Important for the FrameReceiver to be declared last, since its dependencies
   // must remain alive until after its destruction.
-  scoped_ptr<FrameReceiver> receiver_;
+  std::unique_ptr<FrameReceiver> receiver_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FrameReceiverTest);
 };
 
 TEST_F(FrameReceiverTest, RejectsUnparsablePackets) {
+  EXPECT_CALL(mock_transport_, AddValidRtpReceiver(_, _))
+      .WillRepeatedly(testing::Return());
+
   CreateFrameReceiverOfVideo();
 
   SimpleEventSubscriber event_subscriber;
   cast_environment_->logger()->Subscribe(&event_subscriber);
 
   const bool success = receiver_->ProcessPacket(
-      scoped_ptr<Packet>(new Packet(kPacketSize, 0xff)).Pass());
+      std::unique_ptr<Packet>(new Packet(kPacketSize, 0xff)));
   EXPECT_FALSE(success);
 
   // Confirm no log events.
@@ -168,12 +176,22 @@ TEST_F(FrameReceiverTest, RejectsUnparsablePackets) {
 }
 
 TEST_F(FrameReceiverTest, ReceivesOneFrame) {
+  EXPECT_CALL(mock_transport_, AddValidRtpReceiver(_, _))
+      .WillRepeatedly(testing::Return());
+
   CreateFrameReceiverOfAudio();
 
   SimpleEventSubscriber event_subscriber;
   cast_environment_->logger()->Subscribe(&event_subscriber);
 
-  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver(_, _, _, _, _, _, _))
+  EXPECT_CALL(mock_transport_, InitializeRtpReceiverRtcpBuilder(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddCastFeedback(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddPli(_)).WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddRtcpEvents(_))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver())
       .WillRepeatedly(testing::Return());
 
   FeedLipSyncInfoIntoReceiver();
@@ -192,7 +210,7 @@ TEST_F(FrameReceiverTest, ReceivesOneFrame) {
   const base::TimeDelta target_playout_delay =
       base::TimeDelta::FromMilliseconds(kPlayoutDelayMillis);
   frame_client_.AddExpectedResult(
-      kFirstFrameId, testing_clock_->NowTicks() + target_playout_delay);
+      GetFirstTestFrameId(), testing_clock_->NowTicks() + target_playout_delay);
   FeedOneFrameIntoReceiver();
   task_runner_->RunTasks();
   EXPECT_EQ(1, frame_client_.number_times_called());
@@ -209,18 +227,28 @@ TEST_F(FrameReceiverTest, ReceivesOneFrame) {
 }
 
 TEST_F(FrameReceiverTest, ReceivesFramesSkippingWhenAppropriate) {
+  EXPECT_CALL(mock_transport_, AddValidRtpReceiver(_, _))
+      .WillRepeatedly(testing::Return());
+
   CreateFrameReceiverOfAudio();
 
   SimpleEventSubscriber event_subscriber;
   cast_environment_->logger()->Subscribe(&event_subscriber);
 
-  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver(_, _, _, _, _, _, _))
+  EXPECT_CALL(mock_transport_, InitializeRtpReceiverRtcpBuilder(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddCastFeedback(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddPli(_)).WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddRtcpEvents(_))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver())
       .WillRepeatedly(testing::Return());
 
-  const uint32 rtp_advance_per_frame =
-      config_.rtp_timebase / config_.target_frame_rate;
   const base::TimeDelta time_advance_per_frame =
       base::TimeDelta::FromSeconds(1) / config_.target_frame_rate;
+  const RtpTimeDelta rtp_advance_per_frame =
+      RtpTimeDelta::FromTimeDelta(time_advance_per_frame, config_.rtp_timebase);
 
   // Feed and process lip sync in receiver.
   FeedLipSyncInfoIntoReceiver();
@@ -239,8 +267,8 @@ TEST_F(FrameReceiverTest, ReceivesFramesSkippingWhenAppropriate) {
   const base::TimeDelta target_playout_delay =
       base::TimeDelta::FromMilliseconds(kPlayoutDelayMillis);
   frame_client_.AddExpectedResult(
-      kFirstFrameId, first_frame_capture_time + target_playout_delay);
-  rtp_header_.rtp_timestamp = 0;
+      GetFirstTestFrameId(), first_frame_capture_time + target_playout_delay);
+  rtp_header_.rtp_timestamp = RtpTimeTicks();
   FeedOneFrameIntoReceiver();  // Frame 1
   task_runner_->RunTasks();
   EXPECT_EQ(1, frame_client_.number_times_called());
@@ -252,13 +280,13 @@ TEST_F(FrameReceiverTest, ReceivesFramesSkippingWhenAppropriate) {
 
   // Receive one frame out-of-order: Make sure that we are not continuous and
   // that the RTP timestamp represents a time in the future.
-  rtp_header_.frame_id = kFirstFrameId + 2;  // "Frame 3"
+  rtp_header_.frame_id = GetFirstTestFrameId() + 2;  // "Frame 3"
   rtp_header_.reference_frame_id = rtp_header_.frame_id;
-  rtp_header_.rtp_timestamp += 2 * rtp_advance_per_frame;
-  frame_client_.AddExpectedResult(
-      kFirstFrameId + 2,
-      first_frame_capture_time + 2 * time_advance_per_frame +
-          target_playout_delay);
+  rtp_header_.rtp_timestamp += rtp_advance_per_frame * 2;
+  frame_client_.AddExpectedResult(rtp_header_.frame_id,
+                                  first_frame_capture_time +
+                                      2 * time_advance_per_frame +
+                                      target_playout_delay);
   FeedOneFrameIntoReceiver();  // Frame 3
 
   // Frame 2 should not come out at this point in time.
@@ -278,12 +306,13 @@ TEST_F(FrameReceiverTest, ReceivesFramesSkippingWhenAppropriate) {
   EXPECT_EQ(2, frame_client_.number_times_called());
 
   // Receive Frame 4 and expect it to fulfill the third request immediately.
-  rtp_header_.frame_id = kFirstFrameId + 3;  // "Frame 4"
+  rtp_header_.frame_id = GetFirstTestFrameId() + 3;  // "Frame 4"
   rtp_header_.reference_frame_id = rtp_header_.frame_id;
   rtp_header_.rtp_timestamp += rtp_advance_per_frame;
-  frame_client_.AddExpectedResult(
-      kFirstFrameId + 3, first_frame_capture_time + 3 * time_advance_per_frame +
-          target_playout_delay);
+  frame_client_.AddExpectedResult(rtp_header_.frame_id,
+                                  first_frame_capture_time +
+                                      3 * time_advance_per_frame +
+                                      target_playout_delay);
   FeedOneFrameIntoReceiver();    // Frame 4
   task_runner_->RunTasks();
   EXPECT_EQ(3, frame_client_.number_times_called());
@@ -301,29 +330,39 @@ TEST_F(FrameReceiverTest, ReceivesFramesSkippingWhenAppropriate) {
   for (size_t i = 0; i < frame_events.size(); ++i) {
     EXPECT_EQ(FRAME_ACK_SENT, frame_events[i].type);
     EXPECT_EQ(AUDIO_EVENT, frame_events[i].media_type);
-    EXPECT_LE(kFirstFrameId, frame_events[i].frame_id);
-    EXPECT_GE(kFirstFrameId + 4, frame_events[i].frame_id);
-    const int frame_offset = frame_events[i].frame_id - kFirstFrameId;
+    EXPECT_LE(GetFirstTestFrameId(), frame_events[i].frame_id);
+    EXPECT_GE(GetFirstTestFrameId() + 4, frame_events[i].frame_id);
+    const int frame_offset = frame_events[i].frame_id - GetFirstTestFrameId();
     EXPECT_NE(frame_offset, 1);  // Frame 2 never received.
-    EXPECT_EQ(frame_offset * rtp_advance_per_frame,
+    EXPECT_EQ(RtpTimeTicks() + (rtp_advance_per_frame * frame_offset),
               frame_events[i].rtp_timestamp);
   }
   cast_environment_->logger()->Unsubscribe(&event_subscriber);
 }
 
 TEST_F(FrameReceiverTest, ReceivesFramesRefusingToSkipAny) {
+  EXPECT_CALL(mock_transport_, AddValidRtpReceiver(_, _))
+      .WillRepeatedly(testing::Return());
+
   CreateFrameReceiverOfVideo();
 
   SimpleEventSubscriber event_subscriber;
   cast_environment_->logger()->Subscribe(&event_subscriber);
 
-  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver(_, _, _, _, _, _, _))
+  EXPECT_CALL(mock_transport_, InitializeRtpReceiverRtcpBuilder(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddCastFeedback(_, _))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddPli(_)).WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, AddRtcpEvents(_))
+      .WillRepeatedly(testing::Return());
+  EXPECT_CALL(mock_transport_, SendRtcpFromRtpReceiver())
       .WillRepeatedly(testing::Return());
 
-  const uint32 rtp_advance_per_frame =
-      config_.rtp_timebase / config_.target_frame_rate;
   const base::TimeDelta time_advance_per_frame =
       base::TimeDelta::FromSeconds(1) / config_.target_frame_rate;
+  const RtpTimeDelta rtp_advance_per_frame =
+      RtpTimeDelta::FromTimeDelta(time_advance_per_frame, config_.rtp_timebase);
 
   // Feed and process lip sync in receiver.
   FeedLipSyncInfoIntoReceiver();
@@ -342,8 +381,8 @@ TEST_F(FrameReceiverTest, ReceivesFramesRefusingToSkipAny) {
   const base::TimeDelta target_playout_delay =
       base::TimeDelta::FromMilliseconds(kPlayoutDelayMillis);
   frame_client_.AddExpectedResult(
-      kFirstFrameId, first_frame_capture_time + target_playout_delay);
-  rtp_header_.rtp_timestamp = 0;
+      GetFirstTestFrameId(), first_frame_capture_time + target_playout_delay);
+  rtp_header_.rtp_timestamp = RtpTimeTicks();
   FeedOneFrameIntoReceiver();  // Frame 1
   task_runner_->RunTasks();
   EXPECT_EQ(1, frame_client_.number_times_called());
@@ -356,9 +395,9 @@ TEST_F(FrameReceiverTest, ReceivesFramesRefusingToSkipAny) {
   // Receive one frame out-of-order: Make sure that we are not continuous and
   // that the RTP timestamp represents a time in the future.
   rtp_header_.is_key_frame = false;
-  rtp_header_.frame_id = kFirstFrameId + 2;  // "Frame 3"
-  rtp_header_.reference_frame_id = kFirstFrameId + 1;  // "Frame 2"
-  rtp_header_.rtp_timestamp += 2 * rtp_advance_per_frame;
+  rtp_header_.frame_id = GetFirstTestFrameId() + 2;            // "Frame 3"
+  rtp_header_.reference_frame_id = GetFirstTestFrameId() + 1;  // "Frame 2"
+  rtp_header_.rtp_timestamp += rtp_advance_per_frame * 2;
   FeedOneFrameIntoReceiver();  // Frame 3
 
   // Frame 2 should not come out at this point in time.
@@ -380,14 +419,14 @@ TEST_F(FrameReceiverTest, ReceivesFramesRefusingToSkipAny) {
 
   // Now receive Frame 2 and expect both the second and third requests to be
   // fulfilled immediately.
-  frame_client_.AddExpectedResult(
-      kFirstFrameId + 1,  // "Frame 2"
-      first_frame_capture_time + 1 * time_advance_per_frame +
-          target_playout_delay);
-  frame_client_.AddExpectedResult(
-      kFirstFrameId + 2,  // "Frame 3"
-      first_frame_capture_time + 2 * time_advance_per_frame +
-          target_playout_delay);
+  frame_client_.AddExpectedResult(GetFirstTestFrameId() + 1,  // "Frame 2"
+                                  first_frame_capture_time +
+                                      1 * time_advance_per_frame +
+                                      target_playout_delay);
+  frame_client_.AddExpectedResult(GetFirstTestFrameId() + 2,  // "Frame 3"
+                                  first_frame_capture_time +
+                                      2 * time_advance_per_frame +
+                                      target_playout_delay);
   --rtp_header_.frame_id;  // "Frame 2"
   --rtp_header_.reference_frame_id;  // "Frame 1"
   rtp_header_.rtp_timestamp -= rtp_advance_per_frame;
@@ -408,10 +447,10 @@ TEST_F(FrameReceiverTest, ReceivesFramesRefusingToSkipAny) {
   for (size_t i = 0; i < frame_events.size(); ++i) {
     EXPECT_EQ(FRAME_ACK_SENT, frame_events[i].type);
     EXPECT_EQ(VIDEO_EVENT, frame_events[i].media_type);
-    EXPECT_LE(kFirstFrameId, frame_events[i].frame_id);
-    EXPECT_GE(kFirstFrameId + 3, frame_events[i].frame_id);
-    const int frame_offset = frame_events[i].frame_id - kFirstFrameId;
-    EXPECT_EQ(frame_offset * rtp_advance_per_frame,
+    EXPECT_LE(GetFirstTestFrameId(), frame_events[i].frame_id);
+    EXPECT_GE(GetFirstTestFrameId() + 3, frame_events[i].frame_id);
+    const int frame_offset = frame_events[i].frame_id - GetFirstTestFrameId();
+    EXPECT_EQ(RtpTimeTicks() + (rtp_advance_per_frame * frame_offset),
               frame_events[i].rtp_timestamp);
   }
   cast_environment_->logger()->Unsubscribe(&event_subscriber);

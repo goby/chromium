@@ -4,13 +4,14 @@
 
 #include <string>
 
-#include "base/prefs/pref_value_map.h"
+#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "chrome/browser/net/disk_cache_dir_policy_handler.h"
 #include "chrome/common/pref_names.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
+#include "components/prefs/pref_value_map.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace policy {
@@ -29,12 +30,9 @@ TEST_F(DiskCacheDirPolicyTest, Default) {
 
 TEST_F(DiskCacheDirPolicyTest, SetPolicyInvalid) {
   // DiskCacheDir policy expects a string; give it a boolean.
-  policy_.Set(key::kDiskCacheDir,
-              POLICY_LEVEL_MANDATORY,
-              POLICY_SCOPE_USER,
+  policy_.Set(key::kDiskCacheDir, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
               POLICY_SOURCE_CLOUD,
-              new base::FundamentalValue(false),
-              NULL);
+              base::MakeUnique<base::FundamentalValue>(false), nullptr);
   handler_.ApplyPolicySettings(policy_, &prefs_);
   EXPECT_FALSE(prefs_.GetValue(prefs::kDiskCacheDir, NULL));
 }
@@ -42,12 +40,9 @@ TEST_F(DiskCacheDirPolicyTest, SetPolicyInvalid) {
 TEST_F(DiskCacheDirPolicyTest, SetPolicyValid) {
   // Use a variable in the value. It should be expanded by the handler.
   const std::string in = "${user_name}/foo";
-  policy_.Set(key::kDiskCacheDir,
-              POLICY_LEVEL_MANDATORY,
-              POLICY_SCOPE_USER,
-              POLICY_SOURCE_CLOUD,
-              new base::StringValue(in),
-              NULL);
+  policy_.Set(key::kDiskCacheDir, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+              POLICY_SOURCE_CLOUD, base::MakeUnique<base::StringValue>(in),
+              nullptr);
   handler_.ApplyPolicySettings(policy_, &prefs_);
 
   const base::Value* value;

@@ -11,6 +11,7 @@
 #include <string>
 
 #include "base/files/file.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/extensions/file_manager/private_api_base.h"
 #include "chrome/browser/chromeos/file_system_provider/provided_file_system_interface.h"
 #include "chrome/browser/extensions/chrome_extension_function.h"
@@ -26,7 +27,7 @@ namespace extensions {
 // Implements the chrome.fileManagerPrivate.logoutUserForReauthentication
 // method.
 class FileManagerPrivateLogoutUserForReauthenticationFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.logoutUserForReauthentication",
                              FILEMANAGERPRIVATE_LOGOUTUSERFORREAUTHENTICATION)
@@ -34,14 +35,14 @@ class FileManagerPrivateLogoutUserForReauthenticationFunction
  protected:
   ~FileManagerPrivateLogoutUserForReauthenticationFunction() override {}
 
-  // SyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 // Implements the chrome.fileManagerPrivate.getPreferences method.
 // Gets settings for Files.app.
 class FileManagerPrivateGetPreferencesFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.getPreferences",
                              FILEMANAGERPRIVATE_GETPREFERENCES)
@@ -49,13 +50,13 @@ class FileManagerPrivateGetPreferencesFunction
  protected:
   ~FileManagerPrivateGetPreferencesFunction() override {}
 
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // Implements the chrome.fileManagerPrivate.setPreferences method.
 // Sets settings for Files.app.
 class FileManagerPrivateSetPreferencesFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.setPreferences",
                              FILEMANAGERPRIVATE_SETPREFERENCES)
@@ -63,7 +64,7 @@ class FileManagerPrivateSetPreferencesFunction
  protected:
   ~FileManagerPrivateSetPreferencesFunction() override {}
 
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // Implements the chrome.fileManagerPrivate.zipSelection method.
@@ -87,10 +88,11 @@ class FileManagerPrivateInternalZipSelectionFunction
 };
 
 // Implements the chrome.fileManagerPrivate.zoom method.
-// Changes the zoom level of the file manager by internally calling
-// RenderViewHost::Zoom(). TODO(hirono): Remove this function once the zoom
-// level change is supported for all apps. crbug.com/227175.
-class FileManagerPrivateZoomFunction : public ChromeSyncExtensionFunction {
+// Changes the zoom level of the file manager by modifying the zoom level of the
+// WebContents.
+// TODO(hirono): Remove this function once the zoom level change is supported
+// for all apps. crbug.com/227175.
+class FileManagerPrivateZoomFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.zoom",
                              FILEMANAGERPRIVATE_ZOOM);
@@ -98,8 +100,8 @@ class FileManagerPrivateZoomFunction : public ChromeSyncExtensionFunction {
  protected:
   ~FileManagerPrivateZoomFunction() override {}
 
-  // AsyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 class FileManagerPrivateRequestWebStoreAccessTokenFunction
@@ -115,14 +117,13 @@ class FileManagerPrivateRequestWebStoreAccessTokenFunction
   bool RunAsync() override;
 
  private:
-  scoped_ptr<google_apis::AuthServiceInterface> auth_service_;
+  std::unique_ptr<google_apis::AuthServiceInterface> auth_service_;
 
   void OnAccessTokenFetched(google_apis::DriveApiErrorCode code,
                             const std::string& access_token);
 };
 
-class FileManagerPrivateGetProfilesFunction
-    : public ChromeSyncExtensionFunction {
+class FileManagerPrivateGetProfilesFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.getProfiles",
                              FILEMANAGERPRIVATE_GETPROFILES);
@@ -130,13 +131,13 @@ class FileManagerPrivateGetProfilesFunction
  protected:
   ~FileManagerPrivateGetProfilesFunction() override {}
 
-  // AsyncExtensionFunction overrides.
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 // Implements the chrome.fileManagerPrivate.openInspector method.
 class FileManagerPrivateOpenInspectorFunction
-    : public ChromeSyncExtensionFunction {
+    : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("fileManagerPrivate.openInspector",
                              FILEMANAGERPRIVATE_OPENINSPECTOR);
@@ -144,7 +145,7 @@ class FileManagerPrivateOpenInspectorFunction
  protected:
   ~FileManagerPrivateOpenInspectorFunction() override {}
 
-  bool RunSync() override;
+  ResponseAction Run() override;
 };
 
 // Implements the chrome.fileManagerPrivate.getMimeType method.

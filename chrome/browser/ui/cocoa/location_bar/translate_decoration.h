@@ -7,6 +7,7 @@
 
 #import <Cocoa/Cocoa.h>
 
+#include "base/macros.h"
 #include "chrome/browser/ui/cocoa/location_bar/image_decoration.h"
 
 class CommandUpdater;
@@ -21,13 +22,17 @@ class TranslateDecoration : public ImageDecoration {
   ~TranslateDecoration() override;
 
   // Toggles the icon on or off.
-  void SetLit(bool on);
+  void SetLit(bool on, bool locationBarIsDark);
 
   // Implement |LocationBarDecoration|
   bool AcceptsMousePress() override;
   bool OnMousePressed(NSRect frame, NSPoint location) override;
   NSString* GetToolTip() override;
   NSPoint GetBubblePointInFrame(NSRect frame) override;
+
+ protected:
+  // Overridden from LocationBarDecoration:
+  gfx::VectorIconId GetMaterialVectorIconId() const override;
 
  private:
   // For showing the translate bubble up.

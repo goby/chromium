@@ -9,7 +9,7 @@
 #include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
@@ -87,10 +87,10 @@ void RemoteHostInfoFetcher::OnURLFetchComplete(const net::URLFetcher* source) {
     return;
   }
 
-  scoped_ptr<base::Value> response_value(
+  std::unique_ptr<base::Value> response_value(
       base::JSONReader::Read(response_string));
   if (!response_value ||
-      !response_value->IsType(base::Value::TYPE_DICTIONARY)) {
+      !response_value->IsType(base::Value::Type::DICTIONARY)) {
     LOG(ERROR) << "Failed to parse response string to JSON";
     base::ResetAndReturn(&remote_host_info_callback_).Run(remote_host_info);
     return;

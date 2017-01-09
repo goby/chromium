@@ -4,8 +4,10 @@
 
 #include "extensions/shell/browser/shell_prefs.h"
 
+#include "base/macros.h"
 #include "base/path_service.h"
-#include "base/prefs/pref_service.h"
+#include "build/build_config.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "content/public/test/test_browser_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -43,7 +45,7 @@ class ShellPrefsTest : public testing::Test {
 };
 
 TEST_F(ShellPrefsTest, CreateLocalState) {
-  scoped_ptr<PrefService> local_state =
+  std::unique_ptr<PrefService> local_state =
       shell_prefs::CreateLocalState(browser_context_.GetPath());
   ASSERT_TRUE(local_state);
 
@@ -58,7 +60,7 @@ TEST_F(ShellPrefsTest, CreateLocalState) {
 
 TEST_F(ShellPrefsTest, CreateUserPrefService) {
   // Create the pref service. This loads the test pref file.
-  scoped_ptr<PrefService> service =
+  std::unique_ptr<PrefService> service =
       shell_prefs::CreateUserPrefService(&browser_context_);
 
   // Some basic extension preferences are registered.

@@ -6,14 +6,14 @@
 
 #include "base/bind.h"
 #include "base/values.h"
-#include "chrome/browser/lifetime/application_lifetime.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/web_ui.h"
 
 #if defined(OS_WIN)
-#include "base/prefs/pref_service.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #endif
 
 #if defined(OS_CHROMEOS)
@@ -36,10 +36,6 @@ void LanguagesHandler::RegisterMessages() {
       "setUILanguage",
       base::Bind(&LanguagesHandler::HandleSetUILanguage,
                  base::Unretained(this)));
-  web_ui()->RegisterMessageCallback(
-      "restart",
-      base::Bind(&LanguagesHandler::HandleRestart,
-                 base::Unretained(this)));
 }
 
 void LanguagesHandler::HandleSetUILanguage(const base::ListValue* args) {
@@ -57,21 +53,13 @@ void LanguagesHandler::HandleSetUILanguage(const base::ListValue* args) {
   const user_manager::User* user =
       chromeos::ProfileHelper::Get()->GetUserByProfile(profile_);
   if (user &&
-      user->email() == user_manager->GetPrimaryUser()->email() &&
+      user->GetAccountId() == user_manager->GetPrimaryUser()->GetAccountId() &&
       user->GetType() != user_manager::USER_TYPE_PUBLIC_ACCOUNT) {
     profile_->ChangeAppLocale(language_code,
                               Profile::APP_LOCALE_CHANGED_VIA_SETTINGS);
   }
 #else
   NOTREACHED() << "Attempting to set locale on unsupported platform";
-#endif
-}
-
-void LanguagesHandler::HandleRestart(const base::ListValue* args) {
-#if defined(OS_CHROMEOS)
-  chrome::AttemptUserExit();
-#else
-  chrome::AttemptRestart();
 #endif
 }
 

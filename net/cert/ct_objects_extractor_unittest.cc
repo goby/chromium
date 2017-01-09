@@ -5,13 +5,13 @@
 #include "net/cert/ct_objects_extractor.h"
 
 #include "base/files/file_path.h"
-#include "net/base/test_data_directory.h"
 #include "net/cert/ct_log_verifier.h"
 #include "net/cert/ct_serialization.h"
 #include "net/cert/signed_certificate_timestamp.h"
 #include "net/cert/x509_certificate.h"
 #include "net/test/cert_test_util.h"
 #include "net/test/ct_test_util.h"
+#include "net/test/test_data_directory.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace net {
@@ -32,7 +32,7 @@ class CTObjectsExtractorTest : public ::testing::Test {
                                                   der_test_cert.length());
 
     log_ = CTLogVerifier::Create(ct::GetTestPublicKey(), "testlog",
-                                 "https://ct.example.com");
+                                 "https://ct.example.com", "dns.example.com");
     ASSERT_TRUE(log_);
   }
 
@@ -62,7 +62,7 @@ TEST_F(CTObjectsExtractorTest, ExtractEmbeddedSCT) {
       new ct::SignedCertificateTimestamp());
   ExtractEmbeddedSCT(precert_chain_[0], &sct);
 
-  EXPECT_EQ(sct->version, SignedCertificateTimestamp::SCT_VERSION_1);
+  EXPECT_EQ(sct->version, SignedCertificateTimestamp::V1);
   EXPECT_EQ(ct::GetTestPublicKeyId(), sct->log_id);
 
   base::Time expected_timestamp =
@@ -83,7 +83,7 @@ TEST_F(CTObjectsExtractorTest, ExtractPrecert) {
   // Compare hash values of issuer spki.
   SHA256HashValue expected_issuer_key_hash;
   memcpy(expected_issuer_key_hash.data, GetDefaultIssuerKeyHash().data(), 32);
-  ASSERT_TRUE(expected_issuer_key_hash.Equals(entry.issuer_key_hash));
+  ASSERT_EQ(expected_issuer_key_hash, entry.issuer_key_hash);
 }
 
 TEST_F(CTObjectsExtractorTest, ExtractOrdinaryX509Cert) {

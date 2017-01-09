@@ -4,10 +4,14 @@
 
 #include "chrome/test/base/test_browser_window_aura.h"
 
+#include <utility>
+
+#include "base/memory/ptr_util.h"
+
 namespace chrome {
 
-scoped_ptr<Browser> CreateBrowserWithAuraTestWindowForParams(
-    scoped_ptr<aura::Window> window,
+std::unique_ptr<Browser> CreateBrowserWithAuraTestWindowForParams(
+    std::unique_ptr<aura::Window> window,
     Browser::CreateParams* params) {
   if (window.get() == nullptr) {
     window.reset(new aura::Window(nullptr));
@@ -18,7 +22,7 @@ scoped_ptr<Browser> CreateBrowserWithAuraTestWindowForParams(
   }
 
   TestBrowserWindowAura* browser_window =
-      new TestBrowserWindowAura(window.Pass());
+      new TestBrowserWindowAura(std::move(window));
   new TestBrowserWindowOwner(browser_window);
   return browser_window->CreateBrowser(params);
 }
@@ -26,8 +30,8 @@ scoped_ptr<Browser> CreateBrowserWithAuraTestWindowForParams(
 }  // namespace chrome
 
 TestBrowserWindowAura::TestBrowserWindowAura(
-    scoped_ptr<aura::Window> native_window)
-    : native_window_(native_window.Pass()) {}
+    std::unique_ptr<aura::Window> native_window)
+    : native_window_(std::move(native_window)) {}
 
 TestBrowserWindowAura::~TestBrowserWindowAura() {}
 
@@ -47,9 +51,9 @@ gfx::Rect TestBrowserWindowAura::GetBounds() const {
   return native_window_->bounds();
 }
 
-scoped_ptr<Browser> TestBrowserWindowAura::CreateBrowser(
+std::unique_ptr<Browser> TestBrowserWindowAura::CreateBrowser(
     Browser::CreateParams* params) {
   params->window = this;
   browser_ = new Browser(*params);
-  return make_scoped_ptr(browser_);
+  return base::WrapUnique(browser_);
 }

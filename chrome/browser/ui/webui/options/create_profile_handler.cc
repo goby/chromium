@@ -4,27 +4,34 @@
 
 #include "chrome/browser/ui/webui/options/create_profile_handler.h"
 
+#include <stddef.h>
+
+#include <vector>
+
 #include "base/bind.h"
 #include "base/files/file_path.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
 #include "base/value_conversions.h"
 #include "base/values.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/profiles/profile_attributes_entry.h"
+#include "chrome/browser/profiles/profile_attributes_storage.h"
 #include "chrome/browser/profiles/profile_avatar_icon_util.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
-#include "chrome/browser/ui/webui/options/options_handlers_helper.h"
+#include "chrome/browser/ui/webui/profile_helper.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/browser/profile_sync_service.h"
+#include "components/browser_sync/profile_sync_service.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/web_ui.h"
 #include "ui/base/l10n/l10n_util.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/legacy/supervised_user_registration_utility.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service.h"
 #include "chrome/browser/supervised_user/legacy/supervised_user_sync_service_factory.h"
@@ -40,7 +47,7 @@ CreateProfileHandler::CreateProfileHandler()
 }
 
 CreateProfileHandler::~CreateProfileHandler() {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Cancellation is only supported for supervised users.
   CancelProfileRegistration(false);
 #endif
@@ -51,7 +58,7 @@ void CreateProfileHandler::GetLocalizedValues(
 }
 
 void CreateProfileHandler::RegisterMessages() {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Cancellation is only supported for supervised users.
   web_ui()->RegisterMessageCallback(
       "cancelCreateProfile",
@@ -65,7 +72,7 @@ void CreateProfileHandler::RegisterMessages() {
 }
 
 void CreateProfileHandler::CreateProfile(const base::ListValue* args) {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // This handler could have been called for a supervised user, for example
   // because the user fiddled with the web inspector. Silently return.
   if (Profile::FromWebUI(web_ui())->IsSupervised())
@@ -100,7 +107,7 @@ void CreateProfileHandler::CreateProfile(const base::ListValue* args) {
     args->GetBoolean(2, &create_shortcut);
   }
   std::string supervised_user_id;
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   if (!ProcessSupervisedCreateProfileArgs(args, &supervised_user_id))
     return;
 #endif
@@ -108,18 +115,14 @@ void CreateProfileHandler::CreateProfile(const base::ListValue* args) {
   ProfileMetrics::LogProfileAddNewUser(ProfileMetrics::ADD_NEW_USER_DIALOG);
 
   profile_path_being_created_ = ProfileManager::CreateMultiProfileAsync(
-      name, icon_url,
-      base::Bind(&CreateProfileHandler::OnProfileCreated,
-                 weak_ptr_factory_.GetWeakPtr(),
-                 create_shortcut,
-                 helper::GetDesktopType(web_ui()),
-                 supervised_user_id),
+      name, icon_url, base::Bind(&CreateProfileHandler::OnProfileCreated,
+                                 weak_ptr_factory_.GetWeakPtr(),
+                                 create_shortcut, supervised_user_id),
       supervised_user_id);
 }
 
 void CreateProfileHandler::OnProfileCreated(
     bool create_shortcut,
-    chrome::HostDesktopType desktop_type,
     const std::string& supervised_user_id,
     Profile* profile,
     Profile::CreateStatus status) {
@@ -136,8 +139,8 @@ void CreateProfileHandler::OnProfileCreated(
       break;
     }
     case Profile::CREATE_STATUS_INITIALIZED: {
-      HandleProfileCreationSuccess(create_shortcut, desktop_type,
-                                   supervised_user_id, profile);
+      HandleProfileCreationSuccess(create_shortcut, supervised_user_id,
+                                   profile);
       break;
     }
     // User-initiated cancellation is handled in CancelProfileRegistration and
@@ -155,20 +158,18 @@ void CreateProfileHandler::OnProfileCreated(
 
 void CreateProfileHandler::HandleProfileCreationSuccess(
     bool create_shortcut,
-    chrome::HostDesktopType desktop_type,
     const std::string& supervised_user_id,
     Profile* profile) {
   switch (profile_creation_type_) {
     case NON_SUPERVISED_PROFILE_CREATION: {
       DCHECK(supervised_user_id.empty());
-      CreateShortcutAndShowSuccess(create_shortcut, desktop_type, profile);
+      CreateShortcutAndShowSuccess(create_shortcut, profile);
       break;
     }
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
     case SUPERVISED_PROFILE_CREATION:
     case SUPERVISED_PROFILE_IMPORT:
-      RegisterSupervisedUser(create_shortcut, desktop_type,
-                             supervised_user_id, profile);
+      RegisterSupervisedUser(create_shortcut, supervised_user_id, profile);
       break;
 #endif
     case NO_CREATION_IN_PROGRESS:
@@ -177,10 +178,8 @@ void CreateProfileHandler::HandleProfileCreationSuccess(
   }
 }
 
-void CreateProfileHandler::CreateShortcutAndShowSuccess(
-    bool create_shortcut,
-    chrome::HostDesktopType desktop_type,
-    Profile* profile) {
+void CreateProfileHandler::CreateShortcutAndShowSuccess(bool create_shortcut,
+                                                        Profile* profile) {
   if (create_shortcut) {
     ProfileShortcutManager* shortcut_manager =
         g_browser_process->profile_manager()->profile_shortcut_manager();
@@ -196,13 +195,13 @@ void CreateProfileHandler::CreateShortcutAndShowSuccess(
   dict.SetString("name",
                  profile->GetPrefs()->GetString(prefs::kProfileName));
   dict.Set("filePath", base::CreateFilePathValue(profile->GetPath()));
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   bool is_supervised =
       profile_creation_type_ == SUPERVISED_PROFILE_CREATION ||
       profile_creation_type_ == SUPERVISED_PROFILE_IMPORT;
   dict.SetBoolean("isSupervised", is_supervised);
 #endif
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       GetJavascriptMethodName(PROFILE_CREATION_SUCCESS), dict);
 
   // If the new profile is a supervised user, instead of opening a new window
@@ -211,7 +210,7 @@ void CreateProfileHandler::CreateShortcutAndShowSuccess(
   // new non-supervised user profile we don't show any confirmation, so open
   // the new window now.
   bool should_open_new_window = true;
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   if (profile_creation_type_ == SUPERVISED_PROFILE_CREATION)
     should_open_new_window = false;
 #endif
@@ -219,9 +218,7 @@ void CreateProfileHandler::CreateShortcutAndShowSuccess(
   if (should_open_new_window) {
     // Opening the new window must be the last action, after all callbacks
     // have been run, to give them a chance to initialize the profile.
-    helper::OpenNewWindowForProfile(desktop_type,
-                                    profile,
-                                    Profile::CREATE_STATUS_INITIALIZED);
+    webui::OpenNewWindowForProfile(profile);
   }
   profile_creation_type_ = NO_CREATION_IN_PROGRESS;
 }
@@ -232,12 +229,15 @@ void CreateProfileHandler::ShowProfileCreationError(
   DCHECK_NE(NO_CREATION_IN_PROGRESS, profile_creation_type_);
   profile_creation_type_ = NO_CREATION_IN_PROGRESS;
   profile_path_being_created_.clear();
-  web_ui()->CallJavascriptFunction(
+  web_ui()->CallJavascriptFunctionUnsafe(
       GetJavascriptMethodName(PROFILE_CREATION_ERROR),
       base::StringValue(error));
   // The ProfileManager calls us back with a NULL profile in some cases.
-  if (profile)
-    helper::DeleteProfileAtPath(profile->GetPath(), web_ui());
+  if (profile) {
+    webui::DeleteProfileAtPath(profile->GetPath(),
+                               web_ui(),
+                               ProfileMetrics::DELETE_PROFILE_SETTINGS);
+  }
 }
 
 void CreateProfileHandler::RecordProfileCreationMetrics(
@@ -253,7 +253,7 @@ void CreateProfileHandler::RecordProfileCreationMetrics(
 base::string16 CreateProfileHandler::GetProfileCreationErrorMessageLocal()
     const {
   int message_id = IDS_PROFILES_CREATE_LOCAL_ERROR;
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Local errors can occur during supervised profile import.
   if (profile_creation_type_ == SUPERVISED_PROFILE_IMPORT)
     message_id = IDS_LEGACY_SUPERVISED_USER_IMPORT_LOCAL_ERROR;
@@ -261,7 +261,7 @@ base::string16 CreateProfileHandler::GetProfileCreationErrorMessageLocal()
   return l10n_util::GetStringUTF16(message_id);
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 base::string16 CreateProfileHandler::GetProfileCreationErrorMessageRemote()
     const {
   return l10n_util::GetStringUTF16(
@@ -282,7 +282,7 @@ base::string16 CreateProfileHandler::GetProfileCreationErrorMessageSignin()
 std::string CreateProfileHandler::GetJavascriptMethodName(
     ProfileCreationStatus status) const {
   switch (profile_creation_type_) {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
     case SUPERVISED_PROFILE_IMPORT:
       switch (status) {
         case PROFILE_CREATION_SUCCESS:
@@ -306,7 +306,7 @@ std::string CreateProfileHandler::GetJavascriptMethodName(
   return std::string();
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 bool CreateProfileHandler::ProcessSupervisedCreateProfileArgs(
     const base::ListValue* args, std::string* supervised_user_id) {
   bool supervised_user = false;
@@ -331,12 +331,13 @@ bool CreateProfileHandler::ProcessSupervisedCreateProfileArgs(
       // If sync is not yet fully initialized, the creation may take extra time,
       // so show a message. Import doesn't wait for an acknowledgment, so it
       // won't have the same potential delay.
-      ProfileSyncService* sync_service =
+      browser_sync::ProfileSyncService* sync_service =
           ProfileSyncServiceFactory::GetInstance()->GetForProfile(
               Profile::FromWebUI(web_ui()));
-      ProfileSyncService::SyncStatusSummary status =
+      browser_sync::ProfileSyncService::SyncStatusSummary status =
           sync_service->QuerySyncStatusSummary();
-      if (status == ProfileSyncService::DATATYPES_NOT_INITIALIZED) {
+      if (status ==
+          browser_sync::ProfileSyncService::DATATYPES_NOT_INITIALIZED) {
         ShowProfileCreationWarning(l10n_util::GetStringUTF16(
             IDS_PROFILES_CREATE_SUPERVISED_JUST_SIGNED_IN));
       }
@@ -378,12 +379,13 @@ void CreateProfileHandler::CancelProfileRegistration(bool user_initiated) {
   // Cancelling registration means the callback passed into
   // RegisterAndInitSync() won't be called, so the cleanup must be done here.
   profile_path_being_created_.clear();
-  helper::DeleteProfileAtPath(new_profile->GetPath(), web_ui());
+  webui::DeleteProfileAtPath(new_profile->GetPath(),
+                             web_ui(),
+                             ProfileMetrics::DELETE_PROFILE_SETTINGS);
 }
 
 void CreateProfileHandler::RegisterSupervisedUser(
     bool create_shortcut,
-    chrome::HostDesktopType desktop_type,
     const std::string& supervised_user_id,
     Profile* new_profile) {
   DCHECK_EQ(profile_path_being_created_.value(),
@@ -402,19 +404,17 @@ void CreateProfileHandler::RegisterSupervisedUser(
       base::Bind(&CreateProfileHandler::OnSupervisedUserRegistered,
                  weak_ptr_factory_.GetWeakPtr(),
                  create_shortcut,
-                 desktop_type,
                  new_profile));
 }
 
 void CreateProfileHandler::OnSupervisedUserRegistered(
     bool create_shortcut,
-    chrome::HostDesktopType desktop_type,
     Profile* profile,
     const GoogleServiceAuthError& error) {
   GoogleServiceAuthError::State state = error.state();
   RecordSupervisedProfileCreationMetrics(state);
   if (state == GoogleServiceAuthError::NONE) {
-    CreateShortcutAndShowSuccess(create_shortcut, desktop_type, profile);
+    CreateShortcutAndShowSuccess(create_shortcut, profile);
     return;
   }
 
@@ -433,8 +433,8 @@ void CreateProfileHandler::OnSupervisedUserRegistered(
 void CreateProfileHandler::ShowProfileCreationWarning(
     const base::string16& warning) {
   DCHECK_EQ(SUPERVISED_PROFILE_CREATION, profile_creation_type_);
-  web_ui()->CallJavascriptFunction("BrowserOptions.showCreateProfileWarning",
-                                   base::StringValue(warning));
+  web_ui()->CallJavascriptFunctionUnsafe(
+      "BrowserOptions.showCreateProfileWarning", base::StringValue(warning));
 }
 
 void CreateProfileHandler::RecordSupervisedProfileCreationMetrics(
@@ -470,11 +470,11 @@ bool CreateProfileHandler::IsValidExistingSupervisedUserId(
     return false;
 
   // Check if this supervised user already exists on this machine.
-  const ProfileInfoCache& cache =
-      g_browser_process->profile_manager()->GetProfileInfoCache();
-  for (size_t i = 0; i < cache.GetNumberOfProfiles(); ++i) {
-    if (existing_supervised_user_id ==
-            cache.GetSupervisedUserIdOfProfileAtIndex(i))
+  std::vector<ProfileAttributesEntry*> entries =
+      g_browser_process->profile_manager()->
+      GetProfileAttributesStorage().GetAllProfilesAttributes();
+  for (const ProfileAttributesEntry* entry : entries) {
+    if (existing_supervised_user_id == entry->GetSupervisedUserId())
       return false;
   }
   return true;

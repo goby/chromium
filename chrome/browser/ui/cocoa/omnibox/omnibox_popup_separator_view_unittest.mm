@@ -5,7 +5,8 @@
 #import "chrome/browser/ui/cocoa/omnibox/omnibox_popup_separator_view.h"
 
 #include "base/mac/scoped_nsobject.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "base/macros.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
 
 class OmniboxPopupBottomSeparatorViewTest : public CocoaTest {
  public:

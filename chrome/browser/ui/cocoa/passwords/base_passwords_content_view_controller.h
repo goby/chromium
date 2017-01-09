@@ -7,32 +7,38 @@
 
 #import <Cocoa/Cocoa.h>
 
+class ManagePasswordsBubbleModel;
+
 // Handles user interaction with the content view.
-@protocol ManagePasswordsBubbleContentViewDelegate<NSObject>
+@protocol BasePasswordsContentViewDelegate<NSObject>
+
+// Returns the model object.
+@property(nonatomic, readonly) ManagePasswordsBubbleModel* model;
 
 // The user performed an action that should dismiss the bubble.
 - (void)viewShouldDismiss;
 
+// The bubble should update its state.
+- (void)refreshBubble;
+
 @end
 
 // Base class for a state of the password management bubble.
-@interface ManagePasswordsBubbleContentViewController : NSViewController {
-  id<ManagePasswordsBubbleContentViewDelegate> delegate_;  // Weak.
+@interface BasePasswordsContentViewController : NSViewController {
+ @private
+  id<BasePasswordsContentViewDelegate> delegate_;  // Weak.
 }
-- (id)initWithDelegate:(id<ManagePasswordsBubbleContentViewDelegate>)delegate;
+@property(nonatomic, assign) id<BasePasswordsContentViewDelegate> delegate;
+
+- (instancetype)initWithDelegate:(id<BasePasswordsContentViewDelegate>)delegate;
 - (NSButton*)addButton:(NSString*)title
                 toView:(NSView*)view
                 target:(id)target
                 action:(SEL)action;
 - (NSTextField*)addTitleLabel:(NSString*)title toView:(NSView*)view;
-- (NSTextField*)addLabel:(NSString*)title toView:(NSView*)view;
-- (void)bubbleWillDisappear;
 
 // Returns the default button for the bubble.
 - (NSButton*)defaultButton;
-
-@property(nonatomic, assign)
-    id<ManagePasswordsBubbleContentViewDelegate> delegate;
 
 @end
 

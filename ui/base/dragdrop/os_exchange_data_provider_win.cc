@@ -4,12 +4,15 @@
 
 #include "ui/base/dragdrop/os_exchange_data_provider_win.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 #include "base/i18n/file_util_icu.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/win/scoped_hglobal.h"
@@ -274,8 +277,9 @@ OSExchangeDataProviderWin::OSExchangeDataProviderWin()
 OSExchangeDataProviderWin::~OSExchangeDataProviderWin() {
 }
 
-OSExchangeData::Provider* OSExchangeDataProviderWin::Clone() const {
-  return new OSExchangeDataProviderWin(data_object());
+std::unique_ptr<OSExchangeData::Provider>
+OSExchangeDataProviderWin::Clone() const {
+  return base::MakeUnique<OSExchangeDataProviderWin>(data_object());
 }
 
 void OSExchangeDataProviderWin::MarkOriginatedFromRenderer() {
@@ -892,7 +896,7 @@ ULONG DataObjectImpl::Release() {
 static STGMEDIUM* GetStorageForBytes(const void* data, size_t bytes) {
   HANDLE handle = GlobalAlloc(GPTR, static_cast<int>(bytes));
   if (handle) {
-    base::win::ScopedHGlobal<uint8*> scoped(handle);
+    base::win::ScopedHGlobal<uint8_t*> scoped(handle);
     memcpy(scoped.get(), data, bytes);
   }
 
@@ -1061,14 +1065,6 @@ static STGMEDIUM* GetStorageForFileDescriptor(
   storage->hGlobal = hdata;
   storage->pUnkForRelease = NULL;
   return storage;
-}
-
-///////////////////////////////////////////////////////////////////////////////
-// OSExchangeData, public:
-
-// static
-OSExchangeData::Provider* OSExchangeData::CreateProvider() {
-  return new OSExchangeDataProviderWin();
 }
 
 }  // namespace ui

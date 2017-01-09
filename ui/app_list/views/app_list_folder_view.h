@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "base/macros.h"
 #include "ui/app_list/app_list_item_list_observer.h"
 #include "ui/app_list/views/apps_grid_view.h"
 #include "ui/app_list/views/apps_grid_view_folder_delegate.h"
@@ -83,7 +84,7 @@ class AppListFolderView : public views::View,
       bool has_native_drag);
 
   // Overridden from views::View:
-  void GetAccessibleState(ui::AXViewState* state) override;
+  void GetAccessibleNodeData(ui::AXNodeData* node_data) override;
 
   // Overridden from FolderHeaderViewDelegate:
   void NavigateBack(AppListFolderItem* item,
@@ -110,7 +111,7 @@ class AppListFolderView : public views::View,
   FolderHeaderView* folder_header_view_;  // Owned by views hierarchy.
   AppsGridView* items_grid_view_;  // Owned by the views hierarchy.
 
-  scoped_ptr<views::ViewModel> view_model_;
+  std::unique_ptr<views::ViewModel> view_model_;
 
   AppListModel* model_;  // Not owned.
   AppListFolderItem* folder_item_;  // Not owned.

@@ -5,12 +5,14 @@
 #ifndef STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_USAGE_CACHE_H_
 #define STORAGE_BROWSER_FILEAPI_FILE_SYSTEM_USAGE_CACHE_H_
 
-#include <map>
+#include <stdint.h>
 
-#include "base/basictypes.h"
+#include <map>
+#include <memory>
+
 #include "base/files/file.h"
 #include "base/files/file_path.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequenced_task_runner.h"
 #include "storage/browser/storage_browser_export.h"
@@ -26,11 +28,11 @@ class STORAGE_EXPORT FileSystemUsageCache {
 
   // Gets the size described in the .usage file even if dirty > 0 or
   // is_valid == false.  Returns true if the .usage file is available.
-  bool GetUsage(const base::FilePath& usage_file_path, int64* usage);
+  bool GetUsage(const base::FilePath& usage_file_path, int64_t* usage);
 
   // Gets the dirty count in the .usage file.
   // Returns true if the .usage file is available.
-  bool GetDirty(const base::FilePath& usage_file_path, uint32* dirty);
+  bool GetDirty(const base::FilePath& usage_file_path, uint32_t* dirty);
 
   // Increments or decrements the "dirty" entry in the .usage file.
   // Returns false if no .usage is available.
@@ -43,12 +45,12 @@ class STORAGE_EXPORT FileSystemUsageCache {
   bool IsValid(const base::FilePath& usage_file_path);
 
   // Updates the size described in the .usage file.
-  bool UpdateUsage(const base::FilePath& usage_file_path, int64 fs_usage);
+  bool UpdateUsage(const base::FilePath& usage_file_path, int64_t fs_usage);
 
   // Updates the size described in the .usage file by delta with keeping dirty
   // even if dirty > 0.
   bool AtomicUpdateUsageByDelta(const base::FilePath& usage_file_path,
-                                int64 delta);
+                                int64_t delta);
 
   bool Exists(const base::FilePath& usage_file_path);
   bool Delete(const base::FilePath& usage_file_path);
@@ -61,28 +63,26 @@ class STORAGE_EXPORT FileSystemUsageCache {
   static const int kUsageFileHeaderSize;
 
  private:
-  typedef std::map<base::FilePath, base::File*> CacheFiles;
-
   // Read the size, validity and the "dirty" entry described in the .usage file.
   // Returns less than zero if no .usage file is available.
   bool Read(const base::FilePath& usage_file_path,
             bool* is_valid,
-            uint32* dirty,
-            int64* usage);
+            uint32_t* dirty,
+            int64_t* usage);
 
   bool Write(const base::FilePath& usage_file_path,
              bool is_valid,
-             int32 dirty,
-             int64 fs_usage);
+             int32_t dirty,
+             int64_t fs_usage);
 
   base::File* GetFile(const base::FilePath& file_path);
 
   bool ReadBytes(const base::FilePath& file_path,
                  char* buffer,
-                 int64 buffer_size);
+                 int64_t buffer_size);
   bool WriteBytes(const base::FilePath& file_path,
                   const char* buffer,
-                  int64 buffer_size);
+                  int64_t buffer_size);
   bool FlushFile(const base::FilePath& file_path);
   void ScheduleCloseTimer();
 
@@ -90,8 +90,8 @@ class STORAGE_EXPORT FileSystemUsageCache {
 
   bool CalledOnValidThread();
 
-  scoped_ptr<TimedTaskHelper> timer_;
-  CacheFiles cache_files_;
+  std::unique_ptr<TimedTaskHelper> timer_;
+  std::map<base::FilePath, std::unique_ptr<base::File>> cache_files_;
 
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
 

@@ -4,13 +4,18 @@
 
 #include "extensions/common/file_util.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
+#include <utility>
+
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_string_value_serializer.h"
+#include "base/macros.h"
 #include "base/path_service.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "extensions/common/constants.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_paths.h"
@@ -44,13 +49,12 @@ scoped_refptr<Extension> LoadExtensionManifest(
     int extra_flags,
     std::string* error) {
   JSONStringValueDeserializer deserializer(manifest_value);
-  scoped_ptr<base::Value> result = deserializer.Deserialize(NULL, error);
+  std::unique_ptr<base::Value> result = deserializer.Deserialize(NULL, error);
   if (!result.get())
     return NULL;
-  CHECK_EQ(base::Value::TYPE_DICTIONARY, result->GetType());
-  return LoadExtensionManifest(
-      *base::DictionaryValue::From(result.Pass()).get(), manifest_dir, location,
-      extra_flags, error);
+  CHECK_EQ(base::Value::Type::DICTIONARY, result->GetType());
+  return LoadExtensionManifest(*base::DictionaryValue::From(std::move(result)),
+                               manifest_dir, location, extra_flags, error);
 }
 
 }  // namespace
@@ -64,7 +68,7 @@ TEST_F(FileUtilTest, InstallUninstallGarbageCollect) {
   // Create a source extension.
   std::string extension_id("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   std::string version("1.0");
-  base::FilePath src = temp.path().AppendASCII(extension_id);
+  base::FilePath src = temp.GetPath().AppendASCII(extension_id);
   ASSERT_TRUE(base::CreateDirectory(src));
 
   base::FilePath extension_content;
@@ -72,7 +76,7 @@ TEST_F(FileUtilTest, InstallUninstallGarbageCollect) {
   ASSERT_TRUE(base::PathExists(extension_content));
 
   // Create a extensions tree.
-  base::FilePath all_extensions = temp.path().AppendASCII("extensions");
+  base::FilePath all_extensions = temp.GetPath().AppendASCII("extensions");
   ASSERT_TRUE(base::CreateDirectory(all_extensions));
 
   // Install in empty directory. Should create parent directories as needed.
@@ -144,14 +148,14 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesNoUnderscores) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().AppendASCII("some_dir");
+  base::FilePath src_path = temp.GetPath().AppendASCII("some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   std::string data = "{ \"name\": { \"message\": \"foobar\" } }";
   ASSERT_TRUE(base::WriteFile(
       src_path.AppendASCII("some_file.txt"), data.c_str(), data.length()));
   std::string error;
-  EXPECT_TRUE(file_util::CheckForIllegalFilenames(temp.path(), &error));
+  EXPECT_TRUE(file_util::CheckForIllegalFilenames(temp.GetPath(), &error));
 }
 
 TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
@@ -162,26 +166,26 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesOnlyReserved) {
       extensions::kLocaleFolder, extensions::kPlatformSpecificFolder};
 
   for (size_t i = 0; i < arraysize(folders); i++) {
-    base::FilePath src_path = temp.path().Append(folders[i]);
+    base::FilePath src_path = temp.GetPath().Append(folders[i]);
     ASSERT_TRUE(base::CreateDirectory(src_path));
   }
 
   std::string error;
-  EXPECT_TRUE(file_util::CheckForIllegalFilenames(temp.path(), &error));
+  EXPECT_TRUE(file_util::CheckForIllegalFilenames(temp.GetPath(), &error));
 }
 
 TEST_F(FileUtilTest, CheckIllegalFilenamesReservedAndIllegal) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().Append(extensions::kLocaleFolder);
+  base::FilePath src_path = temp.GetPath().Append(extensions::kLocaleFolder);
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
-  src_path = temp.path().AppendASCII("_some_dir");
+  src_path = temp.GetPath().AppendASCII("_some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   std::string error;
-  EXPECT_FALSE(file_util::CheckForIllegalFilenames(temp.path(), &error));
+  EXPECT_FALSE(file_util::CheckForIllegalFilenames(temp.GetPath(), &error));
 }
 
 // These tests do not work on Windows, because it is illegal to create a
@@ -192,12 +196,12 @@ TEST_F(FileUtilTest, CheckIllegalFilenamesDirectoryWindowsReserved) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().AppendASCII("aux");
+  base::FilePath src_path = temp.GetPath().AppendASCII("aux");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   std::string error;
   EXPECT_FALSE(
-      file_util::CheckForWindowsReservedFilenames(temp.path(), &error));
+      file_util::CheckForWindowsReservedFilenames(temp.GetPath(), &error));
 }
 
 TEST_F(FileUtilTest,
@@ -205,7 +209,7 @@ TEST_F(FileUtilTest,
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().AppendASCII("some_dir");
+  base::FilePath src_path = temp.GetPath().AppendASCII("some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   std::string data = "{ \"name\": { \"message\": \"foobar\" } }";
@@ -214,7 +218,7 @@ TEST_F(FileUtilTest,
 
   std::string error;
   EXPECT_FALSE(
-      file_util::CheckForWindowsReservedFilenames(temp.path(), &error));
+      file_util::CheckForWindowsReservedFilenames(temp.GetPath(), &error));
 }
 #endif
 
@@ -256,7 +260,7 @@ TEST_F(FileUtilTest, ValidateThemeUTF8) {
   // "aeo" with accents. Use http://0xcc.net/jsescape/ to decode them.
   std::string non_ascii_file = "\xC3\xA0\xC3\xA8\xC3\xB2.png";
   base::FilePath non_ascii_path =
-      temp.path().Append(base::FilePath::FromUTF8Unsafe(non_ascii_file));
+      temp.GetPath().Append(base::FilePath::FromUTF8Unsafe(non_ascii_file));
   base::WriteFile(non_ascii_path, "", 0);
 
   std::string kManifest = base::StringPrintf(
@@ -266,7 +270,7 @@ TEST_F(FileUtilTest, ValidateThemeUTF8) {
       non_ascii_file.c_str());
   std::string error;
   scoped_refptr<Extension> extension = LoadExtensionManifest(
-      kManifest, temp.path(), Manifest::UNPACKED, 0, &error);
+      kManifest, temp.GetPath(), Manifest::UNPACKED, 0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   std::vector<extensions::InstallWarning> warnings;
@@ -279,19 +283,19 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  scoped_ptr<base::DictionaryValue> value(new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue());
   value->SetString("name", "test");
   value->SetString("version", "1");
   value->SetInteger("manifest_version", 1);
 
   base::ListValue* scripts = new base::ListValue();
-  scripts->Append(new base::StringValue("foo.js"));
+  scripts->AppendString("foo.js");
   value->Set("background.scripts", scripts);
 
   std::string error;
   std::vector<extensions::InstallWarning> warnings;
   scoped_refptr<Extension> extension = LoadExtensionManifest(
-      *value.get(), temp.path(), Manifest::UNPACKED, 0, &error);
+      *value, temp.GetPath(), Manifest::UNPACKED, 0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   EXPECT_FALSE(
@@ -303,10 +307,10 @@ TEST_F(FileUtilTest, BackgroundScriptsMustExist) {
   EXPECT_EQ(0U, warnings.size());
 
   scripts->Clear();
-  scripts->Append(new base::StringValue("http://google.com/foo.js"));
+  scripts->AppendString("http://google.com/foo.js");
 
-  extension = LoadExtensionManifest(*value.get(), temp.path(),
-                                    Manifest::UNPACKED, 0, &error);
+  extension = LoadExtensionManifest(*value, temp.GetPath(), Manifest::UNPACKED,
+                                    0, &error);
   ASSERT_TRUE(extension.get()) << error;
 
   warnings.clear();
@@ -343,7 +347,7 @@ TEST_F(FileUtilTest, FindPrivateKeyFiles) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath src_path = temp.path().AppendASCII("some_dir");
+  base::FilePath src_path = temp.GetPath().AppendASCII("some_dir");
   ASSERT_TRUE(base::CreateDirectory(src_path));
 
   ASSERT_TRUE(base::WriteFile(
@@ -360,7 +364,7 @@ TEST_F(FileUtilTest, FindPrivateKeyFiles) {
                               private_key,
                               arraysize(private_key) - 30));
   std::vector<base::FilePath> private_keys =
-      file_util::FindPrivateKeyFiles(temp.path());
+      file_util::FindPrivateKeyFiles(temp.GetPath());
   EXPECT_EQ(2U, private_keys.size());
   EXPECT_THAT(private_keys,
               testing::Contains(src_path.AppendASCII("a_key.pem")));
@@ -372,7 +376,7 @@ TEST_F(FileUtilTest, WarnOnPrivateKey) {
   base::ScopedTempDir temp;
   ASSERT_TRUE(temp.CreateUniqueTempDir());
 
-  base::FilePath ext_path = temp.path().AppendASCII("ext_root");
+  base::FilePath ext_path = temp.GetPath().AppendASCII("ext_root");
   ASSERT_TRUE(base::CreateDirectory(ext_path));
 
   const char manifest[] =
@@ -414,19 +418,33 @@ TEST_F(FileUtilTest, WarnOnPrivateKey) {
                   "extension includes the key file.*ext_root.a_key.pem"));
 }
 
-TEST_F(FileUtilTest, CheckZeroLengthIconFile) {
+// Try to install an extension with a zero-length icon file.
+TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFile) {
   base::FilePath install_dir;
   ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
 
-  // Try to install an extension with a zero-length icon file.
+  base::FilePath ext_dir =
+      install_dir.AppendASCII("file_util").AppendASCII("bad_icon");
+
+  std::string error;
+  scoped_refptr<Extension> extension(file_util::LoadExtension(
+      ext_dir, Manifest::INTERNAL, Extension::NO_FLAGS, &error));
+  ASSERT_FALSE(extension);
+}
+
+// Try to install an unpacked extension with a zero-length icon file.
+TEST_F(FileUtilTest, CheckZeroLengthAndMissingIconFileUnpacked) {
+  base::FilePath install_dir;
+  ASSERT_TRUE(PathService::Get(DIR_TEST_DATA, &install_dir));
+
   base::FilePath ext_dir =
       install_dir.AppendASCII("file_util").AppendASCII("bad_icon");
 
   std::string error;
   scoped_refptr<Extension> extension(file_util::LoadExtension(
       ext_dir, Manifest::UNPACKED, Extension::NO_FLAGS, &error));
-  EXPECT_TRUE(extension.get() == NULL);
-  EXPECT_STREQ("Could not load extension icon 'icon.png'.", error.c_str());
+  EXPECT_FALSE(extension);
+  EXPECT_EQ("Could not load extension icon 'missing-icon.png'.", error);
 }
 
 TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
@@ -435,26 +453,20 @@ TEST_F(FileUtilTest, ExtensionURLToRelativeFilePath) {
     const char* url;
     const char* expected_relative_path;
   } test_cases[] = {
-    { URL_PREFIX "simple.html",
-      "simple.html" },
-    { URL_PREFIX "directory/to/file.html",
-      "directory/to/file.html" },
-    { URL_PREFIX "escape%20spaces.html",
-      "escape spaces.html" },
-    { URL_PREFIX "%C3%9Cber.html",
-      "\xC3\x9C" "ber.html" },
+    {URL_PREFIX "simple.html", "simple.html"},
+    {URL_PREFIX "directory/to/file.html", "directory/to/file.html"},
+    {URL_PREFIX "escape%20spaces.html", "escape spaces.html"},
+    {URL_PREFIX "%C3%9Cber.html",
+     "\xC3\x9C"
+     "ber.html"},
 #if defined(OS_WIN)
-    { URL_PREFIX "C%3A/simple.html",
-      "" },
+    {URL_PREFIX "C%3A/simple.html", ""},
 #endif
-    { URL_PREFIX "////simple.html",
-      "simple.html" },
-    { URL_PREFIX "/simple.html",
-      "simple.html" },
-    { URL_PREFIX "\\simple.html",
-      "simple.html" },
-    { URL_PREFIX "\\\\foo\\simple.html",
-      "foo/simple.html" },
+    {URL_PREFIX "////simple.html", "simple.html"},
+    {URL_PREFIX "/simple.html", "simple.html"},
+    {URL_PREFIX "\\simple.html", "simple.html"},
+    {URL_PREFIX "\\\\foo\\simple.html", "foo/simple.html"},
+    {URL_PREFIX "..%2f..%2fsimple.html", "..%2f..%2fsimple.html"},
   };
 #undef URL_PREFIX
 
@@ -487,6 +499,10 @@ TEST_F(FileUtilTest, ExtensionResourceURLToFilePath) {
   ASSERT_TRUE(base::WriteFile(resource_path, data, sizeof(data)));
   resource_path = api_path.Append(FILE_PATH_LITERAL("escape spaces.js"));
   ASSERT_TRUE(base::WriteFile(resource_path, data, sizeof(data)));
+  resource_path = api_path.Append(FILE_PATH_LITERAL("escape spaces.js"));
+  ASSERT_TRUE(base::WriteFile(resource_path, data, sizeof(data)));
+  resource_path = api_path.Append(FILE_PATH_LITERAL("..%2f..%2fsimple.html"));
+  ASSERT_TRUE(base::WriteFile(resource_path, data, sizeof(data)));
 
 #ifdef FILE_PATH_USES_WIN_SEPARATORS
 #define SEP "\\"
@@ -498,27 +514,21 @@ TEST_F(FileUtilTest, ExtensionResourceURLToFilePath) {
     const char* url;
     const base::FilePath::CharType* expected_path;
   } test_cases[] = {
-    { URL_PREFIX "apiname/test.js",
-      FILE_PATH_LITERAL("test.js") },
-    { URL_PREFIX "/apiname/test.js",
-      FILE_PATH_LITERAL("test.js") },
-    // Test % escape
-    { URL_PREFIX "apiname/%74%65st.js",
-      FILE_PATH_LITERAL("test.js") },
-    { URL_PREFIX "apiname/escape%20spaces.js",
-      FILE_PATH_LITERAL("escape spaces.js") },
-    // Test file does not exist.
-    { URL_PREFIX "apiname/directory/to/file.js",
-      NULL },
-    // Test apiname/../../test.js
-    { URL_PREFIX "apiname/../../test.js",
-      FILE_PATH_LITERAL("test.js") },
-    { URL_PREFIX "apiname/..%2F../test.js",
-      NULL },
-    { URL_PREFIX "apiname/f/../../../test.js",
-      FILE_PATH_LITERAL("test.js") },
-    { URL_PREFIX "apiname/f%2F..%2F..%2F../test.js",
-      NULL },
+      {URL_PREFIX "apiname/test.js", FILE_PATH_LITERAL("test.js")},
+      {URL_PREFIX "/apiname/test.js", FILE_PATH_LITERAL("test.js")},
+      // Test % escape
+      {URL_PREFIX "apiname/%74%65st.js", FILE_PATH_LITERAL("test.js")},
+      {URL_PREFIX "apiname/escape%20spaces.js",
+       FILE_PATH_LITERAL("escape spaces.js")},
+      // Test file does not exist.
+      {URL_PREFIX "apiname/directory/to/file.js", NULL},
+      // Test apiname/../../test.js
+      {URL_PREFIX "apiname/../../test.js", FILE_PATH_LITERAL("test.js")},
+      {URL_PREFIX "apiname/..%2F../test.js", NULL},
+      {URL_PREFIX "apiname/f/../../../test.js", FILE_PATH_LITERAL("test.js")},
+      {URL_PREFIX "apiname/f%2F..%2F..%2F../test.js", NULL},
+      {URL_PREFIX "apiname/..%2f..%2fsimple.html",
+       FILE_PATH_LITERAL("..%2f..%2fsimple.html")},
   };
 #undef SEP
 #undef URL_PREFIX

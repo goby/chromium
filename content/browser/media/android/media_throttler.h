@@ -8,6 +8,7 @@
 #include <jni.h>
 
 #include "base/android/scoped_java_ref.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 
 namespace content {
@@ -16,9 +17,6 @@ class MediaThrottler {
  public:
   // Called to get the singleton MediaThrottler instance.
   static MediaThrottler* GetInstance();
-
-  // Jni registration.
-  static bool RegisterMediaThrottler(JNIEnv* env);
 
   virtual ~MediaThrottler();
 

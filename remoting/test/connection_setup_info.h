@@ -6,9 +6,6 @@
 #define REMOTING_TEST_CONNECTION_SETUP_INFO_H_
 
 #include <string>
-#include <vector>
-
-#include "remoting/protocol/authentication_method.h"
 
 namespace remoting {
 namespace test {
@@ -16,6 +13,7 @@ namespace test {
 // Holds the information needed to establish a connection with a remote host.
 struct ConnectionSetupInfo {
   ConnectionSetupInfo();
+  ConnectionSetupInfo(const ConnectionSetupInfo& other);
   ~ConnectionSetupInfo();
 
   // User provided information.
@@ -33,7 +31,6 @@ struct ConnectionSetupInfo {
   std::string shared_secret;
 
   // Chromoting host information.
-  std::vector<protocol::AuthenticationMethod> auth_methods;
   std::string capabilities;
   std::string host_id;
   std::string host_jid;

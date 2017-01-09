@@ -9,15 +9,13 @@
 
 namespace content {
 
-class DevToolsProtocolHandler;
-
-namespace devtools {
-namespace io { class IOHandler; }
-namespace memory { class MemoryHandler; }
-namespace system_info { class SystemInfoHandler; }
-namespace tethering { class TetheringHandler; }
-namespace tracing { class TracingHandler; }
-}  // namespace devtools
+namespace protocol {
+class IOHandler;
+class MemoryHandler;
+class SystemInfoHandler;
+class TetheringHandler;
+class TracingHandler;
+}  // namespace protocol
 
 class BrowserDevToolsAgentHost : public DevToolsAgentHostImpl {
  private:
@@ -32,19 +30,22 @@ class BrowserDevToolsAgentHost : public DevToolsAgentHostImpl {
   void Detach() override;
 
   // DevToolsAgentHost implementation.
-  Type GetType() override;
+  std::string GetType() override;
   std::string GetTitle() override;
   GURL GetURL() override;
   bool Activate() override;
+  void Reload() override;
   bool Close() override;
   bool DispatchProtocolMessage(const std::string& message) override;
 
-  scoped_ptr<devtools::io::IOHandler> io_handler_;
-  scoped_ptr<devtools::memory::MemoryHandler> memory_handler_;
-  scoped_ptr<devtools::system_info::SystemInfoHandler> system_info_handler_;
-  scoped_ptr<devtools::tethering::TetheringHandler> tethering_handler_;
-  scoped_ptr<devtools::tracing::TracingHandler> tracing_handler_;
-  scoped_ptr<DevToolsProtocolHandler> protocol_handler_;
+  scoped_refptr<base::SingleThreadTaskRunner> tethering_task_runner_;
+  CreateServerSocketCallback socket_callback_;
+
+  std::unique_ptr<protocol::IOHandler> io_handler_;
+  std::unique_ptr<protocol::MemoryHandler> memory_handler_;
+  std::unique_ptr<protocol::SystemInfoHandler> system_info_handler_;
+  std::unique_ptr<protocol::TetheringHandler> tethering_handler_;
+  std::unique_ptr<protocol::TracingHandler> tracing_handler_;
 };
 
 }  // namespace content

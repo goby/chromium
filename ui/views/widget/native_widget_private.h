@@ -5,6 +5,9 @@
 #ifndef UI_VIEWS_WIDGET_NATIVE_WIDGET_PRIVATE_H_
 #define UI_VIEWS_WIDGET_NATIVE_WIDGET_PRIVATE_H_
 
+#include <memory>
+#include <string>
+
 #include "base/strings/string16.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/native_widget_types.h"
@@ -18,7 +21,6 @@ class Rect;
 
 namespace ui {
 class InputMethod;
-class NativeTheme;
 class OSExchangeData;
 }
 
@@ -71,8 +73,16 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
 
   static gfx::FontList GetWindowTitleFontList();
 
+  // Returns the NativeView with capture, otherwise NULL if there is no current
+  // capture set, or if |native_view| has no root.
+  static gfx::NativeView GetGlobalCapture(gfx::NativeView native_view);
+
   // Initializes the NativeWidget.
   virtual void InitNativeWidget(const Widget::InitParams& params) = 0;
+
+  // Called at the end of Widget::Init(), after Widget has completed
+  // initialization.
+  virtual void OnWidgetInitDone() = 0;
 
   // Returns a NonClientFrameView for the widget's NonClientView, or NULL if
   // the NativeWidget wants no special NonClientFrameView.
@@ -161,12 +171,12 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual gfx::Rect GetWindowBoundsInScreen() const = 0;
   virtual gfx::Rect GetClientAreaBoundsInScreen() const = 0;
   virtual gfx::Rect GetRestoredBounds() const = 0;
+  virtual std::string GetWorkspace() const = 0;
   virtual void SetBounds(const gfx::Rect& bounds) = 0;
   virtual void SetSize(const gfx::Size& size) = 0;
   virtual void StackAbove(gfx::NativeView native_view) = 0;
   virtual void StackAtTop() = 0;
-  virtual void StackBelow(gfx::NativeView native_view) = 0;
-  virtual void SetShape(SkRegion* shape) = 0;
+  virtual void SetShape(std::unique_ptr<SkRegion> shape) = 0;
   virtual void Close() = 0;
   virtual void CloseNow() = 0;
   virtual void Show() = 0;
@@ -182,6 +192,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void SetAlwaysOnTop(bool always_on_top) = 0;
   virtual bool IsAlwaysOnTop() const = 0;
   virtual void SetVisibleOnAllWorkspaces(bool always_visible) = 0;
+  virtual bool IsVisibleOnAllWorkspaces() const = 0;
   virtual void Maximize() = 0;
   virtual void Minimize() = 0;
   virtual bool IsMaximized() const = 0;
@@ -189,8 +200,7 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
   virtual void Restore() = 0;
   virtual void SetFullscreen(bool fullscreen) = 0;
   virtual bool IsFullscreen() const = 0;
-  virtual void SetOpacity(unsigned char opacity) = 0;
-  virtual void SetUseDragFrame(bool use_drag_frame) = 0;
+  virtual void SetOpacity(float opacity) = 0;
   virtual void FlashFrame(bool flash) = 0;
   virtual void RunShellDrag(View* view,
                             const ui::OSExchangeData& data,
@@ -212,13 +222,14 @@ class VIEWS_EXPORT NativeWidgetPrivate : public NativeWidget {
       const base::TimeDelta& duration) = 0;
   virtual void SetVisibilityAnimationTransition(
       Widget::VisibilityTransition transition) = 0;
-  virtual ui::NativeTheme* GetNativeTheme() const = 0;
-  virtual void OnRootViewLayout() = 0;
   virtual bool IsTranslucentWindowOpacitySupported() const = 0;
   virtual void OnSizeConstraintsChanged() = 0;
 
   // Repost an unhandled event to the native widget for default OS processing.
   virtual void RepostNativeEvent(gfx::NativeEvent native_event) = 0;
+
+  // Returns an internal name that matches the name of the associated Widget.
+  virtual std::string GetName() const = 0;
 
   // Overridden from NativeWidget:
   internal::NativeWidgetPrivate* AsNativeWidgetPrivate() override;

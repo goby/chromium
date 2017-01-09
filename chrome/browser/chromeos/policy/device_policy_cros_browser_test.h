@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "chrome/browser/chromeos/policy/device_policy_builder.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
@@ -79,7 +79,7 @@ class DevicePolicyCrosBrowserTest : public InProcessBrowserTest {
   DevicePolicyCrosTestHelper test_helper_;
 
   // FakeDBusThreadManager uses FakeSessionManagerClient.
-  scoped_ptr<chromeos::DBusThreadManagerSetter> dbus_setter_;
+  std::unique_ptr<chromeos::DBusThreadManagerSetter> dbus_setter_;
   chromeos::FakeSessionManagerClient* fake_session_manager_client_;
 
   DISALLOW_COPY_AND_ASSIGN(DevicePolicyCrosBrowserTest);

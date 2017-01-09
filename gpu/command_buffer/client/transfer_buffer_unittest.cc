@@ -6,12 +6,17 @@
 
 #include "gpu/command_buffer/client/transfer_buffer.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
 #include "gpu/command_buffer/client/client_test_helper.h"
 #include "gpu/command_buffer/client/cmd_buffer_helper.h"
 #include "gpu/command_buffer/common/command_buffer.h"
-#include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 using ::testing::_;
 using ::testing::AtMost;
@@ -25,8 +30,8 @@ namespace gpu {
 
 class TransferBufferTest : public testing::Test {
  protected:
-  static const int32 kNumCommandEntries = 400;
-  static const int32 kCommandBufferSizeBytes =
+  static const int32_t kNumCommandEntries = 400;
+  static const int32_t kCommandBufferSizeBytes =
       kNumCommandEntries * sizeof(CommandBufferEntry);
   static const unsigned int kStartingOffset = 64;
   static const unsigned int kAlignment = 4;
@@ -53,15 +58,14 @@ class TransferBufferTest : public testing::Test {
     return command_buffer_.get();
   }
 
-  scoped_ptr<MockClientCommandBufferMockFlush> command_buffer_;
-  scoped_ptr<CommandBufferHelper> helper_;
-  scoped_ptr<TransferBuffer> transfer_buffer_;
-  int32 transfer_buffer_id_;
+  std::unique_ptr<MockClientCommandBufferMockFlush> command_buffer_;
+  std::unique_ptr<CommandBufferHelper> helper_;
+  std::unique_ptr<TransferBuffer> transfer_buffer_;
+  int32_t transfer_buffer_id_;
 };
 
 void TransferBufferTest::SetUp() {
   command_buffer_.reset(new StrictMock<MockClientCommandBufferMockFlush>());
-  ASSERT_TRUE(command_buffer_->Initialize());
 
   helper_.reset(new CommandBufferHelper(command_buffer()));
   ASSERT_TRUE(helper_->Initialize(kCommandBufferSizeBytes));
@@ -88,8 +92,8 @@ void TransferBufferTest::TearDown() {
 
 // GCC requires these declarations, but MSVC requires they not be present
 #ifndef _MSC_VER
-const int32 TransferBufferTest::kNumCommandEntries;
-const int32 TransferBufferTest::kCommandBufferSizeBytes;
+const int32_t TransferBufferTest::kNumCommandEntries;
+const int32_t TransferBufferTest::kCommandBufferSizeBytes;
 const unsigned int TransferBufferTest::kStartingOffset;
 const unsigned int TransferBufferTest::kAlignment;
 const size_t TransferBufferTest::kTransferBufferSize;
@@ -227,17 +231,18 @@ class MockClientCommandBufferCanFail : public MockClientCommandBufferMockFlush {
   }
 
   MOCK_METHOD2(CreateTransferBuffer,
-               scoped_refptr<Buffer>(size_t size, int32* id));
+               scoped_refptr<Buffer>(size_t size, int32_t* id));
 
-  scoped_refptr<gpu::Buffer> RealCreateTransferBuffer(size_t size, int32* id) {
+  scoped_refptr<gpu::Buffer> RealCreateTransferBuffer(size_t size,
+                                                      int32_t* id) {
     return MockCommandBufferBase::CreateTransferBuffer(size, id);
   }
 };
 
 class TransferBufferExpandContractTest : public testing::Test {
  protected:
-  static const int32 kNumCommandEntries = 400;
-  static const int32 kCommandBufferSizeBytes =
+  static const int32_t kNumCommandEntries = 400;
+  static const int32_t kCommandBufferSizeBytes =
       kNumCommandEntries * sizeof(CommandBufferEntry);
   static const unsigned int kStartingOffset = 64;
   static const unsigned int kAlignment = 4;
@@ -256,15 +261,14 @@ class TransferBufferExpandContractTest : public testing::Test {
     return command_buffer_.get();
   }
 
-  scoped_ptr<MockClientCommandBufferCanFail> command_buffer_;
-  scoped_ptr<CommandBufferHelper> helper_;
-  scoped_ptr<TransferBuffer> transfer_buffer_;
-  int32 transfer_buffer_id_;
+  std::unique_ptr<MockClientCommandBufferCanFail> command_buffer_;
+  std::unique_ptr<CommandBufferHelper> helper_;
+  std::unique_ptr<TransferBuffer> transfer_buffer_;
+  int32_t transfer_buffer_id_;
 };
 
 void TransferBufferExpandContractTest::SetUp() {
   command_buffer_.reset(new StrictMock<MockClientCommandBufferCanFail>());
-  ASSERT_TRUE(command_buffer_->Initialize());
 
   EXPECT_CALL(*command_buffer(),
               CreateTransferBuffer(kCommandBufferSizeBytes, _))
@@ -310,8 +314,8 @@ void TransferBufferExpandContractTest::TearDown() {
 
 // GCC requires these declarations, but MSVC requires they not be present
 #ifndef _MSC_VER
-const int32 TransferBufferExpandContractTest::kNumCommandEntries;
-const int32 TransferBufferExpandContractTest::kCommandBufferSizeBytes;
+const int32_t TransferBufferExpandContractTest::kNumCommandEntries;
+const int32_t TransferBufferExpandContractTest::kCommandBufferSizeBytes;
 const unsigned int TransferBufferExpandContractTest::kStartingOffset;
 const unsigned int TransferBufferExpandContractTest::kAlignment;
 const size_t TransferBufferExpandContractTest::kStartTransferBufferSize;

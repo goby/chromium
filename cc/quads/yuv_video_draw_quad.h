@@ -5,10 +5,13 @@
 #ifndef CC_QUADS_YUV_VIDEO_DRAW_QUAD_H_
 #define CC_QUADS_YUV_VIDEO_DRAW_QUAD_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
 #include "cc/base/cc_export.h"
 #include "cc/quads/draw_quad.h"
+#include "ui/gfx/color_space.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/geometry/size.h"
 
@@ -16,6 +19,13 @@ namespace cc {
 
 class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
  public:
+  static const size_t kYPlaneResourceIdIndex = 0;
+  static const size_t kUPlaneResourceIdIndex = 1;
+  static const size_t kVPlaneResourceIdIndex = 2;
+  static const size_t kAPlaneResourceIdIndex = 3;
+
+  enum : uint32_t { kMinBitsPerChannel = 8, kMaxBitsPerChannel = 24 };
+
   enum ColorSpace {
     REC_601,  // SDTV standard with restricted "studio swing" color range.
     REC_709,  // HDTV standard with restricted "studio swing" color range.
@@ -26,6 +36,7 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
   ~YUVVideoDrawQuad() override;
 
   YUVVideoDrawQuad();
+  YUVVideoDrawQuad(const YUVVideoDrawQuad& other);
 
   void SetNew(const SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
@@ -42,7 +53,11 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
               unsigned u_plane_resource_id,
               unsigned v_plane_resource_id,
               unsigned a_plane_resource_id,
-              ColorSpace color_space);
+              ColorSpace color_space,
+              const gfx::ColorSpace& video_color_space,
+              float offset,
+              float multiplier,
+              uint32_t bits_per_channel);
 
   void SetAll(const SharedQuadState* shared_quad_state,
               const gfx::Rect& rect,
@@ -60,13 +75,22 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
               unsigned u_plane_resource_id,
               unsigned v_plane_resource_id,
               unsigned a_plane_resource_id,
-              ColorSpace color_space);
+              ColorSpace color_space,
+              const gfx::ColorSpace& video_color_space,
+              float offset,
+              float multiplier,
+              uint32_t bits_per_channel);
 
   gfx::RectF ya_tex_coord_rect;
   gfx::RectF uv_tex_coord_rect;
   gfx::Size ya_tex_size;
   gfx::Size uv_tex_size;
   ColorSpace color_space;
+  float resource_offset = 0.0f;
+  float resource_multiplier = 1.0f;
+  uint32_t bits_per_channel = 8;
+  // TODO(hubbe): Move to ResourceProvider::ScopedSamplerGL.
+  gfx::ColorSpace video_color_space;
 
   static const YUVVideoDrawQuad* MaterialCast(const DrawQuad*);
 
@@ -84,11 +108,6 @@ class CC_EXPORT YUVVideoDrawQuad : public DrawQuad {
   }
 
  private:
-  static const size_t kYPlaneResourceIdIndex = 0;
-  static const size_t kUPlaneResourceIdIndex = 1;
-  static const size_t kVPlaneResourceIdIndex = 2;
-  static const size_t kAPlaneResourceIdIndex = 3;
-
   void ExtendValue(base::trace_event::TracedValue* value) const override;
 };
 

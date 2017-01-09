@@ -5,6 +5,7 @@
 #ifndef COMPONENTS_HISTORY_CORE_TEST_HISTORY_CLIENT_FAKE_BOOKMARKS_H_
 #define COMPONENTS_HISTORY_CORE_TEST_HISTORY_CLIENT_FAKE_BOOKMARKS_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/strings/string16.h"
 #include "components/history/core/browser/history_client.h"
@@ -33,8 +34,9 @@ class HistoryClientFakeBookmarks : public HistoryClient {
   void OnHistoryServiceCreated(HistoryService* history_service) override;
   void Shutdown() override;
   bool CanAddURL(const GURL& url) override;
-  void NotifyProfileError(sql::InitStatus init_status) override;
-  scoped_ptr<HistoryBackendClient> CreateBackendClient() override;
+  void NotifyProfileError(sql::InitStatus init_status,
+                          const std::string& diagnostics) override;
+  std::unique_ptr<HistoryBackendClient> CreateBackendClient() override;
 
  private:
   scoped_refptr<FakeBookmarkDatabase> bookmarks_;

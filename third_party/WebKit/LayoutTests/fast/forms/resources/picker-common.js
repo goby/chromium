@@ -15,12 +15,6 @@ function waitUntilClosing(callback) {
     setTimeout(callback, 1);
 }
 
-function sendKey(input, keyName, ctrlKey, altKey) {
-    var event = document.createEvent('KeyboardEvent');
-    event.initKeyboardEvent('keydown', true, true, document.defaultView, keyName, 0, ctrlKey, altKey);
-    input.dispatchEvent(event);
-}
-
 function rootWindow() {
     var currentWindow = window;
     while (currentWindow !== currentWindow.parent) {
@@ -40,17 +34,15 @@ function rootWindow() {
 // - INPUT color with DATALIST
 // - INPUT date/datetime-local/month/week
 function openPicker(element, callback, errorCallback) {
-    rootWindow().moveTo(window.screenX, window.screenY);
     element.offsetTop; // Force to lay out
     element.focus();
     if (element.tagName === "SELECT") {
-        sendKey(element, "Down", false, true);
+        eventSender.keyDown("ArrowDown", ["altKey"]);
     } else if (element.tagName === "INPUT") {
         if (element.type === "color") {
-            element.focus();
             eventSender.keyDown(" ");
         } else {
-            sendKey(element, "Down", false, true);
+            eventSender.keyDown("ArrowDown", ["altKey"]);
         }
     }
     popupWindow = window.internals.pagePopupWindow;
@@ -61,7 +53,6 @@ function openPicker(element, callback, errorCallback) {
 }
 
 function clickToOpenPicker(x, y, callback, errorCallback) {
-    rootWindow().moveTo(window.screenX, window.screenY);
     eventSender.mouseMoveTo(x, y);
     eventSender.mouseDown();
     eventSender.mouseUp();
@@ -74,13 +65,7 @@ function clickToOpenPicker(x, y, callback, errorCallback) {
 
 function setPopupOpenCallback(callback) {
     console.assert(popupWindow);
-    popupOpenCallback = (function(callback) {
-        // We need to move the window to the top left of available space
-        // because the window will move back to (0, 0) when the
-        // ShellViewMsg_SetTestConfiguration IPC arrives.
-        rootWindow().moveTo(window.screenX, window.screenY);
-        callback();
-    }).bind(this, callback);
+    popupOpenCallback = callback;
     try {
         popupWindow.addEventListener("didOpenPicker", popupOpenCallbackWrapper, false);
     } catch(e) {

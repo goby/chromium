@@ -4,13 +4,15 @@
 
 #include "chrome/utility/importer/nss_decryptor.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -204,7 +206,7 @@ void NSSDecryptor::ParseSignons(const base::FilePath& signon_file,
     if (lines[begin].find(kRealmBracketBegin) != std::string::npos) {
       size_t start = lines[begin].find(kRealmBracketBegin);
       raw_password_info.host = lines[begin].substr(0, start);
-      start += std::string(kRealmBracketBegin).size();
+      start += sizeof(kRealmBracketBegin) - 1;
       size_t end = lines[begin].rfind(kRealmBracketEnd);
       raw_password_info.realm = lines[begin].substr(start, end - start);
     } else {
@@ -293,7 +295,8 @@ bool NSSDecryptor::ReadAndParseLogins(
     std::vector<autofill::PasswordForm>* forms) {
   std::string json_content;
   base::ReadFileToString(json_file, &json_content);
-  scoped_ptr<base::Value> parsed_json(base::JSONReader::Read(json_content));
+  std::unique_ptr<base::Value> parsed_json(
+      base::JSONReader::Read(json_content));
   const base::DictionaryValue* password_dict;
   const base::ListValue* password_list;
   const base::ListValue* blacklist_domains;
@@ -301,7 +304,7 @@ bool NSSDecryptor::ReadAndParseLogins(
     return false;
 
   if (password_dict->GetList("disabledHosts", &blacklist_domains)) {
-    for (const base::Value* value : *blacklist_domains) {
+    for (const auto& value : *blacklist_domains) {
       std::string disabled_host;
       if (!value->GetAsString(&disabled_host))
         continue;
@@ -310,7 +313,7 @@ bool NSSDecryptor::ReadAndParseLogins(
   }
 
   if (password_dict->GetList("logins", &password_list)) {
-    for (const base::Value* value : *password_list) {
+    for (const auto& value : *password_list) {
       const base::DictionaryValue* password_detail;
       if (!value->GetAsDictionary(&password_detail))
         continue;
@@ -368,7 +371,6 @@ bool NSSDecryptor::CreatePasswordFormFromRawInfo(
     // digest_auth entry, so let's assume basic_auth.
     form->scheme = autofill::PasswordForm::SCHEME_BASIC;
   }
-  form->ssl_valid = form->origin.SchemeIsCryptographic();
   form->username_element = raw_password_info.username_element;
   form->username_value = Decrypt(raw_password_info.encrypted_username);
   form->password_element = raw_password_info.password_element;

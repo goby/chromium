@@ -5,6 +5,7 @@
 #include "base/command_line.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/ui/browser.h"
@@ -17,7 +18,6 @@
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/test_launcher_utils.h"
-#include "chrome/test/base/test_switches.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
@@ -45,7 +45,7 @@ void SimulateGPUCrash(Browser* browser) {
       ui::PageTransitionFromInt(
           ui::PAGE_TRANSITION_TYPED |
           ui::PAGE_TRANSITION_FROM_ADDRESS_BAR));
-  params.disposition = NEW_BACKGROUND_TAB;
+  params.disposition = WindowOpenDisposition::NEW_BACKGROUND_TAB;
   chrome::Navigate(&params);
 }
 
@@ -64,13 +64,6 @@ class WebGLInfoBarTest : public InProcessBrowserTest {
 // This test is flaky. http://crbug.com/324555
 IN_PROC_BROWSER_TEST_F(WebGLInfoBarTest, DISABLED_ContextLossRaisesInfoBar) {
 #undef MAYBE_ContextLossRaisesInfoBard
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   if (gpu::GPUTestBotConfig::CurrentConfigMatches("XP"))
     return;
 
@@ -97,13 +90,6 @@ IN_PROC_BROWSER_TEST_F(WebGLInfoBarTest, DISABLED_ContextLossRaisesInfoBar) {
 
 // This test is flaky. http://crbug.com/324555
 IN_PROC_BROWSER_TEST_F(WebGLInfoBarTest, DISABLED_ContextLossInfoBarReload) {
-#if defined(OS_WIN) && defined(USE_ASH)
-  // Disable this test in Metro+Ash for now (http://crbug.com/262796).
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kAshBrowserTests))
-    return;
-#endif
-
   if (gpu::GPUTestBotConfig::CurrentConfigMatches("XP"))
     return;
 

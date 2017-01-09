@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "extensions/common/permissions/api_permission.h"
 #include "extensions/common/permissions/api_permission_set.h"
@@ -22,7 +23,7 @@ namespace extensions {
 // extension's permissions. The class exposes set operations for combining and
 // manipulating the permissions.
 // TODO(sashab): PermissionIDSet should be called PermissionSet. Once
-// PermissionMessageProvider::GetCoalescedPermissionMessages() is the only
+// PermissionMessageProvider::GetPermissionMessages() is the only
 // method used for generating permission messages, find the other users of this
 // class and deprecate or rename it as appropriate.
 class PermissionSet {
@@ -41,25 +42,26 @@ class PermissionSet {
   ~PermissionSet();
 
   // Creates a new permission set equal to |set1| - |set2|.
-  static scoped_ptr<const PermissionSet> CreateDifference(
+  static std::unique_ptr<const PermissionSet> CreateDifference(
       const PermissionSet& set1,
       const PermissionSet& set2);
 
   // Creates a new permission set equal to the intersection of |set1| and
   // |set2|.
-  static scoped_ptr<const PermissionSet> CreateIntersection(
+  static std::unique_ptr<const PermissionSet> CreateIntersection(
       const PermissionSet& set1,
       const PermissionSet& set2);
 
   // Creates a new permission set equal to the union of |set1| and |set2|.
-  static scoped_ptr<const PermissionSet> CreateUnion(const PermissionSet& set1,
-                                                     const PermissionSet& set2);
+  static std::unique_ptr<const PermissionSet> CreateUnion(
+      const PermissionSet& set1,
+      const PermissionSet& set2);
 
   bool operator==(const PermissionSet& rhs) const;
   bool operator!=(const PermissionSet& rhs) const;
 
   // Returns a copy of this PermissionSet.
-  scoped_ptr<const PermissionSet> Clone() const;
+  std::unique_ptr<const PermissionSet> Clone() const;
 
   // Returns true if every API or host permission available to |set| is also
   // available to this. In other words, if the API permissions of |set| are a

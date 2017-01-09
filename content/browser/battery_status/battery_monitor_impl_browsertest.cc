@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/thread_task_runner_handle.h"
+#include <utility>
+
+#include "base/macros.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/test/content_browser_test.h"
 #include "content/public/test/content_browser_test_utils.h"
@@ -72,16 +75,16 @@ class BatteryMonitorImplTest : public ContentBrowserTest {
 
     // We keep a raw pointer to the FakeBatteryManager, which we expect to
     // remain valid for the lifetime of the BatteryStatusService.
-    scoped_ptr<FakeBatteryManager> battery_manager(new FakeBatteryManager(
+    std::unique_ptr<FakeBatteryManager> battery_manager(new FakeBatteryManager(
         battery_service_->GetUpdateCallbackForTesting()));
     battery_manager_ = battery_manager.get();
 
-    battery_service_->SetBatteryManagerForTesting(battery_manager.Pass());
+    battery_service_->SetBatteryManagerForTesting(std::move(battery_manager));
   }
 
   void TearDown() override {
     battery_service_->SetBatteryManagerForTesting(
-        scoped_ptr<device::BatteryStatusManager>());
+        std::unique_ptr<device::BatteryStatusManager>());
     battery_manager_ = NULL;
   }
 

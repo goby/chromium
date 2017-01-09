@@ -4,10 +4,15 @@
 
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher_service.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "chrome/browser/bitmap_fetcher/bitmap_fetcher.h"
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/skia/include/core/SkBitmap.h"
 
 namespace {
 
@@ -42,8 +47,9 @@ class TestService : public BitmapFetcherService {
 
   // Create a fetcher, but don't start downloading. That allows side-stepping
   // the decode step, which requires a utility process.
-  scoped_ptr<chrome::BitmapFetcher> CreateFetcher(const GURL& url) override {
-    return make_scoped_ptr(new chrome::BitmapFetcher(url, this));
+  std::unique_ptr<chrome::BitmapFetcher> CreateFetcher(
+      const GURL& url) override {
+    return base::MakeUnique<chrome::BitmapFetcher>(url, this);
   }
 };
 
@@ -66,7 +72,7 @@ class BitmapFetcherServiceTest : public testing::Test,
   const ScopedVector<BitmapFetcherRequest>& requests() const {
     return service_->requests_;
   }
-  const std::vector<scoped_ptr<chrome::BitmapFetcher>>& active_fetchers()
+  const std::vector<std::unique_ptr<chrome::BitmapFetcher>>& active_fetchers()
       const {
     return service_->active_fetchers_;
   }
@@ -103,7 +109,7 @@ class BitmapFetcherServiceTest : public testing::Test,
   }
 
  protected:
-  scoped_ptr<BitmapFetcherService> service_;
+  std::unique_ptr<BitmapFetcherService> service_;
 
   int images_changed_;
   int requests_finished_;

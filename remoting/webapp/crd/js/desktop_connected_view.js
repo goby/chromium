@@ -15,11 +15,12 @@ var remoting = remoting || {};
 /**
  * @param {HTMLElement} container
  * @param {remoting.ConnectionInfo} connectionInfo
+ * @param {remoting.SessionLogger} logger
  * @constructor
  * @extends {base.EventSourceImpl}
  * @implements {base.Disposable}
  */
-remoting.DesktopConnectedView = function(container, connectionInfo) {
+remoting.DesktopConnectedView = function(container, connectionInfo, logger) {
 
   /** @private {HTMLElement} */
   this.container_ = container;
@@ -33,14 +34,14 @@ remoting.DesktopConnectedView = function(container, connectionInfo) {
   /** @private */
   this.host_ = connectionInfo.host();
 
+  /** @private */
+  this.logger_ = logger;
+
   /** @private {remoting.DesktopViewport} */
   this.viewport_ = null;
 
   /** @private {remoting.ConnectedView} */
   this.view_ = null;
-
-  /** @private {remoting.VideoFrameRecorder} */
-  this.videoFrameRecorder_ = null;
 
   /** @private {base.Disposable} */
   this.eventHooks_ = null;
@@ -178,11 +179,12 @@ remoting.DesktopConnectedView.prototype.initUI_ = function() {
       this.plugin_, this.container_,
       this.container_.querySelector('.mouse-cursor-overlay'));
 
-  var scrollerElement = document.getElementById('scroller');
+  var scrollerElement = base.getHtmlElement('scroller');
   this.viewport_ = new remoting.DesktopViewport(
       scrollerElement || document.body,
       this.plugin_.hostDesktop(),
-      this.host_.options);
+      this.host_.options,
+      this.logger_);
 
   if (remoting.windowFrame) {
     remoting.windowFrame.setDesktopConnectedView(this);
@@ -297,48 +299,16 @@ remoting.DesktopConnectedView.prototype.setRemapKeys = function(remappings) {
   this.plugin_.setRemapKeys(this.host_.options.getRemapKeys());
 };
 
-/** @param {remoting.VideoFrameRecorder} recorder */
-remoting.DesktopConnectedView.prototype.setVideoFrameRecorder =
-    function(recorder) {
-  this.videoFrameRecorder_ = recorder;
-};
-
-/**
- * Returns true if the ClientSession can record video frames to a file.
- * @return {boolean}
- */
-remoting.DesktopConnectedView.prototype.canRecordVideo = function() {
-  return !!this.videoFrameRecorder_;
-};
-
-/**
- * Returns true if the ClientSession is currently recording video frames.
- * @return {boolean}
- */
-remoting.DesktopConnectedView.prototype.isRecordingVideo = function() {
-  if (!this.videoFrameRecorder_) {
-    return false;
-  }
-  return this.videoFrameRecorder_.isRecording();
-};
-
-/**
- * Starts or stops recording of video frames.
- */
-remoting.DesktopConnectedView.prototype.startStopRecording = function() {
-  if (this.videoFrameRecorder_) {
-    this.videoFrameRecorder_.startStopRecording();
-  }
-};
-
 /**
  * Factory function so that it can be overwritten in unit test to avoid
  * UI dependencies.
  *
  * @param {HTMLElement} container
  * @param {remoting.ConnectionInfo} connectionInfo
+ * @param {remoting.SessionLogger} logger
  * @return  {remoting.DesktopConnectedView}
  */
-remoting.DesktopConnectedView.create = function(container, connectionInfo) {
-  return new remoting.DesktopConnectedView(container, connectionInfo);
+remoting.DesktopConnectedView.create = function(container, connectionInfo,
+                                                logger) {
+  return new remoting.DesktopConnectedView(container, connectionInfo, logger);
 };

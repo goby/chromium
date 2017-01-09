@@ -17,7 +17,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gl/gl_mock.h"
 
-using ::gfx::MockGLInterface;
+using ::gl::MockGLInterface;
 using ::testing::_;
 using ::testing::DoAll;
 using ::testing::InSequence;
@@ -144,7 +144,7 @@ class GLES2DecoderLostContextTest : public GLES2DecoderManualInitTest {
         .RetiresOnSaturation();
     EXPECT_CALL(*gl_, GetGraphicsResetStatusARB())
         .WillOnce(Return(reset_status));
-    cmds::GetError cmd;
+    GetError cmd;
     cmd.Init(shared_memory_id_, shared_memory_offset_);
     EXPECT_EQ(error::kLostContext, ExecuteCmd(cmd));
     EXPECT_EQ(static_cast<GLuint>(GL_NO_ERROR), *GetSharedMemoryAs<GLenum*>());
@@ -155,7 +155,7 @@ class GLES2DecoderLostContextTest : public GLES2DecoderManualInitTest {
     EXPECT_CALL(*gl_, GetError())
         .WillOnce(Return(GL_CONTEXT_LOST_KHR))
         .RetiresOnSaturation();
-    cmds::GetError cmd;
+    GetError cmd;
     cmd.Init(shared_memory_id_, shared_memory_offset_);
     EXPECT_EQ(error::kLostContext, ExecuteCmd(cmd));
   }

@@ -5,7 +5,9 @@
 #ifndef MEDIA_AUDIO_AUDIO_IO_H_
 #define MEDIA_AUDIO_AUDIO_IO_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include "base/time/time.h"
 #include "media/base/audio_bus.h"
 
 // Low-level audio output support. To make sound there are 3 objects involved:
@@ -58,10 +60,19 @@ class MEDIA_EXPORT AudioOutputStream {
    public:
     virtual ~AudioSourceCallback() {}
 
-    // Provide more data by fully filling |dest|.  The source will return
-    // the number of frames it filled.  |total_bytes_delay| contains current
-    // number of bytes of delay buffered by the AudioOutputStream.
-    virtual int OnMoreData(AudioBus* dest, uint32 total_bytes_delay) = 0;
+    // Provide more data by fully filling |dest|. The source will return the
+    // number of frames it filled. |delay| is the duration of audio written to
+    // |dest| in prior calls to OnMoreData() that has not yet been played out,
+    // and |delay_timestamp| is the time when |delay| was measured. The time
+    // when the first sample added to |dest| is expected to be played out can be
+    // calculated by adding |delay| to |delay_timestamp|. The accuracy of
+    // |delay| and |delay_timestamp| may vary depending on the platform and
+    // implementation. |prior_frames_skipped| is the number of frames skipped by
+    // the consumer.
+    virtual int OnMoreData(base::TimeDelta delay,
+                           base::TimeTicks delay_timestamp,
+                           int prior_frames_skipped,
+                           AudioBus* dest) = 0;
 
     // There was an error while playing a buffer. Audio source cannot be
     // destroyed yet. No direct action needed by the AudioStream, but it is
@@ -109,15 +120,15 @@ class MEDIA_EXPORT AudioInputStream {
     // TODO(henrika): should be pure virtual when old OnData() is phased out.
     virtual void OnData(AudioInputStream* stream,
                         const AudioBus* source,
-                        uint32 hardware_delay_bytes,
-                        double volume) {};
+                        uint32_t hardware_delay_bytes,
+                        double volume) {}
 
     // TODO(henrika): don't use; to be removed.
     virtual void OnData(AudioInputStream* stream,
-                        const uint8* src,
-                        uint32 size,
-                        uint32 hardware_delay_bytes,
-                        double volume) {};
+                        const uint8_t* src,
+                        uint32_t size,
+                        uint32_t hardware_delay_bytes,
+                        double volume) {}
 
     // There was an error while recording audio. The audio sink cannot be
     // destroyed yet. No direct action needed by the AudioInputStream, but it

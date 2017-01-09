@@ -6,20 +6,21 @@
 
 #include "base/command_line.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/toolbar/app_menu_model.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/base/accelerators/accelerator.h"
 #include "ui/base/models/simple_menu_model.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/session/session_state_delegate.h"
-#include "ash/shell.h"
+#include "ash/common/session/session_state_delegate.h"  // nogncheck
+#include "ash/common/wm_shell.h"  // nogncheck
 #include "chrome/browser/ui/ash/multi_user/multi_user_util.h"
 #include "chrome/browser/ui/ash/multi_user/multi_user_window_manager.h"
 #include "chrome/browser/ui/browser_window.h"
@@ -60,11 +61,9 @@ void SystemMenuModelBuilder::Init() {
   menu_model_.reset(model);
   BuildMenu(model);
 #if defined(OS_WIN)
-  // On Windows with HOST_DESKTOP_TYPE_NATIVE we put the menu items in the
-  // system menu (not at the end). Doing this necessitates adding a trailing
-  // separator.
-  if (browser()->host_desktop_type() == chrome::HOST_DESKTOP_TYPE_NATIVE)
-    model->AddSeparator(ui::NORMAL_SEPARATOR);
+  // On Windows we put the menu items in the system menu (not at the end). Doing
+  // this necessitates adding a trailing separator.
+  model->AddSeparator(ui::NORMAL_SEPARATOR);
 #endif
 }
 
@@ -116,10 +115,6 @@ void SystemMenuModelBuilder::BuildSystemMenuForAppOrPopupWindow(
   zoom_menu_contents_.reset(new ZoomMenuModel(&menu_delegate_));
   model->AddSubMenuWithStringId(IDC_ZOOM_MENU, IDS_ZOOM_MENU,
                                 zoom_menu_contents_.get());
-  encoding_menu_contents_.reset(new EncodingMenuModel(browser()));
-  model->AddSubMenuWithStringId(IDC_ENCODING_MENU,
-                                IDS_ENCODING_MENU,
-                                encoding_menu_contents_.get());
   if (browser()->is_app() && chrome::CanOpenTaskManager()) {
     model->AddSeparator(ui::NORMAL_SEPARATOR);
     model->AddItemWithStringId(IDC_TASK_MANAGER, IDS_TASK_MANAGER);
@@ -161,7 +156,7 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
 
   // To show the menu we need at least two logged in users.
   ash::SessionStateDelegate* delegate =
-      ash::Shell::GetInstance()->session_state_delegate();
+      ash::WmShell::Get()->GetSessionStateDelegate();
   int logged_in_users = delegate->NumberOfLoggedInUsers();
   if (logged_in_users <= 1)
     return;
@@ -184,9 +179,9 @@ void SystemMenuModelBuilder::AppendTeleportMenu(ui::SimpleMenuModel* model) {
     model->AddItem(
         user_index == 1 ? IDC_VISIT_DESKTOP_OF_LRU_USER_2
                         : IDC_VISIT_DESKTOP_OF_LRU_USER_3,
-        l10n_util::GetStringFUTF16(IDS_VISIT_DESKTOP_OF_LRU_USER,
-                                   user_info->GetDisplayName(),
-                                   base::ASCIIToUTF16(user_info->GetEmail())));
+        l10n_util::GetStringFUTF16(
+            IDS_VISIT_DESKTOP_OF_LRU_USER, user_info->GetDisplayName(),
+            base::ASCIIToUTF16(user_info->GetDisplayEmail())));
   }
 #endif
 }

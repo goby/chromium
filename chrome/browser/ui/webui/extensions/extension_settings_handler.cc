@@ -6,7 +6,6 @@
 
 #include <vector>
 
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -14,12 +13,17 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/apps/app_info_dialog.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/common/features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/google/core/browser/google_util.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_data_source.h"
@@ -29,13 +33,10 @@
 #include "extensions/common/extension_set.h"
 #include "extensions/common/extension_urls.h"
 #include "extensions/common/manifest.h"
-#include "grit/browser_resources.h"
-#include "grit/components_strings.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "url/gurl.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #endif
@@ -147,7 +148,7 @@ void ExtensionSettingsHandler::GetLocalizedValues(
       l10n_util::GetStringUTF16(IDS_EXTENSIONS_POLICY_RECOMMENDED));
   source->AddString("extensionSettingsDependentExtensions",
       l10n_util::GetStringUTF16(IDS_EXTENSIONS_DEPENDENT_EXTENSIONS));
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   const SupervisedUserService* supervised_user_service =
       SupervisedUserServiceFactory::GetForProfile(Profile::FromWebUI(web_ui()));
   source->AddString("extensionSettingsSupervisedUser",
@@ -192,6 +193,13 @@ void ExtensionSettingsHandler::GetLocalizedValues(
   source->AddString("extensionSettingsUpdateRequiredBePolicy",
                     l10n_util::GetStringUTF16(
                         IDS_EXTENSIONS_DISABLED_UPDATE_REQUIRED_BY_POLICY));
+
+  source->AddLocalizedString("extensionLogLevelInfo",
+                             IDS_EXTENSIONS_LOG_LEVEL_INFO);
+  source->AddLocalizedString("extensionLogLevelWarn",
+                             IDS_EXTENSIONS_LOG_LEVEL_WARN);
+  source->AddLocalizedString("extensionLogLevelError",
+                             IDS_EXTENSIONS_LOG_LEVEL_ERROR);
 
   // TODO(estade): comb through the above strings to find ones no longer used in
   // uber extensions.
@@ -272,8 +280,8 @@ void ExtensionSettingsHandler::GetLocalizedValues(
 
 void ExtensionSettingsHandler::DidStartNavigationToPendingEntry(
     const GURL& url,
-    content::NavigationController::ReloadType reload_type) {
-  if (reload_type != content::NavigationController::NO_RELOAD)
+    content::ReloadType reload_type) {
+  if (reload_type != content::ReloadType::NONE)
     ReloadUnpackedExtensions();
 }
 
@@ -285,6 +293,8 @@ void ExtensionSettingsHandler::RegisterMessages() {
   // TODO(devlin): Take this out when everyone's been updated.
   Profile::FromWebUI(web_ui())->GetPrefs()->ClearPref(
       prefs::kExtensionsUIDismissedADTPromo);
+
+  content::WebContentsObserver::Observe(web_ui()->GetWebContents());
 }
 
 void ExtensionSettingsHandler::ReloadUnpackedExtensions() {

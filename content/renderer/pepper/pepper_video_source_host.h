@@ -5,9 +5,13 @@
 #ifndef CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_SOURCE_HOST_H_
 #define CONTENT_RENDERER_PEPPER_PEPPER_VIDEO_SOURCE_HOST_H_
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread_checker.h"
 #include "content/common/content_export.h"
@@ -60,7 +64,7 @@ class CONTENT_EXPORT PepperVideoSourceHost : public ppapi::host::ResourceHost {
 
   ppapi::host::ReplyMessageContext reply_context_;
 
-  scoped_ptr<VideoTrackToPepperAdapter> frame_source_;
+  std::unique_ptr<VideoTrackToPepperAdapter> frame_source_;
   scoped_refptr<FrameReceiver> frame_receiver_;
   std::string stream_url_;
   scoped_refptr<media::VideoFrame> last_frame_;

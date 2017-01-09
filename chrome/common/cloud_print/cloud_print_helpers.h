@@ -6,10 +6,10 @@
 #define CHROME_COMMON_CLOUD_PRINT_CLOUD_PRINT_HELPERS_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 
 class GURL;
 
@@ -63,15 +63,12 @@ GURL GetUrlForGetAuthCode(const GURL& cloud_print_server_url,
 // returns null if there was an error in parsing the JSON. The succeeded
 // value returns the value of the "success" value in the response JSON.
 // Returns the response as a dictionary value.
-scoped_ptr<base::DictionaryValue> ParseResponseJSON(
+std::unique_ptr<base::DictionaryValue> ParseResponseJSON(
     const std::string& response_data,
     bool* succeeded);
 
 // Returns the MIME type of multipart with |mime_boundary|.
 std::string GetMultipartMimeType(const std::string& mime_boundary);
-
-// Create a MIME boundary marker (27 '-' characters followed by 16 hex digits).
-void CreateMimeBoundaryForUpload(std::string *out);
 
 // Returns an MD5 hash for |printer_tags| and the default required tags.
 std::string GetHashOfPrinterTags(const PrinterTags& printer_tags);

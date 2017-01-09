@@ -4,11 +4,15 @@
 
 #include "storage/browser/fileapi/file_system_file_stream_reader.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
+#include <memory>
 #include <string>
 
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/public/test/async_file_test_helper.h"
 #include "content/public/test/test_file_system_context.h"
@@ -70,8 +74,8 @@ class FileSystemFileStreamReaderTest : public testing::Test {
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
-    file_system_context_ = CreateFileSystemContextForTesting(
-        NULL, temp_dir_.path());
+    file_system_context_ =
+        CreateFileSystemContextForTesting(NULL, temp_dir_.GetPath());
 
     file_system_context_->OpenFileSystem(
         GURL(kURLOrigin),
@@ -89,7 +93,7 @@ class FileSystemFileStreamReaderTest : public testing::Test {
  protected:
   storage::FileSystemFileStreamReader* CreateFileReader(
       const std::string& file_name,
-      int64 initial_offset,
+      int64_t initial_offset,
       const base::Time& expected_modification_time) {
     return new FileSystemFileStreamReader(file_system_context_.get(),
                                           GetFileSystemURL(file_name),
@@ -141,7 +145,7 @@ class FileSystemFileStreamReaderTest : public testing::Test {
 
 TEST_F(FileSystemFileStreamReaderTest, NonExistent) {
   const char kFileName[] = "nonexistent";
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kFileName, 0, base::Time()));
   int result = 0;
   std::string data;
@@ -154,7 +158,7 @@ TEST_F(FileSystemFileStreamReaderTest, Empty) {
   const char kFileName[] = "empty";
   WriteFile(kFileName, NULL, 0, NULL);
 
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kFileName, 0, base::Time()));
   int result = 0;
   std::string data;
@@ -163,17 +167,17 @@ TEST_F(FileSystemFileStreamReaderTest, Empty) {
   ASSERT_EQ(0U, data.size());
 
   net::TestInt64CompletionCallback callback;
-  int64 length_result = reader->GetLength(callback.callback());
+  int64_t length_result = reader->GetLength(callback.callback());
   if (length_result == net::ERR_IO_PENDING)
     length_result = callback.WaitForResult();
   ASSERT_EQ(0, length_result);
 }
 
 TEST_F(FileSystemFileStreamReaderTest, GetLengthNormal) {
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 0, test_file_modification_time()));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   ASSERT_EQ(kTestDataSize, result);
@@ -184,10 +188,10 @@ TEST_F(FileSystemFileStreamReaderTest, GetLengthAfterModified) {
   base::Time fake_expected_modification_time =
       test_file_modification_time() - base::TimeDelta::FromSeconds(10);
 
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 0, fake_expected_modification_time));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   ASSERT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
@@ -201,10 +205,10 @@ TEST_F(FileSystemFileStreamReaderTest, GetLengthAfterModified) {
 }
 
 TEST_F(FileSystemFileStreamReaderTest, GetLengthWithOffset) {
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 3, base::Time()));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   // Initial offset does not affect the result of GetLength.
@@ -212,7 +216,7 @@ TEST_F(FileSystemFileStreamReaderTest, GetLengthWithOffset) {
 }
 
 TEST_F(FileSystemFileStreamReaderTest, ReadNormal) {
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 0, test_file_modification_time()));
   int result = 0;
   std::string data;
@@ -226,7 +230,7 @@ TEST_F(FileSystemFileStreamReaderTest, ReadAfterModified) {
   base::Time fake_expected_modification_time =
       test_file_modification_time() - base::TimeDelta::FromSeconds(10);
 
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 0, fake_expected_modification_time));
   int result = 0;
   std::string data;
@@ -243,7 +247,7 @@ TEST_F(FileSystemFileStreamReaderTest, ReadAfterModified) {
 }
 
 TEST_F(FileSystemFileStreamReaderTest, ReadWithOffset) {
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 3, base::Time()));
   int result = 0;
   std::string data;
@@ -253,7 +257,7 @@ TEST_F(FileSystemFileStreamReaderTest, ReadWithOffset) {
 }
 
 TEST_F(FileSystemFileStreamReaderTest, DeleteWithUnfinishedRead) {
-  scoped_ptr<FileSystemFileStreamReader> reader(
+  std::unique_ptr<FileSystemFileStreamReader> reader(
       CreateFileReader(kTestFileName, 0, base::Time()));
 
   net::TestCompletionCallback callback;

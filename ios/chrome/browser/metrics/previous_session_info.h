@@ -7,6 +7,11 @@
 
 #import <Foundation/Foundation.h>
 
+namespace previous_session_info_constants {
+// Key in the UserDefaults for a boolean value keeping track of memory warnings.
+extern NSString* const kDidSeeMemoryWarningShortlyBeforeTerminating;
+}  // namespace previous_session_info_constants
+
 // PreviousSessionInfo has two jobs:
 // - Holding information about the last session, persisted across restart.
 //   These informations are accessible via the properties on the shared
@@ -37,11 +42,6 @@
 // ignored.
 - (void)resetMemoryWarningFlag;
 
-@end
-
-@interface PreviousSessionInfo (TestingOnly)
-@property(nonatomic, assign) BOOL didSeeMemoryWarningShortlyBeforeTerminating;
-+ (void)resetSharedInstanceForTesting;
 @end
 
 #endif  // IOS_CHROME_BROWSER_METRICS_PREVIOUS_SESSION_INFO_H_

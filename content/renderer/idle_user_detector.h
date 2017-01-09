@@ -5,7 +5,8 @@
 #ifndef CONTENT_RENDERER_IDLE_USER_DETECTOR_H_
 #define CONTENT_RENDERER_IDLE_USER_DETECTOR_H_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
+#include "content/common/input/input_event_dispatch_type.h"
 #include "content/public/renderer/render_view_observer.h"
 
 namespace blink {
@@ -28,9 +29,11 @@ class IdleUserDetector : public RenderViewObserver {
  private:
   // RenderViewObserver implementation:
   bool OnMessageReceived(const IPC::Message& message) override;
+  void OnDestruct() override;
 
   void OnHandleInputEvent(const blink::WebInputEvent* event,
-                          const ui::LatencyInfo& latency_info);
+                          const ui::LatencyInfo& latency_info,
+                          InputEventDispatchType dispatch_type);
 
   DISALLOW_COPY_AND_ASSIGN(IdleUserDetector);
 };

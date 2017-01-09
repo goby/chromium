@@ -5,6 +5,7 @@
 #ifndef CHROMEOS_NETWORK_HOST_RESOLVER_IMPL_CHROMEOS_H_
 #define CHROMEOS_NETWORK_HOST_RESOLVER_IMPL_CHROMEOS_H_
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "chromeos/chromeos_export.h"
@@ -31,12 +32,12 @@ class CHROMEOS_EXPORT HostResolverImplChromeOS : public net::HostResolverImpl {
   // This is expected to be constructed on the same thread that Resolve() is
   // called from, i.e. the IO thread, which is presumed to differ from the
   // thread that NetworkStateHandler is called on, i.e. the UI thread.
-  static scoped_ptr<net::HostResolver> CreateSystemResolver(
+  static std::unique_ptr<net::HostResolver> CreateSystemResolver(
       const Options& options,
       net::NetLog* net_log);
 
   // Creates a host resolver instance for testing.
-  static scoped_ptr<net::HostResolver> CreateHostResolverForTest(
+  static std::unique_ptr<net::HostResolver> CreateHostResolverForTest(
       scoped_refptr<base::SingleThreadTaskRunner> network_handler_task_runner,
       NetworkStateHandler* network_state_handler);
 
@@ -47,8 +48,8 @@ class CHROMEOS_EXPORT HostResolverImplChromeOS : public net::HostResolverImpl {
               net::RequestPriority priority,
               net::AddressList* addresses,
               const net::CompletionCallback& callback,
-              RequestHandle* out_req,
-              const net::BoundNetLog& source_net_log) override;
+              std::unique_ptr<Request>* out_req,
+              const net::NetLogWithSource& source_net_log) override;
 
  private:
   friend class net::HostResolver;

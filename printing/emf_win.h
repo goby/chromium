@@ -5,14 +5,16 @@
 #ifndef PRINTING_EMF_WIN_H_
 #define PRINTING_EMF_WIN_H_
 
+#include <stddef.h>
+#include <stdint.h>
 #include <windows.h>
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/gtest_prod_util.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "printing/metafile.h"
 
 namespace base {
@@ -55,14 +57,13 @@ class PRINTING_EXPORT Emf : public Metafile {
 
   // Metafile methods.
   bool Init() override;
-  bool InitFromData(const void* src_buffer,
-                    uint32_t src_buffer_size) override;
+  bool InitFromData(const void* src_buffer, size_t src_buffer_size) override;
 
   // Inserts a custom GDICOMMENT records indicating StartPage/EndPage calls
   // (since StartPage and EndPage do not work in a metafile DC). Only valid
   // when hdc_ is non-NULL. |page_size|, |content_area|, and |scale_factor| are
   // ignored.
-  bool StartPage(const gfx::Size& page_size,
+  void StartPage(const gfx::Size& page_size,
                  const gfx::Rect& content_area,
                  const float& scale_factor) override;
   bool FinishPage() override;
@@ -86,11 +87,11 @@ class PRINTING_EXPORT Emf : public Metafile {
 
   // Returns new metafile with only bitmap created by playback of the current
   // metafile. Returns NULL if fails.
-  scoped_ptr<Emf> RasterizeMetafile(int raster_area_in_pixels) const;
+  std::unique_ptr<Emf> RasterizeMetafile(int raster_area_in_pixels) const;
 
   // Returns new metafile where AlphaBlend replaced by bitmaps. Returns NULL
   // if fails.
-  scoped_ptr<Emf> RasterizeAlphaBlend() const;
+  std::unique_ptr<Emf> RasterizeAlphaBlend() const;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(EmfTest, DC);

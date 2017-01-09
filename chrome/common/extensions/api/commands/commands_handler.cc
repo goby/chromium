@@ -4,6 +4,10 @@
 
 #include "chrome/common/extensions/api/commands/commands_handler.h"
 
+#include <memory>
+#include <utility>
+#include <vector>
+
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
@@ -30,7 +34,7 @@ CommandsInfo::~CommandsInfo() {
 
 // static
 const Command* CommandsInfo::GetBrowserActionCommand(
-   const Extension* extension) {
+    const Extension* extension) {
   CommandsInfo* info = static_cast<CommandsInfo*>(
       extension->GetManifestData(keys::kCommands));
   return info ? info->browser_action_command.get() : NULL;
@@ -58,7 +62,7 @@ CommandsHandler::~CommandsHandler() {
 
 bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
   if (!extension->manifest()->HasKey(keys::kCommands)) {
-    scoped_ptr<CommandsInfo> commands_info(new CommandsInfo);
+    std::unique_ptr<CommandsInfo> commands_info(new CommandsInfo);
     MaybeSetBrowserActionDefault(extension, commands_info.get());
     extension->SetManifestData(keys::kCommands,
                                commands_info.release());
@@ -71,7 +75,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
     return false;
   }
 
-  scoped_ptr<CommandsInfo> commands_info(new CommandsInfo);
+  std::unique_ptr<CommandsInfo> commands_info(new CommandsInfo);
 
   int command_index = 0;
   int keybindings_found = 0;
@@ -87,7 +91,7 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
       return false;
     }
 
-    scoped_ptr<extensions::Command> binding(new Command());
+    std::unique_ptr<extensions::Command> binding(new Command());
     if (!binding->Parse(command, iter.key(), command_index, error))
       return false;  // |error| already set.
 
@@ -110,13 +114,13 @@ bool CommandsHandler::Parse(Extension* extension, base::string16* error) {
 
     std::string command_name = binding->command_name();
     if (command_name == manifest_values::kBrowserActionCommandEvent) {
-      commands_info->browser_action_command.reset(binding.release());
+      commands_info->browser_action_command = std::move(binding);
     } else if (command_name ==
                    manifest_values::kPageActionCommandEvent) {
-      commands_info->page_action_command.reset(binding.release());
+      commands_info->page_action_command = std::move(binding);
     } else {
       if (command_name[0] != '_')  // All commands w/underscore are reserved.
-        commands_info->named_commands[command_name] = *binding.get();
+        commands_info->named_commands[command_name] = *binding;
     }
   }
 

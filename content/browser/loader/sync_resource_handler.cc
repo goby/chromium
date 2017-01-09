@@ -4,10 +4,10 @@
 
 #include "content/browser/loader/sync_resource_handler.h"
 
+#include "base/callback_helpers.h"
 #include "base/logging.h"
-#include "content/browser/devtools/devtools_netlog_observer.h"
+#include "content/browser/loader/netlog_observer.h"
 #include "content/browser/loader/resource_dispatcher_host_impl.h"
-#include "content/browser/loader/resource_message_filter.h"
 #include "content/browser/loader/resource_request_info_impl.h"
 #include "content/common/resource_messages.h"
 #include "content/public/browser/resource_dispatcher_host_delegate.h"
@@ -20,25 +20,19 @@ namespace content {
 
 SyncResourceHandler::SyncResourceHandler(
     net::URLRequest* request,
-    IPC::Message* result_message,
+    const SyncLoadResultCallback& result_handler,
     ResourceDispatcherHostImpl* resource_dispatcher_host)
     : ResourceHandler(request),
       read_buffer_(new net::IOBuffer(kReadBufSize)),
-      result_message_(result_message),
+      result_handler_(result_handler),
       rdh_(resource_dispatcher_host),
       total_transfer_size_(0) {
   result_.final_url = request->url();
 }
 
 SyncResourceHandler::~SyncResourceHandler() {
-  if (result_message_) {
-    result_message_->set_reply_error();
-    ResourceMessageFilter* filter = GetFilter();
-    // If the filter doesn't exist at this point, the process has died and isn't
-    // waiting for the result message anymore.
-    if (filter)
-      filter->Send(result_message_);
-  }
+  if (result_handler_)
+    result_handler_.Run(nullptr);
 }
 
 bool SyncResourceHandler::OnRequestRedirected(
@@ -51,7 +45,7 @@ bool SyncResourceHandler::OnRequestRedirected(
         response);
   }
 
-  DevToolsNetLogObserver::PopulateResponseInfo(request(), response);
+  NetLogObserver::PopulateResponseInfo(request(), response);
   // TODO(darin): It would be much better if this could live in WebCore, but
   // doing so requires API changes at all levels.  Similar code exists in
   // WebCore/platform/network/cf/ResourceHandleCFNet.cpp :-(
@@ -68,16 +62,17 @@ bool SyncResourceHandler::OnRequestRedirected(
 bool SyncResourceHandler::OnResponseStarted(
     ResourceResponse* response,
     bool* defer) {
-  const ResourceRequestInfoImpl* info = GetRequestInfo();
-  if (!info->filter())
+  ResourceRequestInfoImpl* info = GetRequestInfo();
+  DCHECK(info->requester_info()->IsRenderer());
+  if (!info->requester_info()->filter())
     return false;
 
   if (rdh_->delegate()) {
-    rdh_->delegate()->OnResponseStarted(
-        request(), info->GetContext(), response, info->filter());
+    rdh_->delegate()->OnResponseStarted(request(), info->GetContext(),
+                                        response);
   }
 
-  DevToolsNetLogObserver::PopulateResponseInfo(request(), response);
+  NetLogObserver::PopulateResponseInfo(request(), response);
 
   // We don't care about copying the status here.
   result_.headers = response->head.headers;
@@ -92,10 +87,6 @@ bool SyncResourceHandler::OnResponseStarted(
 }
 
 bool SyncResourceHandler::OnWillStart(const GURL& url, bool* defer) {
-  return true;
-}
-
-bool SyncResourceHandler::OnBeforeNetworkStart(const GURL& url, bool* defer) {
   return true;
 }
 
@@ -117,21 +108,14 @@ bool SyncResourceHandler::OnReadCompleted(int bytes_read, bool* defer) {
 
 void SyncResourceHandler::OnResponseCompleted(
     const net::URLRequestStatus& status,
-    const std::string& security_info,
     bool* defer) {
-  ResourceMessageFilter* filter = GetFilter();
-  if (!filter)
-    return;
-
   result_.error_code = status.error();
 
   int total_transfer_size = request()->GetTotalReceivedBytes();
   result_.encoded_data_length = total_transfer_size_ + total_transfer_size;
+  result_.encoded_body_length = request()->GetRawBodyBytes();
 
-  ResourceHostMsg_SyncLoad::WriteReplyParams(result_message_, result_);
-  filter->Send(result_message_);
-  result_message_ = NULL;
-  return;
+  base::ResetAndReturn(&result_handler_).Run(&result_);
 }
 
 void SyncResourceHandler::OnDataDownloaded(int bytes_downloaded) {

@@ -4,28 +4,25 @@
 
 #include "content/shell/browser/shell.h"
 
+#include <stddef.h>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "content/public/browser/context_factory.h"
 #include "content/public/browser/render_widget_host_view.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/common/context_menu_params.h"
 #include "content/shell/browser/shell_platform_data_aura.h"
-#include "device/bluetooth/bluetooth_adapter_factory.h"
-#include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
 #include "ui/base/clipboard/clipboard.h"
-#include "ui/base/models/simple_menu_model.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
-#include "ui/gfx/screen.h"
 #include "ui/views/background.h"
-#include "ui/views/controls/button/label_button.h"
-#include "ui/views/controls/button/menu_button.h"
-#include "ui/views/controls/button/menu_button_listener.h"
-#include "ui/views/controls/menu/menu_runner.h"
+#include "ui/views/controls/button/md_text_button.h"
 #include "ui/views/controls/textfield/textfield.h"
 #include "ui/views/controls/textfield/textfield_controller.h"
 #include "ui/views/controls/webview/webview.h"
@@ -37,12 +34,14 @@
 #include "ui/views/widget/widget_delegate.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "device/bluetooth/dbus/bluez_dbus_manager.h"
 #include "ui/aura/test/test_screen.h"
 #include "ui/wm/test/wm_test_helper.h"
 #else  // !defined(OS_CHROMEOS)
 #include "ui/views/widget/desktop_aura/desktop_screen.h"
+#endif
+
+#if defined(USE_AURA)
+#include "ui/wm/core/wm_state.h"
 #endif
 
 #if defined(OS_WIN)
@@ -53,61 +52,6 @@
 namespace content {
 
 namespace {
-// ViewDelegate implementation for aura content shell
-class ShellViewsDelegateAura : public views::DesktopTestViewsDelegate {
- public:
-  ShellViewsDelegateAura() : use_transparent_windows_(false) {
-  }
-
-  ~ShellViewsDelegateAura() override {}
-
-  void SetUseTransparentWindows(bool transparent) {
-    use_transparent_windows_ = transparent;
-  }
-
- private:
-  bool use_transparent_windows_;
-
-  DISALLOW_COPY_AND_ASSIGN(ShellViewsDelegateAura);
-};
-
-// Model for the "Debug" menu
-class ContextMenuModel : public ui::SimpleMenuModel,
-                         public ui::SimpleMenuModel::Delegate {
- public:
-  explicit ContextMenuModel(
-      Shell* shell, const content::ContextMenuParams& params)
-    : ui::SimpleMenuModel(this),
-      shell_(shell),
-      params_(params) {
-    AddItem(COMMAND_OPEN_DEVTOOLS, base::ASCIIToUTF16("Inspect Element"));
-  }
-
-  // ui::SimpleMenuModel::Delegate:
-  bool IsCommandIdChecked(int command_id) const override { return false; }
-  bool IsCommandIdEnabled(int command_id) const override { return true; }
-  bool GetAcceleratorForCommandId(int command_id,
-                                  ui::Accelerator* accelerator) override {
-    return false;
-  }
-  void ExecuteCommand(int command_id, int event_flags) override {
-    switch (command_id) {
-      case COMMAND_OPEN_DEVTOOLS:
-        shell_->ShowDevToolsForElementAt(params_.x, params_.y);
-        break;
-    };
-  }
-
- private:
-  enum CommandID {
-    COMMAND_OPEN_DEVTOOLS
-  };
-
-  Shell* shell_;
-  content::ContextMenuParams params_;
-
-  DISALLOW_COPY_AND_ASSIGN(ContextMenuModel);
-};
 
 // Maintain the UI controls and web view for content shell
 class ShellWindowDelegateView : public views::WidgetDelegateView,
@@ -148,7 +92,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     // Resizing a widget on chromeos doesn't automatically resize the root, need
     // to explicitly do that.
 #if defined(OS_CHROMEOS)
-    GetWidget()->GetNativeWindow()->GetHost()->SetBounds(bounds);
+    GetWidget()->GetNativeWindow()->GetHost()->SetBoundsInPixels(bounds);
 #endif
   }
 
@@ -163,35 +107,6 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
     } else if (control == STOP_BUTTON) {
       stop_button_->SetState(is_enabled ? views::CustomButton::STATE_NORMAL
           : views::CustomButton::STATE_DISABLED);
-    }
-  }
-
-  void ShowWebViewContextMenu(const content::ContextMenuParams& params) {
-    gfx::Point screen_point(params.x, params.y);
-
-    // Convert from content coordinates to window coordinates.
-    // This code copied from chrome_web_contents_view_delegate_views.cc
-    aura::Window* web_contents_window =
-        shell_->web_contents()->GetNativeView();
-    aura::Window* root_window = web_contents_window->GetRootWindow();
-    aura::client::ScreenPositionClient* screen_position_client =
-        aura::client::GetScreenPositionClient(root_window);
-    if (screen_position_client) {
-        screen_position_client->ConvertPointToScreen(web_contents_window,
-                &screen_point);
-    }
-
-    context_menu_model_.reset(new ContextMenuModel(shell_, params));
-    context_menu_runner_.reset(new views::MenuRunner(
-        context_menu_model_.get(), views::MenuRunner::CONTEXT_MENU));
-
-    if (context_menu_runner_->RunMenuAt(web_view_->GetWidget(),
-                                        NULL,
-                                        gfx::Rect(screen_point, gfx::Size()),
-                                        views::MENU_ANCHOR_TOPRIGHT,
-                                        ui::MENU_SOURCE_NONE) ==
-        views::MenuRunner::MENU_DELETED) {
-      return;
     }
   }
 
@@ -220,8 +135,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       views::ColumnSet* toolbar_column_set =
           toolbar_layout->AddColumnSet(0);
       // Back button
-      back_button_ = new views::LabelButton(this, base::ASCIIToUTF16("Back"));
-      back_button_->SetStyle(views::Button::STYLE_BUTTON);
+      back_button_ =
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Back"));
       gfx::Size back_button_size = back_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -230,8 +145,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     back_button_size.width() / 2);
       // Forward button
       forward_button_ =
-          new views::LabelButton(this, base::ASCIIToUTF16("Forward"));
-      forward_button_->SetStyle(views::Button::STYLE_BUTTON);
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Forward"));
       gfx::Size forward_button_size = forward_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -240,8 +154,7 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     forward_button_size.width() / 2);
       // Refresh button
       refresh_button_ =
-          new views::LabelButton(this, base::ASCIIToUTF16("Refresh"));
-      refresh_button_->SetStyle(views::Button::STYLE_BUTTON);
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Refresh"));
       gfx::Size refresh_button_size = refresh_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -249,8 +162,8 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                                     refresh_button_size.width(),
                                     refresh_button_size.width() / 2);
       // Stop button
-      stop_button_ = new views::LabelButton(this, base::ASCIIToUTF16("Stop"));
-      stop_button_->SetStyle(views::Button::STYLE_BUTTON);
+      stop_button_ =
+          views::MdTextButton::Create(this, base::ASCIIToUTF16("Stop"));
       gfx::Size stop_button_size = stop_button_->GetPreferredSize();
       toolbar_column_set->AddColumn(views::GridLayout::CENTER,
                                     views::GridLayout::CENTER, 0,
@@ -305,15 +218,16 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
                        const base::string16& new_contents) override {}
   bool HandleKeyEvent(views::Textfield* sender,
                       const ui::KeyEvent& key_event) override {
-   if (sender == url_entry_ && key_event.key_code() == ui::VKEY_RETURN) {
-     std::string text = base::UTF16ToUTF8(url_entry_->text());
-     GURL url(text);
-     if (!url.has_scheme()) {
-       url = GURL(std::string("http://") + std::string(text));
-       url_entry_->SetText(base::ASCIIToUTF16(url.spec()));
-     }
-     shell_->LoadURL(url);
-     return true;
+    if (key_event.type() == ui::ET_KEY_PRESSED && sender == url_entry_ &&
+        key_event.key_code() == ui::VKEY_RETURN) {
+      std::string text = base::UTF16ToUTF8(url_entry_->text());
+      GURL url(text);
+      if (!url.has_scheme()) {
+        url = GURL(std::string("http://") + std::string(text));
+        url_entry_->SetText(base::ASCIIToUTF16(url.spec()));
+      }
+      shell_->LoadURL(url);
+      return true;
    }
    return false;
   }
@@ -341,7 +255,6 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
       shell_ = NULL;
     }
   }
-  View* GetContentsView() override { return this; }
 
   // Overridden from View
   gfx::Size GetMinimumSize() const override {
@@ -382,13 +295,11 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 
   // Toolbar view contains forward/backward/reload button and URL entry
   View* toolbar_view_;
-  views::LabelButton* back_button_;
-  views::LabelButton* forward_button_;
-  views::LabelButton* refresh_button_;
-  views::LabelButton* stop_button_;
+  views::CustomButton* back_button_;
+  views::CustomButton* forward_button_;
+  views::CustomButton* refresh_button_;
+  views::CustomButton* stop_button_;
   views::Textfield* url_entry_;
-  scoped_ptr<ContextMenuModel> context_menu_model_;
-  scoped_ptr<views::MenuRunner> context_menu_runner_;
 
   // Contents view contains the web contents view
   View* contents_view_;
@@ -400,10 +311,16 @@ class ShellWindowDelegateView : public views::WidgetDelegateView,
 }  // namespace
 
 #if defined(OS_CHROMEOS)
-wm::WMTestHelper* Shell::wm_test_helper_ = NULL;
-gfx::Screen* Shell::test_screen_ = NULL;
+// static
+wm::WMTestHelper* Shell::wm_test_helper_ = nullptr;
+// static
+display::Screen* Shell::test_screen_ = nullptr;
+#elif defined(USE_AURA)
+// static
+wm::WMState* Shell::wm_state_ = nullptr;
 #endif
-views::ViewsDelegate* Shell::views_delegate_ = NULL;
+// static
+views::ViewsDelegate* Shell::views_delegate_ = nullptr;
 
 // static
 void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
@@ -412,40 +329,35 @@ void Shell::PlatformInitialize(const gfx::Size& default_window_size) {
   _setmode(_fileno(stderr), _O_BINARY);
 #endif
 #if defined(OS_CHROMEOS)
-  chromeos::DBusThreadManager::Initialize();
-  bluez::BluezDBusManager::Initialize(
-      chromeos::DBusThreadManager::Get()->GetSystemBus(),
-      chromeos::DBusThreadManager::Get()->IsUsingStub(
-          chromeos::DBusClientBundle::BLUETOOTH));
   test_screen_ = aura::TestScreen::Create(gfx::Size());
-  gfx::Screen::SetScreenInstance(gfx::SCREEN_TYPE_NATIVE, test_screen_);
+  display::Screen::SetScreenInstance(test_screen_);
   wm_test_helper_ = new wm::WMTestHelper(default_window_size,
                                          GetContextFactory());
 #else
-  gfx::Screen::SetScreenInstance(
-      gfx::SCREEN_TYPE_NATIVE, views::CreateDesktopScreen());
+#if defined(USE_AURA)
+  wm_state_ = new wm::WMState;
 #endif
-  views_delegate_ = new ShellViewsDelegateAura();
+  display::Screen::SetScreenInstance(views::CreateDesktopScreen());
+#endif
+  views_delegate_ = new views::DesktopTestViewsDelegate();
 }
 
 void Shell::PlatformExit() {
 #if defined(OS_CHROMEOS)
   delete wm_test_helper_;
-  wm_test_helper_ = NULL;
+  wm_test_helper_ = nullptr;
 
   delete test_screen_;
-  test_screen_ = NULL;
+  test_screen_ = nullptr;
 #endif
   delete views_delegate_;
-  views_delegate_ = NULL;
+  views_delegate_ = nullptr;
   delete platform_;
-  platform_ = NULL;
-#if defined(OS_CHROMEOS)
-  device::BluetoothAdapterFactory::Shutdown();
-  bluez::BluezDBusManager::Shutdown();
-  chromeos::DBusThreadManager::Shutdown();
+  platform_ = nullptr;
+#if defined(USE_AURA) && !defined(OS_CHROMEOS)
+  delete wm_state_;
+  wm_state_ = nullptr;
 #endif
-  aura::Env::DeleteInstance();
 }
 
 void Shell::PlatformCleanUp() {
@@ -498,6 +410,8 @@ void Shell::PlatformCreateWindow(int width, int height) {
   views::Widget::InitParams params;
   params.bounds = gfx::Rect(0, 0, width, height);
   params.delegate = new ShellWindowDelegateView(this);
+  params.wm_class_class = "chromium-content_shell";
+  params.wm_class_name = params.wm_class_class;
   window_widget_->Init(params);
 #endif
 
@@ -548,16 +462,6 @@ void Shell::PlatformSetTitle(const base::string16& title) {
     static_cast<ShellWindowDelegateView*>(window_widget_->widget_delegate());
   delegate_view->SetWindowTitle(title);
   window_widget_->UpdateWindowTitle();
-}
-
-bool Shell::PlatformHandleContextMenu(
-    const content::ContextMenuParams& params) {
-  if (headless_)
-    return true;
-  ShellWindowDelegateView* delegate_view =
-    static_cast<ShellWindowDelegateView*>(window_widget_->widget_delegate());
-  delegate_view->ShowWebViewContextMenu(params);
-  return true;
 }
 
 }  // namespace content

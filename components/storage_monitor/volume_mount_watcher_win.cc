@@ -5,11 +5,15 @@
 #include "components/storage_monitor/volume_mount_watcher_win.h"
 
 #include <windows.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <dbt.h>
 #include <fileapi.h>
 #include <shlobj.h>
 #include <winioctl.h>
+
+#include <algorithm>
 
 #include "base/bind_helpers.h"
 #include "base/metrics/histogram.h"
@@ -18,6 +22,7 @@
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/sys_info.h"
 #include "base/task_runner_util.h"
 #include "base/time/time.h"
 #include "base/win/scoped_handle.h"
@@ -93,7 +98,7 @@ DeviceType GetDeviceType(const base::string16& mount_point) {
 }
 
 // Returns 0 if the devicetype is not volume.
-uint32 GetVolumeBitMaskFromBroadcastHeader(LPARAM data) {
+uint32_t GetVolumeBitMaskFromBroadcastHeader(LPARAM data) {
   DEV_BROADCAST_VOLUME* dev_broadcast_volume =
       reinterpret_cast<DEV_BROADCAST_VOLUME*>(data);
   if (dev_broadcast_volume->dbcv_devicetype == DBT_DEVTYP_VOLUME)
@@ -105,16 +110,13 @@ uint32 GetVolumeBitMaskFromBroadcastHeader(LPARAM data) {
 bool IsLogicalVolumeStructure(LPARAM data) {
   DEV_BROADCAST_HDR* broadcast_hdr =
       reinterpret_cast<DEV_BROADCAST_HDR*>(data);
-  return broadcast_hdr != NULL &&
-         broadcast_hdr->dbch_devicetype == DBT_DEVTYP_VOLUME;
+  return broadcast_hdr && broadcast_hdr->dbch_devicetype == DBT_DEVTYP_VOLUME;
 }
 
 // Gets the total volume of the |mount_point| in bytes.
-uint64 GetVolumeSize(const base::string16& mount_point) {
-  ULARGE_INTEGER total;
-  if (!GetDiskFreeSpaceExW(mount_point.c_str(), NULL, &total, NULL))
-    return 0;
-  return total.QuadPart;
+uint64_t GetVolumeSize(const base::FilePath& mount_point) {
+  int64_t size = base::SysInfo::AmountOfTotalDiskSpace(mount_point);
+  return std::max(size, static_cast<int64_t>(0));
 }
 
 // Gets mass storage device information given a |device_path|. On success,
@@ -158,10 +160,11 @@ bool GetDeviceDetails(const base::FilePath& device_path, StorageInfo* info) {
     return true;
   }
 
+  base::FilePath mount_path(mount_point);
   StorageInfo::Type type = StorageInfo::FIXED_MASS_STORAGE;
   if (device_type == REMOVABLE) {
     type = StorageInfo::REMOVABLE_MASS_STORAGE_NO_DCIM;
-    if (MediaStorageUtil::HasDcim(base::FilePath(mount_point)))
+    if (MediaStorageUtil::HasDcim(mount_path))
       type = StorageInfo::REMOVABLE_MASS_STORAGE_WITH_DCIM;
   }
 
@@ -172,7 +175,7 @@ bool GetDeviceDetails(const base::FilePath& device_path, StorageInfo* info) {
                         base::WriteInto(&volume_label, kMaxPathBufLen),
                         kMaxPathBufLen, NULL, NULL, NULL, NULL, 0);
 
-  uint64 total_size_in_bytes = GetVolumeSize(mount_point);
+  uint64_t total_size_in_bytes = GetVolumeSize(mount_path);
   std::string device_id =
       StorageInfo::MakeDeviceId(type, base::UTF16ToUTF8(guid));
 
@@ -369,7 +372,7 @@ void VolumeMountWatcherWin::AddDevicesOnUIThread(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
   for (size_t i = 0; i < removable_devices.size(); i++) {
-    if (ContainsKey(pending_device_checks_, removable_devices[i]))
+    if (base::ContainsKey(pending_device_checks_, removable_devices[i]))
       continue;
     pending_device_checks_.insert(removable_devices[i]);
     device_info_task_runner_->PostTask(
@@ -405,7 +408,7 @@ void VolumeMountWatcherWin::DeviceCheckComplete(
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   pending_device_checks_.erase(device_path);
 
-  if (pending_device_checks_.size() == 0) {
+  if (pending_device_checks_.empty()) {
     if (notifications_)
       notifications_->MarkInitialized();
   }

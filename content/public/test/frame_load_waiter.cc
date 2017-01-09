@@ -6,7 +6,7 @@
 
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace content {
 
@@ -24,6 +24,10 @@ void FrameLoadWaiter::DidFinishLoad() {
   // may trigger other IPCs that tests are expecting.
   base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE,
                                                 run_loop_.QuitClosure());
+}
+
+void FrameLoadWaiter::OnDestruct() {
+  delete this;
 }
 
 }  // namespace content

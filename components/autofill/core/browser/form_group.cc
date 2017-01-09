@@ -4,7 +4,10 @@
 
 #include "components/autofill/core/browser/form_group.h"
 
+#include "components/autofill/core/browser/autofill_profile.h"
+#include "components/autofill/core/browser/autofill_profile_comparator.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/common/autofill_l10n_util.h"
 
 namespace autofill {
 
@@ -16,10 +19,18 @@ void FormGroup::GetMatchingTypes(const base::string16& text,
     return;
   }
 
+  AutofillProfileComparator comparator(app_locale);
+  base::string16 canonicalized_text = comparator.NormalizeForComparison(text);
+
+  if (canonicalized_text.empty())
+    return;
+
   ServerFieldTypeSet types;
   GetSupportedTypes(&types);
   for (const auto& type : types) {
-    if (GetInfo(AutofillType(type), app_locale) == text)
+    base::string16 candidate_text = comparator.NormalizeForComparison(
+        GetInfo(AutofillType(type), app_locale));
+    if (canonicalized_text == candidate_text)
       matching_types->insert(type);
   }
 }

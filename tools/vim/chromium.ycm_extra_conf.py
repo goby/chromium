@@ -63,6 +63,12 @@ _default_flags = [
   'c++',
 ]
 
+_header_alternates = ('.cc', '.cpp', '.c', '.mm', '.m')
+
+_extension_flags = {
+  '.m': ['-x', 'objective-c'],
+  '.mm': ['-x', 'objective-c++'],
+}
 
 def PathExists(*args):
   return os.path.exists(os.path.join(*args))
@@ -80,7 +86,7 @@ def FindChromeSrcFromFilename(filename):
     (String) Path of 'src/', or None if unable to find.
   """
   curdir = os.path.normpath(os.path.dirname(filename))
-  while not (os.path.basename(os.path.realpath(curdir)) == 'src'
+  while not (os.path.basename(curdir) == 'src'
              and PathExists(curdir, 'DEPS')
              and (PathExists(curdir, '..', '.gclient')
                   or PathExists(curdir, '.git'))):
@@ -108,36 +114,9 @@ def GetDefaultSourceFile(chrome_root, filename):
   if filename.startswith(blink_root):
     return os.path.join(blink_root, 'Source', 'core', 'Init.cpp')
   else:
+    if 'test.' in filename:
+      return os.path.join(chrome_root, 'base', 'logging_unittest.cc')
     return os.path.join(chrome_root, 'base', 'logging.cc')
-
-
-def GetBuildableSourceFile(chrome_root, filename):
-  """Returns a buildable source file corresponding to |filename|.
-
-  A buildable source file is one which is likely to be passed into clang as a
-  source file during the build. For .h files, returns the closest matching .cc,
-  .cpp or .c file. If no such file is found, returns the same as
-  GetDefaultSourceFile().
-
-  Args:
-    chrome_root: (String) Absolute path to the root of Chromium checkout.
-    filename: (String) Absolute path to the target source file.
-
-  Returns:
-    (String) Absolute path to source file.
-  """
-  if filename.endswith('.h'):
-    # Header files can't be built. Instead, try to match a header file to its
-    # corresponding source file.
-    alternates = ['.cc', '.cpp', '.c']
-    for alt_extension in alternates:
-      alt_name = filename[:-2] + alt_extension
-      if os.path.exists(alt_name):
-        return alt_name
-
-    return GetDefaultSourceFile(chrome_root, filename)
-
-  return filename
 
 
 def GetNinjaBuildOutputsForSourceFile(out_dir, filename):
@@ -157,12 +136,13 @@ def GetNinjaBuildOutputsForSourceFile(out_dir, filename):
   """
   # Ninja needs the path to the source file relative to the output build
   # directory.
-  rel_filename = os.path.relpath(os.path.realpath(filename), out_dir)
+  rel_filename = os.path.relpath(filename, out_dir)
 
   p = subprocess.Popen(['ninja', '-C', out_dir, '-t', 'query', rel_filename],
-                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       universal_newlines=True)
   stdout, _ = p.communicate()
-  if p.returncode:
+  if p.returncode != 0:
     return []
 
   # The output looks like:
@@ -194,9 +174,9 @@ def GetClangCommandLineForNinjaOutput(out_dir, build_target):
   """
   p = subprocess.Popen(['ninja', '-v', '-C', out_dir,
                         '-t', 'commands', build_target],
-                       stdout=subprocess.PIPE)
+                       stdout=subprocess.PIPE, universal_newlines=True)
   stdout, stderr = p.communicate()
-  if p.returncode:
+  if p.returncode != 0:
     return None
 
   # Ninja will return multiple build steps for all dependencies up to
@@ -274,6 +254,14 @@ def GetClangOptionsFromCommandLine(clang_commandline, out_dir,
       if flag_index + 1 < len(clang_tokens):
         clang_flags.append(flag)
         clang_flags.append(clang_tokens[flag_index + 1])
+    elif flag.startswith('--sysroot='):
+      # On Linux we use a sysroot image.
+      sysroot_path = flag.lstrip('--sysroot=')
+      if sysroot_path.startswith('/'):
+        clang_flags.append(flag)
+      else:
+        abs_path = os.path.normpath(os.path.join(out_dir, sysroot_path))
+        clang_flags.append('--sysroot=' + abs_path)
   return clang_flags
 
 
@@ -309,10 +297,24 @@ def GetClangOptionsFromNinjaForFilename(chrome_root, filename):
 
   sys.path.append(os.path.join(chrome_root, 'tools', 'vim'))
   from ninja_output import GetNinjaOutputDirectory
-  out_dir = os.path.realpath(GetNinjaOutputDirectory(chrome_root))
+  out_dir = GetNinjaOutputDirectory(chrome_root)
 
-  clang_line = GetClangCommandLineFromNinjaForSource(
-      out_dir, GetBuildableSourceFile(chrome_root, filename))
+  basename, extension = os.path.splitext(filename)
+  if extension == '.h':
+    candidates = [basename + ext for ext in _header_alternates]
+  else:
+    candidates = [filename]
+
+  clang_line = None
+  buildable_extension = extension
+  for candidate in candidates:
+    clang_line = GetClangCommandLineFromNinjaForSource(out_dir, candidate)
+    if clang_line:
+      buildable_extension = os.path.splitext(candidate)[1]
+      break
+
+  additional_flags += _extension_flags.get(buildable_extension, [])
+
   if not clang_line:
     # If ninja didn't know about filename or it's companion files, then try a
     # default build target. It is possible that the file is new, or build.ninja
@@ -321,7 +323,7 @@ def GetClangOptionsFromNinjaForFilename(chrome_root, filename):
         out_dir, GetDefaultSourceFile(chrome_root, filename))
 
   if not clang_line:
-    return (additional_flags, [])
+    return additional_flags
 
   return GetClangOptionsFromCommandLine(clang_line, out_dir, additional_flags)
 

@@ -4,23 +4,27 @@
 
 #include "ui/views/corewm/tooltip_controller.h"
 
+#include <stddef.h>
+
+#include <utility>
 #include <vector>
 
 #include "base/strings/string_util.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "ui/aura/client/capture_client.h"
 #include "ui/aura/client/cursor_client.h"
+#include "ui/aura/client/drag_drop_client.h"
 #include "ui/aura/client/screen_position_client.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
+#include "ui/display/screen.h"
 #include "ui/events/event.h"
 #include "ui/gfx/font.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/screen.h"
 #include "ui/gfx/text_elider.h"
 #include "ui/views/corewm/tooltip.h"
 #include "ui/views/widget/tooltip_manager.h"
-#include "ui/wm/public/drag_drop_client.h"
 
 namespace views {
 namespace corewm {
@@ -93,7 +97,7 @@ aura::Window* GetTooltipTarget(const ui::MouseEvent& event,
       gfx::Point screen_loc(event.location());
       aura::client::GetScreenPositionClient(event_target->GetRootWindow())->
           ConvertPointToScreen(event_target, &screen_loc);
-      gfx::Screen* screen = gfx::Screen::GetScreenFor(event_target);
+      display::Screen* screen = display::Screen::GetScreen();
       aura::Window* target = screen->GetWindowAtScreenPoint(screen_loc);
       if (!target)
         return NULL;
@@ -120,11 +124,11 @@ aura::Window* GetTooltipTarget(const ui::MouseEvent& event,
 ////////////////////////////////////////////////////////////////////////////////
 // TooltipController public:
 
-TooltipController::TooltipController(scoped_ptr<Tooltip> tooltip)
+TooltipController::TooltipController(std::unique_ptr<Tooltip> tooltip)
     : tooltip_window_(NULL),
       tooltip_id_(NULL),
       tooltip_window_at_mouse_press_(NULL),
-      tooltip_(tooltip.Pass()),
+      tooltip_(std::move(tooltip)),
       tooltips_enabled_(true) {
   tooltip_timer_.Start(FROM_HERE,
       base::TimeDelta::FromMilliseconds(kTooltipTimeoutMs),
@@ -136,9 +140,8 @@ TooltipController::~TooltipController() {
     tooltip_window_->RemoveObserver(this);
 }
 
-int TooltipController::GetMaxWidth(const gfx::Point& location,
-                                   gfx::NativeView context) const {
-  return tooltip_->GetMaxWidth(location, context);
+int TooltipController::GetMaxWidth(const gfx::Point& location) const {
+  return tooltip_->GetMaxWidth(location);
 }
 
 void TooltipController::UpdateTooltip(aura::Window* target) {
@@ -200,8 +203,8 @@ void TooltipController::OnMouseEvent(ui::MouseEvent* event) {
     case ui::ET_MOUSE_DRAGGED: {
       curr_mouse_loc_ = event->location();
       aura::Window* target = NULL;
-      // Avoid a call to gfx::Screen::GetWindowAtScreenPoint() since it can be
-      // very expensive on X11 in cases when the tooltip is hidden anyway.
+      // Avoid a call to display::Screen::GetWindowAtScreenPoint() since it can
+      // be very expensive on X11 in cases when the tooltip is hidden anyway.
       if (tooltips_enabled_ &&
           !aura::Env::GetInstance()->IsMouseButtonDown() &&
           !IsDragDropInProgress()) {
@@ -229,6 +232,10 @@ void TooltipController::OnMouseEvent(ui::MouseEvent* event) {
       // Hide the tooltip for click, release, drag, wheel events.
       if (tooltip_->IsVisible())
         tooltip_->Hide();
+
+      // Don't reshow the tooltip during scroll.
+      if (tooltip_timer_.IsRunning())
+        tooltip_timer_.Reset();
       break;
     default:
       break;

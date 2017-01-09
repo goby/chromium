@@ -5,11 +5,12 @@
 #ifndef CHROME_BROWSER_CHROMEOS_LOGIN_UI_SIMPLE_WEB_VIEW_DIALOG_H_
 #define CHROME_BROWSER_CHROMEOS_LOGIN_UI_SIMPLE_WEB_VIEW_DIALOG_H_
 
+#include <memory>
 #include <string>
-#include "base/memory/scoped_ptr.h"
+
+#include "base/macros.h"
 #include "chrome/browser/command_updater_delegate.h"
-#include "chrome/browser/ssl/security_state_model.h"
-#include "chrome/browser/ui/toolbar/toolbar_model_delegate.h"
+#include "chrome/browser/ui/toolbar/chrome_toolbar_model_delegate.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "content/public/browser/page_navigator.h"
 #include "content/public/browser/web_contents_delegate.h"
@@ -21,6 +22,10 @@ class CommandUpdater;
 class Profile;
 class ReloadButton;
 class ToolbarModel;
+
+namespace security_state {
+struct SecurityInfo;
+}  // namespace security_state
 
 namespace views {
 class WebView;
@@ -39,7 +44,7 @@ class StubBubbleModelDelegate;
 class SimpleWebViewDialog : public views::ButtonListener,
                             public views::WidgetDelegateView,
                             public LocationBarView::Delegate,
-                            public ToolbarModelDelegate,
+                            public ChromeToolbarModelDelegate,
                             public CommandUpdaterDelegate,
                             public content::PageNavigator,
                             public content::WebContentsDelegate {
@@ -57,7 +62,6 @@ class SimpleWebViewDialog : public views::ButtonListener,
   void Layout() override;
 
   // Overridden from views::WidgetDelegate:
-  views::View* GetContentsView() override;
   views::View* GetInitiallyFocusedView() override;
 
   // Implements views::ButtonListener:
@@ -76,8 +80,6 @@ class SimpleWebViewDialog : public views::ButtonListener,
   content::WebContents* GetWebContents() override;
   ToolbarModel* GetToolbarModel() override;
   const ToolbarModel* GetToolbarModel() const override;
-  views::Widget* CreateViewsBubble(
-      views::BubbleDelegateView* bubble_delegate) override;
   PageActionImageView* CreatePageActionImageView(
       LocationBarView* owner,
       ExtensionAction* action) override;
@@ -85,10 +87,10 @@ class SimpleWebViewDialog : public views::ButtonListener,
       override;
   void ShowWebsiteSettings(
       content::WebContents* web_contents,
-      const GURL& url,
-      const SecurityStateModel::SecurityInfo& security_info) override;
+      const GURL& virtual_url,
+      const security_state::SecurityInfo& security_info) override;
 
-  // Implements ToolbarModelDelegate:
+  // Implements ChromeToolbarModelDelegate:
   content::WebContents* GetActiveWebContents() const override;
 
   // Implements CommandUpdaterDelegate:
@@ -102,8 +104,8 @@ class SimpleWebViewDialog : public views::ButtonListener,
   void UpdateReload(bool is_loading, bool force);
 
   Profile* profile_;
-  scoped_ptr<ToolbarModel> toolbar_model_;
-  scoped_ptr<CommandUpdater> command_updater_;
+  std::unique_ptr<ToolbarModel> toolbar_model_;
+  std::unique_ptr<CommandUpdater> command_updater_;
 
   // Controls
   views::ImageButton* back_;
@@ -113,9 +115,9 @@ class SimpleWebViewDialog : public views::ButtonListener,
   views::WebView* web_view_;
 
   // Contains |web_view_| while it isn't owned by the view.
-  scoped_ptr<views::WebView> web_view_container_;
+  std::unique_ptr<views::WebView> web_view_container_;
 
-  scoped_ptr<StubBubbleModelDelegate> bubble_model_delegate_;
+  std::unique_ptr<StubBubbleModelDelegate> bubble_model_delegate_;
 
   DISALLOW_COPY_AND_ASSIGN(SimpleWebViewDialog);
 };

@@ -5,11 +5,12 @@
 #ifndef COMPONENTS_DRIVE_FILE_CHANGE_H_
 #define COMPONENTS_DRIVE_FILE_CHANGE_H_
 
+#include <stddef.h>
+
 #include <deque>
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/file_path.h"
 
 namespace drive {
@@ -58,6 +59,7 @@ class FileChange {
     typedef std::deque<Change> List;
 
     ChangeList();
+    ChangeList(const ChangeList& other);
     ~ChangeList();
 
     // Updates the list with the |new_change|.
@@ -82,6 +84,7 @@ class FileChange {
   typedef std::map<base::FilePath, FileChange::ChangeList> Map;
 
   FileChange();
+  FileChange(const FileChange& other);
   ~FileChange();
 
   void Update(const base::FilePath file_path,

@@ -6,15 +6,18 @@
 
 #include <stdint.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/bit_cast.h"
+#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
-#include "base/prefs/pref_service.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/win/registry.h"
 #include "chrome/browser/prefs/browser_prefs.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/test/base/testing_profile.h"
+#include "components/prefs/pref_service.h"
 #include "components/variations/entropy_provider.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -28,7 +31,8 @@ class TriggeredProfileResetterTest : public testing::Test {
 
     // Activate the triggered reset field trial for these tests.
     field_trial_list_.reset(
-        new base::FieldTrialList(new metrics::SHA1EntropyProvider("foo")));
+        new base::FieldTrialList(
+            base::MakeUnique<metrics::SHA1EntropyProvider>("foo")));
     base::FieldTrial* trial = base::FieldTrialList::CreateFieldTrial(
         "TriggeredResetFieldTrial", "On");
     trial->group();
@@ -54,7 +58,7 @@ class TriggeredProfileResetterTest : public testing::Test {
 
  private:
   registry_util::RegistryOverrideManager override_manager_;
-  scoped_ptr<base::FieldTrialList> field_trial_list_;
+  std::unique_ptr<base::FieldTrialList> field_trial_list_;
 };
 
 TEST_F(TriggeredProfileResetterTest, HasResetTriggerAndClear) {

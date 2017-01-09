@@ -7,6 +7,7 @@ package org.chromium.net;
 import static junit.framework.Assert.assertTrue;
 
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.net.impl.CronetUrlRequestContext;
 import org.chromium.net.test.FailurePhase;
 
 /**
@@ -14,11 +15,25 @@ import org.chromium.net.test.FailurePhase;
  */
 @JNINamespace("cronet")
 public final class MockUrlRequestJobFactory {
+    private final long mInterceptorHandle;
+    private final CronetTestUtil.NetworkThreadTestConnector mNetworkThreadTestConnector;
+
     /**
      * Sets up URL interceptors.
      */
-    public static void setUp() {
-        nativeAddUrlInterceptors();
+    public MockUrlRequestJobFactory(CronetEngine cronetEngine) {
+        mNetworkThreadTestConnector = new CronetTestUtil.NetworkThreadTestConnector(cronetEngine);
+
+        mInterceptorHandle = nativeAddUrlInterceptors(
+                ((CronetUrlRequestContext) cronetEngine).getUrlRequestContextAdapter());
+    }
+
+    /**
+     * Remove URL Interceptors.
+     */
+    public void shutdown() {
+        nativeRemoveUrlInterceptorJobFactory(mInterceptorHandle);
+        mNetworkThreadTestConnector.shutdown();
     }
 
     /**
@@ -68,7 +83,16 @@ public final class MockUrlRequestJobFactory {
         return nativeGetMockUrlForSSLCertificateError();
     }
 
-    private static native void nativeAddUrlInterceptors();
+    /**
+     * Constructs a mock URL that will hang when try to read response body from the remote.
+     */
+    public static String getMockUrlForHangingRead() {
+        return nativeGetMockUrlForHangingRead();
+    }
+
+    private static native long nativeAddUrlInterceptors(long requestContextAdapter);
+
+    private static native void nativeRemoveUrlInterceptorJobFactory(long interceptorHandle);
 
     private static native String nativeGetMockUrlWithFailure(int phase, int netError);
 
@@ -78,4 +102,6 @@ public final class MockUrlRequestJobFactory {
     private static native String nativeGetMockUrlForClientCertificateRequest();
 
     private static native String nativeGetMockUrlForSSLCertificateError();
+
+    private static native String nativeGetMockUrlForHangingRead();
 }

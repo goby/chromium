@@ -2,11 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "media/base/audio_timestamp_helper.h"
 #include "media/base/timestamp_constants.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace media {
+
+namespace {
+
+const int k48kHz = 48000;
+
+}  // namespace
 
 static const int kDefaultSampleRate = 44100;
 
@@ -18,12 +28,12 @@ class AudioTimestampHelperTest : public ::testing::Test {
 
   // Adds frames to the helper and returns the current timestamp in
   // microseconds.
-  int64 AddFrames(int frames) {
+  int64_t AddFrames(int frames) {
     helper_.AddFrames(frames);
     return helper_.GetTimestamp().InMicroseconds();
   }
 
-  int64 FramesToTarget(int target_in_microseconds) {
+  int64_t FramesToTarget(int target_in_microseconds) {
     return helper_.GetFramesToTarget(
         base::TimeDelta::FromMicroseconds(target_in_microseconds));
   }
@@ -38,8 +48,54 @@ class AudioTimestampHelperTest : public ::testing::Test {
  protected:
   AudioTimestampHelper helper_;
 
+ private:
   DISALLOW_COPY_AND_ASSIGN(AudioTimestampHelperTest);
 };
+
+TEST_F(AudioTimestampHelperTest, FramesToTime) {
+  // Negative value.
+  EXPECT_EQ(base::TimeDelta::FromSeconds(-1),
+            AudioTimestampHelper::FramesToTime(-48000, k48kHz));
+  // Zero.
+  EXPECT_EQ(base::TimeDelta::FromMicroseconds(0),
+            AudioTimestampHelper::FramesToTime(0, k48kHz));
+  // One frame.
+  EXPECT_EQ(base::TimeDelta::FromMicroseconds(20),
+            AudioTimestampHelper::FramesToTime(1, k48kHz));
+  // Exact value with maximum precision of TimeDelta.
+  EXPECT_EQ(base::TimeDelta::FromMicroseconds(15625),
+            AudioTimestampHelper::FramesToTime(750, k48kHz));
+  // One second.
+  EXPECT_EQ(base::TimeDelta::FromSeconds(1),
+            AudioTimestampHelper::FramesToTime(48000, k48kHz));
+  // Argument and return value exceeding 32 bits.
+  EXPECT_EQ(base::TimeDelta::FromSeconds(1000000),
+            AudioTimestampHelper::FramesToTime(48000000000, k48kHz));
+}
+
+TEST_F(AudioTimestampHelperTest, TimeToFrames) {
+  // Negative value.
+  EXPECT_EQ(-48000, AudioTimestampHelper::TimeToFrames(
+                        base::TimeDelta::FromSeconds(-1), k48kHz));
+  // Zero.
+  EXPECT_EQ(0, AudioTimestampHelper::TimeToFrames(
+                   base::TimeDelta::FromMicroseconds(0), k48kHz));
+  // Any duration less than 21 microseconds will return zero frames at 48 kHz
+  // because each frame is 20.833 microseconds.
+  EXPECT_EQ(0, AudioTimestampHelper::TimeToFrames(
+                   base::TimeDelta::FromMicroseconds(20), k48kHz));
+  EXPECT_EQ(1, AudioTimestampHelper::TimeToFrames(
+                   base::TimeDelta::FromMicroseconds(21), k48kHz));
+  // Exact value with maximum precision of TimeDelta.
+  EXPECT_EQ(750, AudioTimestampHelper::TimeToFrames(
+                     base::TimeDelta::FromMicroseconds(15625), k48kHz));
+  // One second.
+  EXPECT_EQ(48000, AudioTimestampHelper::TimeToFrames(
+                       base::TimeDelta::FromSeconds(1), k48kHz));
+  // Argument and return value exceeding 32 bits.
+  EXPECT_EQ(48000000000, AudioTimestampHelper::TimeToFrames(
+                             base::TimeDelta::FromSeconds(1000000), k48kHz));
+}
 
 TEST_F(AudioTimestampHelperTest, Basic) {
   EXPECT_EQ(0, helper_.GetTimestamp().InMicroseconds());
@@ -58,8 +114,8 @@ TEST_F(AudioTimestampHelperTest, Basic) {
   // Verify that adding frames one frame at a time matches the timestamp
   // returned if the same number of frames are added all at once.
   base::TimeDelta timestamp_1  = helper_.GetTimestamp();
-  helper_.SetBaseTimestamp(kNoTimestamp());
-  EXPECT_TRUE(kNoTimestamp() == helper_.base_timestamp());
+  helper_.SetBaseTimestamp(kNoTimestamp);
+  EXPECT_TRUE(kNoTimestamp == helper_.base_timestamp());
   helper_.SetBaseTimestamp(base::TimeDelta());
   EXPECT_EQ(0, helper_.GetTimestamp().InMicroseconds());
 
@@ -73,7 +129,7 @@ TEST_F(AudioTimestampHelperTest, GetDuration) {
   helper_.SetBaseTimestamp(base::TimeDelta::FromMicroseconds(100));
 
   int frame_count = 5;
-  int64 expected_durations[] = { 113, 113, 114, 113, 113, 114 };
+  int64_t expected_durations[] = {113, 113, 114, 113, 113, 114};
   for (size_t i = 0; i < arraysize(expected_durations); ++i) {
     base::TimeDelta duration = helper_.GetFrameDuration(frame_count);
     EXPECT_EQ(expected_durations[i], duration.InMicroseconds());

@@ -5,23 +5,22 @@
 #ifndef CHROME_BROWSER_EXTENSIONS_WINDOW_CONTROLLER_H_
 #define CHROME_BROWSER_EXTENSIONS_WINDOW_CONTROLLER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
+#include "chrome/common/extensions/api/tabs.h"
 #include "chrome/common/extensions/api/windows.h"
 
 class Browser;  // TODO(stevenjb) eliminate this dependency.
 class GURL;
 class Profile;
-class SessionID;
 
 namespace base {
 class DictionaryValue;
-}
-
-namespace gfx {
-class Rect;
 }
 
 namespace ui {
@@ -76,14 +75,15 @@ class WindowController {
   // Populates a dictionary for the Window object. Override this to set
   // implementation specific properties (call the base implementation first to
   // set common properties).
-  virtual base::DictionaryValue* CreateWindowValue() const;
+  std::unique_ptr<base::DictionaryValue> CreateWindowValue() const;
 
   // Populates a dictionary for the Window object, including a list of tabs.
-  virtual base::DictionaryValue* CreateWindowValueWithTabs(
+  virtual std::unique_ptr<base::DictionaryValue> CreateWindowValueWithTabs(
       const extensions::Extension* extension) const = 0;
 
-  virtual base::DictionaryValue* CreateTabValue(
-      const extensions::Extension* extension, int tab_index) const = 0;
+  virtual std::unique_ptr<api::tabs::Tab> CreateTabObject(
+      const extensions::Extension* extension,
+      int tab_index) const = 0;
 
   // Returns false if the window is in a state where closing the window is not
   // permitted and sets |reason| if not NULL.

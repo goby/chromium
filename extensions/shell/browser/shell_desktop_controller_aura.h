@@ -5,18 +5,19 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_DESKTOP_CONTROLLER_AURA_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_DESKTOP_CONTROLLER_AURA_H_
 
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "build/build_config.h"
 #include "extensions/shell/browser/desktop_controller.h"
-#include "ui/aura/client/window_tree_client.h"
+#include "ui/aura/client/window_parenting_client.h"
 #include "ui/aura/window_tree_host_observer.h"
 
 #if defined(OS_CHROMEOS)
 #include "chromeos/dbus/power_manager_client.h"
-#include "ui/display/chromeos/display_configurator.h"
+#include "ui/display/manager/chromeos/display_configurator.h"
 #endif
 
 namespace aura {
@@ -56,7 +57,7 @@ class ShellScreen;
 // Handles desktop-related tasks for app_shell.
 class ShellDesktopControllerAura
     : public DesktopController,
-      public aura::client::WindowTreeClient,
+      public aura::client::WindowParentingClient,
 #if defined(OS_CHROMEOS)
       public chromeos::PowerManagerClient::Observer,
       public ui::DisplayConfigurator::Observer,
@@ -74,7 +75,7 @@ class ShellDesktopControllerAura
   void RemoveAppWindow(AppWindow* window) override;
   void CloseAppWindows() override;
 
-  // aura::client::WindowTreeClient overrides:
+  // aura::client::WindowParentingClient overrides:
   aura::Window* GetDefaultParent(aura::Window* context,
                                  aura::Window* window,
                                  const gfx::Rect& bounds) override;
@@ -109,27 +110,27 @@ class ShellDesktopControllerAura
   gfx::Size GetPrimaryDisplaySize();
 
 #if defined(OS_CHROMEOS)
-  scoped_ptr<ui::DisplayConfigurator> display_configurator_;
+  std::unique_ptr<ui::DisplayConfigurator> display_configurator_;
 #endif
 
-  scoped_ptr<ShellScreen> screen_;
+  std::unique_ptr<ShellScreen> screen_;
 
-  scoped_ptr<aura::WindowTreeHost> host_;
+  std::unique_ptr<aura::WindowTreeHost> host_;
 
-  scoped_ptr<wm::CompoundEventFilter> root_window_event_filter_;
+  std::unique_ptr<wm::CompoundEventFilter> root_window_event_filter_;
 
-  scoped_ptr<aura::client::DefaultCaptureClient> capture_client_;
+  std::unique_ptr<aura::client::DefaultCaptureClient> capture_client_;
 
-  scoped_ptr<aura::client::FocusClient> focus_client_;
+  std::unique_ptr<aura::client::FocusClient> focus_client_;
 
-  scoped_ptr<wm::CursorManager> cursor_manager_;
+  std::unique_ptr<wm::CursorManager> cursor_manager_;
 
-  scoped_ptr<ui::UserActivityDetector> user_activity_detector_;
+  std::unique_ptr<ui::UserActivityDetector> user_activity_detector_;
 #if defined(OS_CHROMEOS)
-  scoped_ptr<ui::UserActivityPowerManagerNotifier> user_activity_notifier_;
+  std::unique_ptr<ui::UserActivityPowerManagerNotifier> user_activity_notifier_;
 #endif
 
-  scoped_ptr<AppWindowClient> app_window_client_;
+  std::unique_ptr<AppWindowClient> app_window_client_;
 
   // NativeAppWindow::Close() deletes the AppWindow.
   std::vector<AppWindow*> app_windows_;

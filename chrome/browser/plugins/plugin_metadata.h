@@ -6,8 +6,9 @@
 #define CHROME_BROWSER_PLUGINS_PLUGIN_METADATA_H_
 
 #include <map>
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "base/version.h"
 #include "url/gurl.h"
@@ -23,6 +24,7 @@ class PluginMetadata {
     SECURITY_STATUS_UP_TO_DATE,
     SECURITY_STATUS_OUT_OF_DATE,
     SECURITY_STATUS_REQUIRES_AUTHORIZATION,
+    SECURITY_STATUS_FULLY_TRUSTED,
   };
 
   // Used by about:plugins to disable Reader plugin when internal PDF viewer is
@@ -31,6 +33,7 @@ class PluginMetadata {
   static const char kJavaGroupName[];
   static const char kQuickTimeGroupName[];
   static const char kShockwaveGroupName[];
+  static const char kAdobeFlashPlayerGroupName[];
   static const char kRealPlayerGroupName[];
   static const char kSilverlightGroupName[];
   static const char kWindowsMediaPlayerGroupName[];
@@ -69,7 +72,7 @@ class PluginMetadata {
   void AddMatchingMimeType(const std::string& mime_type);
 
   // Adds information about a plugin version.
-  void AddVersion(const Version& version, SecurityStatus status);
+  void AddVersion(const base::Version& version, SecurityStatus status);
 
   // Checks if |plugin| mime types match all |matching_mime_types_|.
   // If there is no |matching_mime_types_|, |group_name_matcher_| is used
@@ -85,11 +88,11 @@ class PluginMetadata {
   // considered out-of-date, etc.)
   SecurityStatus GetSecurityStatus(const content::WebPluginInfo& plugin) const;
 
-  scoped_ptr<PluginMetadata> Clone() const;
+  std::unique_ptr<PluginMetadata> Clone() const;
 
  private:
   struct VersionComparator {
-    bool operator() (const Version& lhs, const Version& rhs) const;
+    bool operator()(const base::Version& lhs, const base::Version& rhs) const;
   };
 
   std::string identifier_;
@@ -99,7 +102,7 @@ class PluginMetadata {
   GURL plugin_url_;
   GURL help_url_;
   std::string language_;
-  std::map<Version, SecurityStatus, VersionComparator> versions_;
+  std::map<base::Version, SecurityStatus, VersionComparator> versions_;
   std::vector<std::string> all_mime_types_;
   std::vector<std::string> matching_mime_types_;
 

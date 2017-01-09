@@ -4,24 +4,26 @@
 
 #include "chrome/browser/services/gcm/fake_gcm_profile_service.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/format_macros.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/gcm_driver/fake_gcm_client_factory.h"
-#include "components/gcm_driver/fake_gcm_driver.h"
-#include "components/gcm_driver/gcm_driver.h"
+#include "components/gcm_driver/instance_id/fake_gcm_driver_for_instance_id.h"
 #include "content/public/browser/browser_context.h"
 
 namespace gcm {
 
 namespace {
 
-class CustomFakeGCMDriver : public FakeGCMDriver {
+class CustomFakeGCMDriver : public instance_id::FakeGCMDriverForInstanceID {
  public:
   explicit CustomFakeGCMDriver(FakeGCMProfileService* service);
   ~CustomFakeGCMDriver() override;
@@ -39,7 +41,7 @@ class CustomFakeGCMDriver : public FakeGCMDriver {
                          const IncomingMessage& message);
 
  protected:
-  // FakeGCMDriver overrides:
+  // FakeGCMDriverForInstanceID overrides:
   void RegisterImpl(const std::string& app_id,
                     const std::vector<std::string>& sender_ids) override;
   void UnregisterImpl(const std::string& app_id) override;
@@ -56,9 +58,9 @@ class CustomFakeGCMDriver : public FakeGCMDriver {
 };
 
 CustomFakeGCMDriver::CustomFakeGCMDriver(FakeGCMProfileService* service)
-    : FakeGCMDriver(base::ThreadTaskRunnerHandle::Get()),
-      service_(service) {
-}
+    : instance_id::FakeGCMDriverForInstanceID(
+          base::ThreadTaskRunnerHandle::Get()),
+      service_(service) {}
 
 CustomFakeGCMDriver::~CustomFakeGCMDriver() {
 }
@@ -116,12 +118,13 @@ void CustomFakeGCMDriver::OnDispatchMessage(const std::string& app_id,
 }  // namespace
 
 // static
-scoped_ptr<KeyedService> FakeGCMProfileService::Build(
+std::unique_ptr<KeyedService> FakeGCMProfileService::Build(
     content::BrowserContext* context) {
   Profile* profile = static_cast<Profile*>(context);
-  scoped_ptr<FakeGCMProfileService> service(new FakeGCMProfileService(profile));
+  std::unique_ptr<FakeGCMProfileService> service(
+      new FakeGCMProfileService(profile));
   service->SetDriverForTesting(new CustomFakeGCMDriver(service.get()));
-  return service.Pass();
+  return std::move(service);
 }
 
 FakeGCMProfileService::FakeGCMProfileService(Profile* profile)

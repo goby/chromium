@@ -56,6 +56,7 @@ class TCPSocketEventDispatcher
   // as a workaround that limitation for invoking StartReceive.
   struct ReadParams {
     ReadParams();
+    ReadParams(const ReadParams& other);
     ~ReadParams();
 
     content::BrowserThread::ID thread_id;
@@ -74,15 +75,16 @@ class TCPSocketEventDispatcher
   // Called when socket receive data.
   static void ReadCallback(const ReadParams& params,
                            int bytes_read,
-                           scoped_refptr<net::IOBuffer> io_buffer);
+                           scoped_refptr<net::IOBuffer> io_buffer,
+                           bool socket_destroying);
 
   // Post an extension event from IO to UI thread
-  static void PostEvent(const ReadParams& params, scoped_ptr<Event> event);
+  static void PostEvent(const ReadParams& params, std::unique_ptr<Event> event);
 
   // Dispatch an extension event on to EventRouter instance on UI thread.
   static void DispatchEvent(void* browser_context_id,
                             const std::string& extension_id,
-                            scoped_ptr<Event> event);
+                            std::unique_ptr<Event> event);
 
   // Usually IO thread (except for unit testing).
   content::BrowserThread::ID thread_id_;

@@ -2,6 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "gpu/command_buffer/service/buffer_manager.h"
 #include "gpu/command_buffer/service/error_state_mock.h"
 #include "gpu/command_buffer/service/feature_info.h"
@@ -34,7 +39,8 @@ class BufferManagerTestBase : public GpuServiceTest {
   }
 
   void TearDown() override {
-    manager_->Destroy(false);
+    manager_->MarkContextLost();
+    manager_->Destroy();
     manager_.reset();
     error_state_.reset();
     GpuServiceTest::TearDown();
@@ -55,24 +61,172 @@ class BufferManagerTestBase : public GpuServiceTest {
   bool DoBufferSubData(
       Buffer* buffer, GLenum target, GLintptr offset, GLsizeiptr size,
       const GLvoid* data) {
-    bool success = true;
     if (!buffer->CheckRange(offset, size)) {
-      EXPECT_CALL(*error_state_, SetGLError(_, _, GL_INVALID_VALUE, _, _))
-         .Times(1)
-         .RetiresOnSaturation();
-      success = false;
-    } else if (!buffer->IsClientSideArray()) {
+      return false;
+    }
+    if (!buffer->IsClientSideArray()) {
       EXPECT_CALL(*gl_, BufferSubData(target, offset, size, _))
           .Times(1)
           .RetiresOnSaturation();
     }
-    manager_->DoBufferSubData(
-        error_state_.get(), buffer, target, offset, size, data);
-    return success;
+    manager_->DoBufferSubData(buffer, target, offset, size, data);
+    return true;
   }
 
-  scoped_ptr<BufferManager> manager_;
-  scoped_ptr<MockErrorState> error_state_;
+  void RunGetMaxValueForRangeUint8Test(bool enable_primitive_restart)
+  {
+    const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
+    const GLuint kClientBufferId = 1;
+    const GLuint kServiceBufferId = 11;
+    const uint8_t data[] = {10, 9, 8, 7, 6, 0xFFu, 4, 3, 2, 1};
+    const uint8_t new_data[] = {100, 120, 110};
+    manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
+    Buffer* buffer = manager_->GetBuffer(kClientBufferId);
+    ASSERT_TRUE(buffer != NULL);
+    manager_->SetTarget(buffer, kTarget);
+    DoBufferData(
+        buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
+    GLuint max_value;
+    // Check entire range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(10u, max_value);
+    } else {
+      EXPECT_EQ(0xFFu, max_value);
+    }
+    // Check sub range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        4, 3, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(6u, max_value);
+    } else {
+      EXPECT_EQ(0xFFu, max_value);
+    }
+    // Check changing sub range succeeds.
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 4, sizeof(new_data),
+                                new_data));
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        4, 3, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    max_value = 0;
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    // Check out of range fails.
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        0, 11, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        10, 1, GL_UNSIGNED_BYTE, enable_primitive_restart, &max_value));
+  }
+
+  void RunGetMaxValueForRangeUint16Test(bool enable_primitive_restart) {
+    const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
+    const GLuint kClientBufferId = 1;
+    const GLuint kServiceBufferId = 11;
+    const uint16_t data[] = {10, 9, 8, 7, 6, 0xFFFF, 4, 3, 2, 1};
+    const uint16_t new_data[] = {100, 120, 110};
+    manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
+    Buffer* buffer = manager_->GetBuffer(kClientBufferId);
+    ASSERT_TRUE(buffer != NULL);
+    manager_->SetTarget(buffer, kTarget);
+    DoBufferData(
+        buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
+    GLuint max_value;
+    // Check entire range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(10u, max_value);
+    } else {
+      EXPECT_EQ(0xFFFFu, max_value);
+    }
+    // Check odd offset fails for GL_UNSIGNED_SHORT.
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        1, 10, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    // Check sub range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        8, 3, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(6u, max_value);
+    } else {
+      EXPECT_EQ(0xFFFFu, max_value);
+    }
+    // Check changing sub range succeeds.
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 8, sizeof(new_data),
+                                new_data));
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        8, 3, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    max_value = 0;
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    // Check out of range fails.
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        0, 11, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        20, 1, GL_UNSIGNED_SHORT, enable_primitive_restart, &max_value));
+  }
+
+  void RunGetMaxValueForRangeUint32Test(bool enable_primitive_restart) {
+    const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
+    const GLuint kClientBufferId = 1;
+    const GLuint kServiceBufferId = 11;
+    const uint32_t data[] = {10, 9, 8, 7, 6, 0xFFFFFFFFu, 4, 3, 2, 1};
+    const uint32_t new_data[] = {100, 120, 110};
+    manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
+    Buffer* buffer = manager_->GetBuffer(kClientBufferId);
+    ASSERT_TRUE(buffer != NULL);
+    manager_->SetTarget(buffer, kTarget);
+    DoBufferData(
+        buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
+    GLuint max_value;
+    // Check entire range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(10u, max_value);
+    } else {
+      EXPECT_EQ(0xFFFFFFFFu, max_value);
+    }
+    // Check non aligned offsets fails for GL_UNSIGNED_INT.
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        1, 10, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        2, 10, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        3, 10, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    // Check sub range succeeds.
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        16, 3, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    if (enable_primitive_restart) {
+      EXPECT_EQ(6u, max_value);
+    } else {
+      EXPECT_EQ(0xFFFFFFFFu, max_value);
+    }
+    // Check changing sub range succeeds.
+    EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 16, sizeof(new_data),
+                                new_data));
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        16, 3, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    max_value = 0;
+    EXPECT_TRUE(buffer->GetMaxValueForRange(
+        0, 10, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    EXPECT_EQ(120u, max_value);
+    // Check out of range fails.
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        0, 11, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+    EXPECT_FALSE(buffer->GetMaxValueForRange(
+        40, 1, GL_UNSIGNED_INT, enable_primitive_restart, &max_value));
+  }
+
+  std::unique_ptr<BufferManager> manager_;
+  std::unique_ptr<MockErrorState> error_state_;
 };
 
 class BufferManagerTest : public BufferManagerTestBase {
@@ -93,9 +247,9 @@ class BufferManagerMemoryTrackerTest : public BufferManagerTestBase {
 class BufferManagerClientSideArraysTest : public BufferManagerTestBase {
  protected:
   void SetUp() override {
-    feature_info_ = new FeatureInfo();
-    feature_info_->workarounds_.use_client_side_arrays_for_stream_buffers =
-      true;
+    GpuDriverBugWorkarounds gpu_driver_bug_workarounds;
+    gpu_driver_bug_workarounds.use_client_side_arrays_for_stream_buffers = true;
+    feature_info_ = new FeatureInfo(gpu_driver_bug_workarounds);
     SetUpBase(NULL, feature_info_.get(), "");
   }
 
@@ -183,7 +337,7 @@ TEST_F(BufferManagerTest, Destroy) {
   EXPECT_CALL(*gl_, DeleteBuffersARB(1, ::testing::Pointee(kService1Id)))
       .Times(1)
       .RetiresOnSaturation();
-  manager_->Destroy(true);
+  manager_->Destroy();
   // Check the resources were released.
   buffer1 = manager_->GetBuffer(kClient1Id);
   ASSERT_TRUE(buffer1 == NULL);
@@ -193,7 +347,7 @@ TEST_F(BufferManagerTest, DoBufferSubData) {
   const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
   const GLuint kClientBufferId = 1;
   const GLuint kServiceBufferId = 11;
-  const uint8 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+  const uint8_t data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
   manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
   Buffer* buffer = manager_->GetBuffer(kClientBufferId);
   ASSERT_TRUE(buffer != NULL);
@@ -208,7 +362,7 @@ TEST_F(BufferManagerTest, DoBufferSubData) {
   EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 0, -1, data));
   DoBufferData(buffer, kTarget, 1, GL_STATIC_DRAW, NULL, GL_NO_ERROR);
   const int size = 0x20000;
-  scoped_ptr<uint8[]> temp(new uint8[size]);
+  std::unique_ptr<uint8_t[]> temp(new uint8_t[size]);
   EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 0 - size, size, temp.get()));
   EXPECT_FALSE(DoBufferSubData(buffer, kTarget, 1, size / 2, temp.get()));
 }
@@ -240,124 +394,27 @@ TEST_F(BufferManagerTest, GetRange) {
 }
 
 TEST_F(BufferManagerTest, GetMaxValueForRangeUint8) {
-  const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
-  const GLuint kClientBufferId = 1;
-  const GLuint kServiceBufferId = 11;
-  const uint8 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
-  const uint8 new_data[] = {100, 120, 110};
-  manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
-  Buffer* buffer = manager_->GetBuffer(kClientBufferId);
-  ASSERT_TRUE(buffer != NULL);
-  manager_->SetTarget(buffer, kTarget);
-  DoBufferData(
-      buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
-  GLuint max_value;
-  // Check entire range succeeds.
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      0, 10, GL_UNSIGNED_BYTE, &max_value));
-  EXPECT_EQ(10u, max_value);
-  // Check sub range succeeds.
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      4, 3, GL_UNSIGNED_BYTE, &max_value));
-  EXPECT_EQ(6u, max_value);
-  // Check changing sub range succeeds.
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 4, sizeof(new_data), new_data));
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      4, 3, GL_UNSIGNED_BYTE, &max_value));
-  EXPECT_EQ(120u, max_value);
-  max_value = 0;
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      0, 10, GL_UNSIGNED_BYTE, &max_value));
-  EXPECT_EQ(120u, max_value);
-  // Check out of range fails.
-  EXPECT_FALSE(buffer->GetMaxValueForRange(
-      0, 11, GL_UNSIGNED_BYTE, &max_value));
-  EXPECT_FALSE(buffer->GetMaxValueForRange(
-      10, 1, GL_UNSIGNED_BYTE, &max_value));
+  RunGetMaxValueForRangeUint8Test(false);
+}
+
+TEST_F(BufferManagerTest, GetMaxValueForRangeUint8PrimitiveRestart) {
+  RunGetMaxValueForRangeUint8Test(true);
 }
 
 TEST_F(BufferManagerTest, GetMaxValueForRangeUint16) {
-  const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
-  const GLuint kClientBufferId = 1;
-  const GLuint kServiceBufferId = 11;
-  const uint16 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
-  const uint16 new_data[] = {100, 120, 110};
-  manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
-  Buffer* buffer = manager_->GetBuffer(kClientBufferId);
-  ASSERT_TRUE(buffer != NULL);
-  manager_->SetTarget(buffer, kTarget);
-  DoBufferData(
-      buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
-  GLuint max_value;
-  // Check entire range succeeds.
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      0, 10, GL_UNSIGNED_SHORT, &max_value));
-  EXPECT_EQ(10u, max_value);
-  // Check odd offset fails for GL_UNSIGNED_SHORT.
-  EXPECT_FALSE(buffer->GetMaxValueForRange(
-      1, 10, GL_UNSIGNED_SHORT, &max_value));
-  // Check sub range succeeds.
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      8, 3, GL_UNSIGNED_SHORT, &max_value));
-  EXPECT_EQ(6u, max_value);
-  // Check changing sub range succeeds.
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 8, sizeof(new_data), new_data));
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      8, 3, GL_UNSIGNED_SHORT, &max_value));
-  EXPECT_EQ(120u, max_value);
-  max_value = 0;
-  EXPECT_TRUE(buffer->GetMaxValueForRange(
-      0, 10, GL_UNSIGNED_SHORT, &max_value));
-  EXPECT_EQ(120u, max_value);
-  // Check out of range fails.
-  EXPECT_FALSE(buffer->GetMaxValueForRange(
-      0, 11, GL_UNSIGNED_SHORT, &max_value));
-  EXPECT_FALSE(buffer->GetMaxValueForRange(
-      20, 1, GL_UNSIGNED_SHORT, &max_value));
+  RunGetMaxValueForRangeUint16Test(false);
+}
+
+TEST_F(BufferManagerTest, GetMaxValueForRangeUint16PrimitiveRestart) {
+  RunGetMaxValueForRangeUint16Test(true);
 }
 
 TEST_F(BufferManagerTest, GetMaxValueForRangeUint32) {
-  const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
-  const GLuint kClientBufferId = 1;
-  const GLuint kServiceBufferId = 11;
-  const uint32 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
-  const uint32 new_data[] = {100, 120, 110};
-  manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
-  Buffer* buffer = manager_->GetBuffer(kClientBufferId);
-  ASSERT_TRUE(buffer != NULL);
-  manager_->SetTarget(buffer, kTarget);
-  DoBufferData(
-      buffer, kTarget, sizeof(data), GL_STATIC_DRAW, NULL, GL_NO_ERROR);
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 0, sizeof(data), data));
-  GLuint max_value;
-  // Check entire range succeeds.
-  EXPECT_TRUE(
-      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
-  EXPECT_EQ(10u, max_value);
-  // Check non aligned offsets fails for GL_UNSIGNED_INT.
-  EXPECT_FALSE(
-      buffer->GetMaxValueForRange(1, 10, GL_UNSIGNED_INT, &max_value));
-  EXPECT_FALSE(
-      buffer->GetMaxValueForRange(2, 10, GL_UNSIGNED_INT, &max_value));
-  EXPECT_FALSE(
-      buffer->GetMaxValueForRange(3, 10, GL_UNSIGNED_INT, &max_value));
-  // Check sub range succeeds.
-  EXPECT_TRUE(buffer->GetMaxValueForRange(16, 3, GL_UNSIGNED_INT, &max_value));
-  EXPECT_EQ(6u, max_value);
-  // Check changing sub range succeeds.
-  EXPECT_TRUE(DoBufferSubData(buffer, kTarget, 16, sizeof(new_data), new_data));
-  EXPECT_TRUE(buffer->GetMaxValueForRange(16, 3, GL_UNSIGNED_INT, &max_value));
-  EXPECT_EQ(120u, max_value);
-  max_value = 0;
-  EXPECT_TRUE(buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
-  EXPECT_EQ(120u, max_value);
-  // Check out of range fails.
-  EXPECT_FALSE(
-      buffer->GetMaxValueForRange(0, 11, GL_UNSIGNED_INT, &max_value));
-  EXPECT_FALSE(
-      buffer->GetMaxValueForRange(40, 1, GL_UNSIGNED_INT, &max_value));
+  RunGetMaxValueForRangeUint32Test(false);
+}
+
+TEST_F(BufferManagerTest, GetMaxValueForRangeUint32PrimitiveRestart) {
+  RunGetMaxValueForRangeUint32Test(true);
 }
 
 TEST_F(BufferManagerTest, UseDeletedBuffer) {
@@ -386,7 +443,7 @@ TEST_F(BufferManagerClientSideArraysTest, StreamBuffersAreShadowed) {
   const GLenum kTarget = GL_ARRAY_BUFFER;
   const GLuint kClientBufferId = 1;
   const GLuint kServiceBufferId = 11;
-  static const uint32 data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+  static const uint32_t data[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
   manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
   Buffer* buffer = manager_->GetBuffer(kClientBufferId);
   ASSERT_TRUE(buffer != NULL);
@@ -404,9 +461,9 @@ TEST_F(BufferManagerTest, MaxValueCacheClearedCorrectly) {
   const GLenum kTarget = GL_ELEMENT_ARRAY_BUFFER;
   const GLuint kClientBufferId = 1;
   const GLuint kServiceBufferId = 11;
-  const uint32 data1[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
-  const uint32 data2[] = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
-  const uint32 data3[] = {30, 29, 28};
+  const uint32_t data1[] = {10, 9, 8, 7, 6, 5, 4, 3, 2, 1};
+  const uint32_t data2[] = {11, 12, 13, 14, 15, 16, 17, 18, 19, 20};
+  const uint32_t data3[] = {30, 29, 28};
   manager_->CreateBuffer(kClientBufferId, kServiceBufferId);
   Buffer* buffer = manager_->GetBuffer(kClientBufferId);
   ASSERT_TRUE(buffer != NULL);
@@ -417,7 +474,7 @@ TEST_F(BufferManagerTest, MaxValueCacheClearedCorrectly) {
   DoBufferData(
       buffer, kTarget, sizeof(data1), GL_STATIC_DRAW, data1, GL_NO_ERROR);
   EXPECT_TRUE(
-      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
+      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, false, &max_value));
   EXPECT_EQ(10u, max_value);
   // Check that any cached values are invalidated if the buffer is reloaded
   // with the same amount of data (but different content)
@@ -425,7 +482,7 @@ TEST_F(BufferManagerTest, MaxValueCacheClearedCorrectly) {
   DoBufferData(
       buffer, kTarget, sizeof(data2), GL_STATIC_DRAW, data2, GL_NO_ERROR);
   EXPECT_TRUE(
-      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, &max_value));
+      buffer->GetMaxValueForRange(0, 10, GL_UNSIGNED_INT, false, &max_value));
   EXPECT_EQ(20u, max_value);
   // Check that any cached values are invalidated if the buffer is reloaded
   // with entirely different content.
@@ -433,7 +490,7 @@ TEST_F(BufferManagerTest, MaxValueCacheClearedCorrectly) {
   DoBufferData(
       buffer, kTarget, sizeof(data3), GL_STATIC_DRAW, data3, GL_NO_ERROR);
   EXPECT_TRUE(
-      buffer->GetMaxValueForRange(0, 3, GL_UNSIGNED_INT, &max_value));
+      buffer->GetMaxValueForRange(0, 3, GL_UNSIGNED_INT, false, &max_value));
   EXPECT_EQ(30u, max_value);
 }
 
@@ -511,7 +568,20 @@ TEST_F(BufferManagerTest, BindBufferConflicts) {
   }
 }
 
+TEST_F(BufferManagerTest, DeleteBufferAfterContextLost) {
+  const GLuint kClient1Id = 1;
+  const GLuint kService1Id = 11;
+  manager_->CreateBuffer(kClient1Id, kService1Id);
+  Buffer* buffer1 = manager_->GetBuffer(kClient1Id);
+  ASSERT_TRUE(buffer1 != nullptr);
+  manager_->MarkContextLost();
+  // Removing buffers after MarkContextLost cause no GL calls.
+  manager_->RemoveBuffer(kClient1Id);
+  manager_->Destroy();
+  // Check the resources were released.
+  buffer1 = manager_->GetBuffer(kClient1Id);
+  ASSERT_TRUE(buffer1 == nullptr);
+}
+
 }  // namespace gles2
 }  // namespace gpu
-
-

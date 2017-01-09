@@ -5,18 +5,19 @@
 #include "base/message_loop/message_pump_libevent.h"
 
 #include <errno.h>
-#include <fcntl.h>
 #include <unistd.h>
+
+#include <memory>
 
 #include "base/auto_reset.h"
 #include "base/compiler_specific.h"
+#include "base/files/file_util.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/observer_list.h"
 #include "base/posix/eintr_wrapper.h"
+#include "base/third_party/libevent/event.h"
 #include "base/time/time.h"
 #include "base/trace_event/trace_event.h"
-#include "third_party/libevent/event.h"
+#include "build/build_config.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
@@ -41,15 +42,6 @@
 // but if it does, we need to fix it.
 
 namespace base {
-
-// Return 0 on success
-// Too small a function to bother putting in a library?
-static int SetNonBlocking(int fd) {
-  int flags = fcntl(fd, F_GETFL, 0);
-  if (flags == -1)
-    flags = 0;
-  return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
-}
 
 MessagePumpLibevent::FileDescriptorWatcher::FileDescriptorWatcher()
     : event_(NULL),
@@ -81,36 +73,34 @@ bool MessagePumpLibevent::FileDescriptorWatcher::StopWatchingFileDescriptor() {
   return (rv == 0);
 }
 
-void MessagePumpLibevent::FileDescriptorWatcher::Init(event *e) {
+void MessagePumpLibevent::FileDescriptorWatcher::Init(event* e) {
   DCHECK(e);
   DCHECK(!event_);
 
   event_ = e;
 }
 
-event *MessagePumpLibevent::FileDescriptorWatcher::ReleaseEvent() {
-  struct event *e = event_;
+event* MessagePumpLibevent::FileDescriptorWatcher::ReleaseEvent() {
+  struct event* e = event_;
   event_ = NULL;
   return e;
 }
 
 void MessagePumpLibevent::FileDescriptorWatcher::OnFileCanReadWithoutBlocking(
-    int fd, MessagePumpLibevent* pump) {
+    int fd,
+    MessagePumpLibevent* pump) {
   // Since OnFileCanWriteWithoutBlocking() gets called first, it can stop
   // watching the file descriptor.
   if (!watcher_)
     return;
-  pump->WillProcessIOEvent();
   watcher_->OnFileCanReadWithoutBlocking(fd);
-  pump->DidProcessIOEvent();
 }
 
 void MessagePumpLibevent::FileDescriptorWatcher::OnFileCanWriteWithoutBlocking(
-    int fd, MessagePumpLibevent* pump) {
+    int fd,
+    MessagePumpLibevent* pump) {
   DCHECK(watcher_);
-  pump->WillProcessIOEvent();
   watcher_->OnFileCanWriteWithoutBlocking(fd);
-  pump->DidProcessIOEvent();
 }
 
 MessagePumpLibevent::MessagePumpLibevent()
@@ -121,7 +111,7 @@ MessagePumpLibevent::MessagePumpLibevent()
       wakeup_pipe_in_(-1),
       wakeup_pipe_out_(-1) {
   if (!Init())
-     NOTREACHED();
+    NOTREACHED();
 }
 
 MessagePumpLibevent::~MessagePumpLibevent() {
@@ -143,8 +133,8 @@ MessagePumpLibevent::~MessagePumpLibevent() {
 bool MessagePumpLibevent::WatchFileDescriptor(int fd,
                                               bool persistent,
                                               int mode,
-                                              FileDescriptorWatcher *controller,
-                                              Watcher *delegate) {
+                                              FileDescriptorWatcher* controller,
+                                              Watcher* delegate) {
   DCHECK_GE(fd, 0);
   DCHECK(controller);
   DCHECK(delegate);
@@ -161,7 +151,7 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
     event_mask |= EV_WRITE;
   }
 
-  scoped_ptr<event> evt(controller->ReleaseEvent());
+  std::unique_ptr<event> evt(controller->ReleaseEvent());
   if (evt.get() == NULL) {
     // Ownership is transferred to the controller.
     evt.reset(new event);
@@ -206,18 +196,9 @@ bool MessagePumpLibevent::WatchFileDescriptor(int fd,
   return true;
 }
 
-void MessagePumpLibevent::AddIOObserver(IOObserver *obs) {
-  io_observers_.AddObserver(obs);
-}
-
-void MessagePumpLibevent::RemoveIOObserver(IOObserver *obs) {
-  io_observers_.RemoveObserver(obs);
-}
-
 // Tell libevent to break out of inner loop.
-static void timer_callback(int fd, short events, void *context)
-{
-  event_base_loopbreak((struct event_base *)context);
+static void timer_callback(int fd, short events, void* context) {
+  event_base_loopbreak((struct event_base*)context);
 }
 
 // Reentrant!
@@ -227,7 +208,7 @@ void MessagePumpLibevent::Run(Delegate* delegate) {
 
   // event_base_loopexit() + EVLOOP_ONCE is leaky, see http://crbug.com/25641.
   // Instead, make our own timer and reuse it on each call to event_base_loop().
-  scoped_ptr<event> timer_event(new event);
+  std::unique_ptr<event> timer_event(new event);
 
   for (;;) {
 #if defined(OS_MACOSX)
@@ -308,26 +289,10 @@ void MessagePumpLibevent::ScheduleDelayedWork(
   delayed_work_time_ = delayed_work_time;
 }
 
-void MessagePumpLibevent::WillProcessIOEvent() {
-  FOR_EACH_OBSERVER(IOObserver, io_observers_, WillProcessIOEvent());
-}
-
-void MessagePumpLibevent::DidProcessIOEvent() {
-  FOR_EACH_OBSERVER(IOObserver, io_observers_, DidProcessIOEvent());
-}
-
 bool MessagePumpLibevent::Init() {
   int fds[2];
-  if (pipe(fds)) {
-    DLOG(ERROR) << "pipe() failed, errno: " << errno;
-    return false;
-  }
-  if (SetNonBlocking(fds[0])) {
-    DLOG(ERROR) << "SetNonBlocking for pipe fd[0] failed, errno: " << errno;
-    return false;
-  }
-  if (SetNonBlocking(fds[1])) {
-    DLOG(ERROR) << "SetNonBlocking for pipe fd[1] failed, errno: " << errno;
+  if (!CreateLocalNonBlockingPipe(fds)) {
+    DPLOG(ERROR) << "pipe creation failed";
     return false;
   }
   wakeup_pipe_out_ = fds[0];

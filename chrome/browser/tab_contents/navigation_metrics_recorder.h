@@ -5,14 +5,22 @@
 #ifndef CHROME_BROWSER_TAB_CONTENTS_NAVIGATION_METRICS_RECORDER_H_
 #define CHROME_BROWSER_TAB_CONTENTS_NAVIGATION_METRICS_RECORDER_H_
 
+#include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
+
+namespace rappor {
+class RapporServiceImpl;
+}
 
 class NavigationMetricsRecorder
     : public content::WebContentsObserver,
       public content::WebContentsUserData<NavigationMetricsRecorder> {
  public:
   ~NavigationMetricsRecorder() override;
+
+  void set_rappor_service_for_testing(
+      rappor::RapporServiceImpl* rappor_service);
 
  private:
   explicit NavigationMetricsRecorder(content::WebContents* web_contents);
@@ -23,7 +31,7 @@ class NavigationMetricsRecorder
       const content::LoadCommittedDetails& details,
       const content::FrameNavigateParams& params) override;
 
-  void DidStartLoading() override;
+  rappor::RapporServiceImpl* rappor_service_;
 
   DISALLOW_COPY_AND_ASSIGN(NavigationMetricsRecorder);
 };

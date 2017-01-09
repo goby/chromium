@@ -6,11 +6,11 @@
 
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
-#include "base/strings/stringprintf.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/api/webstore_private/webstore_private_api.h"
-#include "chrome/browser/extensions/bundle_installer.h"
 #include "chrome/browser/extensions/extension_apitest.h"
 #include "chrome/browser/extensions/extension_function_test_utils.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
@@ -20,6 +20,7 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "chrome/test/base/ui_test_utils.h"
 #include "content/public/browser/gpu_data_manager.h"
 #include "content/public/browser/notification_observer.h"
@@ -34,6 +35,10 @@
 #include "net/dns/mock_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "ui/gl/gl_switches.h"
+
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+#include "chrome/browser/supervised_user/supervised_user_constants.h"
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
 
 using gpu::GpuFeatureType;
 
@@ -122,7 +127,7 @@ class ExtensionWebstorePrivateApiTest : public ExtensionApiTest {
         new ScopedTestDialogAutoConfirm(ScopedTestDialogAutoConfirm::ACCEPT));
 
     ASSERT_TRUE(webstore_install_dir_.CreateUniqueTempDir());
-    webstore_install_dir_copy_ = webstore_install_dir_.path();
+    webstore_install_dir_copy_ = webstore_install_dir_.GetPath();
     WebstoreInstaller::SetDownloadDirectoryForTests(
         &webstore_install_dir_copy_);
   }
@@ -176,7 +181,7 @@ class ExtensionWebstorePrivateApiTest : public ExtensionApiTest {
   // directory for testing.
   base::FilePath webstore_install_dir_copy_;
 
-  scoped_ptr<ScopedTestDialogAutoConfirm> auto_confirm_install_;
+  std::unique_ptr<ScopedTestDialogAutoConfirm> auto_confirm_install_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionWebstorePrivateApiTest);
 };
@@ -306,7 +311,7 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, MAYBE_BeginInstall) {
   std::string extensionId = "enfkhcelefdadlmkffamgdlgplcionje";
   ASSERT_TRUE(RunInstallTest("begin_install.html", "extension.crx"));
 
-  scoped_ptr<WebstoreInstaller::Approval> approval =
+  std::unique_ptr<WebstoreInstaller::Approval> approval =
       WebstorePrivateApi::PopApprovalForTesting(browser()->profile(), appId);
   EXPECT_EQ(appId, approval->extension_id);
   EXPECT_TRUE(approval->use_app_installed_bubble);
@@ -344,6 +349,44 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTest, EmptyCrx) {
   ASSERT_TRUE(RunInstallTest("empty.html", "empty.crx"));
 }
 
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
+
+class ExtensionWebstorePrivateApiTestSupervised
+    : public ExtensionWebstorePrivateApiTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ExtensionWebstorePrivateApiTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(switches::kSupervisedUserId, "not_empty");
+  }
+};
+
+// Tests that extension installation is blocked for supervised users.
+// Note: This will have to be updated if we enable SU-initiated installs.
+IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTestSupervised,
+                       InstallBlocked) {
+  ASSERT_TRUE(
+      RunInstallTest("begin_install_fail_supervised.html", "extension.crx"));
+}
+
+class ExtensionWebstorePrivateApiTestChild
+    : public ExtensionWebstorePrivateApiTest {
+ public:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    ExtensionWebstorePrivateApiTest::SetUpCommandLine(command_line);
+    command_line->AppendSwitchASCII(switches::kSupervisedUserId,
+                                    supervised_users::kChildAccountSUID);
+  }
+};
+
+// Tests that extension installation is blocked for child accounts, and
+// attempting to do so produces a special error code.
+// Note: This will have to be updated when we enable child-initiated installs.
+IN_PROC_BROWSER_TEST_F(ExtensionWebstorePrivateApiTestChild, InstallBlocked) {
+  ASSERT_TRUE(RunInstallTest("begin_install_fail_child.html", "extension.crx"));
+}
+
+#endif  // BUILDFLAG(ENABLE_SUPERVISED_USERS)
+
 class ExtensionWebstoreGetWebGLStatusTest : public InProcessBrowserTest {
  protected:
   void RunTest(bool webgl_allowed) {
@@ -356,10 +399,10 @@ class ExtensionWebstoreGetWebGLStatusTest : public InProcessBrowserTest {
     static const char kWebGLStatusBlocked[] = "webgl_blocked";
     scoped_refptr<WebstorePrivateGetWebGLStatusFunction> function =
         new WebstorePrivateGetWebGLStatusFunction();
-    scoped_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
-            function.get(), kEmptyArgs, browser()));
+    std::unique_ptr<base::Value> result(utils::RunFunctionAndReturnSingleResult(
+        function.get(), kEmptyArgs, browser()));
     ASSERT_TRUE(result);
-    EXPECT_EQ(base::Value::TYPE_STRING, result->GetType());
+    EXPECT_EQ(base::Value::Type::STRING, result->GetType());
     std::string webgl_status;
     EXPECT_TRUE(result->GetAsString(&webgl_status));
     EXPECT_STREQ(webgl_allowed ? kWebGLStatusAllowed : kWebGLStatusBlocked,
@@ -396,55 +439,6 @@ IN_PROC_BROWSER_TEST_F(ExtensionWebstoreGetWebGLStatusTest, Blocked) {
 
   bool webgl_allowed = false;
   RunTest(webgl_allowed);
-}
-
-class BundleWebstorePrivateApiTest
-    : public ExtensionWebstorePrivateApiTest {
- public:
-  void SetUpInProcessBrowserTestFixture() override {
-    ExtensionWebstorePrivateApiTest::SetUpInProcessBrowserTestFixture();
-
-    test_data_dir_ = test_data_dir_.AppendASCII("webstore_private/bundle");
-
-    // The test server needs to have already started, so setup the switch here
-    // rather than in SetUpCommandLine.
-    base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
-        switches::kAppsGalleryDownloadURL,
-        GetTestServerURL("bundle/%s.crx").spec());
-  }
-};
-
-// Tests successfully installing a bundle of 2 apps and 2 extensions.
-IN_PROC_BROWSER_TEST_F(BundleWebstorePrivateApiTest, InstallBundle) {
-  extensions::BundleInstaller::SetAutoApproveForTesting(true);
-  ASSERT_TRUE(RunPageTest(GetTestServerURL("install_bundle.html").spec()));
-}
-
-// Tests that bundles can be installed from incognito windows.
-IN_PROC_BROWSER_TEST_F(BundleWebstorePrivateApiTest, InstallBundleIncognito) {
-  extensions::BundleInstaller::SetAutoApproveForTesting(true);
-
-  ASSERT_TRUE(RunPageTest(GetTestServerURL("install_bundle.html").spec(),
-                          ExtensionApiTest::kFlagUseIncognito));
-}
-
-// Tests the user canceling the bundle install prompt.
-IN_PROC_BROWSER_TEST_F(BundleWebstorePrivateApiTest, InstallBundleCancel) {
-  // We don't need to create the CRX files since we are aborting the install.
-  extensions::BundleInstaller::SetAutoApproveForTesting(false);
-
-  ASSERT_TRUE(
-      RunPageTest(GetTestServerURL("install_bundle_cancel.html").spec()));
-}
-
-// Tests partially installing a bundle (1 succeeds, 1 fails due to an invalid
-// CRX, 1 fails due to the manifests not matching, and 1 fails due to a missing
-// crx file).
-IN_PROC_BROWSER_TEST_F(BundleWebstorePrivateApiTest, InstallBundleInvalid) {
-  extensions::BundleInstaller::SetAutoApproveForTesting(true);
-
-  ASSERT_TRUE(
-      RunPageTest(GetTestServerURL("install_bundle_invalid.html").spec()));
 }
 
 }  // namespace extensions

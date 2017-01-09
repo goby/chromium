@@ -5,11 +5,10 @@
 #ifndef UI_GL_GL_HELPER_H_
 #define UI_GL_GL_HELPER_H_
 
-#include "base/basictypes.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_export.h"
 
-namespace gfx {
+namespace gl {
 
 class GL_EXPORT GLHelper {
  public:
@@ -35,8 +34,12 @@ class GL_EXPORT GLHelper {
 
   // Draws a quad to the currently bound frame buffer.
   static void DrawQuad(GLuint vertex_buffer);
+
+  // When using the desktop core profile we have to bind a VAO before
+  // calling glVertexAttribPointer.
+  static bool ShouldTestsUseVAOs();
 };
 
-}  // namespace gfx
+}  // namespace gl
 
 #endif  // UI_GL_GL_HELPER_H_

@@ -2,9 +2,11 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
+
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/policy/cloud/test_request_interceptor.h"
 #include "chrome/browser/profiles/profile.h"
@@ -12,13 +14,14 @@
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/policy/core/common/cloud/cloud_policy_client.h"
+#include "components/policy/core/common/cloud/device_management_service.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
 #include "components/policy/core/common/policy_switches.h"
 #include "components/policy/core/common/policy_test_utils.h"
+#include "components/policy/proto/device_management_backend.pb.h"
 #include "content/public/browser/browser_thread.h"
 #include "net/base/net_errors.h"
 #include "net/url_request/url_request_context_getter.h"
-#include "policy/proto/device_management_backend.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -53,6 +56,9 @@ class CloudPolicyManagerTest : public InProcessBrowserTest {
     base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
     command_line->AppendSwitchASCII(switches::kDeviceManagementUrl,
                                     "http://localhost");
+
+    // Set retry delay to prevent timeouts.
+    policy::DeviceManagementService::SetRetryDelayForTesting(0);
   }
 
   void SetUpOnMainThread() override {
@@ -60,8 +66,7 @@ class CloudPolicyManagerTest : public InProcessBrowserTest {
         << "Pre-existing policies in this machine will make this test fail.";
 
     interceptor_.reset(new TestRequestInterceptor(
-        "localhost",
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO)));
+        "localhost", BrowserThread::GetTaskRunnerForThread(BrowserThread::IO)));
 
     BrowserPolicyConnector* connector =
         g_browser_process->browser_policy_connector();
@@ -76,12 +81,11 @@ class CloudPolicyManagerTest : public InProcessBrowserTest {
     signin_manager->SetAuthenticatedAccountInfo("12345", "user@example.com");
 
     ASSERT_TRUE(policy_manager());
-    policy_manager()->Connect(
-        g_browser_process->local_state(),
-        g_browser_process->system_request_context(),
-        UserCloudPolicyManager::CreateCloudPolicyClient(
-            connector->device_management_service(),
-            g_browser_process->system_request_context()).Pass());
+    policy_manager()->Connect(g_browser_process->local_state(),
+                              g_browser_process->system_request_context(),
+                              UserCloudPolicyManager::CreateCloudPolicyClient(
+                                  connector->device_management_service(),
+                                  g_browser_process->system_request_context()));
 #endif
   }
 
@@ -136,7 +140,7 @@ class CloudPolicyManagerTest : public InProcessBrowserTest {
     policy_manager()->core()->client()->RemoveObserver(&observer);
   }
 
-  scoped_ptr<TestRequestInterceptor> interceptor_;
+  std::unique_ptr<TestRequestInterceptor> interceptor_;
 };
 
 IN_PROC_BROWSER_TEST_F(CloudPolicyManagerTest, Register) {

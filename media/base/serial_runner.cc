@@ -8,7 +8,7 @@
 #include "base/callback_helpers.h"
 #include "base/location.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 
 namespace media {
 
@@ -40,6 +40,7 @@ static void RunOnTaskRunner(
 }
 
 SerialRunner::Queue::Queue() {}
+SerialRunner::Queue::Queue(const Queue& other) = default;
 SerialRunner::Queue::~Queue() {}
 
 void SerialRunner::Queue::Push(const base::Closure& closure) {
@@ -87,11 +88,12 @@ SerialRunner::SerialRunner(const Queue& bound_fns,
 
 SerialRunner::~SerialRunner() {}
 
-scoped_ptr<SerialRunner> SerialRunner::Run(
-    const Queue& bound_fns, const PipelineStatusCB& done_cb) {
-  scoped_ptr<SerialRunner> callback_series(
+std::unique_ptr<SerialRunner> SerialRunner::Run(
+    const Queue& bound_fns,
+    const PipelineStatusCB& done_cb) {
+  std::unique_ptr<SerialRunner> callback_series(
       new SerialRunner(bound_fns, done_cb));
-  return callback_series.Pass();
+  return callback_series;
 }
 
 void SerialRunner::RunNextInSeries(PipelineStatus last_status) {

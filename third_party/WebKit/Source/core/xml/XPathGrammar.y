@@ -27,8 +27,6 @@
 
 %{
 
-#include "config.h"
-
 #include "core/xml/XPathFunctions.h"
 #include "core/xml/XPathNSResolver.h"
 #include "core/xml/XPathParser.h"
@@ -36,7 +34,7 @@
 #include "core/xml/XPathPredicate.h"
 #include "core/xml/XPathStep.h"
 #include "core/xml/XPathVariableReference.h"
-#include "wtf/Partitions.h"
+#include "wtf/allocator/Partitions.h"
 
 void* yyFastMalloc(size_t size)
 {
@@ -396,14 +394,14 @@ PathExpr:
     FilterExpr '/' RelativeLocationPath
     {
         $3->setAbsolute(true);
-        $$ = new Path($1, $3);
+        $$ = new blink::XPath::Path($1, $3);
     }
     |
     FilterExpr DescendantOrSelf RelativeLocationPath
     {
         $3->insertFirstStep($2);
         $3->setAbsolute(true);
-        $$ = new Path($1, $3);
+        $$ = new blink::XPath::Path($1, $3);
     }
     ;
 
@@ -412,7 +410,7 @@ FilterExpr:
     |
     PrimaryExpr PredicateList
     {
-        $$ = new Filter($1, *$2);
+        $$ = new blink::XPath::Filter($1, *$2);
     }
     ;
 

@@ -2,18 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "components/constrained_window/constrained_window_views.h"
+#include <memory>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
+#include "base/test/scoped_feature_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_commands.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
 #include "chrome/browser/ui/views/tab_modal_confirm_dialog_views.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "chrome/test/base/ui_test_utils.h"
+#include "components/constrained_window/constrained_window_views.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
 #include "components/web_modal/web_contents_modal_dialog_manager.h"
 #include "components/web_modal/web_contents_modal_dialog_manager_delegate.h"
@@ -31,30 +34,25 @@ namespace {
 
 class TestDialog : public views::DialogDelegateView {
  public:
-  TestDialog() { SetFocusable(true); }
+  TestDialog() { SetFocusBehavior(FocusBehavior::ALWAYS); }
   ~TestDialog() override {}
 
   views::View* GetInitiallyFocusedView() override { return this; }
   // Don't delete the delegate yet. Keep it around for inspection later.
   void DeleteDelegate() override {}
 
-  ui::ModalType GetModalType() const override {
-#if defined(USE_ASH)
-    return ui::MODAL_TYPE_CHILD;
-#else
-    return views::WidgetDelegate::GetModalType();
-#endif
-  }
+  ui::ModalType GetModalType() const override { return ui::MODAL_TYPE_CHILD; }
 
  private:
   DISALLOW_COPY_AND_ASSIGN(TestDialog);
 };
 
 // A helper function to create and show a web contents modal dialog.
-scoped_ptr<TestDialog> ShowModalDialog(content::WebContents* web_contents) {
-  scoped_ptr<TestDialog> dialog(new TestDialog());
+std::unique_ptr<TestDialog> ShowModalDialog(
+    content::WebContents* web_contents) {
+  std::unique_ptr<TestDialog> dialog(new TestDialog());
   constrained_window::ShowWebModalDialogViews(dialog.get(), web_contents);
-  return dialog.Pass();
+  return dialog;
 }
 
 } // namespace
@@ -68,7 +66,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, FocusTest) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
   EXPECT_TRUE(ui_test_utils::IsViewFocused(browser(), VIEW_ID_OMNIBOX));
-  scoped_ptr<TestDialog> dialog1 = ShowModalDialog(web_contents);
+  std::unique_ptr<TestDialog> dialog1 = ShowModalDialog(web_contents);
 
   // |dialog1| should be active and focused.
   EXPECT_TRUE(dialog1->GetWidget()->IsVisible());
@@ -77,7 +75,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, FocusTest) {
 
   // Create a second dialog. This will also be modal to |web_contents|, but will
   // remain hidden since the |dialog1| is still showing.
-  scoped_ptr<TestDialog> dialog2 = ShowModalDialog(web_contents);
+  std::unique_ptr<TestDialog> dialog2 = ShowModalDialog(web_contents);
   EXPECT_FALSE(dialog2->GetWidget()->IsVisible());
   EXPECT_TRUE(dialog1->GetWidget()->IsVisible());
   EXPECT_EQ(focus_manager, dialog2->GetWidget()->GetFocusManager());
@@ -116,8 +114,8 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, FocusTest) {
 
 // Tests that the tab-modal window is closed properly when its tab is closed.
 IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabCloseTest) {
-  scoped_ptr<TestDialog> dialog = ShowModalDialog(
-      browser()->tab_strip_model()->GetActiveWebContents());
+  std::unique_ptr<TestDialog> dialog =
+      ShowModalDialog(browser()->tab_strip_model()->GetActiveWebContents());
   EXPECT_TRUE(dialog->GetWidget()->IsVisible());
   chrome::CloseTab(browser());
   content::RunAllPendingInMessageLoop();
@@ -127,8 +125,8 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabCloseTest) {
 // Tests that the tab-modal window is hidden when an other tab is selected and
 // shown when its tab is selected again.
 IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabSwitchTest) {
-  scoped_ptr<TestDialog> dialog = ShowModalDialog(
-      browser()->tab_strip_model()->GetActiveWebContents());
+  std::unique_ptr<TestDialog> dialog =
+      ShowModalDialog(browser()->tab_strip_model()->GetActiveWebContents());
   EXPECT_TRUE(dialog->GetWidget()->IsVisible());
 
   // Open a new tab. The tab-modal window should hide itself.
@@ -149,7 +147,7 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabSwitchTest) {
 IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, TabMoveTest) {
   content::WebContents* web_contents =
       browser()->tab_strip_model()->GetActiveWebContents();
-  scoped_ptr<TestDialog> dialog = ShowModalDialog(web_contents);
+  std::unique_ptr<TestDialog> dialog = ShowModalDialog(web_contents);
   EXPECT_TRUE(dialog->GetWidget()->IsVisible());
 
   // Move the tab to a second browser window; but first create another tab.
@@ -183,18 +181,37 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, NavigationOnBackspace) {
   content::WaitForLoadStop(web_contents);
   EXPECT_EQ(GURL(chrome::kChromeUIVersionURL), web_contents->GetURL());
 
-  scoped_ptr<TestDialog> dialog = ShowModalDialog(web_contents);
-  EXPECT_TRUE(dialog->GetWidget()->IsVisible());
-  EXPECT_EQ(dialog->GetContentsView(),
-            dialog->GetWidget()->GetFocusManager()->GetFocusedView());
+  std::unique_ptr<TestDialog> dialog = ShowModalDialog(web_contents);
 
-  // Pressing backspace should navigate back and close the dialog.
+  views::Widget* widget = dialog->GetWidget();
+
+  EXPECT_TRUE(widget->IsVisible());
+  EXPECT_EQ(dialog->GetContentsView(),
+            widget->GetFocusManager()->GetFocusedView());
+
+  // Pressing backspace should not navigate back and close the dialog
+  // with the Finch flag disabled.
   EXPECT_TRUE(chrome::CanGoBack(browser()));
   EXPECT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_BACK,
                                               false, false, false, false));
   content::RunAllPendingInMessageLoop();
   content::WaitForLoadStop(web_contents);
-  EXPECT_EQ(NULL, dialog->GetWidget());
+
+  EXPECT_EQ(widget, dialog->GetWidget());
+  EXPECT_EQ(GURL(chrome::kChromeUIVersionURL), web_contents->GetURL());
+
+  // Pressing backspace should navigate back and close the dialog with the
+  // Finch flag enabled.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(features::kBackspaceGoesBackFeature);
+
+  EXPECT_TRUE(chrome::CanGoBack(browser()));
+  EXPECT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_BACK,
+                                              false, false, false, false));
+  content::RunAllPendingInMessageLoop();
+  content::WaitForLoadStop(web_contents);
+
+  EXPECT_EQ(nullptr, dialog->GetWidget());
   EXPECT_EQ(original_url, web_contents->GetURL());
 }
 
@@ -206,8 +223,8 @@ IN_PROC_BROWSER_TEST_F(ConstrainedWindowViewTest, ClosesOnEscape) {
     return;
 #endif
 
-  scoped_ptr<TestDialog> dialog = ShowModalDialog(
-      browser()->tab_strip_model()->GetActiveWebContents());
+  std::unique_ptr<TestDialog> dialog =
+      ShowModalDialog(browser()->tab_strip_model()->GetActiveWebContents());
   EXPECT_TRUE(dialog->GetWidget()->IsVisible());
   EXPECT_TRUE(ui_test_utils::SendKeyPressSync(browser(), ui::VKEY_ESCAPE,
                                               false, false, false, false));

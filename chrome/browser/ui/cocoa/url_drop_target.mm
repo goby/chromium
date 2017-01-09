@@ -4,19 +4,10 @@
 
 #import "chrome/browser/ui/cocoa/url_drop_target.h"
 
-#include "base/basictypes.h"
 #include "chrome/browser/ui/cocoa/drag_util.h"
 #import "third_party/mozilla/NSPasteboard+Utils.h"
+#include "ui/base/clipboard/clipboard_util_mac.h"
 #include "url/gurl.h"
-
-namespace {
-
-// Mac WebKit uses this type, declared in
-// WebKit/mac/History/WebURLsWithTitles.h.
-NSString* const kCrWebURLsWithTitlesPboardType =
-    @"WebURLsWithTitlesPboardType";
-
-}  // namespace
 
 @interface URLDropTargetHandler(Private)
 
@@ -31,11 +22,10 @@ NSString* const kCrWebURLsWithTitlesPboardType =
 @implementation URLDropTargetHandler
 
 + (NSArray*)handledDragTypes {
-  return [NSArray arrayWithObjects:kCrWebURLsWithTitlesPboardType,
-                                   NSURLPboardType,
-                                   NSStringPboardType,
-                                   NSFilenamesPboardType,
-                                   nil];
+  return @[
+    ui::ClipboardUtil::UTIForWebURLsAndTitles(), NSURLPboardType,
+    NSStringPboardType, NSFilenamesPboardType
+  ];
 }
 
 - (id)initWithView:(NSView<URLDropTarget>*)view {
@@ -94,10 +84,13 @@ NSString* const kCrWebURLsWithTitlesPboardType =
   NSPoint dropPoint =
       [view_ convertPoint:[sender draggingLocation] fromView:nil];
   // Tell the window controller about the dropped URL(s).
-  if ([pboard containsURLData]) {
+  if ([pboard containsURLDataConvertingTextToURL:NO]) {
     NSArray* urls = nil;
     NSArray* titles;  // discarded
-    [pboard getURLs:&urls andTitles:&titles convertingFilenames:YES];
+    [pboard getURLs:&urls
+                  andTitles:&titles
+        convertingFilenames:YES
+        convertingTextToURL:NO];
 
     if ([urls count]) {
       [[view_ urlDropController] dropURLs:urls inView:view_ at:dropPoint];
@@ -121,7 +114,8 @@ NSString* const kCrWebURLsWithTitlesPboardType =
   NSPasteboard* pboard = [sender draggingPasteboard];
   NSArray *supportedTypes = [NSArray arrayWithObjects:NSStringPboardType, nil];
   NSString *bestType = [pboard availableTypeFromArray:supportedTypes];
-  if (![pboard containsURLData] && ![pboard stringForType:bestType])
+  if (![pboard containsURLDataConvertingTextToURL:YES] &&
+      ![pboard stringForType:bestType])
     return NSDragOperationNone;
 
   // Only allow the copy operation.

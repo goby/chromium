@@ -6,7 +6,7 @@
 
 #include <algorithm>
 
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/stl_util.h"
 #include "base/task_runner_util.h"
 #include "base/timer/elapsed_timer.h"
@@ -96,10 +96,9 @@ void ContentVerifyJob::BytesRead(int count, const char* data) {
     if (current_block_ >= hash_reader_->block_count())
       return DispatchFailureCallback(HASH_MISMATCH);
 
-    if (!current_hash_.get()) {
+    if (!current_hash_) {
       current_hash_byte_count_ = 0;
-      current_hash_.reset(
-          crypto::SecureHash::Create(crypto::SecureHash::SHA256));
+      current_hash_ = crypto::SecureHash::Create(crypto::SecureHash::SHA256);
     }
     // Compute how many bytes we should hash, and add them to the current hash.
     int bytes_to_hash =
@@ -147,7 +146,7 @@ bool ContentVerifyJob::FinishBlock() {
   if (current_hash_byte_count_ <= 0)
     return true;
   std::string final(crypto::kSHA256Length, 0);
-  current_hash_->Finish(string_as_array(&final), final.size());
+  current_hash_->Finish(base::string_as_array(& final), final.size());
   current_hash_.reset();
   current_hash_byte_count_ = 0;
 
@@ -179,7 +178,7 @@ void ContentVerifyJob::OnHashesReady(bool success) {
   if (!queue_.empty()) {
     std::string tmp;
     queue_.swap(tmp);
-    BytesRead(tmp.size(), string_as_array(&tmp));
+    BytesRead(tmp.size(), base::string_as_array(&tmp));
   }
   if (done_reading_) {
     ScopedElapsedTimer timer(&time_spent_);
@@ -194,6 +193,9 @@ void ContentVerifyJob::OnHashesReady(bool success) {
 
 // static
 void ContentVerifyJob::SetDelegateForTests(TestDelegate* delegate) {
+  DCHECK(delegate == nullptr || g_test_delegate == nullptr)
+      << "SetDelegateForTests does not support interleaving. Delegates should "
+      << "be set and then cleared one at a time.";
   g_test_delegate = delegate;
 }
 

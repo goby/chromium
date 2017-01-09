@@ -27,7 +27,7 @@ void ExpectBrightness(double brightness, const FilterOperations& filter) {
 // Tests that a color animation with one keyframe works as expected.
 TEST(KeyframedAnimationCurveTest, OneColorKeyFrame) {
   SkColor color = SkColorSetARGB(255, 255, 255, 255);
-  scoped_ptr<KeyframedColorAnimationCurve> curve(
+  std::unique_ptr<KeyframedColorAnimationCurve> curve(
       KeyframedColorAnimationCurve::Create());
   curve->AddKeyframe(ColorKeyframe::Create(base::TimeDelta(), color, nullptr));
 
@@ -45,7 +45,7 @@ TEST(KeyframedAnimationCurveTest, TwoColorKeyFrame) {
   SkColor color_a = SkColorSetARGB(255, 255, 0, 0);
   SkColor color_b = SkColorSetARGB(255, 0, 255, 0);
   SkColor color_midpoint = gfx::Tween::ColorValueBetween(0.5, color_a, color_b);
-  scoped_ptr<KeyframedColorAnimationCurve> curve(
+  std::unique_ptr<KeyframedColorAnimationCurve> curve(
       KeyframedColorAnimationCurve::Create());
   curve->AddKeyframe(
       ColorKeyframe::Create(base::TimeDelta(), color_a, nullptr));
@@ -73,7 +73,7 @@ TEST(KeyframedAnimationCurveTest, ThreeColorKeyFrame) {
       gfx::Tween::ColorValueBetween(0.5, color_a, color_b);
   SkColor color_midpoint2 =
       gfx::Tween::ColorValueBetween(0.5, color_b, color_c);
-  scoped_ptr<KeyframedColorAnimationCurve> curve(
+  std::unique_ptr<KeyframedColorAnimationCurve> curve(
       KeyframedColorAnimationCurve::Create());
   curve->AddKeyframe(
       ColorKeyframe::Create(base::TimeDelta(), color_a, nullptr));
@@ -98,12 +98,12 @@ TEST(KeyframedAnimationCurveTest, ThreeColorKeyFrame) {
                     curve->GetValue(base::TimeDelta::FromSecondsD(3.f)));
 }
 
-// Tests that a colro animation with multiple keys at a given time works sanely.
+// Tests that a color animation with multiple keys at a given time works sanely.
 TEST(KeyframedAnimationCurveTest, RepeatedColorKeyFrame) {
   SkColor color_a = SkColorSetARGB(255, 64, 0, 0);
   SkColor color_b = SkColorSetARGB(255, 192, 0, 0);
 
-  scoped_ptr<KeyframedColorAnimationCurve> curve(
+  std::unique_ptr<KeyframedColorAnimationCurve> curve(
       KeyframedColorAnimationCurve::Create());
   curve->AddKeyframe(
       ColorKeyframe::Create(base::TimeDelta(), color_a, nullptr));
@@ -137,7 +137,7 @@ TEST(KeyframedAnimationCurveTest, RepeatedColorKeyFrame) {
 
 // Tests that a float animation with one keyframe works as expected.
 TEST(KeyframedAnimationCurveTest, OneFloatKeyframe) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 2.f, nullptr));
   EXPECT_FLOAT_EQ(2.f, curve->GetValue(base::TimeDelta::FromSecondsD(-1.f)));
@@ -149,7 +149,7 @@ TEST(KeyframedAnimationCurveTest, OneFloatKeyframe) {
 
 // Tests that a float animation with two keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, TwoFloatKeyframe) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 2.f, nullptr));
   curve->AddKeyframe(
@@ -163,7 +163,7 @@ TEST(KeyframedAnimationCurveTest, TwoFloatKeyframe) {
 
 // Tests that a float animation with three keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, ThreeFloatKeyframe) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 2.f, nullptr));
   curve->AddKeyframe(
@@ -181,7 +181,7 @@ TEST(KeyframedAnimationCurveTest, ThreeFloatKeyframe) {
 
 // Tests that a float animation with multiple keys at a given time works sanely.
 TEST(KeyframedAnimationCurveTest, RepeatedFloatKeyTimes) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 4.f, nullptr));
   curve->AddKeyframe(
@@ -206,7 +206,7 @@ TEST(KeyframedAnimationCurveTest, RepeatedFloatKeyTimes) {
 
 // Tests that a transform animation with one keyframe works as expected.
 TEST(KeyframedAnimationCurveTest, OneTransformKeyframe) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
   TransformOperations operations;
   operations.AppendTranslate(2.f, 0.f, 0.f);
@@ -222,7 +222,7 @@ TEST(KeyframedAnimationCurveTest, OneTransformKeyframe) {
 
 // Tests that a transform animation with two keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, TwoTransformKeyframe) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
   TransformOperations operations1;
   operations1.AppendTranslate(2.f, 0.f, 0.f);
@@ -242,7 +242,7 @@ TEST(KeyframedAnimationCurveTest, TwoTransformKeyframe) {
 
 // Tests that a transform animation with three keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, ThreeTransformKeyframe) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
   TransformOperations operations1;
   operations1.AppendTranslate(2.f, 0.f, 0.f);
@@ -268,7 +268,7 @@ TEST(KeyframedAnimationCurveTest, ThreeTransformKeyframe) {
 // Tests that a transform animation with multiple keys at a given time works
 // sanely.
 TEST(KeyframedAnimationCurveTest, RepeatedTransformKeyTimes) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
   // A step function.
   TransformOperations operations1;
@@ -304,7 +304,7 @@ TEST(KeyframedAnimationCurveTest, RepeatedTransformKeyTimes) {
 
 // Tests that a filter animation with one keyframe works as expected.
 TEST(KeyframedAnimationCurveTest, OneFilterKeyframe) {
-  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+  std::unique_ptr<KeyframedFilterAnimationCurve> curve(
       KeyframedFilterAnimationCurve::Create());
   FilterOperations operations;
   operations.Append(FilterOperation::CreateBrightnessFilter(2.f));
@@ -320,7 +320,7 @@ TEST(KeyframedAnimationCurveTest, OneFilterKeyframe) {
 
 // Tests that a filter animation with two keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, TwoFilterKeyframe) {
-  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+  std::unique_ptr<KeyframedFilterAnimationCurve> curve(
       KeyframedFilterAnimationCurve::Create());
   FilterOperations operations1;
   operations1.Append(FilterOperation::CreateBrightnessFilter(2.f));
@@ -340,7 +340,7 @@ TEST(KeyframedAnimationCurveTest, TwoFilterKeyframe) {
 
 // Tests that a filter animation with three keyframes works as expected.
 TEST(KeyframedAnimationCurveTest, ThreeFilterKeyframe) {
-  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+  std::unique_ptr<KeyframedFilterAnimationCurve> curve(
       KeyframedFilterAnimationCurve::Create());
   FilterOperations operations1;
   operations1.Append(FilterOperation::CreateBrightnessFilter(2.f));
@@ -366,7 +366,7 @@ TEST(KeyframedAnimationCurveTest, ThreeFilterKeyframe) {
 // Tests that a filter animation with multiple keys at a given time works
 // sanely.
 TEST(KeyframedAnimationCurveTest, RepeatedFilterKeyTimes) {
-  scoped_ptr<KeyframedFilterAnimationCurve> curve(
+  std::unique_ptr<KeyframedFilterAnimationCurve> curve(
       KeyframedFilterAnimationCurve::Create());
   // A step function.
   FilterOperations operations1;
@@ -404,7 +404,7 @@ TEST(KeyframedAnimationCurveTest, RepeatedFilterKeyTimes) {
 
 // Tests that the keyframes may be added out of order.
 TEST(KeyframedAnimationCurveTest, UnsortedKeyframes) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(
       FloatKeyframe::Create(base::TimeDelta::FromSecondsD(2.f), 8.f, nullptr));
@@ -422,7 +422,7 @@ TEST(KeyframedAnimationCurveTest, UnsortedKeyframes) {
 
 // Tests that a cubic bezier timing function works as expected.
 TEST(KeyframedAnimationCurveTest, CubicBezierTimingFunction) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(
       base::TimeDelta(), 0.f,
@@ -442,13 +442,13 @@ TEST(KeyframedAnimationCurveTest, CubicBezierTimingFunction) {
 
 // Tests a step timing function if the change of values occur at the start.
 TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtStart) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   const int num_steps = 36;
-  const float steps_start_offset = 1.0f;
   curve->AddKeyframe(FloatKeyframe::Create(
       base::TimeDelta(), 0.f,
-      StepsTimingFunction::Create(num_steps, steps_start_offset)));
+      StepsTimingFunction::Create(num_steps,
+                                  StepsTimingFunction::StepPosition::START)));
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta::FromSecondsD(1.0),
                                            num_steps, nullptr));
 
@@ -473,13 +473,13 @@ TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtStart) {
 
 // Tests a step timing function if the change of values occur at the middle.
 TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtMiddle) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   const int num_steps = 36;
-  const float steps_start_offset = 0.5f;
   curve->AddKeyframe(FloatKeyframe::Create(
       base::TimeDelta(), 0.f,
-      StepsTimingFunction::Create(num_steps, steps_start_offset)));
+      StepsTimingFunction::Create(num_steps,
+                                  StepsTimingFunction::StepPosition::MIDDLE)));
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta::FromSecondsD(1.0),
                                            num_steps, nullptr));
 
@@ -505,13 +505,13 @@ TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtMiddle) {
 
 // Tests a step timing function if the change of values occur at the end.
 TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtEnd) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   const int num_steps = 36;
-  const float steps_start_offset = 0.0f;
   curve->AddKeyframe(FloatKeyframe::Create(
       base::TimeDelta(), 0.f,
-      StepsTimingFunction::Create(num_steps, steps_start_offset)));
+      StepsTimingFunction::Create(num_steps,
+                                  StepsTimingFunction::StepPosition::END)));
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta::FromSecondsD(1.0),
                                            num_steps, nullptr));
 
@@ -537,7 +537,7 @@ TEST(KeyframedAnimationCurveTest, StepsTimingFunctionStepAtEnd) {
 
 // Tests that animated bounds are computed as expected.
 TEST(KeyframedAnimationCurveTest, AnimatedBounds) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
 
   TransformOperations operations1;
@@ -548,9 +548,10 @@ TEST(KeyframedAnimationCurveTest, AnimatedBounds) {
       base::TimeDelta::FromSecondsD(0.5f), operations1, nullptr));
   TransformOperations operations2;
   operations2.AppendTranslate(4.0, 1.0, 2.0);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(1.f), operations2,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(1.f), operations2,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   gfx::BoxF box(2.f, 3.f, 4.f, 1.f, 3.f, 2.f);
   gfx::BoxF bounds;
@@ -560,40 +561,9 @@ TEST(KeyframedAnimationCurveTest, AnimatedBounds) {
             bounds.ToString());
 }
 
-// Tests that animations that affect scale are correctly identified.
-TEST(KeyframedAnimationCurveTest, AffectsScale) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
-      KeyframedTransformAnimationCurve::Create());
-
-  TransformOperations operations1;
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta(), operations1, nullptr));
-  operations1.AppendTranslate(2.0, 3.0, -1.0);
-  TransformOperations operations2;
-  operations2.AppendTranslate(4.0, 1.0, 2.0);
-  curve->AddKeyframe(TransformKeyframe::Create(
-      base::TimeDelta::FromSecondsD(1.f), operations2, nullptr));
-
-  EXPECT_FALSE(curve->AffectsScale());
-
-  TransformOperations operations3;
-  operations3.AppendScale(2.f, 2.f, 2.f);
-  curve->AddKeyframe(TransformKeyframe::Create(
-      base::TimeDelta::FromSecondsD(2.f), operations3, nullptr));
-
-  EXPECT_TRUE(curve->AffectsScale());
-
-  TransformOperations operations4;
-  operations3.AppendTranslate(2.f, 2.f, 2.f);
-  curve->AddKeyframe(TransformKeyframe::Create(
-      base::TimeDelta::FromSecondsD(3.f), operations4, nullptr));
-
-  EXPECT_TRUE(curve->AffectsScale());
-}
-
 // Tests that animations that are translations are correctly identified.
 TEST(KeyframedAnimationCurveTest, IsTranslation) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
 
   TransformOperations operations1;
@@ -624,16 +594,17 @@ TEST(KeyframedAnimationCurveTest, IsTranslation) {
 
 // Tests that maximum target scale is computed as expected.
 TEST(KeyframedAnimationCurveTest, MaximumTargetScale) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
 
   TransformOperations operations1;
   curve->AddKeyframe(
       TransformKeyframe::Create(base::TimeDelta(), operations1, nullptr));
   operations1.AppendScale(2.f, -3.f, 1.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(1.f), operations1,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(1.f), operations1,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   float maximum_scale = 0.f;
   EXPECT_TRUE(curve->MaximumTargetScale(true, &maximum_scale));
@@ -641,34 +612,49 @@ TEST(KeyframedAnimationCurveTest, MaximumTargetScale) {
 
   TransformOperations operations2;
   operations2.AppendScale(6.f, 3.f, 2.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(2.f), operations2,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(2.f), operations2,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   EXPECT_TRUE(curve->MaximumTargetScale(true, &maximum_scale));
   EXPECT_EQ(6.f, maximum_scale);
 
   TransformOperations operations3;
   operations3.AppendRotate(1.f, 0.f, 0.f, 90.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(3.f), operations3,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(3.f), operations3,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
+
+  EXPECT_TRUE(curve->MaximumTargetScale(true, &maximum_scale));
+  EXPECT_EQ(6.f, maximum_scale);
+
+  TransformOperations operations4;
+  operations4.AppendPerspective(3.f);
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(4.f), operations4,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   EXPECT_FALSE(curve->MaximumTargetScale(true, &maximum_scale));
 
   // The original scale is not used in computing the max.
-  scoped_ptr<KeyframedTransformAnimationCurve> curve2(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve2(
       KeyframedTransformAnimationCurve::Create());
 
-  TransformOperations operations4;
-  operations4.AppendScale(0.4f, 0.2f, 0.6f);
-  curve2->AddKeyframe(TransformKeyframe::Create(base::TimeDelta(), operations4,
-                                                EaseTimingFunction::Create()));
   TransformOperations operations5;
-  operations5.AppendScale(0.5f, 0.3f, -0.8f);
-  curve2->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(1.f), operations5,
-                                EaseTimingFunction::Create()));
+  operations5.AppendScale(0.4f, 0.2f, 0.6f);
+  curve2->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta(), operations5,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
+  TransformOperations operations6;
+  operations6.AppendScale(0.5f, 0.3f, -0.8f);
+  curve2->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(1.f), operations6,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   EXPECT_TRUE(curve2->MaximumTargetScale(true, &maximum_scale));
   EXPECT_EQ(0.8f, maximum_scale);
@@ -679,16 +665,17 @@ TEST(KeyframedAnimationCurveTest, MaximumTargetScale) {
 
 // Tests that starting animation scale is computed as expected.
 TEST(KeyframedAnimationCurveTest, AnimationStartScale) {
-  scoped_ptr<KeyframedTransformAnimationCurve> curve(
+  std::unique_ptr<KeyframedTransformAnimationCurve> curve(
       KeyframedTransformAnimationCurve::Create());
 
   TransformOperations operations1;
   curve->AddKeyframe(
       TransformKeyframe::Create(base::TimeDelta(), operations1, nullptr));
   operations1.AppendScale(2.f, -3.f, 1.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(1.f), operations1,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(1.f), operations1,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   float start_scale = 0.f;
 
@@ -702,11 +689,12 @@ TEST(KeyframedAnimationCurveTest, AnimationStartScale) {
 
   TransformOperations operations2;
   operations2.AppendScale(6.f, 3.f, 2.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(2.f), operations2,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(2.f), operations2,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
-  // Backward direction
+  // Forward direction
   EXPECT_TRUE(curve->AnimationStartScale(true, &start_scale));
   EXPECT_EQ(1.f, start_scale);
 
@@ -716,9 +704,20 @@ TEST(KeyframedAnimationCurveTest, AnimationStartScale) {
 
   TransformOperations operations3;
   operations3.AppendRotate(1.f, 0.f, 0.f, 90.f);
-  curve->AddKeyframe(
-      TransformKeyframe::Create(base::TimeDelta::FromSecondsD(3.f), operations3,
-                                EaseTimingFunction::Create()));
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(3.f), operations3,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
+
+  EXPECT_TRUE(curve->AnimationStartScale(false, &start_scale));
+  EXPECT_EQ(1.f, start_scale);
+
+  TransformOperations operations4;
+  operations4.AppendPerspective(90.f);
+  curve->AddKeyframe(TransformKeyframe::Create(
+      base::TimeDelta::FromSecondsD(4.f), operations4,
+      CubicBezierTimingFunction::CreatePreset(
+          CubicBezierTimingFunction::EaseType::EASE)));
 
   EXPECT_FALSE(curve->AnimationStartScale(false, &start_scale));
   EXPECT_EQ(0.f, start_scale);
@@ -726,7 +725,7 @@ TEST(KeyframedAnimationCurveTest, AnimationStartScale) {
 
 // Tests that an animation with a curve timing function works as expected.
 TEST(KeyframedAnimationCurveTest, CurveTiming) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 0.f, nullptr));
   curve->AddKeyframe(
@@ -747,7 +746,7 @@ TEST(KeyframedAnimationCurveTest, CurveTiming) {
 // Tests that an animation with a curve and keyframe timing function works as
 // expected.
 TEST(KeyframedAnimationCurveTest, CurveAndKeyframeTiming) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(
       base::TimeDelta(), 0.f,
@@ -775,7 +774,7 @@ TEST(KeyframedAnimationCurveTest, CurveAndKeyframeTiming) {
 // Tests that a linear timing function works as expected for inputs outside of
 // range [0,1]
 TEST(KeyframedAnimationCurveTest, LinearTimingInputsOutsideZeroOneRange) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 0.f, nullptr));
   curve->AddKeyframe(
@@ -794,7 +793,7 @@ TEST(KeyframedAnimationCurveTest, LinearTimingInputsOutsideZeroOneRange) {
 // the range [0, 1] then a keyframe cubic-bezier timing function
 // should consume that input properly (using end-point gradients).
 TEST(KeyframedAnimationCurveTest, CurveTimingInputsOutsideZeroOneRange) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   // Keyframe timing function with 0.5 gradients at each end.
   curve->AddKeyframe(FloatKeyframe::Create(
@@ -820,10 +819,12 @@ TEST(KeyframedAnimationCurveTest, CurveTimingInputsOutsideZeroOneRange) {
 // Tests that a step timing function works as expected for inputs outside of
 // range [0,1]
 TEST(KeyframedAnimationCurveTest, StepsTimingInputsOutsideZeroOneRange) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
-  curve->AddKeyframe(FloatKeyframe::Create(
-      base::TimeDelta(), 0.f, StepsTimingFunction::Create(4, 0.5f)));
+  curve->AddKeyframe(
+      FloatKeyframe::Create(base::TimeDelta(), 0.f,
+                            StepsTimingFunction::Create(
+                                4, StepsTimingFunction::StepPosition::MIDDLE)));
   curve->AddKeyframe(
       FloatKeyframe::Create(base::TimeDelta::FromSecondsD(1.0), 2.f, nullptr));
   // Curve timing function producing timing outputs outside of range [0,1].
@@ -837,7 +838,7 @@ TEST(KeyframedAnimationCurveTest, StepsTimingInputsOutsideZeroOneRange) {
 // Tests that an animation with a curve timing function and multiple keyframes
 // works as expected.
 TEST(KeyframedAnimationCurveTest, CurveTimingMultipleKeyframes) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 0.f, nullptr));
   curve->AddKeyframe(
@@ -866,7 +867,7 @@ TEST(KeyframedAnimationCurveTest, CurveTimingMultipleKeyframes) {
 // Tests that an animation with a curve timing function that overshoots works as
 // expected.
 TEST(KeyframedAnimationCurveTest, CurveTimingOvershootMultipeKeyframes) {
-  scoped_ptr<KeyframedFloatAnimationCurve> curve(
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
       KeyframedFloatAnimationCurve::Create());
   curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 0.f, nullptr));
   curve->AddKeyframe(
@@ -884,6 +885,48 @@ TEST(KeyframedAnimationCurveTest, CurveTimingOvershootMultipeKeyframes) {
             0.f);  // c(.25) < 0
   EXPECT_GE(curve->GetValue(base::TimeDelta::FromSecondsD(3.f)),
             9.f);  // c(.75) > 1
+}
+
+// Tests that a float animation with multiple keys works with scaled duration.
+TEST(KeyframedAnimationCurveTest, ScaledDuration) {
+  std::unique_ptr<KeyframedFloatAnimationCurve> curve(
+      KeyframedFloatAnimationCurve::Create());
+  curve->AddKeyframe(FloatKeyframe::Create(base::TimeDelta(), 0.f, nullptr));
+  curve->AddKeyframe(
+      FloatKeyframe::Create(base::TimeDelta::FromSecondsD(1.f), 1.f, nullptr));
+  curve->AddKeyframe(
+      FloatKeyframe::Create(base::TimeDelta::FromSecondsD(2.f), 3.f, nullptr));
+  curve->AddKeyframe(
+      FloatKeyframe::Create(base::TimeDelta::FromSecondsD(3.f), 6.f, nullptr));
+  curve->AddKeyframe(
+      FloatKeyframe::Create(base::TimeDelta::FromSecondsD(4.f), 9.f, nullptr));
+  curve->SetTimingFunction(
+      CubicBezierTimingFunction::Create(0.5f, 0.f, 0.5f, 1.f));
+
+  const double scale = 1000.0;
+  curve->set_scaled_duration(scale);
+
+  EXPECT_DOUBLE_EQ(scale * 4, curve->Duration().InSecondsF());
+
+  EXPECT_FLOAT_EQ(0.f,
+                  curve->GetValue(base::TimeDelta::FromSecondsD(scale * -1.f)));
+  EXPECT_FLOAT_EQ(0.f,
+                  curve->GetValue(base::TimeDelta::FromSecondsD(scale * 0.f)));
+  EXPECT_NEAR(0.42f,
+              curve->GetValue(base::TimeDelta::FromSecondsD(scale * 1.f)),
+              0.005f);
+  EXPECT_NEAR(1.f,
+              curve->GetValue(base::TimeDelta::FromSecondsD(scale * 1.455f)),
+              0.005f);
+  EXPECT_FLOAT_EQ(3.f,
+                  curve->GetValue(base::TimeDelta::FromSecondsD(scale * 2.f)));
+  EXPECT_NEAR(8.72f,
+              curve->GetValue(base::TimeDelta::FromSecondsD(scale * 3.5f)),
+              0.01f);
+  EXPECT_FLOAT_EQ(9.f,
+                  curve->GetValue(base::TimeDelta::FromSecondsD(scale * 4.f)));
+  EXPECT_FLOAT_EQ(9.f,
+                  curve->GetValue(base::TimeDelta::FromSecondsD(scale * 5.f)));
 }
 
 }  // namespace

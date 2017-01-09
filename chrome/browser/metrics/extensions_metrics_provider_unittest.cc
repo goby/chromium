@@ -4,14 +4,17 @@
 
 #include "chrome/browser/metrics/extensions_metrics_provider.h"
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/testing_pref_service.h"
 #include "components/metrics/client_info.h"
 #include "components/metrics/metrics_service.h"
 #include "components/metrics/metrics_state_manager.h"
 #include "components/metrics/proto/system_profile.pb.h"
+#include "components/metrics/test_enabled_state_provider.h"
+#include "components/prefs/testing_pref_service.h"
 #include "extensions/common/extension.h"
 #include "extensions/common/extension_builder.h"
 #include "extensions/common/extension_set.h"
@@ -19,15 +22,11 @@
 
 namespace {
 
-bool IsMetricsReportingEnabled() {
-  return true;
-}
-
 void StoreNoClientInfoBackup(const metrics::ClientInfo& /* client_info */) {
 }
 
-scoped_ptr<metrics::ClientInfo> ReturnNoBackup() {
-  return scoped_ptr<metrics::ClientInfo>();
+std::unique_ptr<metrics::ClientInfo> ReturnNoBackup() {
+  return std::unique_ptr<metrics::ClientInfo>();
 }
 
 class TestExtensionsMetricsProvider : public ExtensionsMetricsProvider {
@@ -42,16 +41,17 @@ class TestExtensionsMetricsProvider : public ExtensionsMetricsProvider {
  protected:
   // Override the GetInstalledExtensions method to return a set of extensions
   // for tests.
-  scoped_ptr<extensions::ExtensionSet> GetInstalledExtensions(
+  std::unique_ptr<extensions::ExtensionSet> GetInstalledExtensions(
       Profile* profile) override {
-    scoped_ptr<extensions::ExtensionSet> extensions(
+    std::unique_ptr<extensions::ExtensionSet> extensions(
         new extensions::ExtensionSet());
     scoped_refptr<const extensions::Extension> extension;
     extension = extensions::ExtensionBuilder()
                     .SetManifest(extensions::DictionaryBuilder()
                                      .Set("name", "Test extension")
                                      .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2))
+                                     .Set("manifest_version", 2)
+                                     .Build())
                     .SetID("ahfgeienlihckogmohjhadlkjgocpleb")
                     .Build();
     extensions->Insert(extension);
@@ -59,7 +59,8 @@ class TestExtensionsMetricsProvider : public ExtensionsMetricsProvider {
                     .SetManifest(extensions::DictionaryBuilder()
                                      .Set("name", "Test extension 2")
                                      .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2))
+                                     .Set("manifest_version", 2)
+                                     .Build())
                     .SetID("pknkgggnfecklokoggaggchhaebkajji")
                     .Build();
     extensions->Insert(extension);
@@ -67,16 +68,17 @@ class TestExtensionsMetricsProvider : public ExtensionsMetricsProvider {
                     .SetManifest(extensions::DictionaryBuilder()
                                      .Set("name", "Colliding Extension")
                                      .Set("version", "1.0.0")
-                                     .Set("manifest_version", 2))
+                                     .Set("manifest_version", 2)
+                                     .Build())
                     .SetID("mdhofdjgenpkhlmddfaegdjddcecipmo")
                     .Build();
     extensions->Insert(extension);
-    return extensions.Pass();
+    return extensions;
   }
 
   // Override GetClientID() to return a specific value on which test
   // expectations are based.
-  uint64 GetClientID() override { return 0x3f1bfee9; }
+  uint64_t GetClientID() override { return 0x3f1bfee9; }
 };
 
 }  // namespace
@@ -103,13 +105,12 @@ TEST(ExtensionsMetricsProvider, HashExtension) {
 TEST(ExtensionsMetricsProvider, SystemProtoEncoding) {
   metrics::SystemProfileProto system_profile;
   TestingPrefServiceSimple local_state;
+  metrics::TestEnabledStateProvider enabled_state_provider(true, true);
   metrics::MetricsService::RegisterPrefs(local_state.registry());
-  scoped_ptr<metrics::MetricsStateManager> metrics_state_manager(
+  std::unique_ptr<metrics::MetricsStateManager> metrics_state_manager(
       metrics::MetricsStateManager::Create(
-          &local_state,
-          base::Bind(&IsMetricsReportingEnabled),
-          base::Bind(&StoreNoClientInfoBackup),
-          base::Bind(&ReturnNoBackup)));
+          &local_state, &enabled_state_provider,
+          base::Bind(&StoreNoClientInfoBackup), base::Bind(&ReturnNoBackup)));
   TestExtensionsMetricsProvider extension_metrics(metrics_state_manager.get());
   extension_metrics.ProvideSystemProfileMetrics(&system_profile);
   ASSERT_EQ(2, system_profile.occupied_extension_bucket_size());

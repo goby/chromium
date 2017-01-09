@@ -10,6 +10,7 @@
 #if defined(__OBJC__)
 
 #import <Foundation/Foundation.h>
+#include <stdint.h>
 
 #include "base/mac/scoped_authorizationref.h"
 #import "base/mac/scoped_nsobject.h"
@@ -43,10 +44,12 @@ enum AutoupdateStatus {
 // the notification.  Its userInfo dictionary will contain an AutoupdateStatus
 // value as an intValue at key kAutoupdateStatusStatus.  If a version is
 // available (see AutoupdateStatus), it will be present at key
-// kAutoupdateStatusVersion.
+// kAutoupdateStatusVersion.  If any error messages were supplied by Keystone,
+// they will be present at key kAutoupdateStatusErrorMessages.
 extern NSString* const kAutoupdateStatusNotification;
 extern NSString* const kAutoupdateStatusStatus;
 extern NSString* const kAutoupdateStatusVersion;
+extern NSString* const kAutoupdateStatusErrorMessages;
 
 namespace {
 
@@ -180,6 +183,8 @@ enum BrandFileType {
 - (void)setAppPath:(NSString*)appPath;
 
 // Sets the total number of profiles and the number of signed in profiles.
+// Passing zeroes sets the application as active, but does not update
+// profile metrics.
 - (void)updateProfileCountsWithNumProfiles:(uint32_t)profiles
                        numSignedInProfiles:(uint32_t)signedInProfiles;
 

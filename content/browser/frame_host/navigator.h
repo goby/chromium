@@ -7,13 +7,13 @@
 
 #include "base/memory/ref_counted.h"
 #include "base/time/time.h"
+#include "content/browser/frame_host/navigation_handle_impl.h"
 #include "content/browser/frame_host/navigator_delegate.h"
 #include "content/common/content_export.h"
 #include "content/public/browser/navigation_controller.h"
 #include "ui/base/window_open_disposition.h"
 
 class GURL;
-struct FrameHostMsg_BeginNavigation_Params;
 struct FrameHostMsg_DidCommitProvisionalLoad_Params;
 struct FrameHostMsg_DidFailProvisionalLoadWithError_Params;
 
@@ -25,15 +25,11 @@ namespace content {
 
 class FrameNavigationEntry;
 class FrameTreeNode;
-class NavigationControllerImpl;
-class NavigationEntryImpl;
 class NavigationRequest;
 class RenderFrameHostImpl;
-class ResourceRequestBody;
-class StreamHandle;
+class ResourceRequestBodyImpl;
 struct BeginNavigationParams;
 struct CommonNavigationParams;
-struct ResourceResponse;
 
 // Implementations of this interface are responsible for performing navigations
 // in a node of the FrameTree. Its lifetime is bound to all FrameTreeNode
@@ -53,10 +49,10 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
   // Notifications coming from the RenderFrameHosts ----------------------------
 
   // The RenderFrameHostImpl started a provisional load.
-  virtual void DidStartProvisionalLoad(
-      RenderFrameHostImpl* render_frame_host,
-      const GURL& url,
-      const base::TimeTicks& navigation_start) {};
+  virtual void DidStartProvisionalLoad(RenderFrameHostImpl* render_frame_host,
+                                       const GURL& url,
+                                       const base::TimeTicks& navigation_start,
+                                       NavigationGesture gesture){};
 
   // The RenderFrameHostImpl has failed a provisional load.
   virtual void DidFailProvisionalLoadWithError(
@@ -71,18 +67,23 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
       const base::string16& error_description,
       bool was_ignored_by_handler) {}
 
-  // The RenderFrameHostImpl has committed a navigation.
+  // The RenderFrameHostImpl has committed a navigation. The Navigator is
+  // responsible for resetting |navigation_handle| at the end of this method and
+  // should not attempt to keep it alive.
+  // Note: it is possible that |navigation_handle| is not the NavigationHandle
+  // stored in the RenderFrameHost that just committed. This happens for example
+  // when a same-page navigation commits while another navigation is ongoing.
+  // The Navigator should use the NavigationHandle provided by this method and
+  // not attempt to access the RenderFrameHost's NavigationsHandle.
   virtual void DidNavigate(
       RenderFrameHostImpl* render_frame_host,
-      const FrameHostMsg_DidCommitProvisionalLoad_Params& params) {}
+      const FrameHostMsg_DidCommitProvisionalLoad_Params& params,
+      std::unique_ptr<NavigationHandleImpl> navigation_handle) {}
 
   // Called by the NavigationController to cause the Navigator to navigate
   // to the current pending entry. The NavigationController should be called
   // back with RendererDidNavigate on success or DiscardPendingEntry on failure.
   // The callbacks can be inside of this function, or at some future time.
-  //
-  // The entry has a PageID of -1 if newly created (corresponding to navigation
-  // to a new URL).
   //
   // If this method returns false, then the navigation is discarded (equivalent
   // to calling DiscardPendingEntry on the NavigationController).
@@ -90,19 +91,20 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
   // TODO(nasko): Remove this method from the interface, since Navigator and
   // NavigationController know about each other. This will be possible once
   // initialization of Navigator and NavigationController is properly done.
-  virtual bool NavigateToPendingEntry(
-      FrameTreeNode* frame_tree_node,
-      const FrameNavigationEntry& frame_entry,
-      NavigationController::ReloadType reload_type,
-      bool is_same_document_history_load);
+  virtual bool NavigateToPendingEntry(FrameTreeNode* frame_tree_node,
+                                      const FrameNavigationEntry& frame_entry,
+                                      ReloadType reload_type,
+                                      bool is_same_document_history_load);
 
   // Called on a newly created subframe during a history navigation. The browser
   // process looks up the corresponding FrameNavigationEntry for the new frame
-  // based on |unique_name| and navigates it in the correct process. Returns
-  // false if the FrameNavigationEntry can't be found or the navigation fails.
-  // This is only used in OOPIF-enabled modes.
+  // navigates it in the correct process. Returns false if the
+  // FrameNavigationEntry can't be found or the navigation fails. This is only
+  // used in OOPIF-enabled modes.
+  // TODO(creis): Remove |default_url| once we have collected UMA stats on the
+  // cases that we use a different URL from history than the frame's src.
   virtual bool NavigateNewChildFrame(RenderFrameHostImpl* render_frame_host,
-                                     const std::string& unique_name);
+                                     const GURL& default_url);
 
   // Navigation requests -------------------------------------------------------
 
@@ -110,17 +112,21 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
 
   // The RenderFrameHostImpl has received a request to open a URL with the
   // specified |disposition|.
-  virtual void RequestOpenURL(RenderFrameHostImpl* render_frame_host,
-                              const GURL& url,
-                              SiteInstance* source_site_instance,
-                              const Referrer& referrer,
-                              WindowOpenDisposition disposition,
-                              bool should_replace_current_entry,
-                              bool user_gesture) {}
+  virtual void RequestOpenURL(
+      RenderFrameHostImpl* render_frame_host,
+      const GURL& url,
+      bool uses_post,
+      const scoped_refptr<ResourceRequestBodyImpl>& body,
+      const std::string& extra_headers,
+      const Referrer& referrer,
+      WindowOpenDisposition disposition,
+      bool should_replace_current_entry,
+      bool user_gesture) {}
 
   // The RenderFrameHostImpl wants to transfer the request to a new renderer.
   // |redirect_chain| contains any redirect URLs (excluding |url|) that happened
-  // before the transfer.
+  // before the transfer.  If |method| is "POST", then |post_body| needs to
+  // specify the request body, otherwise |post_body| should be null.
   virtual void RequestTransferURL(
       RenderFrameHostImpl* render_frame_host,
       const GURL& url,
@@ -128,10 +134,11 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
       const std::vector<GURL>& redirect_chain,
       const Referrer& referrer,
       ui::PageTransition page_transition,
-      WindowOpenDisposition disposition,
       const GlobalRequestID& transferred_global_request_id,
       bool should_replace_current_entry,
-      bool user_gesture) {}
+      const std::string& method,
+      scoped_refptr<ResourceRequestBodyImpl> post_body,
+      const std::string& extra_headers) {}
 
   // PlzNavigate
   // Called after receiving a BeforeUnloadACK IPC from the renderer. If
@@ -144,18 +151,9 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
   // PlzNavigate
   // Used to start a new renderer-initiated navigation, following a
   // BeginNavigation IPC from the renderer.
-  virtual void OnBeginNavigation(
-      FrameTreeNode* frame_tree_node,
-      const CommonNavigationParams& common_params,
-      const BeginNavigationParams& begin_params,
-      scoped_refptr<ResourceRequestBody> body);
-
-  // PlzNavigate
-  // Signal |render_frame_host| that a navigation is ready to commit (the
-  // response to the navigation request has been received).
-  virtual void CommitNavigation(FrameTreeNode* frame_tree_node,
-                                ResourceResponse* response,
-                                scoped_ptr<StreamHandle> body);
+  virtual void OnBeginNavigation(FrameTreeNode* frame_tree_node,
+                                 const CommonNavigationParams& common_params,
+                                 const BeginNavigationParams& begin_params);
 
   // PlzNavigate
   // Called when a NavigationRequest for |frame_tree_node| failed. An
@@ -185,6 +183,10 @@ class CONTENT_EXPORT Navigator : public base::RefCounted<Navigator> {
   virtual void LogBeforeUnloadTime(
       const base::TimeTicks& renderer_before_unload_start_time,
       const base::TimeTicks& renderer_before_unload_end_time) {}
+
+  // Called when a navigation has failed or the response is 204/205 to discard
+  // the pending entry in order to avoid url spoofs.
+  virtual void DiscardPendingEntryIfNeeded(NavigationHandleImpl* handle) {}
 
  protected:
   friend class base::RefCounted<Navigator>;

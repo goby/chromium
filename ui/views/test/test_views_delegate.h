@@ -5,12 +5,11 @@
 #ifndef UI_VIEWS_TEST_TEST_VIEWS_DELEGATE_H_
 #define UI_VIEWS_TEST_TEST_VIEWS_DELEGATE_H_
 
-#include "base/memory/scoped_ptr.h"
-#include "ui/views/views_delegate.h"
+#include <memory>
 
-namespace wm {
-class WMState;
-}
+#include "base/macros.h"
+#include "build/build_config.h"
+#include "ui/views/views_delegate.h"
 
 namespace views {
 
@@ -47,10 +46,6 @@ class TestViewsDelegate : public ViewsDelegate {
   ui::ContextFactory* context_factory_;
   bool use_desktop_native_widgets_;
   bool use_transparent_windows_;
-
-#if defined(USE_AURA)
-  scoped_ptr<wm::WMState> wm_state_;
-#endif
 
   DISALLOW_COPY_AND_ASSIGN(TestViewsDelegate);
 };

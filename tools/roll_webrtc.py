@@ -36,8 +36,11 @@ TRYJOB_STATUS_SLEEP_SECONDS = 30
 # Use a shell for subcommands on Windows to get a PATH search.
 IS_WIN = sys.platform.startswith('win')
 WEBRTC_PATH = os.path.join('third_party', 'webrtc')
-LIBJINGLE_PATH = os.path.join('third_party', 'libjingle', 'source', 'talk')
-LIBJINGLE_README = os.path.join('third_party', 'libjingle', 'README.chromium')
+# Run these CQ trybots in addition to the default ones in infra/config/cq.cfg.
+EXTRA_TRYBOTS = (
+    'master.tryserver.chromium.linux:linux_chromium_archive_rel_ng;'
+    'master.tryserver.chromium.mac:mac_chromium_archive_rel_ng'
+)
 
 # Result codes from build/third_party/buildbot_8_4p1/buildbot/status/results.py
 # plus the -1 code which is used when there's no result yet.
@@ -93,7 +96,6 @@ def _ParseDepsDict(deps_content):
   local_scope = {}
   var = GClientKeywords.VarImpl({}, local_scope)
   global_scope = {
-    'File': GClientKeywords.FileImpl,
     'From': GClientKeywords.FromImpl,
     'Var': var.Lookup,
     'deps_os': {},
@@ -151,42 +153,6 @@ def _PrintTrybotsStatus(tryjob_results):
   for status,name_list in status_to_name.iteritems():
     print '%s: %s' % (status, ','.join(sorted(name_list)))
 
-
-def _GenerateCLDescriptionCommand(webrtc_current, libjingle_current,
-                                  webrtc_new, libjingle_new):
-  delim = ''
-  webrtc_str = ''
-  def GetChangeLogURL(git_repo_url, current_hash, new_hash):
-    return '%s/+log/%s..%s' % (git_repo_url, current_hash[0:7], new_hash[0:7])
-
-  if webrtc_current.git_commit != webrtc_new.git_commit:
-    webrtc_str = 'WebRTC %s:%s' % (webrtc_current.commit_position,
-                                   webrtc_new.commit_position)
-    webrtc_changelog_url = GetChangeLogURL(webrtc_current.git_repo_url,
-                                           webrtc_current.git_commit,
-                                           webrtc_new.git_commit)
-
-  libjingle_str = ''
-  if libjingle_current.git_commit != libjingle_new.git_commit:
-    if webrtc_str:
-      delim += ', '
-    libjingle_str = 'Libjingle %s:%s' % (libjingle_current.commit_position,
-                                         libjingle_new.commit_position)
-    libjingle_changelog_url = GetChangeLogURL(libjingle_current.git_repo_url,
-                                              libjingle_current.git_commit,
-                                              libjingle_new.git_commit)
-
-  description = [ '-m', 'Roll ' + webrtc_str + delim + libjingle_str ]
-  if webrtc_str:
-    description.extend(['-m', webrtc_str])
-    description.extend(['-m', 'Changes: %s' % webrtc_changelog_url])
-  if libjingle_str:
-    description.extend(['-m', libjingle_str])
-    description.extend(['-m', 'Changes: %s' % libjingle_changelog_url])
-  description.extend(['-m', 'TBR='])
-  return description
-
-
 class AutoRoller(object):
   def __init__(self, chromium_src):
     self._chromium_src = chromium_src
@@ -216,12 +182,45 @@ class AutoRoller(object):
       sys.exit(p.returncode)
     return output
 
+  def _GenerateCLDescriptionCommand(self, webrtc_current, webrtc_new):
+    commit_range = '%s..%s' % (webrtc_current.git_commit[:7],
+                               webrtc_new.git_commit[:7])
+
+    webrtc_changelog_url = '%s/+log/%s' % (webrtc_current.git_repo_url,
+                                           commit_range)
+
+    git_log_cmd = ['git', 'log', commit_range, '--date=short', '--no-merges',
+                   '--format=%ad %ae %s']
+
+    working_dir = os.path.join(self._chromium_src, WEBRTC_PATH)
+    git_log = self._RunCommand(git_log_cmd, working_dir=working_dir)
+
+    nb_commits = git_log.count('\n')
+    webrtc_header = 'Roll WebRTC %s:%s (%d commit%s)' % (
+        webrtc_current.commit_position, webrtc_new.commit_position,
+        nb_commits, 's' if nb_commits > 1 else '')
+
+    description = ('%s\n\n'
+                   'Changes: %s\n\n'
+                   '$ %s\n'
+                   '%s\n'
+                   'TBR=\n'
+                   'CQ_INCLUDE_TRYBOTS=%s\n') % (
+                       webrtc_header,
+                       webrtc_changelog_url,
+                       ' '.join(git_log_cmd),
+                       git_log,
+                       EXTRA_TRYBOTS)
+
+    return description
+
   def _GetCommitInfo(self, path_below_src, git_hash=None, git_repo_url=None):
     working_dir = os.path.join(self._chromium_src, path_below_src)
     self._RunCommand(['git', 'fetch', 'origin'], working_dir=working_dir)
     revision_range = git_hash or 'origin'
     ret = self._RunCommand(
-        ['git', '--no-pager', 'log', revision_range, '--pretty=full', '-1'],
+        ['git', '--no-pager', 'log', revision_range,
+         '--no-abbrev-commit', '--pretty=full', '-1'],
         working_dir=working_dir)
     return CommitInfo(_ParseGitCommitPosition(ret), _ParseGitCommitHash(ret),
                       git_repo_url)
@@ -299,29 +298,25 @@ class AutoRoller(object):
     deps_filename = os.path.join(self._chromium_src, 'DEPS')
     deps = _ParseDepsFile(deps_filename)
     webrtc_current = self._GetDepsCommitInfo(deps, WEBRTC_PATH)
-    libjingle_current = self._GetDepsCommitInfo(deps, LIBJINGLE_PATH)
 
     # Find ToT revisions.
     webrtc_latest = self._GetCommitInfo(WEBRTC_PATH)
-    libjingle_latest = self._GetCommitInfo(LIBJINGLE_PATH)
 
     if IS_WIN:
       # Make sure the roll script doesn't use Windows line endings.
       self._RunCommand(['git', 'config', 'core.autocrlf', 'true'])
 
     self._UpdateDep(deps_filename, WEBRTC_PATH, webrtc_latest)
-    self._UpdateDep(deps_filename, LIBJINGLE_PATH, libjingle_latest)
 
     if self._IsTreeClean():
-      print 'The latest revision is already rolled for WebRTC and libjingle.'
+      print 'The latest revision is already rolled for WebRTC.'
       self._DeleteRollBranch()
     else:
-      self._UpdateReadmeFile(LIBJINGLE_README, libjingle_latest.commit_position)
-      description = _GenerateCLDescriptionCommand(
-        webrtc_current, libjingle_current, webrtc_latest, libjingle_latest)
+      description = self._GenerateCLDescriptionCommand(
+        webrtc_current, webrtc_latest)
       logging.debug('Committing changes locally.')
       self._RunCommand(['git', 'add', '--update', '.'])
-      self._RunCommand(['git', 'commit'] + description)
+      self._RunCommand(['git', 'commit', '-m', description])
       logging.debug('Uploading changes...')
       self._RunCommand(['git', 'cl', 'upload'],
                        extra_env={'EDITOR': 'true'})
@@ -397,7 +392,7 @@ class AutoRoller(object):
 
 def main():
   parser = argparse.ArgumentParser(
-      description='Find webrtc and libjingle revisions for roll.')
+      description='Find webrtc revisions for roll.')
   parser.add_argument('--abort',
     help=('Aborts a previously prepared roll. '
           'Closes any associated issues and deletes the roll branches'),

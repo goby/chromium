@@ -33,26 +33,34 @@
 
 namespace blink {
 
-class MODULES_EXPORT MediaDeviceInfo final : public GarbageCollectedFinalized<MediaDeviceInfo>, public ScriptWrappable {
-    DEFINE_WRAPPERTYPEINFO();
-public:
-    static MediaDeviceInfo* create(const WebMediaDeviceInfo&);
+class ScriptState;
+class ScriptValue;
 
-    String deviceId() const;
-    String kind() const;
-    String label() const;
-    String groupId() const;
+class MODULES_EXPORT MediaDeviceInfo final
+    : public GarbageCollectedFinalized<MediaDeviceInfo>,
+      public ScriptWrappable {
+  DEFINE_WRAPPERTYPEINFO();
 
-    DEFINE_INLINE_TRACE() { }
+ public:
+  static MediaDeviceInfo* create(const WebMediaDeviceInfo&);
 
-private:
-    explicit MediaDeviceInfo(const WebMediaDeviceInfo&);
+  String deviceId() const;
+  String kind() const;
+  String label() const;
+  String groupId() const;
 
-    WebMediaDeviceInfo m_webMediaDeviceInfo;
+  ScriptValue toJSONForBinding(ScriptState*);
+
+  DEFINE_INLINE_TRACE() {}
+
+ private:
+  explicit MediaDeviceInfo(const WebMediaDeviceInfo&);
+
+  WebMediaDeviceInfo m_webMediaDeviceInfo;
 };
 
 typedef HeapVector<Member<MediaDeviceInfo>> MediaDeviceInfoVector;
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MediaDeviceInfo_h
+#endif  // MediaDeviceInfo_h

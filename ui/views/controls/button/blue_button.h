@@ -6,6 +6,7 @@
 #define UI_VIEWS_CONTROLS_BUTTON_BLUE_BUTTON_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ui/views/controls/button/label_button.h"
 
 namespace views {
@@ -22,7 +23,7 @@ class VIEWS_EXPORT BlueButton : public LabelButton {
   // Overridden from LabelButton:
   void ResetColorsFromNativeTheme() override;
   const char* GetClassName() const override;
-  scoped_ptr<LabelButtonBorder> CreateDefaultBorder() const override;
+  std::unique_ptr<LabelButtonBorder> CreateDefaultBorder() const override;
 
   DISALLOW_COPY_AND_ASSIGN(BlueButton);
 };

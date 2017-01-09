@@ -8,12 +8,14 @@
 #include <set>
 #include <string>
 
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "content/common/content_export.h"
 #include "storage/browser/quota/quota_client.h"
 #include "storage/browser/quota/quota_task.h"
 #include "storage/common/quota/quota_types.h"
+#include "url/gurl.h"
 
 namespace content {
 class IndexedDBContextImpl;

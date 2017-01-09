@@ -6,13 +6,19 @@
 
 namespace extensions {
 
-const char* const BehaviorFeature::kServiceWorker = "service_worker";
+namespace behavior_feature {
 
-const char* const BehaviorFeature::kWhitelistedForIncognito =
-    "whitelisted_for_incognito";
+const char kWhitelistedForIncognito[] = "whitelisted_for_incognito";
 
-const char* const BehaviorFeature::kDoNotSync = "do_not_sync";
+const char kDoNotSync[] = "do_not_sync";
 
-const char* const BehaviorFeature::kZoomWithoutBubble = "zoom_without_bubble";
+const char kZoomWithoutBubble[] = "zoom_without_bubble";
+
+const char kAllowUsbDevicesPermissionInterfaceClass[] =
+    "allow_usb_devices_permission_interface_class";
+
+const char kSigninScreen[] = "signin_screen";
+
+}  // namespace behavior_feature
 
 }  // namespace extensions

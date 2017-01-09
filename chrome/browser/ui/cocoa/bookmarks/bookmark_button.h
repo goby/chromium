@@ -11,7 +11,7 @@
 @class BookmarkBarFolderController;
 @class BookmarkButton;
 @class BrowserWindowController;
-class ThemeService;
+class Profile;
 
 namespace bookmarks {
 class BookmarkModel;
@@ -22,17 +22,19 @@ class BookmarkNode;
 // things on behalf of a bookmark button.
 @protocol BookmarkButtonDelegate
 
-// Fill the given pasteboard with appropriate data when the given button is
-// dragged. Since the delegate has no way of providing pasteboard data later,
-// all data must actually be put into the pasteboard and not merely promised.
-- (void)fillPasteboard:(NSPasteboard*)pboard
-       forDragOfButton:(BookmarkButton*)button;
+// Returns a pasteboard item that has all bookmark information.
+- (NSPasteboardItem*)pasteboardItemForDragOfButton:(BookmarkButton*)button;
 
 // Bookmark buttons pass mouseEntered: and mouseExited: events to
 // their delegate.  This allows the delegate to decide (for example)
 // which one, if any, should perform a hover-open.
-- (void)mouseEnteredButton:(id)button event:(NSEvent*)event;
-- (void)mouseExitedButton:(id)button event:(NSEvent*)event;
+//
+// mouseEnteredButton:event: is optimized to act only if the mouse is actually
+// within the button's bounds at the time of the call (with a fast moving mouse,
+// -isMouseReallyInside might return NO). Passing nil for |event| disables this
+// optimization, useful for unit testing.
+- (void)mouseEnteredButton:(BookmarkButton*)button event:(NSEvent*)event;
+- (void)mouseExitedButton:(BookmarkButton*)button event:(NSEvent*)event;
 
 // Returns YES if a drag operation should lock the fullscreen overlay bar
 // visibility before starting.  For example, dragging a bookmark button should
@@ -55,6 +57,10 @@ class BookmarkNode;
 // doing that hover thing.
 - (void)bookmarkDragDidEnd:(BookmarkButton*)button
                  operation:(NSDragOperation)operation;
+
+@optional
+// Called when a pasteboard drag is about to begin.
+- (void)willBeginPasteboardDrag;
 
 @end
 
@@ -130,8 +136,8 @@ class BookmarkNode;
 // Used to tell the controller to stop making room for a drop.
 - (void)clearDropInsertionPos;
 
-// Return the theme service associated with this browser window.
-- (ThemeService*)themeService;
+// Return the profile associated with this browser window.
+- (Profile*)profile;
 
 // Called just before a child folder puts itself on screen.
 - (void)childFolderWillShow:(id<BookmarkButtonControllerProtocol>)child;
@@ -190,7 +196,8 @@ class BookmarkNode;
 
 
 // Class for bookmark bar buttons that can be drag sources.
-@interface BookmarkButton : DraggableButton<ThemedWindowDrawing> {
+@interface BookmarkButton
+    : DraggableButton<ThemedWindowDrawing, NSDraggingSource> {
  @private
   IBOutlet NSObject<BookmarkButtonDelegate>* delegate_;  // Weak.
 
@@ -207,10 +214,12 @@ class BookmarkNode;
   BOOL dragPending_;
   BOOL acceptsTrackIn_;
   NSTrackingArea* area_;
+  NSColor* backgroundColor_;
 }
 
 @property(assign, nonatomic) NSObject<BookmarkButtonDelegate>* delegate;
 @property(assign, nonatomic) BOOL acceptsTrackIn;
+@property(retain, nonatomic) NSColor* backgroundColor;
 
 // Return the bookmark node associated with this button, or NULL.
 - (const bookmarks::BookmarkNode*)bookmarkNode;
@@ -230,12 +239,12 @@ class BookmarkNode;
 // http://crbug.com/35967
 - (BOOL)isEmpty;
 
-// Turn on or off pulsing of a bookmark button.
+// Stick or unstick the pulse of a bookmark button.
 // Triggered by the bookmark bubble.
-- (void)setIsContinuousPulsing:(BOOL)flag;
+- (void)setPulseIsStuckOn:(BOOL)flag;
 
-// Return continuous pulse state.
-- (BOOL)isContinuousPulsing;
+// Return pulse sticky state.
+- (BOOL)isPulseStuckOn;
 
 // Return the location in screen coordinates where the remove animation should
 // be displayed.

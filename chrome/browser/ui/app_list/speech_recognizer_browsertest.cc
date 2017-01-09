@@ -4,11 +4,13 @@
 
 #include "chrome/browser/ui/app_list/speech_recognizer.h"
 
+#include <stdint.h>
+
 #include "base/command_line.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/threading/platform_thread.h"
 #include "chrome/browser/ui/app_list/speech_recognizer_delegate.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/common/chrome_switches.h"
@@ -16,6 +18,7 @@
 #include "chrome/test/base/testing_profile.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/fake_speech_recognition_manager.h"
+#include "content/public/test/test_utils.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -57,22 +60,13 @@ class AppListSpeechRecognizerBrowserTest : public InProcessBrowserTest {
   }
 
   void TearDownOnMainThread() override {
-    // Poor-person's way of ensuring IO loop is idle.
-    auto io_loop = content::BrowserThread::UnsafeGetMessageLoopForThread(
-        content::BrowserThread::IO);
-    ASSERT_TRUE(io_loop);
-    while (!io_loop->IsIdleForTesting()) {
-      // Sleep for a little bit, allowing the IO thread to obtain any locks
-      // taken by IsIdleForTesting(). Without this sleep, this loop may livelock
-      // the message loop causing the test to fail.
-      base::PlatformThread::Sleep(base::TimeDelta::FromMilliseconds(10));
-    }
+    content::RunAllPendingInMessageLoop(content::BrowserThread::IO);
   }
 
  protected:
-  scoped_ptr<content::FakeSpeechRecognitionManager>
+  std::unique_ptr<content::FakeSpeechRecognitionManager>
       fake_speech_recognition_manager_;
-  scoped_ptr<MockSpeechRecognizerDelegate> mock_speech_delegate_;
+  std::unique_ptr<MockSpeechRecognizerDelegate> mock_speech_delegate_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(AppListSpeechRecognizerBrowserTest);

@@ -18,17 +18,12 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
-
 #include "core/svg/SVGFEFuncAElement.h"
 
 namespace blink {
 
 inline SVGFEFuncAElement::SVGFEFuncAElement(Document& document)
-    : SVGComponentTransferFunctionElement(SVGNames::feFuncATag, document)
-{
-}
+    : SVGComponentTransferFunctionElement(SVGNames::feFuncATag, document) {}
 
 DEFINE_NODE_FACTORY(SVGFEFuncAElement)
-
 }

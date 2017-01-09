@@ -1,5 +1,6 @@
 /*
- * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights reserved.
+ * Copyright (C) 2004, 2005, 2006, 2007, 2008, 2009, 2010 Apple Inc. All rights
+ * reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -26,39 +27,45 @@
 #ifndef DragCaretController_h
 #define DragCaretController_h
 
+#include "core/dom/SynchronousMutationObserver.h"
 #include "core/editing/CaretBase.h"
 
 namespace blink {
 
-class CullRect;
+class DragCaretController final
+    : public GarbageCollectedFinalized<DragCaretController>,
+      public SynchronousMutationObserver {
+  WTF_MAKE_NONCOPYABLE(DragCaretController);
+  USING_GARBAGE_COLLECTED_MIXIN(DragCaretController);
 
-class DragCaretController final : public NoBaseWillBeGarbageCollectedFinalized<DragCaretController>, private CaretBase {
-    WTF_MAKE_NONCOPYABLE(DragCaretController);
-    USING_FAST_MALLOC_WILL_BE_REMOVED(DragCaretController);
-public:
-    static PassOwnPtrWillBeRawPtr<DragCaretController> create();
+ public:
+  static DragCaretController* create();
 
-    LayoutBlock* caretLayoutObject() const;
-    void paintDragCaret(LocalFrame*, GraphicsContext*, const LayoutPoint&) const;
+  virtual ~DragCaretController();
 
-    bool isContentEditable() const;
-    bool isContentRichlyEditable() const;
+  void paintDragCaret(LocalFrame*, GraphicsContext&, const LayoutPoint&) const;
 
-    bool hasCaret() const { return m_position.isNotNull(); }
-    const VisiblePosition& caretPosition() { return m_position; }
-    void setCaretPosition(const PositionWithAffinity&);
-    void clear() { setCaretPosition(PositionWithAffinity()); }
+  bool hasCaretIn(const LayoutBlock&) const;
+  bool isContentRichlyEditable() const;
 
-    void nodeWillBeRemoved(Node&);
+  bool hasCaret() const { return m_position.isNotNull(); }
+  const PositionWithAffinity& caretPosition() { return m_position; }
+  void setCaretPosition(const PositionWithAffinity&);
+  void clear() { setCaretPosition(PositionWithAffinity()); }
 
-    DECLARE_TRACE();
+  DECLARE_TRACE();
 
-private:
-    DragCaretController();
+ private:
+  DragCaretController();
 
-    VisiblePosition m_position;
+  // Implementations of |SynchronousMutationObserver|
+  void nodeChildrenWillBeRemoved(ContainerNode&) final;
+  void nodeWillBeRemoved(Node&) final;
+
+  PositionWithAffinity m_position;
+  const Member<CaretBase> m_caretBase;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DragCaretController_h
+#endif  // DragCaretController_h

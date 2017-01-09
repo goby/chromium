@@ -5,20 +5,22 @@
 #ifndef UI_OZONE_COMMON_GPU_OZONE_GPU_MESSAGE_PARAMS_H_
 #define UI_OZONE_COMMON_GPU_OZONE_GPU_MESSAGE_PARAMS_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
+#include "base/files/file_path.h"
 #include "ui/display/types/display_constants.h"
 #include "ui/gfx/buffer_types.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/overlay_transform.h"
-#include "ui/ozone/ozone_export.h"
 #include "ui/ozone/public/overlay_candidates_ozone.h"
 
 namespace ui {
 
-struct OZONE_EXPORT DisplayMode_Params {
+struct DisplayMode_Params {
   DisplayMode_Params();
   ~DisplayMode_Params();
 
@@ -27,8 +29,9 @@ struct OZONE_EXPORT DisplayMode_Params {
   float refresh_rate = 0.0f;
 };
 
-struct OZONE_EXPORT DisplaySnapshot_Params {
+struct DisplaySnapshot_Params {
   DisplaySnapshot_Params();
+  DisplaySnapshot_Params(const DisplaySnapshot_Params& other);
   ~DisplaySnapshot_Params();
 
   int64_t display_id = 0;
@@ -37,21 +40,28 @@ struct OZONE_EXPORT DisplaySnapshot_Params {
   DisplayConnectionType type = DISPLAY_CONNECTION_TYPE_NONE;
   bool is_aspect_preserving_scaling = false;
   bool has_overscan = false;
+  bool has_color_correction_matrix = false;
   std::string display_name;
+  base::FilePath sys_path;
   std::vector<DisplayMode_Params> modes;
+  std::vector<uint8_t> edid;
   bool has_current_mode = false;
   DisplayMode_Params current_mode;
   bool has_native_mode = false;
   DisplayMode_Params native_mode;
   int64_t product_id = 0;
   std::string string_representation;
+  gfx::Size maximum_cursor_size;
 };
 
-struct OZONE_EXPORT OverlayCheck_Params {
+struct OverlayCheck_Params {
   OverlayCheck_Params();
   OverlayCheck_Params(
       const OverlayCandidatesOzone::OverlaySurfaceCandidate& candidate);
+  OverlayCheck_Params(const OverlayCheck_Params& other);
   ~OverlayCheck_Params();
+
+  bool operator<(const OverlayCheck_Params& plane) const;
 
   gfx::Size buffer_size;
   gfx::OverlayTransform transform = gfx::OVERLAY_TRANSFORM_INVALID;
@@ -59,12 +69,8 @@ struct OZONE_EXPORT OverlayCheck_Params {
   gfx::Rect display_rect;
   gfx::RectF crop_rect;
   int plane_z_order = 0;
-  // Higher the value, the more important it is to ensure that this
-  // overlay candidate finds a compatible free hardware plane to use.
-  uint32_t weight;
-  // Will be set in GPU process. These are unique plane ids of primary display
-  // supporting this configuration.
-  std::vector<uint32_t> plane_ids;
+  // By default we mark this configuration valid for promoting it to an overlay.
+  bool is_overlay_candidate = true;
 };
 
 }  // namespace ui

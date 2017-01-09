@@ -9,6 +9,7 @@
 
 #include "base/callback.h"
 #include "base/files/file_path.h"
+#include "build/build_config.h"
 #include "chrome/browser/media_galleries/fileapi/iapps_finder.h"
 #include "components/storage_monitor/storage_info.h"
 
@@ -29,7 +30,6 @@ namespace iapps {
 
 #if defined(OS_MACOSX)
 
-extern NSString* const kIPhotoRecentDatabasesKey;
 extern NSString* const kITunesRecentDatabasePathsKey;
 
 // Set the mac preferences to use for testing. The caller continues to own

@@ -5,20 +5,25 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_P2P_SOCKET_HOST_TEST_UTILS_H_
 #define CONTENT_BROWSER_RENDERER_HOST_P2P_SOCKET_HOST_TEST_UTILS_H_
 
+#include <stdint.h>
+
+#include <string>
+#include <tuple>
 #include <vector>
 
 #include "content/common/p2p_messages.h"
 #include "ipc/ipc_sender.h"
 #include "net/base/net_errors.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/stream_socket.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 const char kTestLocalIpAddress[] = "123.44.22.4";
 const char kTestIpAddress1[] = "123.44.22.31";
-const uint16 kTestPort1 = 234;
+const uint16_t kTestPort1 = 234;
 const char kTestIpAddress2[] = "133.11.22.33";
-const uint16 kTestPort2 = 543;
+const uint16_t kTestPort2 = 543;
 
 class MockIPCSender : public IPC::Sender {
  public:
@@ -47,19 +52,18 @@ class FakeSocket : public net::StreamSocket {
   int Write(net::IOBuffer* buf,
             int buf_len,
             const net::CompletionCallback& callback) override;
-  int SetReceiveBufferSize(int32 size) override;
-  int SetSendBufferSize(int32 size) override;
+  int SetReceiveBufferSize(int32_t size) override;
+  int SetSendBufferSize(int32_t size) override;
   int Connect(const net::CompletionCallback& callback) override;
   void Disconnect() override;
   bool IsConnected() const override;
   bool IsConnectedAndIdle() const override;
   int GetPeerAddress(net::IPEndPoint* address) const override;
   int GetLocalAddress(net::IPEndPoint* address) const override;
-  const net::BoundNetLog& NetLog() const override;
+  const net::NetLogWithSource& NetLog() const override;
   void SetSubresourceSpeculation() override;
   void SetOmniboxSpeculation() override;
   bool WasEverUsed() const override;
-  bool UsingTCPFastOpen() const override;
   bool WasNpnNegotiated() const override;
   net::NextProto GetNegotiatedProtocol() const override;
   bool GetSSLInfo(net::SSLInfo* ssl_info) override;
@@ -88,7 +92,7 @@ class FakeSocket : public net::StreamSocket {
   net::IPEndPoint peer_address_;
   net::IPEndPoint local_address_;
 
-  net::BoundNetLog net_log_;
+  net::NetLogWithSource net_log_;
 };
 
 void CreateRandomPacket(std::vector<char>* packet);
@@ -96,7 +100,7 @@ void CreateStunRequest(std::vector<char>* packet);
 void CreateStunResponse(std::vector<char>* packet);
 void CreateStunError(std::vector<char>* packet);
 
-net::IPEndPoint ParseAddress(const std::string& ip_str, uint16 port);
+net::IPEndPoint ParseAddress(const std::string& ip_str, uint16_t port);
 
 MATCHER_P(MatchMessage, type, "") {
   return arg->type() == type;
@@ -107,7 +111,7 @@ MATCHER_P(MatchPacketMessage, packet_content, "") {
     return false;
   P2PMsg_OnDataReceived::Param params;
   P2PMsg_OnDataReceived::Read(arg, &params);
-  return base::get<2>(params) == packet_content;
+  return std::get<2>(params) == packet_content;
 }
 
 MATCHER_P(MatchIncomingSocketMessage, address, "") {
@@ -116,7 +120,7 @@ MATCHER_P(MatchIncomingSocketMessage, address, "") {
   P2PMsg_OnIncomingTcpConnection::Param params;
   P2PMsg_OnIncomingTcpConnection::Read(
       arg, &params);
-  return base::get<1>(params) == address;
+  return std::get<1>(params) == address;
 }
 
 #endif  // CONTENT_BROWSER_RENDERER_HOST_P2P_SOCKET_HOST_TEST_UTILS_H_

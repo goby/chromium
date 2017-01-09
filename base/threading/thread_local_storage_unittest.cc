@@ -7,8 +7,10 @@
 #include <process.h>
 #endif
 
+#include "base/macros.h"
 #include "base/threading/simple_thread.h"
 #include "base/threading/thread_local_storage.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_WIN)
@@ -123,6 +125,16 @@ TEST(ThreadLocalStorageTest, MAYBE_TLSDestructors) {
     EXPECT_EQ(values[index], kFinalTlsValue);
   }
   tls_slot.Free();  // Stop doing callbacks to cleanup threads.
+}
+
+TEST(ThreadLocalStorageTest, TLSReclaim) {
+  // Creates and destroys many TLS slots and ensures they all zero-inited.
+  for (int i = 0; i < 1000; ++i) {
+    ThreadLocalStorage::Slot slot(nullptr);
+    EXPECT_EQ(nullptr, slot.Get());
+    slot.Set(reinterpret_cast<void*>(0xBAADF00D));
+    EXPECT_EQ(reinterpret_cast<void*>(0xBAADF00D), slot.Get());
+  }
 }
 
 }  // namespace base

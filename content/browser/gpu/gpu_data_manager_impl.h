@@ -5,19 +5,22 @@
 #ifndef CONTENT_BROWSER_GPU_GPU_DATA_MANAGER_IMPL_H_
 #define CONTENT_BROWSER_GPU_GPU_DATA_MANAGER_IMPL_H_
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/compiler_specific.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/singleton.h"
 #include "base/process/kill.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
 #include "base/values.h"
 #include "content/public/browser/gpu_data_manager.h"
-#include "content/public/common/gpu_memory_stats.h"
 #include "content/public/common/three_d_api_types.h"
 #include "gpu/config/gpu_info.h"
 
@@ -25,6 +28,11 @@ class GURL;
 
 namespace base {
 class CommandLine;
+}
+
+namespace gpu {
+struct GpuPreferences;
+struct VideoMemoryUsageStats;
 }
 
 namespace content {
@@ -70,7 +78,6 @@ class CONTENT_EXPORT GpuDataManagerImpl
   void RequestVideoMemoryUsageStatsUpdate() const override;
   bool ShouldUseSwiftShader() const override;
   void RegisterSwiftShaderPath(const base::FilePath& path) override;
-  bool ShouldUseWarp() const override;
   // TODO(kbr): the threading model for the GpuDataManagerObservers is
   // not well defined, and it's impossible for callers to correctly
   // delete observers from anywhere except in one of the observer's
@@ -79,7 +86,6 @@ class CONTENT_EXPORT GpuDataManagerImpl
   void AddObserver(GpuDataManagerObserver* observer) override;
   void RemoveObserver(GpuDataManagerObserver* observer) override;
   void UnblockDomainFrom3DAPIs(const GURL& url) override;
-  void DisableGpuWatchdog() override;
   void SetGLStrings(const std::string& gl_vendor,
                     const std::string& gl_renderer,
                     const std::string& gl_version) override;
@@ -89,6 +95,7 @@ class CONTENT_EXPORT GpuDataManagerImpl
   void DisableHardwareAcceleration() override;
   bool CanUseGpuBrowserCompositor() const override;
   void GetDisabledExtensions(std::string* disabled_extensions) const override;
+  void SetGpuInfo(const gpu::GPUInfo& gpu_info) override;
 
   // This collects preliminary GPU info, load GpuBlacklist, and compute the
   // preliminary blacklisted features; it should only be called at browser
@@ -100,18 +107,18 @@ class CONTENT_EXPORT GpuDataManagerImpl
   void UpdateGpuInfo(const gpu::GPUInfo& gpu_info);
 
   void UpdateVideoMemoryUsageStats(
-      const GPUVideoMemoryUsageStats& video_memory_usage_stats);
+      const gpu::VideoMemoryUsageStats& video_memory_usage_stats);
 
   // Insert disable-feature switches corresponding to preliminary gpu feature
   // flags into the renderer process command line.
   void AppendRendererCommandLine(base::CommandLine* command_line) const;
 
   // Insert switches into gpu process command line: kUseGL, etc.
-  void AppendGpuCommandLine(base::CommandLine* command_line) const;
-
-  // Insert switches into plugin process command line:
-  // kDisableCoreAnimationPlugins.
-  void AppendPluginCommandLine(base::CommandLine* command_line) const;
+  // If the gpu_preferences isn't a nullptr, the gpu_preferences will be set
+  // for some GPU switches which have been replaced by GpuPreferences, and those
+  // switches will not be append to the command_line anymore.
+  void AppendGpuCommandLine(base::CommandLine* command_line,
+                            gpu::GpuPreferences* gpu_preferences) const;
 
   // Update WebPreferences for renderer based on blacklisting decisions.
   void UpdateRendererWebPrefs(WebPreferences* prefs) const;
@@ -169,12 +176,9 @@ class CONTENT_EXPORT GpuDataManagerImpl
   // Get number of features being blacklisted.
   size_t GetBlacklistedFeatureCount() const;
 
-  void SetDisplayCount(unsigned int display_count);
-  unsigned int GetDisplayCount() const;
-
   // Set the active gpu.
   // Return true if it's a different GPU from the previous active one.
-  bool UpdateActiveGpu(uint32 vendor_id, uint32 device_id);
+  bool UpdateActiveGpu(uint32_t vendor_id, uint32_t device_id);
 
   // Called when GPU process initialization failed.
   void OnGpuProcessInitFailure();
@@ -214,7 +218,7 @@ class CONTENT_EXPORT GpuDataManagerImpl
   ~GpuDataManagerImpl() override;
 
   mutable base::Lock lock_;
-  scoped_ptr<GpuDataManagerImplPrivate> private_;
+  std::unique_ptr<GpuDataManagerImplPrivate> private_;
 
   DISALLOW_COPY_AND_ASSIGN(GpuDataManagerImpl);
 };

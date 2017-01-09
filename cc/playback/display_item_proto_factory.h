@@ -11,6 +11,7 @@
 #include "cc/playback/display_item_list.h"
 
 namespace cc {
+class ClientPictureCache;
 
 namespace proto {
 class DisplayItem;
@@ -18,9 +19,12 @@ class DisplayItem;
 
 class DisplayItemProtoFactory {
  public:
-  static DisplayItem* AllocateAndConstruct(const gfx::Rect& visual_rect,
-                                           DisplayItemList* list,
-                                           const proto::DisplayItem& proto);
+  static void AllocateAndConstruct(
+      const gfx::Rect& visual_rect,
+      DisplayItemList* list,
+      const proto::DisplayItem& proto,
+      ClientPictureCache* client_picture_cache,
+      std::vector<uint32_t>* used_engine_picture_ids);
 
  private:
   DisplayItemProtoFactory() {}

@@ -4,9 +4,10 @@
 
 #include "ash/shell/toplevel_window.h"
 
+#include "ash/common/wm/window_positioner.h"
+#include "ash/common/wm/window_state.h"
 #include "ash/shell.h"
-#include "ash/wm/window_positioner.h"
-#include "ash/wm/window_state.h"
+#include "ash/wm/window_state_aura.h"
 #include "base/strings/utf_string_conversions.h"
 #include "ui/aura/window.h"
 #include "ui/aura/window_event_dispatcher.h"
@@ -29,9 +30,7 @@ SavedState* saved_state = NULL;
 }  // namespace
 
 ToplevelWindow::CreateParams::CreateParams()
-    : can_resize(false),
-      can_maximize(false) {
-}
+    : can_resize(false), can_maximize(false), use_saved_placement(true) {}
 
 // static
 views::Widget* ToplevelWindow::CreateToplevelWindow(
@@ -51,11 +50,9 @@ void ToplevelWindow::ClearSavedStateForTest() {
   saved_state = NULL;
 }
 
-ToplevelWindow::ToplevelWindow(const CreateParams& params) : params_(params) {
-}
+ToplevelWindow::ToplevelWindow(const CreateParams& params) : params_(params) {}
 
-ToplevelWindow::~ToplevelWindow() {
-}
+ToplevelWindow::~ToplevelWindow() {}
 
 void ToplevelWindow::OnPaint(gfx::Canvas* canvas) {
   canvas->FillRect(GetLocalBounds(), SK_ColorDKGRAY);
@@ -78,25 +75,16 @@ bool ToplevelWindow::GetSavedWindowPlacement(
     gfx::Rect* bounds,
     ui::WindowShowState* show_state) const {
   bool is_saved_bounds = !!saved_state;
-  if (saved_state) {
+  if (saved_state && params_.use_saved_placement) {
     *bounds = saved_state->bounds;
     *show_state = saved_state->show_state;
   } else {
     // Initial default bounds.
     bounds->SetRect(10, 150, 300, 300);
   }
-  ash::WindowPositioner::GetBoundsAndShowStateForNewWindow(
-      ash::Shell::GetScreen(),
-      NULL,
-      is_saved_bounds,
-      *show_state,
-      bounds,
-      show_state);
+  WindowPositioner::GetBoundsAndShowStateForNewWindow(
+      nullptr, is_saved_bounds, *show_state, bounds, show_state);
   return true;
-}
-
-views::View* ToplevelWindow::GetContentsView() {
-  return this;
 }
 
 bool ToplevelWindow::CanResize() const {

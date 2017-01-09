@@ -2,20 +2,26 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/run_loop.h"
 #include "net/base/io_buffer.h"
 #include "net/base/test_completion_callback.h"
+#include "net/log/net_log_with_source.h"
 #include "net/socket/client_socket_handle.h"
 #include "net/socket/socket_test_util.h"
 #include "net/socket/transport_client_socket_pool.h"
+#include "net/test/gtest_util.h"
+#include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest-spi.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/platform_test.h"
+
+using net::test::IsError;
+using net::test::IsOk;
 
 //-----------------------------------------------------------------------------
 
@@ -194,7 +200,10 @@ class SequencedSocketDataTest : public testing::Test {
   void AssertSyncWriteEquals(const char* data, int len);
   void AssertAsyncWriteEquals(const char* data, int len);
   void AssertWriteReturns(const char* data, int len, int rv);
-  void CompleteRead();
+
+  bool IsPaused() const;
+  void Resume();
+  void RunUntilPaused();
 
   // When a given test completes, data_.at_eof() is expected to
   // match the value specified here. Most test should consume all
@@ -210,7 +219,7 @@ class SequencedSocketDataTest : public testing::Test {
 
  private:
   MockConnect connect_data_;
-  scoped_ptr<SequencedSocketData> data_;
+  std::unique_ptr<SequencedSocketData> data_;
 
   const HostPortPair endpoint_;
   scoped_refptr<TransportSocketParams> tcp_params_;
@@ -231,7 +240,6 @@ SequencedSocketDataTest::SequencedSocketDataTest()
       endpoint_("www.google.com", 443),
       tcp_params_(new TransportSocketParams(
           endpoint_,
-          false,
           false,
           OnHostResolutionCallback(),
           TransportSocketParams::COMBINE_CONNECT_AND_WRITE_DEFAULT)),
@@ -259,9 +267,10 @@ void SequencedSocketDataTest::Initialize(MockRead* reads,
 
   EXPECT_EQ(OK,
             connection_.Init(
-                endpoint_.ToString(), tcp_params_, LOWEST, CompletionCallback(),
+                endpoint_.ToString(), tcp_params_, LOWEST,
+                ClientSocketPool::RespectLimits::ENABLED, CompletionCallback(),
                 reinterpret_cast<TransportClientSocketPool*>(&socket_pool_),
-                BoundNetLog()));
+                NetLogWithSource()));
   sock_ = connection_.socket();
 }
 
@@ -314,8 +323,16 @@ void SequencedSocketDataTest::AssertAsyncWriteEquals(const char* data,
   ASSERT_EQ(len, write_callback_.WaitForResult());
 }
 
-void SequencedSocketDataTest::CompleteRead() {
-  data_->CompleteRead();
+bool SequencedSocketDataTest::IsPaused() const {
+  return data_->IsPaused();
+}
+
+void SequencedSocketDataTest::Resume() {
+  data_->Resume();
+}
+
+void SequencedSocketDataTest::RunUntilPaused() {
+  data_->RunUntilPaused();
 }
 
 void SequencedSocketDataTest::AssertWriteReturns(const char* data,
@@ -370,7 +387,8 @@ void SequencedSocketDataTest::ReentrantAsyncWriteCallback(
   EXPECT_EQ(expected_rv, rv);
   scoped_refptr<IOBuffer> write_buf(new IOBuffer(len));
   memcpy(write_buf->data(), data, len);
-  EXPECT_EQ(ERR_IO_PENDING, sock_->Write(write_buf.get(), len, callback));
+  EXPECT_THAT(sock_->Write(write_buf.get(), len, callback),
+              IsError(ERR_IO_PENDING));
 }
 
 void SequencedSocketDataTest::FailingCompletionCallback(int rv) {
@@ -479,7 +497,7 @@ TEST_F(SequencedSocketDataTest, SyncReadFromCompletionCallback) {
           base::Bind(&SequencedSocketDataTest::ReentrantReadCallback,
                      base::Unretained(this), kMsg1, kLen1, kLen2, kLen2)));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   AssertReadBufferEquals(kMsg2, kLen2);
 }
 
@@ -592,7 +610,7 @@ TEST_F(SequencedSocketDataTest, SingleAsyncReadLargeBuffer) {
 
 TEST_F(SequencedSocketDataTest, HangingRead) {
   MockRead reads[] = {
-      MockRead(ASYNC, ERR_IO_PENDING, 0),
+      MockRead(SYNCHRONOUS, ERR_IO_PENDING, 0),
   };
 
   Initialize(reads, arraysize(reads), nullptr, 0);
@@ -604,30 +622,8 @@ TEST_F(SequencedSocketDataTest, HangingRead) {
 
   // Even though the read is scheduled to complete at sequence number 0,
   // verify that the read callback in never called.
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   ASSERT_FALSE(read_callback_.have_result());
-}
-
-TEST_F(SequencedSocketDataTest, CompleteRead) {
-  MockRead reads[] = {
-      MockRead(ASYNC, ERR_IO_PENDING, 0), MockRead(ASYNC, kMsg1, kLen1, 1),
-  };
-
-  Initialize(reads, arraysize(reads), nullptr, 0);
-
-  AssertReadReturns(kLen1, ERR_IO_PENDING);
-  ASSERT_FALSE(read_callback_.have_result());
-
-  // Even though the read is scheduled to complete at sequence number 0,
-  // verify that the read callback in not called, until CompleteRead() is.
-  base::MessageLoop::current()->RunUntilIdle();
-  ASSERT_FALSE(read_callback_.have_result());
-
-  CompleteRead();
-
-  ASSERT_TRUE(read_callback_.have_result());
-  ASSERT_EQ(kLen1, read_callback_.WaitForResult());
-  AssertReadBufferEquals(kMsg1, kLen1);
 }
 
 // ----------- Write
@@ -806,7 +802,7 @@ TEST_F(SequencedSocketDataTest, SyncWriteFromCompletionCallback) {
           base::Bind(&SequencedSocketDataTest::ReentrantWriteCallback,
                      base::Unretained(this), kLen1, kMsg2, kLen2, kLen2)));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 TEST_F(SequencedSocketDataTest, AsyncWriteFromCompletionCallback) {
@@ -1091,7 +1087,7 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousRead) {
   ASSERT_EQ(ERR_IO_PENDING,
             sock_->Write(write_buf.get(), kLen1, helper.callback()));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   AssertReadBufferEquals(kMsg4, kLen4);
 }
 
@@ -1125,7 +1121,135 @@ TEST_F(SequencedSocketDataTest, MixedReentrantOperationsThenSynchronousWrite) {
   ASSERT_EQ(ERR_IO_PENDING,
             sock_->Read(helper.read_buf().get(), kLen1, helper.callback()));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
+}
+
+// Test the basic case where a read is paused.
+TEST_F(SequencedSocketDataTest, PauseAndResume_PauseRead) {
+  MockRead reads[] = {
+      MockRead(ASYNC, ERR_IO_PENDING, 0), MockRead(ASYNC, kMsg1, kLen1, 1),
+  };
+
+  Initialize(reads, arraysize(reads), nullptr, 0);
+
+  AssertReadReturns(kLen1, ERR_IO_PENDING);
+  ASSERT_FALSE(read_callback_.have_result());
+
+  RunUntilPaused();
+  ASSERT_TRUE(IsPaused());
+
+  // Spinning the message loop should do nothing.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(read_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  Resume();
+  ASSERT_FALSE(IsPaused());
+  ASSERT_TRUE(read_callback_.have_result());
+  ASSERT_EQ(kLen1, read_callback_.WaitForResult());
+  AssertReadBufferEquals(kMsg1, kLen1);
+}
+
+// Test the case where a read that will be paused is started before write that
+// completes before the pause.
+TEST_F(SequencedSocketDataTest, PauseAndResume_WritePauseRead) {
+  MockWrite writes[] = {
+      MockWrite(SYNCHRONOUS, kMsg1, kLen1, 0),
+  };
+
+  MockRead reads[] = {
+      MockRead(ASYNC, ERR_IO_PENDING, 1), MockRead(ASYNC, kMsg2, kLen2, 2),
+  };
+
+  Initialize(reads, arraysize(reads), writes, arraysize(writes));
+
+  AssertReadReturns(kLen2, ERR_IO_PENDING);
+  ASSERT_FALSE(read_callback_.have_result());
+
+  // Nothing should happen until the write starts.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(read_callback_.have_result());
+  ASSERT_FALSE(IsPaused());
+
+  AssertSyncWriteEquals(kMsg1, kLen1);
+
+  RunUntilPaused();
+  ASSERT_FALSE(read_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  // Spinning the message loop should do nothing.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(read_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  Resume();
+  ASSERT_FALSE(IsPaused());
+  ASSERT_TRUE(read_callback_.have_result());
+  ASSERT_EQ(kLen2, read_callback_.WaitForResult());
+  AssertReadBufferEquals(kMsg2, kLen2);
+}
+
+// Test the basic case where a write is paused.
+TEST_F(SequencedSocketDataTest, PauseAndResume_PauseWrite) {
+  MockWrite writes[] = {
+      MockWrite(ASYNC, ERR_IO_PENDING, 0), MockWrite(ASYNC, kMsg1, kLen1, 1),
+  };
+
+  Initialize(nullptr, 0, writes, arraysize(writes));
+
+  AssertWriteReturns(kMsg1, kLen1, ERR_IO_PENDING);
+  ASSERT_FALSE(write_callback_.have_result());
+
+  RunUntilPaused();
+  ASSERT_TRUE(IsPaused());
+
+  // Spinning the message loop should do nothing.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(write_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  Resume();
+  ASSERT_FALSE(IsPaused());
+  ASSERT_TRUE(write_callback_.have_result());
+  ASSERT_EQ(kLen1, write_callback_.WaitForResult());
+}
+
+// Test the case where a write that will be paused is started before read that
+// completes before the pause.
+TEST_F(SequencedSocketDataTest, PauseAndResume_ReadPauseWrite) {
+  MockWrite writes[] = {
+      MockWrite(ASYNC, ERR_IO_PENDING, 1), MockWrite(ASYNC, kMsg2, kLen2, 2),
+  };
+
+  MockRead reads[] = {
+      MockRead(SYNCHRONOUS, kMsg1, kLen1, 0),
+  };
+
+  Initialize(reads, arraysize(reads), writes, arraysize(writes));
+
+  AssertWriteReturns(kMsg2, kLen2, ERR_IO_PENDING);
+  ASSERT_FALSE(write_callback_.have_result());
+
+  // Nothing should happen until the write starts.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(write_callback_.have_result());
+  ASSERT_FALSE(IsPaused());
+
+  AssertSyncReadEquals(kMsg1, kLen1);
+
+  RunUntilPaused();
+  ASSERT_FALSE(write_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  // Spinning the message loop should do nothing.
+  base::RunLoop().RunUntilIdle();
+  ASSERT_FALSE(write_callback_.have_result());
+  ASSERT_TRUE(IsPaused());
+
+  Resume();
+  ASSERT_FALSE(IsPaused());
+  ASSERT_TRUE(write_callback_.have_result());
+  ASSERT_EQ(kLen2, write_callback_.WaitForResult());
 }
 
 }  // namespace

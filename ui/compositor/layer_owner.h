@@ -5,8 +5,10 @@
 #ifndef UI_COMPOSITOR_LAYER_OWNER_H_
 #define UI_COMPOSITOR_LAYER_OWNER_H_
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "ui/compositor/compositor_export.h"
 #include "ui/compositor/layer.h"
 
@@ -18,7 +20,7 @@ class COMPOSITOR_EXPORT LayerOwner {
   LayerOwner();
   virtual ~LayerOwner();
 
-  void SetLayer(Layer* layer);
+  void SetLayer(std::unique_ptr<Layer> layer);
 
   // Releases the owning reference to its layer, and returns it.
   // This is used when you need to animate the presentation of the owner just
@@ -26,14 +28,14 @@ class COMPOSITOR_EXPORT LayerOwner {
   // function, and the caller is then responsible for disposing of the layer
   // once any animation completes. Note that layer() will remain valid until the
   // end of ~LayerOwner().
-  scoped_ptr<Layer> AcquireLayer();
+  std::unique_ptr<Layer> AcquireLayer();
 
   // Asks the owner to recreate the layer, returning the old Layer. NULL is
   // returned if there is no existing layer, or recreate is not supported.
   //
   // This does not recurse. Existing children of the layer are moved to the new
   // layer.
-  virtual scoped_ptr<Layer> RecreateLayer();
+  virtual std::unique_ptr<Layer> RecreateLayer();
 
   ui::Layer* layer() { return layer_; }
   const ui::Layer* layer() const { return layer_; }
@@ -42,10 +44,10 @@ class COMPOSITOR_EXPORT LayerOwner {
     layer_owner_delegate_ = delegate;
   }
 
+  bool OwnsLayer() const;
+
  protected:
   void DestroyLayer();
-
-  bool OwnsLayer() const;
 
  private:
   // The LayerOwner owns its layer unless ownership is relinquished via a call
@@ -53,7 +55,7 @@ class COMPOSITOR_EXPORT LayerOwner {
   // |layer_owner_| will be NULL. The reason for releasing ownership is that
   // the client may wish to animate the layer beyond the lifetime of the owner,
   // e.g. fading it out when it is destroyed.
-  scoped_ptr<Layer> layer_owner_;
+  std::unique_ptr<Layer> layer_owner_;
   Layer* layer_;
 
   LayerOwnerDelegate* layer_owner_delegate_;

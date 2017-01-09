@@ -5,10 +5,14 @@
 #ifndef ASH_TEST_OVERFLOW_BUBBLE_VIEW_TEST_API_
 #define ASH_TEST_OVERFLOW_BUBBLE_VIEW_TEST_API_
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 
 namespace gfx {
 class Size;
+}
+
+namespace views {
+class BubbleFrameView;
 }
 
 namespace ash {
@@ -27,6 +31,9 @@ class OverflowBubbleViewTestAPI {
   // Emulates scroll operations on OverflowBubble to make invisible last item
   // visible.
   void ScrollByXOffset(int x_offset);
+
+  // Returns the NonClientFrameView for the bubble.
+  views::BubbleFrameView* GetBubbleFrameView();
 
  private:
   OverflowBubbleView* bubble_view_;

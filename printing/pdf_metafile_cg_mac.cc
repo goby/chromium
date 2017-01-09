@@ -4,41 +4,21 @@
 
 #include "printing/pdf_metafile_cg_mac.h"
 
+#include <stdint.h>
+
 #include <algorithm>
 
-#include "base/files/file_path.h"
-#include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
+#include "base/numerics/safe_conversions.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/threading/thread_local.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/size.h"
 
 using base::ScopedCFTypeRef;
 
 namespace {
-
-// What is up with this ugly hack? <http://crbug.com/64641>, that's what.
-// The bug: Printing certain PDFs crashes. The cause: When printing, the
-// renderer process assembles pages one at a time, in PDF format, to send to the
-// browser process. When printing a PDF, the PDF plugin returns output in PDF
-// format. There is a bug in 10.5 and 10.6 (<rdar://9018916>,
-// <http://www.openradar.me/9018916>) where reference counting is broken when
-// drawing certain PDFs into PDF contexts. So at the high-level, a PdfMetafileCg
-// is used to hold the destination context, and then about five layers down on
-// the callstack, a PdfMetafileCg is used to hold the source PDF. If the source
-// PDF is drawn into the destination PDF context and then released, accessing
-// the destination PDF context will crash. So the outermost instantiation of
-// PdfMetafileCg creates a pool for deeper instantiations to dump their used
-// PDFs into rather than releasing them. When the top-level PDF is closed, then
-// it's safe to clear the pool. A thread local is used to allow this to work in
-// single-process mode. TODO(avi): This Apple bug appears fixed in 10.7; when
-// 10.7 is the minimum required version for Chromium, remove this hack.
-
-base::LazyInstance<base::ThreadLocalPointer<struct __CFSet> >::Leaky
-    thread_pdf_docs = LAZY_INSTANCE_INITIALIZER;
 
 // Rotate a page by |num_rotations| * 90 degrees, counter-clockwise.
 void RotatePage(CGContextRef context, const CGRect rect, int num_rotations) {
@@ -77,29 +57,9 @@ void RotatePage(CGContextRef context, const CGRect rect, int num_rotations) {
 
 namespace printing {
 
-PdfMetafileCg::PdfMetafileCg()
-    : page_is_open_(false),
-      thread_pdf_docs_owned_(false) {
-  if (!thread_pdf_docs.Pointer()->Get() &&
-      base::mac::IsOSSnowLeopard()) {
-    thread_pdf_docs_owned_ = true;
-    thread_pdf_docs.Pointer()->Set(
-        CFSetCreateMutable(kCFAllocatorDefault, 0, &kCFTypeSetCallBacks));
-  }
-}
+PdfMetafileCg::PdfMetafileCg() : page_is_open_(false) {}
 
-PdfMetafileCg::~PdfMetafileCg() {
-  DCHECK(thread_checker_.CalledOnValidThread());
-  if (pdf_doc_ && thread_pdf_docs.Pointer()->Get()) {
-    // Transfer ownership to the pool.
-    CFSetAddValue(thread_pdf_docs.Pointer()->Get(), pdf_doc_);
-  }
-
-  if (thread_pdf_docs_owned_) {
-    CFRelease(thread_pdf_docs.Pointer()->Get());
-    thread_pdf_docs.Pointer()->Set(NULL);
-  }
-}
+PdfMetafileCg::~PdfMetafileCg() {}
 
 bool PdfMetafileCg::Init() {
   // Ensure that Init hasn't already been called.
@@ -115,26 +75,28 @@ bool PdfMetafileCg::Init() {
       CGDataConsumerCreateWithCFData(pdf_data_));
   if (!pdf_consumer.get()) {
     LOG(ERROR) << "Failed to create data consumer for metafile";
-    pdf_data_.reset(NULL);
+    pdf_data_.reset();
     return false;
   }
-  context_.reset(CGPDFContextCreate(pdf_consumer, NULL, NULL));
+  context_.reset(CGPDFContextCreate(pdf_consumer, nullptr, nullptr));
   if (!context_.get()) {
     LOG(ERROR) << "Failed to create pdf context for metafile";
-    pdf_data_.reset(NULL);
+    pdf_data_.reset();
   }
 
   return true;
 }
 
 bool PdfMetafileCg::InitFromData(const void* src_buffer,
-                                 uint32_t src_buffer_size) {
+                                 size_t src_buffer_size) {
   DCHECK(!context_.get());
   DCHECK(!pdf_data_.get());
 
-  if (!src_buffer || src_buffer_size == 0) {
+  if (!src_buffer || !src_buffer_size)
     return false;
-  }
+
+  if (!base::IsValueInRangeForNumericType<CFIndex>(src_buffer_size))
+    return false;
 
   pdf_data_.reset(CFDataCreateMutable(kCFAllocatorDefault, src_buffer_size));
   CFDataAppendBytes(pdf_data_, static_cast<const UInt8*>(src_buffer),
@@ -143,7 +105,7 @@ bool PdfMetafileCg::InitFromData(const void* src_buffer,
   return true;
 }
 
-bool PdfMetafileCg::StartPage(const gfx::Size& page_size,
+void PdfMetafileCg::StartPage(const gfx::Size& page_size,
                               const gfx::Rect& content_area,
                               const float& scale_factor) {
   DCHECK(context_.get());
@@ -163,8 +125,6 @@ bool PdfMetafileCg::StartPage(const gfx::Size& page_size,
   // Flip the context.
   CGContextTranslateCTM(context_, 0, height);
   CGContextScaleCTM(context_, scale_factor, -scale_factor);
-
-  return context_.get() != NULL;
 }
 
 bool PdfMetafileCg::FinishPage() {
@@ -193,7 +153,7 @@ bool PdfMetafileCg::FinishDocument() {
   }
 #endif
   CGPDFContextClose(context_.get());
-  context_.reset(NULL);
+  context_.reset();
   return true;
 }
 

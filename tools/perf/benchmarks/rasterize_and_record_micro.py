@@ -7,16 +7,18 @@ from core import perf_benchmark
 import ct_benchmarks_util
 from measurements import rasterize_and_record_micro
 import page_sets
+from page_sets import repaint_helpers
 from telemetry import benchmark
 
 
 class _RasterizeAndRecordMicro(perf_benchmark.PerfBenchmark):
+
   @classmethod
   def AddBenchmarkCommandLineArgs(cls, parser):
     parser.add_option('--start-wait-time', type='float',
                       default=2,
                       help='Wait time before the benchmark is started '
-                      '(must be long enought to load all content)')
+                      '(must be long enough to load all content)')
     parser.add_option('--rasterize-repeat', type='int',
                       default=100,
                       help='Repeat each raster this many times. Increase '
@@ -45,7 +47,8 @@ class _RasterizeAndRecordMicro(perf_benchmark.PerfBenchmark):
 
 # RasterizeAndRecord disabled on mac because of crbug.com/350684.
 # RasterizeAndRecord disabled on windows because of crbug.com/338057.
-@benchmark.Disabled('mac', 'win')
+@benchmark.Disabled('mac', 'win',
+                    'android')  # http://crbug.com/610018
 class RasterizeAndRecordMicroTop25(_RasterizeAndRecordMicro):
   """Measures rasterize and record performance on the top 25 web pages.
 
@@ -54,11 +57,10 @@ class RasterizeAndRecordMicroTop25(_RasterizeAndRecordMicro):
 
   @classmethod
   def Name(cls):
-    return 'rasterize_and_record_micro.top_25_smooth'
+    return 'rasterize_and_record_micro.top_25'
 
 
-@benchmark.Disabled('mac', 'win',
-                    'android') # http://crbug.com/531597
+@benchmark.Disabled('mac', 'win', 'android')  # http://crbug.com/531597
 class RasterizeAndRecordMicroKeyMobileSites(_RasterizeAndRecordMicro):
   """Measures rasterize and record performance on the key mobile sites.
 
@@ -67,10 +69,10 @@ class RasterizeAndRecordMicroKeyMobileSites(_RasterizeAndRecordMicro):
 
   @classmethod
   def Name(cls):
-    return 'rasterize_and_record_micro.key_mobile_sites_smooth'
+    return 'rasterize_and_record_micro.key_mobile_sites'
 
 
-@benchmark.Disabled('mac', 'win')
+@benchmark.Disabled('all') # http://crbug.com/610424
 class RasterizeAndRecordMicroKeySilkCases(_RasterizeAndRecordMicro):
   """Measures rasterize and record performance on the silk sites.
 
@@ -98,6 +100,20 @@ class RasterizeAndRecordMicroPolymer(_RasterizeAndRecordMicro):
     return page_sets.PolymerPageSet(run_no_page_interactions=True)
 
 
+# New benchmark only enabled on Linux until we've observed behavior for a
+# reasonable period of time.
+@benchmark.Disabled('mac', 'win', 'android')
+class RasterizeAndRecordMicroPartialInvalidation(_RasterizeAndRecordMicro):
+  """Measures rasterize and record performance for partial inval. on big pages.
+
+  http://www.chromium.org/developers/design-documents/rendering-benchmarks"""
+  page_set = page_sets.PartialInvalidationCasesPageSet
+
+  @classmethod
+  def Name(cls):
+    return 'rasterize_and_record_micro.partial_invalidation'
+
+
 # Disabled because we do not plan on running CT benchmarks on the perf
 # waterfall any time soon.
 @benchmark.Disabled('all')
@@ -119,4 +135,5 @@ class RasterizeAndRecordMicroCT(_RasterizeAndRecordMicro):
 
   def CreateStorySet(self, options):
     return page_sets.CTPageSet(
-        options.urls_list, options.user_agent, options.archive_data_file)
+        options.urls_list, options.user_agent, options.archive_data_file,
+        run_page_interaction_callback=repaint_helpers.WaitThenRepaint)

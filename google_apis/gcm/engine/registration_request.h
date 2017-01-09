@@ -5,14 +5,16 @@
 #ifndef GOOGLE_APIS_GCM_ENGINE_REGISTRATION_REQUEST_H_
 #define GOOGLE_APIS_GCM_ENGINE_REGISTRATION_REQUEST_H_
 
+#include <stdint.h>
+
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "google_apis/gcm/base/gcm_export.h"
@@ -47,8 +49,12 @@ class GCM_EXPORT RegistrationRequest : public net::URLFetcherDelegate {
     UNKNOWN_ERROR,              // Unknown error.
     URL_FETCHING_FAILED,        // URL fetching failed.
     HTTP_NOT_OK,                // HTTP status was not OK.
-    RESPONSE_PARSING_FAILED,    // Registration response parsing failed.
+    NO_RESPONSE_BODY,           // No response body.
     REACHED_MAX_RETRIES,        // Reached maximum number of retries.
+    RESPONSE_PARSING_FAILED,    // Registration response parsing failed.
+    INTERNAL_SERVER_ERROR,      // Internal server error during request.
+    QUOTA_EXCEEDED,             // Registration quota exceeded.
+    TOO_MANY_REGISTRATIONS,     // Max registrations per device exceeded.
     // NOTE: always keep this entry at the end. Add new status types only
     // immediately above this line. Make sure to update the corresponding
     // histogram enum accordingly.
@@ -63,17 +69,26 @@ class GCM_EXPORT RegistrationRequest : public net::URLFetcherDelegate {
   // Defines the common info about a registration/token request. All parameters
   // are mandatory.
   struct GCM_EXPORT RequestInfo {
-    RequestInfo(uint64 android_id,
-                uint64 security_token,
-                const std::string& app_id);
+    RequestInfo(uint64_t android_id,
+                uint64_t security_token,
+                const std::string& category,
+                const std::string& subtype);
     ~RequestInfo();
 
     // Android ID of the device.
-    uint64 android_id;
+    uint64_t android_id;
     // Security token of the device.
-    uint64 security_token;
-    // Application ID.
-    std::string app_id;
+    uint64_t security_token;
+
+    // Application ID used in Chrome to refer to registration/token's owner.
+    const std::string& app_id() const {
+      return subtype.empty() ? category : subtype;
+    }
+
+    // GCM category field.
+    std::string category;
+    // GCM subtype field.
+    std::string subtype;
   };
 
   // Encapsulates the custom logic that is needed to build and process the
@@ -97,7 +112,7 @@ class GCM_EXPORT RegistrationRequest : public net::URLFetcherDelegate {
   RegistrationRequest(
       const GURL& registration_url,
       const RequestInfo& request_info,
-      scoped_ptr<CustomRequestHandler> custom_request_handler,
+      std::unique_ptr<CustomRequestHandler> custom_request_handler,
       const net::BackoffEntry::Policy& backoff_policy,
       const RegistrationCallback& callback,
       int max_retry_count,
@@ -124,12 +139,12 @@ class GCM_EXPORT RegistrationRequest : public net::URLFetcherDelegate {
 
   RegistrationCallback callback_;
   RequestInfo request_info_;
-  scoped_ptr<CustomRequestHandler> custom_request_handler_;
+  std::unique_ptr<CustomRequestHandler> custom_request_handler_;
   GURL registration_url_;
 
   net::BackoffEntry backoff_entry_;
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   int retries_left_;
   base::TimeTicks request_start_time_;
 

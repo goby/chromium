@@ -4,6 +4,9 @@
 
 #include "chrome/browser/signin/mutable_profile_oauth2_token_service_delegate.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/profiler/scoped_tracker.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/browser/signin_metrics.h"
@@ -222,6 +225,11 @@ std::string MutableProfileOAuth2TokenServiceDelegate::GetRefreshToken(
   return std::string();
 }
 
+std::string MutableProfileOAuth2TokenServiceDelegate::GetRefreshTokenForTest(
+    const std::string& account_id) const {
+  return GetRefreshToken(account_id);
+}
+
 std::vector<std::string>
 MutableProfileOAuth2TokenServiceDelegate::GetAccounts() {
   std::vector<std::string> account_ids;
@@ -264,9 +272,9 @@ void MutableProfileOAuth2TokenServiceDelegate::LoadCredentials(
 
 void MutableProfileOAuth2TokenServiceDelegate::OnWebDataServiceRequestDone(
     WebDataServiceBase::Handle handle,
-    const WDTypedResult* result) {
+    std::unique_ptr<WDTypedResult> result) {
   VLOG(1) << "MutablePO2TS::OnWebDataServiceRequestDone. Result type: "
-          << (result == nullptr ? -1 : (int)result->GetType());
+          << (result.get() == nullptr ? -1 : (int)result->GetType());
 
   // TODO(robliao): Remove ScopedTracker below once https://crbug.com/422460 is
   // fixed.
@@ -281,7 +289,7 @@ void MutableProfileOAuth2TokenServiceDelegate::OnWebDataServiceRequestDone(
     DCHECK(result->GetType() == TOKEN_RESULT);
     const WDResult<std::map<std::string, std::string>>* token_result =
         static_cast<const WDResult<std::map<std::string, std::string>>*>(
-            result);
+            result.get());
     LoadAllCredentialsIntoMemory(token_result->GetValue());
   }
 

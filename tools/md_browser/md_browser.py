@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright 2015 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -13,11 +14,15 @@ import os
 import re
 import socket
 import sys
+import threading
+import time
+import webbrowser
+from xml.etree import ElementTree
 
 
-THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+THIS_DIR = os.path.realpath(os.path.dirname(__file__))
 SRC_DIR = os.path.dirname(os.path.dirname(THIS_DIR))
-sys.path.append(os.path.join(SRC_DIR, 'third_party', 'Python-Markdown'))
+sys.path.insert(0, os.path.join(SRC_DIR, 'third_party', 'Python-Markdown'))
 import markdown
 
 
@@ -25,16 +30,50 @@ def main(argv):
   parser = argparse.ArgumentParser(prog='md_browser')
   parser.add_argument('-p', '--port', type=int, default=8080,
                       help='port to run on (default = %(default)s)')
+  parser.add_argument('-d', '--directory', type=str, default=SRC_DIR)
+  parser.add_argument('file', nargs='?',
+                      help='open file in browser')
   args = parser.parse_args(argv)
 
+  top_level = os.path.realpath(args.directory)
+
+  s = Server(args.port, top_level)
+
+  print('Listening on http://localhost:%s/' % args.port)
+  thread = None
+  if args.file:
+    path = os.path.realpath(args.file)
+    if not path.startswith(top_level):
+      print('%s is not under %s' % (args.file, args.directory))
+      return 1
+    rpath = os.path.relpath(path, top_level)
+    url = 'http://localhost:%d/%s' % (args.port, rpath)
+    print('Opening %s' % url)
+    thread = threading.Thread(target=_open_url, args=(url,))
+    thread.start()
+
+  elif os.path.isfile(os.path.join(top_level, 'docs', 'README.md')):
+    print(' Try loading http://localhost:%d/docs/README.md' % args.port)
+  elif os.path.isfile(os.path.join(args.directory, 'README.md')):
+    print(' Try loading http://localhost:%d/README.md' % args.port)
+
+  retcode = 1
   try:
-    s = Server(args.port, SRC_DIR)
-    print("Listening on http://localhost:%s/" % args.port)
     s.serve_forever()
-    s.shutdown()
-    return 0
   except KeyboardInterrupt:
-    return 130
+    retcode = 130
+  except Exception as e:
+    print('Exception raised: %s' % str(e))
+
+  s.shutdown()
+  if thread:
+    thread.join()
+  return retcode
+
+
+def _open_url(url):
+  time.sleep(1)
+  webbrowser.open(url)
 
 
 def _gitiles_slugify(value, _separator):
@@ -71,6 +110,7 @@ class Server(SocketServer.TCPServer):
     SocketServer.TCPServer.__init__(self, ('0.0.0.0', port), Handler)
     self.port = port
     self.top_level = top_level
+    self.retcode = None
 
   def server_bind(self):
     self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -86,16 +126,18 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     if path.startswith('/chromium/src/+/master'):
       path = path[len('/chromium/src/+/master'):]
 
-    full_path = os.path.abspath(os.path.join(self.server.top_level, path[1:]))
+    full_path = os.path.realpath(os.path.join(self.server.top_level, path[1:]))
 
-    if not full_path.startswith(SRC_DIR):
+    if not full_path.startswith(self.server.top_level):
       self._DoUnknown()
     elif path == '/doc.css':
-      self._WriteTemplate('doc.css')
+      self._DoCSS('doc.css')
     elif not os.path.exists(full_path):
       self._DoNotFound()
     elif path.lower().endswith('.md'):
       self._DoMD(path)
+    elif os.path.exists(full_path + '/README.md'):
+      self._DoMD(path + '/README.md')
     else:
       self._DoUnknown()
 
@@ -114,33 +156,116 @@ class Handler(SimpleHTTPServer.SimpleHTTPRequestHandler):
     }
 
     contents = self._Read(path[1:])
-    md_fragment = markdown.markdown(contents,
-                                    extensions=extensions,
-                                    extension_configs=extension_configs,
-                                    output_format='html4').encode('utf-8')
+
+    md = markdown.Markdown(extensions=extensions,
+                           extension_configs=extension_configs,
+                           output_format='html4')
+
+    has_a_single_h1 = (len([line for line in contents.splitlines()
+                            if (line.startswith('#') and
+                                not line.startswith('##'))]) == 1)
+
+    md.treeprocessors['adjust_toc'] = _AdjustTOC(has_a_single_h1)
+
+    md_fragment = md.convert(contents).encode('utf-8')
+
     try:
+      self._WriteHeader('text/html')
       self._WriteTemplate('header.html')
       self.wfile.write(md_fragment)
       self._WriteTemplate('footer.html')
     except:
       raise
 
+  def _DoCSS(self, template):
+    self._WriteHeader('text/css')
+    self._WriteTemplate(template)
+
   def _DoNotFound(self):
+    self._WriteHeader('text/html', status_code=404)
     self.wfile.write('<html><body>%s not found</body></html>' % self.path)
 
   def _DoUnknown(self):
+    self._WriteHeader('text/html')
     self.wfile.write('<html><body>I do not know how to serve %s.</body>'
                        '</html>' % self.path)
 
-  def _Read(self, relpath):
+  def _Read(self, relpath, relative_to=None):
+    if relative_to is None:
+      relative_to = self.server.top_level
     assert not relpath.startswith(os.sep)
-    path = os.path.join(self.server.top_level, relpath)
+    path = os.path.join(relative_to, relpath)
     with codecs.open(path, encoding='utf-8') as fp:
       return fp.read()
 
+  def _WriteHeader(self, content_type='text/plain', status_code=200):
+    self.send_response(status_code)
+    self.send_header('Content-Type', content_type)
+    self.end_headers()
+
   def _WriteTemplate(self, template):
-    contents = self._Read(os.path.join('tools', 'md_browser', template))
+    contents = self._Read(os.path.join('tools', 'md_browser', template),
+                          relative_to=SRC_DIR)
     self.wfile.write(contents.encode('utf-8'))
+
+
+class _AdjustTOC(markdown.treeprocessors.Treeprocessor):
+  def __init__(self, has_a_single_h1):
+    super(_AdjustTOC, self).__init__()
+    self.has_a_single_h1 = has_a_single_h1
+
+  def run(self, tree):
+    # Given
+    #
+    #     # H1
+    #
+    #     [TOC]
+    #
+    #     ## first H2
+    #
+    #     ## second H2
+    #
+    # the markdown.extensions.toc extension generates:
+    #
+    #     <div class='toc'>
+    #       <ul><li><a>H1</a>
+    #               <ul><li>first H2
+    #                   <li>second H2</li></ul></li><ul></div>
+    #
+    # for [TOC]. But, we want the TOC to have its own subheading, so
+    # we rewrite <div class='toc'><ul>...</ul></div> to:
+    #
+    #     <div class='toc'>
+    #        <h2>Contents</h2>
+    #        <div class='toc-aux'>
+    #          <ul>...</ul></div></div>
+    #
+    # In addition, if the document only has a single H1, it is usually the
+    # title, and we don't want the title to be in the TOC. So, we remove it
+    # and shift all of the title's children up a level, leaving:
+    #
+    #     <div class='toc'>
+    #       <h2>Contents</h2>
+    #       <div class='toc-aux'>
+    #       <ul><li>first H2
+    #           <li>second H2</li></ul></div></div>
+
+    for toc_node in tree.findall(".//*[@class='toc']"):
+      toc_ul = toc_node[0]
+      if self.has_a_single_h1:
+        toc_ul_li = toc_ul[0]
+        ul_with_the_desired_toc_entries = toc_ul_li[1]
+      else:
+        ul_with_the_desired_toc_entries = toc_ul
+
+      toc_node.remove(toc_ul)
+      contents = ElementTree.SubElement(toc_node, 'h2')
+      contents.text = 'Contents'
+      contents.tail = '\n'
+      toc_aux = ElementTree.SubElement(toc_node, 'div', {'class': 'toc-aux'})
+      toc_aux.text = '\n'
+      toc_aux.append(ul_with_the_desired_toc_entries)
+      toc_aux.tail = '\n'
 
 
 if __name__ == '__main__':

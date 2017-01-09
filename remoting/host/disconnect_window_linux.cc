@@ -7,6 +7,8 @@
 
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "remoting/base/string_resources.h"
@@ -287,8 +289,8 @@ gboolean DisconnectWindowGtk::OnButtonPress(GtkWidget* widget,
 }  // namespace
 
 // static
-scoped_ptr<HostWindow> HostWindow::CreateDisconnectWindow() {
-  return make_scoped_ptr(new DisconnectWindowGtk());
+std::unique_ptr<HostWindow> HostWindow::CreateDisconnectWindow() {
+  return base::MakeUnique<DisconnectWindowGtk>();
 }
 
 }  // namespace remoting

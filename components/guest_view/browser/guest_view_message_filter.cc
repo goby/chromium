@@ -4,6 +4,7 @@
 
 #include "components/guest_view/browser/guest_view_message_filter.h"
 
+#include "base/memory/ptr_util.h"
 #include "components/guest_view/browser/guest_view_base.h"
 #include "components/guest_view/browser/guest_view_manager.h"
 #include "components/guest_view/browser/guest_view_manager_delegate.h"
@@ -31,7 +32,7 @@ GuestViewMessageFilter::GuestViewMessageFilter(int render_process_id,
 }
 
 GuestViewMessageFilter::GuestViewMessageFilter(
-    const uint32* message_classes_to_filter,
+    const uint32_t* message_classes_to_filter,
     size_t num_message_classes_to_filter,
     int render_process_id,
     BrowserContext* context)
@@ -48,11 +49,10 @@ GuestViewMessageFilter::~GuestViewMessageFilter() {
 }
 
 GuestViewManager* GuestViewMessageFilter::GetOrCreateGuestViewManager() {
-  auto manager = GuestViewManager::FromBrowserContext(browser_context_);
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   if (!manager) {
     manager = GuestViewManager::CreateWithDelegate(
-        browser_context_,
-        scoped_ptr<GuestViewManagerDelegate>(new GuestViewManagerDelegate()));
+        browser_context_, base::MakeUnique<GuestViewManagerDelegate>());
   }
   return manager;
 }
@@ -102,7 +102,7 @@ void GuestViewMessageFilter::OnAttachGuest(
     int guest_instance_id,
     const base::DictionaryValue& params) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  auto manager = GuestViewManager::FromBrowserContext(browser_context_);
+  auto* manager = GuestViewManager::FromBrowserContext(browser_context_);
   // We should have a GuestViewManager at this point. If we don't then the
   // embedder is misbehaving.
   if (!manager)
@@ -133,12 +133,6 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   auto* embedder_frame = RenderFrameHost::FromID(
       render_process_id_, embedder_local_render_frame_id);
 
-  // Attach this inner WebContents |guest_web_contents| to the outer
-  // WebContents |owner_web_contents|. The outer WebContents's
-  // frame |embedder_frame| hosts the inner WebContents.
-  guest_web_contents->AttachToOuterWebContentsFrame(owner_web_contents,
-                                                    embedder_frame);
-
   // Update the guest manager about the attachment.
   // This sets up the embedder and guest pairing information inside
   // the manager.
@@ -151,6 +145,14 @@ void GuestViewMessageFilter::OnAttachToEmbedderFrame(
   guest->WillAttach(
       owner_web_contents, element_instance_id, false,
       base::Bind(&GuestViewMessageFilter::WillAttachCallback, this, guest));
+
+  // Attach this inner WebContents |guest_web_contents| to the outer
+  // WebContents |owner_web_contents|. The outer WebContents's
+  // frame |embedder_frame| hosts the inner WebContents.
+  // NOTE: this must be called last, because it could unblock pending requests
+  // which depend on the WebViewGuest being initialized which happens above.
+  guest_web_contents->AttachToOuterWebContentsFrame(owner_web_contents,
+                                                    embedder_frame);
 }
 
 void GuestViewMessageFilter::WillAttachCallback(GuestViewBase* guest) {

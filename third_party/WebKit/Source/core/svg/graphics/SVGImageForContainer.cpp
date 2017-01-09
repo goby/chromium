@@ -17,7 +17,6 @@
  * Boston, MA 02110-1301, USA.
  */
 
-#include "config.h"
 #include "core/svg/graphics/SVGImageForContainer.h"
 
 #include "platform/geometry/FloatRect.h"
@@ -28,28 +27,48 @@
 
 namespace blink {
 
-IntSize SVGImageForContainer::size() const
-{
-    FloatSize scaledContainerSize(m_containerSize);
-    scaledContainerSize.scale(m_zoom);
-    return roundedIntSize(scaledContainerSize);
+bool SVGImageForContainer::isTextureBacked() {
+  return m_image->isTextureBacked();
 }
 
-void SVGImageForContainer::draw(SkCanvas* canvas, const SkPaint& paint, const FloatRect& dstRect,
-    const FloatRect& srcRect, RespectImageOrientationEnum, ImageClampingMode)
-{
-    m_image->drawForContainer(canvas, paint, m_containerSize, m_zoom, dstRect, srcRect, m_url);
+IntSize SVGImageForContainer::size() const {
+  FloatSize scaledContainerSize(m_containerSize);
+  scaledContainerSize.scale(m_zoom);
+  return roundedIntSize(scaledContainerSize);
 }
 
-void SVGImageForContainer::drawPattern(GraphicsContext* context, const FloatRect& srcRect, const FloatSize& scale,
-    const FloatPoint& phase, SkXfermode::Mode op, const FloatRect& dstRect, const FloatSize& repeatSpacing)
-{
-    m_image->drawPatternForContainer(context, m_containerSize, m_zoom, srcRect, scale, phase, op, dstRect, repeatSpacing, m_url);
+void SVGImageForContainer::draw(SkCanvas* canvas,
+                                const SkPaint& paint,
+                                const FloatRect& dstRect,
+                                const FloatRect& srcRect,
+                                RespectImageOrientationEnum,
+                                ImageClampingMode,
+                                const ColorBehavior& colorBehavior) {
+  // TODO(ccameron): This function should not ignore |colorBehavior|.
+  // https://crbug.com/667431
+  m_image->drawForContainer(canvas, paint, m_containerSize, m_zoom, dstRect,
+                            srcRect, m_url);
 }
 
-PassRefPtr<SkImage> SVGImageForContainer::imageForCurrentFrame()
-{
-    return m_image->imageForCurrentFrame();
+void SVGImageForContainer::drawPattern(GraphicsContext& context,
+                                       const FloatRect& srcRect,
+                                       const FloatSize& scale,
+                                       const FloatPoint& phase,
+                                       SkBlendMode op,
+                                       const FloatRect& dstRect,
+                                       const FloatSize& repeatSpacing) {
+  // TODO(ccameron): This function should not ignore |context|'s color behavior.
+  // https://crbug.com/667431
+  m_image->drawPatternForContainer(context, m_containerSize, m_zoom, srcRect,
+                                   scale, phase, op, dstRect, repeatSpacing,
+                                   m_url);
 }
 
-} // namespace blink
+sk_sp<SkImage> SVGImageForContainer::imageForCurrentFrame(
+    const ColorBehavior& colorBehavior) {
+  // TODO(ccameron): This function should not ignore |colorBehavior|.
+  // https://crbug.com/667431
+  return m_image->imageForCurrentFrameForContainer(m_url, size());
+}
+
+}  // namespace blink

@@ -7,8 +7,10 @@
 
 #include <stdint.h>
 
+#include <memory>
+
 #include "ash/ash_export.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/compositor/layer_animation_element.h"
 #include "ui/gfx/animation/tween.h"
@@ -39,7 +41,7 @@ class ASH_EXPORT ScreenRotationAnimation : public ui::LayerAnimationElement {
   ~ScreenRotationAnimation() override;
 
  private:
-  // Implementation of ui::LayerAnimationDelegate
+  // Implementation of ui::LayerAnimationElement:
   void OnStart(ui::LayerAnimationDelegate* delegate) override;
   bool OnProgress(double current,
                   ui::LayerAnimationDelegate* delegate) override;
@@ -47,7 +49,7 @@ class ASH_EXPORT ScreenRotationAnimation : public ui::LayerAnimationElement {
   void OnAbort(ui::LayerAnimationDelegate* delegate) override;
 
   // The root InterpolatedTransform that defines the animation.
-  scoped_ptr<ui::InterpolatedTransform> interpolated_transform_;
+  std::unique_ptr<ui::InterpolatedTransform> interpolated_transform_;
 
   // The Tween type to use for the animation.
   gfx::Tween::Type tween_type_;

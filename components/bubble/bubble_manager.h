@@ -5,7 +5,9 @@
 #ifndef COMPONENTS_BUBBLE_BUBBLE_MANAGER_H_
 #define COMPONENTS_BUBBLE_BUBBLE_MANAGER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
@@ -13,6 +15,10 @@
 #include "components/bubble/bubble_reference.h"
 
 class BubbleDelegate;
+
+namespace content {
+class RenderFrameHost;
+}
 
 // Inherit from BubbleManager to show, update, and close bubbles.
 // Any class that inherits from BubbleManager should capture any events that
@@ -46,7 +52,7 @@ class BubbleManager {
 
   // Shows a specific bubble and returns a reference to it.
   // This reference should be used through the BubbleManager.
-  BubbleReference ShowBubble(scoped_ptr<BubbleDelegate> bubble);
+  BubbleReference ShowBubble(std::unique_ptr<BubbleDelegate> bubble);
 
   // Notify a bubble of an event that might trigger close.
   // Returns true if the bubble was actually closed.
@@ -68,6 +74,10 @@ class BubbleManager {
   // Will close any open bubbles and prevent new ones from being shown.
   void FinalizePendingRequests();
 
+  // Closes bubbles that declare |frame| as their owner, with
+  // a reason of BUBBLE_CLOSE_FRAME_DESTROYED.
+  void CloseBubblesOwnedBy(const content::RenderFrameHost* frame);
+
  private:
   enum ManagerState {
     SHOW_BUBBLES,
@@ -75,10 +85,12 @@ class BubbleManager {
     ITERATING_BUBBLES,
   };
 
-  // All bubbles will get a close event for the specified |reason| if |match| is
-  // nullptr, otherwise only the bubble held by |match| will get a close event.
-  // Any bubble that is closed will also be deleted.
-  bool CloseAllMatchingBubbles(BubbleController* match,
+  // All matching bubbles will get a close event for the specified |reason|. Any
+  // bubble that is closed will also be deleted. Bubbles match if 1) |bubble| is
+  // null or it refers to the bubble, and 2) |owner| is null or owns the bubble.
+  // At most one can be non-null.
+  bool CloseAllMatchingBubbles(BubbleController* bubble,
+                               const content::RenderFrameHost* owner,
                                BubbleCloseReason reason);
 
   base::ObserverList<BubbleManagerObserver> observers_;

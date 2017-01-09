@@ -5,18 +5,20 @@
 #ifndef CHROME_BROWSER_SERVICE_PROCESS_SERVICE_PROCESS_CONTROL_H_
 #define CHROME_BROWSER_SERVICE_PROCESS_SERVICE_PROCESS_CONTROL_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <queue>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/callback.h"
 #include "base/cancelable_callback.h"
 #include "base/id_map.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/singleton.h"
 #include "base/process/process.h"
+#include "build/build_config.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "ipc/ipc_channel_proxy.h"
@@ -65,12 +67,12 @@ class ServiceProcessControl : public IPC::Sender,
     SERVICE_EVENT_MAX,
   };
 
-  typedef IDMap<ServiceProcessControl>::iterator iterator;
-  typedef std::queue<IPC::Message> MessageQueue;
-  typedef base::Callback<void(const cloud_print::CloudPrintProxyInfo&)>
-      CloudPrintProxyInfoCallback;
-  typedef base::Callback<void(const std::vector<std::string>&)>
-      PrintersCallback;
+  using iterator = IDMap<ServiceProcessControl*>::iterator;
+  using MessageQueue = std::queue<IPC::Message>;
+  using CloudPrintProxyInfoCallback =
+      base::Callback<void(const cloud_print::CloudPrintProxyInfo&)>;
+  using PrintersCallback =
+      base::Callback<void(const std::vector<std::string>&)>;
 
   // Returns the singleton instance of this class.
   static ServiceProcessControl* GetInstance();
@@ -99,7 +101,7 @@ class ServiceProcessControl : public IPC::Sender,
 
   // IPC::Listener implementation.
   bool OnMessageReceived(const IPC::Message& message) override;
-  void OnChannelConnected(int32 peer_pid) override;
+  void OnChannelConnected(int32_t peer_pid) override;
   void OnChannelError() override;
 
   // IPC::Sender implementation
@@ -145,7 +147,7 @@ class ServiceProcessControl : public IPC::Sender,
   class Launcher
       : public base::RefCountedThreadSafe<ServiceProcessControl::Launcher> {
    public:
-    explicit Launcher(scoped_ptr<base::CommandLine> cmd_line);
+    explicit Launcher(std::unique_ptr<base::CommandLine> cmd_line);
     // Execute the command line to start the process asynchronously. After the
     // command is executed |task| is called with the process handle on the UI
     // thread.
@@ -163,10 +165,10 @@ class ServiceProcessControl : public IPC::Sender,
 
     void DoRun();
     void Notify();
-    scoped_ptr<base::CommandLine> cmd_line_;
+    std::unique_ptr<base::CommandLine> cmd_line_;
     base::Closure notify_task_;
     bool launched_;
-    uint32 retry_count_;
+    uint32_t retry_count_;
     base::Process process_;
   };
 
@@ -199,12 +201,12 @@ class ServiceProcessControl : public IPC::Sender,
   void ConnectInternal();
 
   // Takes ownership of the pointer. Split out for testing.
-  void SetChannel(scoped_ptr<IPC::ChannelProxy> channel);
+  void SetChannel(std::unique_ptr<IPC::ChannelProxy> channel);
 
   static void RunAllTasksHelper(TaskList* task_list);
 
   // IPC channel to the service process.
-  scoped_ptr<IPC::ChannelProxy> channel_;
+  std::unique_ptr<IPC::ChannelProxy> channel_;
 
   // Service process launcher.
   scoped_refptr<Launcher> launcher_;

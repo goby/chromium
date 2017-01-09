@@ -47,22 +47,6 @@ public class AwContentsStatics {
         callback.run();
     }
 
-    /**
-     * Set Data Reduction Proxy key for authentication.
-     */
-    public static void setDataReductionProxyKey(String key) {
-        ThreadUtils.assertOnUiThread();
-        nativeSetDataReductionProxyKey(key);
-    }
-
-    /*
-     * Enable or disable data reduction proxy.
-     */
-    public static void setDataReductionProxyEnabled(boolean enabled) {
-        ThreadUtils.assertOnUiThread();
-        nativeSetDataReductionProxyEnabled(enabled);
-    }
-
     public static String getUnreachableWebDataUrl() {
         // Note that this method may be called from both IO and UI threads,
         // but as it only retrieves a value of a constant from native, even if
@@ -90,13 +74,18 @@ public class AwContentsStatics {
         return nativeGetProductVersion();
     }
 
+    public static void setServiceWorkerIoThreadClient(AwContentsIoThreadClient ioThreadClient,
+            AwBrowserContext browserContext) {
+        nativeSetServiceWorkerIoThreadClient(ioThreadClient, browserContext);
+    }
+
     //--------------------------------------------------------------------------------------------
     //  Native methods
     //--------------------------------------------------------------------------------------------
     private static native void nativeClearClientCertPreferences(Runnable callback);
-    private static native void nativeSetDataReductionProxyKey(String key);
-    private static native void nativeSetDataReductionProxyEnabled(boolean enabled);
     private static native String nativeGetUnreachableWebDataUrl();
     private static native void nativeSetLegacyCacheRemovalDelayForTest(long timeoutMs);
     private static native String nativeGetProductVersion();
+    private static native void nativeSetServiceWorkerIoThreadClient(
+            AwContentsIoThreadClient ioThreadClient, AwBrowserContext browserContext);
 }

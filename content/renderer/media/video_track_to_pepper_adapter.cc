@@ -7,6 +7,7 @@
 #include <string>
 
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/synchronization/lock.h"
 #include "base/trace_event/trace_event.h"
@@ -14,7 +15,7 @@
 #include "content/renderer/media/media_stream.h"
 #include "content/renderer/media/media_stream_registry_interface.h"
 #include "media/base/bind_to_current_loop.h"
-#include "media/base/video_capture_types.h"
+#include "media/capture/video_capture_types.h"
 #include "third_party/WebKit/public/platform/WebMediaStream.h"
 #include "third_party/WebKit/public/platform/WebURL.h"
 #include "third_party/WebKit/public/web/WebMediaStreamRegistry.h"
@@ -39,13 +40,13 @@ class PpFrameReceiver : public MediaStreamVideoSink {
     DCHECK((reader_ && !reader) || (!reader_ && reader))
         << " |reader| = " << reader << ", |reader_| = " << reader_;
     if (reader) {
-      AddToVideoTrack(this,
-                      media::BindToCurrentLoop(
-                          base::Bind(&PpFrameReceiver::OnVideoFrame,
-                                     weak_factory_.GetWeakPtr())),
-                      track_);
+      MediaStreamVideoSink::ConnectToTrack(
+          track_,
+          media::BindToCurrentLoop(base::Bind(&PpFrameReceiver::OnVideoFrame,
+                                              weak_factory_.GetWeakPtr())),
+          false);
     } else {
-      RemoveFromVideoTrack(this, track_);
+      MediaStreamVideoSink::DisconnectFromTrack();
       weak_factory_.InvalidateWeakPtrs();
     }
     reader_ = reader;

@@ -4,7 +4,9 @@
 
 #include "components/favicon_base/favicon_url_parser.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "components/favicon_base/favicon_types.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/layout.h"
@@ -24,7 +26,7 @@ class FaviconUrlParserTest : public testing::Test {
   ~FaviconUrlParserTest() override {}
 
  private:
-  typedef scoped_ptr<ui::test::ScopedSetSupportedScaleFactors>
+  typedef std::unique_ptr<ui::test::ScopedSetSupportedScaleFactors>
       ScopedSetSupportedScaleFactors;
   ScopedSetSupportedScaleFactors scoped_set_supported_scale_factors_;
 

@@ -9,11 +9,12 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "base/values.h"
 #include "chrome/browser/plugins/plugin_status_pref_setter.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/prefs/pref_service.h"
 
 namespace options {
 
@@ -82,7 +83,7 @@ class CoreOptionsHandler : public OptionsPageUIHandler {
   // preference. |value| is the new value for |name|.  Called from
   // Notify*Changed methods to fire off the notifications.
   void DispatchPrefChangeNotification(const std::string& name,
-                                      scoped_ptr<base::Value> value);
+                                      std::unique_ptr<base::Value> value);
 
   // Creates dictionary value for the pref described by |pref_name|.
   // If |controlling_pref| is not empty, it describes the pref that manages

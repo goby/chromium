@@ -7,6 +7,7 @@ package org.chromium.ui.base;
 import android.app.Activity;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
 import android.content.IntentSender.SendIntentException;
 import android.content.SharedPreferences;
@@ -16,13 +17,15 @@ import android.content.pm.PermissionInfo;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Process;
-import android.preference.PreferenceManager;
 import android.text.TextUtils;
 import android.util.SparseArray;
 import android.view.View;
 
 import org.chromium.base.ActivityState;
+import org.chromium.base.ApiCompatibilityUtils;
 import org.chromium.base.ApplicationStatus;
+import org.chromium.base.Callback;
+import org.chromium.base.ContextUtils;
 import org.chromium.ui.UiUtils;
 
 import java.lang.ref.WeakReference;
@@ -50,19 +53,23 @@ public class ActivityWindowAndroid
      * Creates an Activity-specific WindowAndroid with associated intent functionality.
      * TODO(jdduke): Remove this overload when all callsites have been updated to
      * indicate their activity state listening preference.
-     * @param activity The activity associated with the WindowAndroid.
+     * @param context Context wrapping an activity associated with the WindowAndroid.
      */
-    public ActivityWindowAndroid(Activity activity) {
-        this(activity, true);
+    public ActivityWindowAndroid(Context context) {
+        this(context, true);
     }
 
     /**
      * Creates an Activity-specific WindowAndroid with associated intent functionality.
-     * @param activity The activity associated with the WindowAndroid.
+     * @param context Context wrapping an activity associated with the WindowAndroid.
      * @param listenToActivityState Whether to listen to activity state changes.
      */
-    public ActivityWindowAndroid(Activity activity, boolean listenToActivityState) {
-        super(activity);
+    public ActivityWindowAndroid(Context context, boolean listenToActivityState) {
+        super(context);
+        Activity activity = activityFromContext(context);
+        if (activity == null) {
+            throw new IllegalArgumentException("Context is not and does not wrap an Activity");
+        }
         mHandler = new Handler();
         mOutstandingPermissionRequests = new SparseArray<PermissionCallback>();
         if (listenToActivityState) {
@@ -119,6 +126,20 @@ public class ActivityWindowAndroid
         } catch (ActivityNotFoundException e) {
             return START_INTENT_FAILURE;
         }
+
+        storeCallbackData(requestCode, callback, errorId);
+        return requestCode;
+    }
+
+    @Override
+    public int showCancelableIntent(Callback<Integer> intentTrigger, IntentCallback callback,
+            Integer errorId) {
+        Activity activity = getActivity().get();
+        if (activity == null) return START_INTENT_FAILURE;
+
+        int requestCode = generateNextRequestCode();
+
+        intentTrigger.onResult(requestCode);
 
         storeCallbackData(requestCode, callback, errorId);
         return requestCode;
@@ -191,8 +212,7 @@ public class ActivityWindowAndroid
         Activity activity = getActivity().get();
         assert activity != null;
 
-        SharedPreferences.Editor editor =
-                PreferenceManager.getDefaultSharedPreferences(activity).edit();
+        SharedPreferences.Editor editor = ContextUtils.getAppSharedPreferences().edit();
         for (int i = 0; i < permissions.length; i++) {
             editor.putBoolean(getHasRequestedPermissionKey(permissions[i]), true);
         }
@@ -207,7 +227,7 @@ public class ActivityWindowAndroid
 
     @Override
     public WeakReference<Activity> getActivity() {
-        return new WeakReference<Activity>((Activity) getContext().get());
+        return new WeakReference<Activity>(activityFromContext(getContext().get()));
     }
 
     @Override
@@ -240,7 +260,8 @@ public class ActivityWindowAndroid
     private class ActivityAndroidPermissionDelegate implements AndroidPermissionDelegate {
         @Override
         public boolean hasPermission(String permission) {
-            return mApplicationContext.checkPermission(permission, Process.myPid(), Process.myUid())
+            return ApiCompatibilityUtils.checkPermission(
+                    mApplicationContext, permission, Process.myPid(), Process.myUid())
                     == PackageManager.PERMISSION_GRANTED;
         }
 
@@ -262,7 +283,7 @@ public class ActivityWindowAndroid
             // Check whether we have ever asked for this permission by checking whether we saved
             // a preference associated with it before.
             String permissionQueriedKey = getHasRequestedPermissionKey(permission);
-            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(activity);
+            SharedPreferences prefs = ContextUtils.getAppSharedPreferences();
             if (!prefs.getBoolean(permissionQueriedKey, false)) return true;
 
             return false;

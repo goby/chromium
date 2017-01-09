@@ -4,15 +4,15 @@
 
 #include "chrome/browser/ui/views/toolbar/home_button.h"
 
-#include "base/prefs/pref_service.h"
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
-#include "chrome/browser/ui/views/settings_api_bubble_helper_views.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/grit/generated_resources.h"
+#include "components/prefs/pref_service.h"
 #include "components/user_prefs/user_prefs.h"
 #include "ui/base/l10n/l10n_util.h"
-#include "ui/views/bubble/bubble_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate.h"
 #include "ui/views/controls/label.h"
 #include "ui/views/controls/link.h"
 #include "ui/views/controls/link_listener.h"
@@ -24,7 +24,7 @@
 
 namespace {
 
-class HomePageUndoBubble : public views::BubbleDelegateView,
+class HomePageUndoBubble : public views::BubbleDialogDelegateView,
                            public views::LinkListener {
  public:
   static void ShowBubble(Browser* browser,
@@ -38,7 +38,8 @@ class HomePageUndoBubble : public views::BubbleDelegateView,
                      const GURL& undo_url, views::View* anchor_view);
   ~HomePageUndoBubble() override;
 
-  // views::BubbleDelegateView:
+  // views::BubbleDialogDelegateView:
+  int GetDialogButtons() const override;
   void Init() override;
   void WindowClosing() override;
 
@@ -66,7 +67,7 @@ void HomePageUndoBubble::ShowBubble(Browser* browser,
                                                   undo_value_is_ntp,
                                                   undo_url,
                                                   anchor_view);
-  views::BubbleDelegateView::CreateBubble(home_page_undo_bubble_)->Show();
+  views::BubbleDialogDelegateView::CreateBubble(home_page_undo_bubble_)->Show();
 }
 
 void HomePageUndoBubble::HideBubble() {
@@ -79,13 +80,17 @@ HomePageUndoBubble::HomePageUndoBubble(
     bool undo_value_is_ntp,
     const GURL& undo_url,
     views::View* anchor_view)
-    : BubbleDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
+    : BubbleDialogDelegateView(anchor_view, views::BubbleBorder::TOP_LEFT),
       browser_(browser),
       undo_value_is_ntp_(undo_value_is_ntp),
       undo_url_(undo_url) {
 }
 
 HomePageUndoBubble::~HomePageUndoBubble() {
+}
+
+int HomePageUndoBubble::GetDialogButtons() const {
+  return ui::DIALOG_BUTTON_NONE;
 }
 
 void HomePageUndoBubble::Init() {
@@ -136,12 +141,8 @@ void HomePageUndoBubble::WindowClosing() {
 
 // HomeButton -----------------------------------------------------------
 
-HomeButton::HomeButton(
-    views::ButtonListener* listener,
-    Browser* browser)
-    : ToolbarButton(listener, NULL),
-      browser_(browser) {
-}
+HomeButton::HomeButton(views::ButtonListener* listener, Browser* browser)
+    : ToolbarButton(browser->profile(), listener, nullptr), browser_(browser) {}
 
 HomeButton::~HomeButton() {
 }
@@ -162,8 +163,7 @@ bool HomeButton::CanDrop(const OSExchangeData& data) {
 }
 
 int HomeButton::OnDragUpdated(const ui::DropTargetEvent& event) {
-  return (event.source_operations() & ui::DragDropTypes::DRAG_LINK) ?
-      ui::DragDropTypes::DRAG_LINK : ui::DragDropTypes::DRAG_NONE;
+  return event.source_operations();
 }
 
 int HomeButton::OnPerformDrop(const ui::DropTargetEvent& event) {
@@ -182,9 +182,4 @@ int HomeButton::OnPerformDrop(const ui::DropTargetEvent& event) {
     HomePageUndoBubble::ShowBubble(browser_, old_is_ntp, old_homepage, this);
   }
   return ui::DragDropTypes::DRAG_NONE;
-}
-
-void HomeButton::NotifyClick(const ui::Event& event) {
-  ToolbarButton::NotifyClick(event);
-  extensions::MaybeShowExtensionControlledHomeNotification(browser_);
 }

@@ -5,11 +5,11 @@
 #ifndef EXTENSIONS_COMMON_EXTENSIONS_CLIENT_H_
 #define EXTENSIONS_COMMON_EXTENSIONS_CLIENT_H_
 
+#include <memory>
 #include <set>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_piece.h"
 #include "extensions/common/permissions/api_permission_set.h"
 
@@ -23,13 +23,9 @@ namespace extensions {
 
 class APIPermissionSet;
 class Extension;
-class ExtensionAPI;
 class FeatureProvider;
 class JSONFeatureProviderSource;
-class ManifestPermissionSet;
-class PermissionMessage;
 class PermissionMessageProvider;
-class SimpleFeature;
 class URLPatternSet;
 
 // Sets up global state for the extensions system. Should be Set() once in each
@@ -54,15 +50,13 @@ class ExtensionsClient {
   virtual const std::string GetProductName() = 0;
 
   // Create a FeatureProvider for a specific feature type, e.g. "permission".
-  virtual scoped_ptr<FeatureProvider> CreateFeatureProvider(
+  virtual std::unique_ptr<FeatureProvider> CreateFeatureProvider(
       const std::string& name) const = 0;
 
-  // Create a JSONFeatureProviderSource for a specific feature type,
-  // e.g. "permission". Currently, all features are loaded from
-  // JSONFeatureProviderSources.
-  // This is used primarily in CreateFeatureProvider, above.
-  virtual scoped_ptr<JSONFeatureProviderSource> CreateFeatureProviderSource(
-      const std::string& name) const = 0;
+  // Returns the dictionary of the API features json file.
+  // TODO(devlin): We should find a way to remove this.
+  virtual std::unique_ptr<JSONFeatureProviderSource> CreateAPIFeatureSource()
+      const = 0;
 
   // Takes the list of all hosts and filters out those with special
   // permission strings. Adds the regular hosts to |new_hosts|,
@@ -95,10 +89,6 @@ class ExtensionsClient {
   // Gets the generated API schema named |name|.
   virtual base::StringPiece GetAPISchema(const std::string& name) const = 0;
 
-  // Register non-generated API schema resources with the global ExtensionAPI.
-  // Called when the ExtensionAPI is lazily initialized.
-  virtual void RegisterAPISchemaResources(ExtensionAPI* api) const = 0;
-
   // Determines if certain fatal extensions errors should be surpressed
   // (i.e., only logged) or allowed (i.e., logged before crashing).
   virtual bool ShouldSuppressFatalErrors() const = 0;
@@ -109,10 +99,10 @@ class ExtensionsClient {
   virtual void RecordDidSuppressFatalError() = 0;
 
   // Returns the base webstore URL prefix.
-  virtual std::string GetWebstoreBaseURL() const = 0;
+  virtual const GURL& GetWebstoreBaseURL() const = 0;
 
   // Returns the URL to use for update manifest queries.
-  virtual std::string GetWebstoreUpdateURL() const = 0;
+  virtual const GURL& GetWebstoreUpdateURL() const = 0;
 
   // Returns a flag indicating whether or not a given URL is a valid
   // extension blacklist URL.
@@ -130,6 +120,13 @@ class ExtensionsClient {
   // result.
   virtual std::set<base::FilePath> GetBrowserImagePaths(
       const Extension* extension);
+
+  // Returns whether or not extension APIs are allowed in extension service
+  // workers.
+  // This is currently disallowed as the code to support this is work in
+  // progress.
+  // Can be overridden in tests.
+  virtual bool ExtensionAPIEnabledInExtensionServiceWorkers() const;
 
   // Return the extensions client.
   static ExtensionsClient* Get();

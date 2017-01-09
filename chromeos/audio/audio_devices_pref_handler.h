@@ -5,12 +5,9 @@
 #ifndef CHROMEOS_AUDIO_AUDIO_DEVICES_PREF_HANDLER_H_
 #define CHROMEOS_AUDIO_AUDIO_DEVICES_PREF_HANDLER_H_
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted.h"
 #include "chromeos/audio/audio_pref_observer.h"
 #include "chromeos/chromeos_export.h"
-
-class PrefService;
 
 namespace chromeos {
 
@@ -38,6 +35,20 @@ class CHROMEOS_EXPORT AudioDevicesPrefHandler
   virtual bool GetMuteValue(const AudioDevice& device) = 0;
   // Sets the audio mute value to prefs for a device.
   virtual void SetMuteValue(const AudioDevice& device, bool mute_on) = 0;
+
+  // Sets the device active state in prefs.
+  // Note: |activate_by_user| indicates whether |device| is set to active
+  // by user or by priority, and it only matters when |active| is true.
+  virtual void SetDeviceActive(const AudioDevice& device,
+                               bool active,
+                               bool activate_by_user) = 0;
+  // Returns false if it fails to get device active state from prefs.
+  // Otherwise, returns true, pass the active state data in |*active|
+  // and |*activate_by_user|.
+  // Note: |*activate_by_user| only matters when |*active| is true.
+  virtual bool GetDeviceActive(const AudioDevice& device,
+                               bool* active,
+                               bool* activate_by_user) = 0;
 
   // Reads the audio output allowed value from prefs.
   virtual bool GetAudioOutputAllowedValue() = 0;

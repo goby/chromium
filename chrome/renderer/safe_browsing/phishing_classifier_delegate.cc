@@ -4,18 +4,19 @@
 
 #include "chrome/renderer/safe_browsing/phishing_classifier_delegate.h"
 
+#include <memory>
 #include <set>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/metrics/histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "chrome/common/safe_browsing/csd.pb.h"
-#include "chrome/common/safe_browsing/safebrowsing_messages.h"
 #include "chrome/renderer/safe_browsing/feature_extractor_clock.h"
 #include "chrome/renderer/safe_browsing/phishing_classifier.h"
 #include "chrome/renderer/safe_browsing/scorer.h"
+#include "components/safe_browsing/common/safebrowsing_messages.h"
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/navigation_state.h"
 #include "content/public/renderer/render_frame.h"
@@ -41,7 +42,7 @@ typedef std::set<PhishingClassifierDelegate*> PhishingClassifierDelegates;
 static base::LazyInstance<PhishingClassifierDelegates>
     g_delegates = LAZY_INSTANCE_INITIALIZER;
 
-static base::LazyInstance<scoped_ptr<const safe_browsing::Scorer> >
+static base::LazyInstance<std::unique_ptr<const safe_browsing::Scorer>>
     g_phishing_scorer = LAZY_INSTANCE_INITIALIZER;
 
 // static
@@ -52,7 +53,7 @@ PhishingClassifierFilter* PhishingClassifierFilter::Create() {
 }
 
 PhishingClassifierFilter::PhishingClassifierFilter()
-    : RenderProcessObserver() {}
+    : RenderThreadObserver() {}
 
 PhishingClassifierFilter::~PhishingClassifierFilter() {}
 
@@ -286,6 +287,10 @@ void PhishingClassifierDelegate::MaybeStartClassification() {
       &classifier_page_text_,
       base::Bind(&PhishingClassifierDelegate::ClassificationDone,
                  base::Unretained(this)));
+}
+
+void PhishingClassifierDelegate::OnDestruct() {
+  delete this;
 }
 
 }  // namespace safe_browsing

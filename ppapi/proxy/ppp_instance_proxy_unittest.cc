@@ -2,6 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/synchronization/waitable_event.h"
 #include "ipc/ipc_message_utils.h"
 #include "ppapi/c/pp_var.h"
@@ -19,9 +22,9 @@ namespace ppapi {
 namespace proxy {
 
 namespace {
-// This is a poor man's mock of PPP_Instance using global variables.  Eventually
-// we should generalize making PPAPI interface mocks by using IDL or macro/
-// template magic.
+
+// This is an ad-hoc mock of PPP_Instance using global variables. Eventually,
+// generalize making PPAPI interface mocks by using IDL or macro/template magic.
 PP_Instance received_instance;
 uint32_t received_argc;
 std::vector<std::string> received_argn;
@@ -46,7 +49,9 @@ PP_Rect received_position;
 PP_Rect received_clip;
 // DidChangeView is asynchronous. We wait until the call has completed before
 // proceeding on to the next test.
-base::WaitableEvent did_change_view_called(false, false);
+base::WaitableEvent did_change_view_called(
+    base::WaitableEvent::ResetPolicy::AUTOMATIC,
+    base::WaitableEvent::InitialState::NOT_SIGNALED);
 void DidChangeView(PP_Instance instance, const PP_Rect* position,
                    const PP_Rect* clip) {
   received_instance = instance;
@@ -56,7 +61,9 @@ void DidChangeView(PP_Instance instance, const PP_Rect* position,
 }
 
 PP_Bool received_has_focus;
-base::WaitableEvent did_change_focus_called(false, false);
+base::WaitableEvent did_change_focus_called(
+    base::WaitableEvent::ResetPolicy::AUTOMATIC,
+    base::WaitableEvent::InitialState::NOT_SIGNALED);
 void DidChangeFocus(PP_Instance instance, PP_Bool has_focus) {
   received_instance = instance;
   received_has_focus = has_focus;

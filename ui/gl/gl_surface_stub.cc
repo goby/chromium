@@ -4,9 +4,15 @@
 
 #include "ui/gl/gl_surface_stub.h"
 
-namespace gfx {
+namespace gl {
 
 void GLSurfaceStub::Destroy() {
+}
+
+bool GLSurfaceStub::Resize(const gfx::Size& size,
+                           float scale_factor,
+                           bool has_alpha) {
+  return true;
 }
 
 bool GLSurfaceStub::IsOffscreen() {
@@ -25,6 +31,10 @@ void* GLSurfaceStub::GetHandle() {
   return NULL;
 }
 
+bool GLSurfaceStub::BuffersFlipped() const {
+  return buffers_flipped_;
+}
+
 GLSurfaceStub::~GLSurfaceStub() {}
 
-}  // namespace gfx
+}  // namespace gl

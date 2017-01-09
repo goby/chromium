@@ -5,6 +5,7 @@
 #ifndef CRYPTO_MOCK_KEYCHAIN_MAC_H_
 #define CRYPTO_MOCK_KEYCHAIN_MAC_H_
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <map>
@@ -208,7 +209,7 @@ class CRYPTO_EXPORT MockAppleKeychain : public AppleKeychain {
   bool locked_;
 
   typedef struct KeychainPasswordData {
-    KeychainPasswordData() : data(NULL), length(0) {}
+    KeychainPasswordData() : data(nullptr), length(0) {}
     void* data;
     UInt32 length;
   } KeychainPasswordData;

@@ -5,10 +5,14 @@
 #ifndef CONTENT_RENDERER_SHARED_MEMORY_SEQLOCK_READER_H_
 #define CONTENT_RENDERER_SHARED_MEMORY_SEQLOCK_READER_H_
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/shared_memory.h"
-#include "content/common/shared_memory_seqlock_buffer.h"
+#include "device/base/synchronization/shared_memory_seqlock_buffer.h"
 
 namespace content {
 namespace internal {
@@ -22,12 +26,15 @@ class SharedMemorySeqLockReaderBase  {
       base::SharedMemoryHandle shared_memory_handle,
       size_t buffer_size);
 
-  bool FetchFromBuffer(content::OneWriterSeqLock* seqlock, void* final,
-      void* temp, void* from, size_t size);
+  bool FetchFromBuffer(device::OneWriterSeqLock* seqlock,
+                       void* final,
+                       void* temp,
+                       void* from,
+                       size_t size);
 
   static const int kMaximumContentionCount = 10;
   base::SharedMemoryHandle renderer_shared_memory_handle_;
-  scoped_ptr<base::SharedMemory> renderer_shared_memory_;
+  std::unique_ptr<base::SharedMemory> renderer_shared_memory_;
 };
 
 }  // namespace internal
@@ -50,8 +57,9 @@ class SharedMemorySeqLockReader
 
   bool Initialize(base::SharedMemoryHandle shared_memory_handle) {
     if (void* memory = InitializeSharedMemory(
-        shared_memory_handle, sizeof(SharedMemorySeqLockBuffer<Data>))) {
-      buffer_ = static_cast<SharedMemorySeqLockBuffer<Data>*>(memory);
+            shared_memory_handle,
+            sizeof(device::SharedMemorySeqLockBuffer<Data>))) {
+      buffer_ = static_cast<device::SharedMemorySeqLockBuffer<Data>*>(memory);
       temp_buffer_.reset(new Data);
       return true;
     }
@@ -59,8 +67,8 @@ class SharedMemorySeqLockReader
   }
 
  private:
-  SharedMemorySeqLockBuffer<Data>* buffer_;
-  scoped_ptr<Data> temp_buffer_;
+  device::SharedMemorySeqLockBuffer<Data>* buffer_;
+  std::unique_ptr<Data> temp_buffer_;
 
   DISALLOW_COPY_AND_ASSIGN(SharedMemorySeqLockReader);
 };

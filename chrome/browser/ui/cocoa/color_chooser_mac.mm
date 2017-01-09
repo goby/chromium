@@ -74,7 +74,7 @@ ColorChooserMac::ColorChooserMac(content::WebContents* web_contents,
                                  SkColor initial_color)
     : web_contents_(web_contents) {
   panel_.reset([[ColorPanelCocoa alloc] initWithChooser:this]);
-  [panel_ setColor:gfx::SkColorToDeviceNSColor(initial_color)];
+  [panel_ setColor:skia::SkColorToDeviceNSColor(initial_color)];
   [[NSColorPanel sharedColorPanel] makeKeyAndOrderFront:nil];
 }
 
@@ -101,7 +101,7 @@ void ColorChooserMac::End() {
 }
 
 void ColorChooserMac::SetSelectedColor(SkColor color) {
-  [panel_ setColor:gfx::SkColorToDeviceNSColor(color)];
+  [panel_ setColor:skia::SkColorToDeviceNSColor(color)];
 }
 
 @implementation ColorPanelCocoa
@@ -139,9 +139,30 @@ void ColorChooserMac::SetSelectedColor(SkColor color) {
     nonUserChange_ = NO;
     return;
   }
-  chooser_->DidChooseColorInColorPanel(gfx::NSDeviceColorToSkColor(
-      [[panel color] colorUsingColorSpaceName:NSDeviceRGBColorSpace]));
   nonUserChange_ = NO;
+  NSColor* color = [panel color];
+  if ([[color colorSpaceName] isEqualToString:NSNamedColorSpace]) {
+    color = [color colorUsingColorSpace:[NSColorSpace genericRGBColorSpace]];
+    // Some colors in "Developer" palette in "Color Palettes" tab can't be
+    // converted to RGB. We just ignore such colors.
+    // TODO(tkent): We should notice the rejection to users.
+    if (!color)
+      return;
+  }
+  if ([color colorSpace] == [NSColorSpace genericRGBColorSpace]) {
+    // genericRGB -> deviceRGB conversion isn't ignorable.  We'd like to use RGB
+    // values shown in NSColorPanel UI.
+    CGFloat red, green, blue, alpha;
+    [color getRed:&red green:&green blue:&blue alpha:&alpha];
+    SkColor skColor = SkColorSetARGB(SkScalarRoundToInt(255.0 * alpha),
+                                     SkScalarRoundToInt(255.0 * red),
+                                     SkScalarRoundToInt(255.0 * green),
+                                     SkScalarRoundToInt(255.0 * blue));
+    chooser_->DidChooseColorInColorPanel(skColor);
+  } else {
+    chooser_->DidChooseColorInColorPanel(skia::NSDeviceColorToSkColor(
+        [[panel color] colorUsingColorSpaceName:NSDeviceRGBColorSpace]));
+  }
 }
 
 - (void)setColor:(NSColor*)color {

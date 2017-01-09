@@ -5,10 +5,13 @@
 #ifndef CHROME_BROWSER_ANDROID_HISTORY_REPORT_USAGE_REPORTS_BUFFER_SERVICE_H_
 #define CHROME_BROWSER_ANDROID_HISTORY_REPORT_USAGE_REPORTS_BUFFER_SERVICE_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/threading/sequenced_worker_pool.h"
 
 namespace base {
@@ -32,10 +35,13 @@ class UsageReportsBufferService {
   void Init();
 
   // Add report about page visit to the buffer. It's asynchronous.
-  void AddVisit(const std::string& id, int64 timestamp_ms, bool typed_visit);
+  virtual void AddVisit(const std::string& id,
+                        int64_t timestamp_ms,
+                        bool typed_visit);
 
   // Get a batch of usage reports of size up to |batch_size|. It's synchronous.
-  scoped_ptr<std::vector<UsageReport> > GetUsageReportsBatch(int32 batch_size);
+  std::unique_ptr<std::vector<UsageReport>> GetUsageReportsBatch(
+      int32_t batch_size);
 
   // Remove given usage reports from buffer. It's synchronous.
   void Remove(const std::vector<std::string>& report_ids);
@@ -50,7 +56,7 @@ class UsageReportsBufferService {
   // Token used to serialize buffer operations.
   base::SequencedWorkerPool::SequenceToken worker_pool_token_;
   // Non thread safe backend.
-  scoped_ptr<UsageReportsBufferBackend> backend_;
+  std::unique_ptr<UsageReportsBufferBackend> backend_;
 
   DISALLOW_COPY_AND_ASSIGN(UsageReportsBufferService);
 };

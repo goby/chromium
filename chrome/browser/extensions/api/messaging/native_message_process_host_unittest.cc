@@ -4,6 +4,12 @@
 
 #include "chrome/browser/extensions/api/messaging/native_message_process_host.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
@@ -11,7 +17,6 @@
 #include "base/files/scoped_file.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/json/json_reader.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -20,14 +25,19 @@
 #include "base/threading/platform_thread.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/messaging/native_messaging_test_util.h"
 #include "chrome/browser/extensions/api/messaging/native_process_launcher.h"
-#include "chrome/common/extensions/features/feature_channel.h"
 #include "components/version_info/version_info.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "extensions/common/extension.h"
+#include "extensions/common/features/feature_channel.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_POSIX)
+#include "base/files/file_descriptor_watcher_posix.h"
+#endif
 
 #if defined(OS_WIN)
 #include <windows.h>
@@ -49,24 +59,23 @@ namespace extensions {
 class FakeLauncher : public NativeProcessLauncher {
  public:
   FakeLauncher(base::File read_file, base::File write_file)
-      : read_file_(read_file.Pass()),
-        write_file_(write_file.Pass()) {
-  }
+      : read_file_(std::move(read_file)), write_file_(std::move(write_file)) {}
 
-  static scoped_ptr<NativeProcessLauncher> Create(base::FilePath read_file,
-                                                  base::FilePath write_file) {
+  static std::unique_ptr<NativeProcessLauncher> Create(
+      base::FilePath read_file,
+      base::FilePath write_file) {
     int read_flags = base::File::FLAG_OPEN | base::File::FLAG_READ;
     int write_flags = base::File::FLAG_CREATE | base::File::FLAG_WRITE;
 #if !defined(OS_POSIX)
     read_flags |= base::File::FLAG_ASYNC;
     write_flags |= base::File::FLAG_ASYNC;
 #endif
-    return scoped_ptr<NativeProcessLauncher>(new FakeLauncher(
-        base::File(read_file, read_flags),
-        base::File(write_file, write_flags)));
+    return std::unique_ptr<NativeProcessLauncher>(
+        new FakeLauncher(base::File(read_file, read_flags),
+                         base::File(write_file, write_flags)));
   }
 
-  static scoped_ptr<NativeProcessLauncher> CreateWithPipeInput(
+  static std::unique_ptr<NativeProcessLauncher> CreateWithPipeInput(
       base::File read_pipe,
       base::FilePath write_file) {
     int write_flags = base::File::FLAG_CREATE | base::File::FLAG_WRITE;
@@ -74,16 +83,15 @@ class FakeLauncher : public NativeProcessLauncher {
     write_flags |= base::File::FLAG_ASYNC;
 #endif
 
-    return scoped_ptr<NativeProcessLauncher>(new FakeLauncher(
-        read_pipe.Pass(),
-        base::File(write_file, write_flags)));
+    return std::unique_ptr<NativeProcessLauncher>(new FakeLauncher(
+        std::move(read_pipe), base::File(write_file, write_flags)));
   }
 
   void Launch(const GURL& origin,
               const std::string& native_host_name,
               const LaunchedCallback& callback) const override {
-    callback.Run(NativeProcessLauncher::RESULT_SUCCESS,
-                 base::Process(), read_file_.Pass(), write_file_.Pass());
+    callback.Run(NativeProcessLauncher::RESULT_SUCCESS, base::Process(),
+                 std::move(read_file_), std::move(write_file_));
   }
 
  private:
@@ -98,6 +106,9 @@ class NativeMessagingTest : public ::testing::Test,
   NativeMessagingTest()
       : current_channel_(version_info::Channel::DEV),
         thread_bundle_(content::TestBrowserThreadBundle::IO_MAINLOOP),
+#if defined(OS_POSIX)
+        file_descriptor_watcher_(base::MessageLoopForIO::current()),
+#endif
         channel_closed_(false) {}
 
   void SetUp() override { ASSERT_TRUE(temp_dir_.CreateUniqueTempDir()); }
@@ -114,10 +125,10 @@ class NativeMessagingTest : public ::testing::Test,
     last_message_ = message;
 
     // Parse the message.
-    scoped_ptr<base::DictionaryValue> dict_value =
+    std::unique_ptr<base::DictionaryValue> dict_value =
         base::DictionaryValue::From(base::JSONReader::Read(message));
     if (dict_value) {
-      last_message_parsed_ = dict_value.Pass();
+      last_message_parsed_ = std::move(dict_value);
     } else {
       LOG(ERROR) << "Failed to parse " << message;
       last_message_parsed_.reset();
@@ -141,7 +152,7 @@ class NativeMessagingTest : public ::testing::Test,
 
   base::FilePath CreateTempFileWithMessage(const std::string& message) {
     base::FilePath filename;
-    if (!base::CreateTemporaryFileInDir(temp_dir_.path(), &filename))
+    if (!base::CreateTemporaryFileInDir(temp_dir_.GetPath(), &filename))
       return base::FilePath();
 
     std::string message_with_header = FormatMessage(message);
@@ -157,26 +168,30 @@ class NativeMessagingTest : public ::testing::Test,
   base::ScopedTempDir temp_dir_;
   // Force the channel to be dev.
   ScopedCurrentChannel current_channel_;
-  scoped_ptr<NativeMessageHost> native_message_host_;
-  scoped_ptr<base::RunLoop> run_loop_;
+  std::unique_ptr<NativeMessageHost> native_message_host_;
+  std::unique_ptr<base::RunLoop> run_loop_;
   content::TestBrowserThreadBundle thread_bundle_;
+#if defined(OS_POSIX)
+  // Required to watch a file descriptor from NativeMessageProcessHost.
+  base::FileDescriptorWatcher file_descriptor_watcher_;
+#endif
+
   std::string last_message_;
-  scoped_ptr<base::DictionaryValue> last_message_parsed_;
+  std::unique_ptr<base::DictionaryValue> last_message_parsed_;
   bool channel_closed_;
 };
 
 // Read a single message from a local file.
 TEST_F(NativeMessagingTest, SingleSendMessageRead) {
-  base::FilePath temp_output_file = temp_dir_.path().AppendASCII("output");
+  base::FilePath temp_output_file = temp_dir_.GetPath().AppendASCII("output");
   base::FilePath temp_input_file = CreateTempFileWithMessage(kTestMessage);
   ASSERT_FALSE(temp_input_file.empty());
 
-  scoped_ptr<NativeProcessLauncher> launcher =
-      FakeLauncher::Create(temp_input_file, temp_output_file).Pass();
+  std::unique_ptr<NativeProcessLauncher> launcher =
+      FakeLauncher::Create(temp_input_file, temp_output_file);
   native_message_host_ = NativeMessageProcessHost::CreateWithLauncher(
-      ScopedTestNativeMessagingHost::kExtensionId,
-      "empty_app.py",
-      launcher.Pass());
+      ScopedTestNativeMessagingHost::kExtensionId, "empty_app.py",
+      std::move(launcher));
   native_message_host_->Start(this);
   ASSERT_TRUE(native_message_host_.get());
   run_loop_.reset(new base::RunLoop());
@@ -184,7 +199,7 @@ TEST_F(NativeMessagingTest, SingleSendMessageRead) {
 
   if (last_message_.empty()) {
     run_loop_.reset(new base::RunLoop());
-    scoped_ptr<NativeMessageProcessHost> native_message_process_host_(
+    std::unique_ptr<NativeMessageProcessHost> native_message_process_host_(
         static_cast<NativeMessageProcessHost*>(native_message_host_.release()));
     native_message_process_host_->ReadNowForTesting();
     run_loop_->Run();
@@ -195,7 +210,7 @@ TEST_F(NativeMessagingTest, SingleSendMessageRead) {
 // Tests sending a single message. The message should get written to
 // |temp_file| and should match the contents of single_message_request.msg.
 TEST_F(NativeMessagingTest, SingleSendMessageWrite) {
-  base::FilePath temp_output_file = temp_dir_.path().AppendASCII("output");
+  base::FilePath temp_output_file = temp_dir_.GetPath().AppendASCII("output");
 
   base::File read_file;
 #if defined(OS_WIN)
@@ -212,7 +227,7 @@ TEST_F(NativeMessagingTest, SingleSendMessageWrite) {
                   FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, NULL));
   ASSERT_TRUE(read_handle.IsValid());
 
-  read_file = read_handle.Pass();
+  read_file = std::move(read_handle);
 #else  // defined(OS_WIN)
   base::PlatformFile pipe_handles[2];
   ASSERT_EQ(0, pipe(pipe_handles));
@@ -220,13 +235,11 @@ TEST_F(NativeMessagingTest, SingleSendMessageWrite) {
   base::File write_file(pipe_handles[1]);
 #endif  // !defined(OS_WIN)
 
-  scoped_ptr<NativeProcessLauncher> launcher =
-      FakeLauncher::CreateWithPipeInput(read_file.Pass(),
-                                        temp_output_file).Pass();
+  std::unique_ptr<NativeProcessLauncher> launcher =
+      FakeLauncher::CreateWithPipeInput(std::move(read_file), temp_output_file);
   native_message_host_ = NativeMessageProcessHost::CreateWithLauncher(
-      ScopedTestNativeMessagingHost::kExtensionId,
-      "empty_app.py",
-      launcher.Pass());
+      ScopedTestNativeMessagingHost::kExtensionId, "empty_app.py",
+      std::move(launcher));
   native_message_host_->Start(this);
   ASSERT_TRUE(native_message_host_.get());
   base::RunLoop().RunUntilIdle();

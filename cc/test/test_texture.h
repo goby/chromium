@@ -5,9 +5,13 @@
 #ifndef CC_TEST_TEST_TEXTURE_H_
 #define CC_TEST_TEST_TEXTURE_H_
 
-#include "base/containers/hash_tables.h"
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+#include <unordered_map>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "cc/resources/resource_format.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/gfx/geometry/size.h"
@@ -24,10 +28,9 @@ struct TestTexture : public base::RefCounted<TestTexture> {
 
   gfx::Size size;
   ResourceFormat format;
-  scoped_ptr<uint8_t[]> data;
+  std::unique_ptr<uint8_t[]> data;
 
-  typedef base::hash_map<GLenum, GLint>
-      TextureParametersMap;
+  using TextureParametersMap = std::unordered_map<GLenum, GLint>;
   TextureParametersMap params;
 
  private:

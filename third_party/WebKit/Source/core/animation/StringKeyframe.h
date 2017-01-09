@@ -14,103 +14,176 @@ namespace blink {
 
 class StyleSheetContents;
 
+// A specialization of Keyframe that associates user specified keyframe
+// properties with either CSS properties or SVG attributes.
 class StringKeyframe : public Keyframe {
-public:
-    static PassRefPtr<StringKeyframe> create()
-    {
-        return adoptRef(new StringKeyframe);
+ public:
+  static PassRefPtr<StringKeyframe> create() {
+    return adoptRef(new StringKeyframe);
+  }
+
+  MutableStylePropertySet::SetResult setCSSPropertyValue(
+      const AtomicString& propertyName,
+      const String& value,
+      StyleSheetContents*);
+  MutableStylePropertySet::SetResult setCSSPropertyValue(CSSPropertyID,
+                                                         const String& value,
+                                                         StyleSheetContents*);
+  void setCSSPropertyValue(CSSPropertyID, const CSSValue&);
+  void setPresentationAttributeValue(CSSPropertyID,
+                                     const String& value,
+                                     StyleSheetContents*);
+  void setSVGAttributeValue(const QualifiedName&, const String& value);
+
+  const CSSValue& cssPropertyValue(const PropertyHandle& property) const {
+    int index = -1;
+    if (property.isCSSCustomProperty())
+      index =
+          m_cssPropertyMap->findPropertyIndex(property.customPropertyName());
+    else
+      index = m_cssPropertyMap->findPropertyIndex(property.cssProperty());
+    CHECK_GE(index, 0);
+    return m_cssPropertyMap->propertyAt(static_cast<unsigned>(index)).value();
+  }
+
+  const CSSValue& presentationAttributeValue(CSSPropertyID property) const {
+    int index = m_presentationAttributeMap->findPropertyIndex(property);
+    CHECK_GE(index, 0);
+    return m_presentationAttributeMap->propertyAt(static_cast<unsigned>(index))
+        .value();
+  }
+
+  String svgPropertyValue(const QualifiedName& attributeName) const {
+    return m_svgAttributeMap.get(&attributeName);
+  }
+
+  PropertyHandleSet properties() const override;
+
+  class CSSPropertySpecificKeyframe
+      : public Keyframe::PropertySpecificKeyframe {
+   public:
+    static PassRefPtr<CSSPropertySpecificKeyframe> create(
+        double offset,
+        PassRefPtr<TimingFunction> easing,
+        const CSSValue* value,
+        EffectModel::CompositeOperation composite) {
+      return adoptRef(new CSSPropertySpecificKeyframe(offset, std::move(easing),
+                                                      value, composite));
     }
 
-    void setPropertyValue(CSSPropertyID, const String& value, Element*, StyleSheetContents*);
-    void setPropertyValue(CSSPropertyID, PassRefPtrWillBeRawPtr<CSSValue>);
-    void setPropertyValue(const QualifiedName&, const String& value, Element*);
-    CSSValue* cssPropertyValue(CSSPropertyID property) const
-    {
-        int index = m_propertySet->findPropertyIndex(property);
-        RELEASE_ASSERT(index >= 0);
-        return m_propertySet->propertyAt(static_cast<unsigned>(index)).value();
-    }
-    String svgPropertyValue(const QualifiedName& attributeName) const
-    {
-        return m_svgPropertyMap.get(&attributeName);
+    const CSSValue* value() const { return m_value.get(); }
+
+    bool populateAnimatableValue(CSSPropertyID,
+                                 Element&,
+                                 const ComputedStyle& baseStyle,
+                                 const ComputedStyle* parentStyle) const final;
+    PassRefPtr<AnimatableValue> getAnimatableValue() const final {
+      return m_animatableValueCache.get();
     }
 
-    PropertyHandleSet properties() const override;
+    bool isNeutral() const final { return !m_value; }
+    PassRefPtr<Keyframe::PropertySpecificKeyframe> neutralKeyframe(
+        double offset,
+        PassRefPtr<TimingFunction> easing) const final;
 
-    class CSSPropertySpecificKeyframe : public Keyframe::PropertySpecificKeyframe {
-    public:
-        CSSPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, CSSValue*, EffectModel::CompositeOperation);
+   private:
+    CSSPropertySpecificKeyframe(double offset,
+                                PassRefPtr<TimingFunction> easing,
+                                const CSSValue* value,
+                                EffectModel::CompositeOperation composite)
+        : Keyframe::PropertySpecificKeyframe(offset,
+                                             std::move(easing),
+                                             composite),
+          m_value(const_cast<CSSValue*>(value)) {}
 
-        CSSValue* value() const { return m_value.get(); }
+    virtual PassRefPtr<Keyframe::PropertySpecificKeyframe> cloneWithOffset(
+        double offset) const;
+    bool isCSSPropertySpecificKeyframe() const override { return true; }
 
-        virtual bool populateAnimatableValue(CSSPropertyID, Element&, const ComputedStyle* baseStyle, bool force) const;
-        const PassRefPtr<AnimatableValue> getAnimatableValue() const final { return m_animatableValueCache.get(); }
-        void setAnimatableValue(PassRefPtr<AnimatableValue> value) { m_animatableValueCache = value; }
+    // TODO(sashab): Make this a const CSSValue.
+    Persistent<CSSValue> m_value;
+    mutable RefPtr<AnimatableValue> m_animatableValueCache;
+  };
 
-        bool isNeutral() const final { return !m_value; }
-        PassOwnPtr<Keyframe::PropertySpecificKeyframe> neutralKeyframe(double offset, PassRefPtr<TimingFunction> easing) const final;
-        PassRefPtr<Interpolation> maybeCreateInterpolation(PropertyHandle, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const final;
+  class SVGPropertySpecificKeyframe
+      : public Keyframe::PropertySpecificKeyframe {
+   public:
+    static PassRefPtr<SVGPropertySpecificKeyframe> create(
+        double offset,
+        PassRefPtr<TimingFunction> easing,
+        const String& value,
+        EffectModel::CompositeOperation composite) {
+      return adoptRef(new SVGPropertySpecificKeyframe(offset, std::move(easing),
+                                                      value, composite));
+    }
 
-    private:
-        CSSPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, CSSValue*);
+    const String& value() const { return m_value; }
 
-        virtual PassOwnPtr<Keyframe::PropertySpecificKeyframe> cloneWithOffset(double offset) const;
-        bool isCSSPropertySpecificKeyframe() const override { return true; }
+    PassRefPtr<PropertySpecificKeyframe> cloneWithOffset(
+        double offset) const final;
 
-        PassRefPtr<Interpolation> createLegacyStyleInterpolation(CSSPropertyID, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const;
-        static bool createInterpolationsFromCSSValues(CSSPropertyID, CSSValue* fromCSSValue, CSSValue* toCSSValue, Element*, OwnPtr<Vector<RefPtr<Interpolation>>>& interpolations);
+    PassRefPtr<AnimatableValue> getAnimatableValue() const final {
+      return nullptr;
+    }
 
-        void populateAnimatableValueCaches(CSSPropertyID, Keyframe::PropertySpecificKeyframe&, Element*, CSSValue& fromCSSValue, CSSValue& toCSSValue) const;
+    bool isNeutral() const final { return m_value.isNull(); }
+    PassRefPtr<PropertySpecificKeyframe> neutralKeyframe(
+        double offset,
+        PassRefPtr<TimingFunction> easing) const final;
 
-        RefPtrWillBePersistent<CSSValue> m_value;
-        mutable RefPtr<AnimatableValue> m_animatableValueCache;
-    };
+   private:
+    SVGPropertySpecificKeyframe(double offset,
+                                PassRefPtr<TimingFunction> easing,
+                                const String& value,
+                                EffectModel::CompositeOperation composite)
+        : Keyframe::PropertySpecificKeyframe(offset,
+                                             std::move(easing),
+                                             composite),
+          m_value(value) {}
 
-    class SVGPropertySpecificKeyframe : public Keyframe::PropertySpecificKeyframe {
-    public:
-        SVGPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, const String&, EffectModel::CompositeOperation);
+    bool isSVGPropertySpecificKeyframe() const override { return true; }
 
-        const String& value() const { return m_value; }
+    String m_value;
+  };
 
-        PassOwnPtr<PropertySpecificKeyframe> cloneWithOffset(double offset) const final;
+ private:
+  StringKeyframe()
+      : m_cssPropertyMap(MutableStylePropertySet::create(HTMLStandardMode)),
+        m_presentationAttributeMap(
+            MutableStylePropertySet::create(HTMLStandardMode)) {}
 
-        const PassRefPtr<AnimatableValue> getAnimatableValue() const final { return nullptr; }
+  StringKeyframe(const StringKeyframe& copyFrom);
 
-        bool isNeutral() const final { return m_value.isNull(); }
-        PassOwnPtr<PropertySpecificKeyframe> neutralKeyframe(double offset, PassRefPtr<TimingFunction> easing) const final;
-        PassRefPtr<Interpolation> maybeCreateInterpolation(PropertyHandle, Keyframe::PropertySpecificKeyframe& end, Element*, const ComputedStyle* baseStyle) const final;
+  PassRefPtr<Keyframe> clone() const override;
+  PassRefPtr<Keyframe::PropertySpecificKeyframe> createPropertySpecificKeyframe(
+      PropertyHandle) const override;
 
-    private:
-        SVGPropertySpecificKeyframe(double offset, PassRefPtr<TimingFunction> easing, const String&);
+  bool isStringKeyframe() const override { return true; }
 
-        bool isSVGPropertySpecificKeyframe() const override { return true; }
-
-        String m_value;
-    };
-
-private:
-    StringKeyframe()
-        : m_propertySet(MutableStylePropertySet::create(HTMLStandardMode))
-    { }
-
-    StringKeyframe(const StringKeyframe& copyFrom);
-
-    PassRefPtr<Keyframe> clone() const override;
-    PassOwnPtr<Keyframe::PropertySpecificKeyframe> createPropertySpecificKeyframe(PropertyHandle) const override;
-
-    bool isStringKeyframe() const override { return true; }
-
-    RefPtrWillBePersistent<MutableStylePropertySet> m_propertySet;
-    HashMap<const QualifiedName*, String> m_svgPropertyMap;
+  Persistent<MutableStylePropertySet> m_cssPropertyMap;
+  Persistent<MutableStylePropertySet> m_presentationAttributeMap;
+  HashMap<const QualifiedName*, String> m_svgAttributeMap;
 };
 
 using CSSPropertySpecificKeyframe = StringKeyframe::CSSPropertySpecificKeyframe;
 using SVGPropertySpecificKeyframe = StringKeyframe::SVGPropertySpecificKeyframe;
 
-DEFINE_TYPE_CASTS(StringKeyframe, Keyframe, value, value->isStringKeyframe(), value.isStringKeyframe());
-DEFINE_TYPE_CASTS(CSSPropertySpecificKeyframe, Keyframe::PropertySpecificKeyframe, value, value->isCSSPropertySpecificKeyframe(), value.isCSSPropertySpecificKeyframe());
-DEFINE_TYPE_CASTS(SVGPropertySpecificKeyframe, Keyframe::PropertySpecificKeyframe, value, value->isSVGPropertySpecificKeyframe(), value.isSVGPropertySpecificKeyframe());
+DEFINE_TYPE_CASTS(StringKeyframe,
+                  Keyframe,
+                  value,
+                  value->isStringKeyframe(),
+                  value.isStringKeyframe());
+DEFINE_TYPE_CASTS(CSSPropertySpecificKeyframe,
+                  Keyframe::PropertySpecificKeyframe,
+                  value,
+                  value->isCSSPropertySpecificKeyframe(),
+                  value.isCSSPropertySpecificKeyframe());
+DEFINE_TYPE_CASTS(SVGPropertySpecificKeyframe,
+                  Keyframe::PropertySpecificKeyframe,
+                  value,
+                  value->isSVGPropertySpecificKeyframe(),
+                  value.isSVGPropertySpecificKeyframe());
 
-}
+}  // namespace blink
 
 #endif

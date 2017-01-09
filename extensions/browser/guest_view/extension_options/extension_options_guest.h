@@ -5,14 +5,12 @@
 #ifndef EXTENSIONS_BROWSER_GUEST_VIEW_EXTENSION_OPTIONS_EXTENSION_OPTIONS_GUEST_H_
 #define EXTENSIONS_BROWSER_GUEST_VIEW_EXTENSION_OPTIONS_EXTENSION_OPTIONS_GUEST_H_
 
+#include <stdint.h>
+
 #include "base/macros.h"
 #include "components/guest_view/browser/guest_view.h"
 #include "extensions/browser/guest_view/extension_options/extension_options_guest_delegate.h"
 #include "url/gurl.h"
-
-namespace content {
-class BrowserContext;
-}
 
 namespace extensions {
 
@@ -47,10 +45,12 @@ class ExtensionOptionsGuest
   bool HandleContextMenu(const content::ContextMenuParams& params) final;
   bool ShouldCreateWebContents(
       content::WebContents* web_contents,
+      content::SiteInstance* source_site_instance,
       int32_t route_id,
       int32_t main_frame_route_id,
       int32_t main_frame_widget_route_id,
       WindowContainerType window_container_type,
+      const GURL& opener_url,
       const std::string& frame_name,
       const GURL& target_url,
       const std::string& partition_id,
@@ -60,7 +60,7 @@ class ExtensionOptionsGuest
   void DidNavigateMainFrame(const content::LoadCommittedDetails& details,
                             const content::FrameNavigateParams& params) final;
 
-  scoped_ptr<extensions::ExtensionOptionsGuestDelegate>
+  std::unique_ptr<extensions::ExtensionOptionsGuestDelegate>
       extension_options_guest_delegate_;
   GURL options_page_;
 

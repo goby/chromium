@@ -4,6 +4,8 @@
 
 #include "storage/browser/fileapi/file_system_file_stream_reader.h"
 
+#include <stdint.h>
+
 #include "base/files/file_util_proxy.h"
 #include "base/single_thread_task_runner.h"
 #include "net/base/file_stream.h"
@@ -21,7 +23,7 @@ namespace storage {
 FileStreamReader* FileStreamReader::CreateForFileSystemFile(
     storage::FileSystemContext* file_system_context,
     const storage::FileSystemURL& url,
-    int64 initial_offset,
+    int64_t initial_offset,
     const base::Time& expected_modification_time) {
   return new storage::FileSystemFileStreamReader(
       file_system_context, url, initial_offset, expected_modification_time);
@@ -67,13 +69,12 @@ int FileSystemFileStreamReader::Read(
     const net::CompletionCallback& callback) {
   if (local_file_reader_)
     return local_file_reader_->Read(buf, buf_len, callback);
-  return CreateSnapshot(
-      base::Bind(&ReadAdapter, weak_factory_.GetWeakPtr(),
-                 make_scoped_refptr(buf), buf_len, callback),
-      callback);
+  return CreateSnapshot(base::Bind(&ReadAdapter, weak_factory_.GetWeakPtr(),
+                                   base::RetainedRef(buf), buf_len, callback),
+                        callback);
 }
 
-int64 FileSystemFileStreamReader::GetLength(
+int64_t FileSystemFileStreamReader::GetLength(
     const net::Int64CompletionCallback& callback) {
   if (local_file_reader_)
     return local_file_reader_->GetLength(callback);
@@ -85,15 +86,14 @@ int64 FileSystemFileStreamReader::GetLength(
 FileSystemFileStreamReader::FileSystemFileStreamReader(
     FileSystemContext* file_system_context,
     const FileSystemURL& url,
-    int64 initial_offset,
+    int64_t initial_offset,
     const base::Time& expected_modification_time)
     : file_system_context_(file_system_context),
       url_(url),
       initial_offset_(initial_offset),
       expected_modification_time_(expected_modification_time),
       has_pending_create_snapshot_(false),
-      weak_factory_(this) {
-}
+      weak_factory_(this) {}
 
 int FileSystemFileStreamReader::CreateSnapshot(
     const base::Closure& callback,

@@ -5,8 +5,10 @@
 #ifndef CHROME_BROWSER_MEDIA_ROUTER_PRESENTATION_MEDIA_SINKS_OBSERVER_H_
 #define CHROME_BROWSER_MEDIA_ROUTER_PRESENTATION_MEDIA_SINKS_OBSERVER_H_
 
+#include <memory>
+#include <vector>
+
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "chrome/browser/media/router/media_sinks_observer.h"
 #include "content/public/browser/presentation_service_delegate.h"
 
@@ -27,11 +29,13 @@ class PresentationMediaSinksObserver : public MediaSinksObserver {
   // |router|: Media router that publishes sink query results.
   // |listener|: Notified when sinks availability changes.
   // |source|: Filters available sink.
+  // |origin|: Origin of request.
   // Does not take ownership of |listener| or |router|.
   PresentationMediaSinksObserver(
       MediaRouter* router,
       content::PresentationScreenAvailabilityListener* listener,
-      const MediaSource& source);
+      const MediaSource& source,
+      const GURL& origin);
   ~PresentationMediaSinksObserver() override;
 
   // MediaSinksObserver implementation.

@@ -4,9 +4,10 @@
 
 #include "ui/events/platform/x11/x11_hotplug_event_handler.h"
 
-#include <X11/Xatom.h>
+#include <stdint.h>
 #include <X11/extensions/XInput.h>
 #include <X11/extensions/XInput2.h>
+#include <X11/Xatom.h>
 
 #include <algorithm>
 #include <cmath>
@@ -22,13 +23,12 @@
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_util.h"
 #include "base/sys_info.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/threading/worker_pool.h"
 #include "ui/events/devices/device_data_manager.h"
 #include "ui/events/devices/device_hotplug_event_observer.h"
 #include "ui/events/devices/device_util_linux.h"
 #include "ui/events/devices/input_device.h"
-#include "ui/events/devices/keyboard_device.h"
 #include "ui/events/devices/touchscreen_device.h"
 #include "ui/gfx/x/x11_types.h"
 
@@ -69,7 +69,7 @@ enum DeviceType {
   DEVICE_TYPE_OTHER
 };
 
-typedef base::Callback<void(const std::vector<KeyboardDevice>&)>
+typedef base::Callback<void(const std::vector<InputDevice>&)>
     KeyboardDeviceCallback;
 
 typedef base::Callback<void(const std::vector<TouchscreenDevice>&)>
@@ -215,7 +215,11 @@ base::FilePath GetDevicePath(XDisplay* dpy, const XIDeviceInfo& device) {
   unsigned long nitems, bytes_after;
   unsigned char* data;
   XDevice* dev = XOpenDevice(dpy, device.deviceid);
-  if (!dev)
+
+  // Sometimes XOpenDevice() doesn't return null but the contents aren't valid.
+  // Calling XGetDeviceProperty() when dev->device_id is invalid triggers a
+  // BadDevice error. Return early to avoid a crash. http://crbug.com/659261
+  if (!dev || dev->device_id != base::checked_cast<XID>(device.deviceid))
     return base::FilePath();
 
   if (XGetDeviceProperty(dpy,
@@ -251,7 +255,7 @@ void HandleKeyboardDevicesInWorker(
     const std::vector<DeviceInfo>& device_infos,
     scoped_refptr<base::TaskRunner> reply_runner,
     const KeyboardDeviceCallback& callback) {
-  std::vector<KeyboardDevice> devices;
+  std::vector<InputDevice> devices;
 
   for (const DeviceInfo& device_info : device_infos) {
     if (device_info.type != DEVICE_TYPE_KEYBOARD)
@@ -261,7 +265,7 @@ void HandleKeyboardDevicesInWorker(
     if (IsKnownInvalidKeyboardDevice(device_info.name))
       continue;  // Skip invalid devices.
     InputDeviceType type = GetInputDeviceTypeFromPath(device_info.path);
-    KeyboardDevice keyboard(device_info.id, type, device_info.name);
+    InputDevice keyboard(device_info.id, type, device_info.name);
     devices.push_back(keyboard);
   }
 
@@ -383,7 +387,7 @@ DeviceHotplugEventObserver* GetHotplugEventObserver() {
   return DeviceDataManager::GetInstance();
 }
 
-void OnKeyboardDevices(const std::vector<KeyboardDevice>& devices) {
+void OnKeyboardDevices(const std::vector<InputDevice>& devices) {
   GetHotplugEventObserver()->OnKeyboardDevicesUpdated(devices);
 }
 

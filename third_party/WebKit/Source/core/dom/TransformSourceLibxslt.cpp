@@ -23,22 +23,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "core/dom/TransformSource.h"
 
 #include <libxml/tree.h>
 
 namespace blink {
 
-TransformSource::TransformSource(xmlDocPtr source)
-    : m_source(source)
-{
+TransformSource::TransformSource(xmlDocPtr source) : m_source(source) {}
+
+TransformSource::~TransformSource() {
+  xmlFreeDoc(m_source);
 }
 
-TransformSource::~TransformSource()
-{
-    xmlFreeDoc(m_source);
-}
-
-} // namespace blink
+}  // namespace blink

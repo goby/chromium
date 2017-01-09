@@ -4,116 +4,183 @@
 
 /**
  * @fileoverview
- * 'site-settings-category' is the settings page for showing a certain
+ * 'site-settings-category' is the polymer element for showing a certain
  * category under Site Settings.
- *
- * Example:
- *
- *   <site-settings-category prefs="{{prefs}}">
- *   </site-settings-category>
- *   ... other pages ...
- *
- * @group Chrome Settings Elements
- * @element site-settings-category
  */
 Polymer({
   is: 'site-settings-category',
 
-  behaviors: [SiteSettingsBehavior],
+  behaviors: [SiteSettingsBehavior, WebUIListenerBehavior],
 
   properties: {
-    /**
-     * Preferences state.
-     */
-    prefs: {
-      type: Object,
-      notify: true,
-    },
-
     /**
      * Represents the state of the main toggle shown for the category. For
      * example, the Location category can be set to Block/Ask so false, in that
      * case, represents Block and true represents Ask.
      */
-    categoryEnabled: {
+    categoryEnabled: Boolean,
+
+    /**
+     * The site that is passed down to the site list.
+     * @type {SiteException}
+     */
+    selectedSite: {
+      type: Object,
+      notify: true,
+    },
+
+    /**
+     * The description to be shown next to the slider.
+     * @private
+     */
+    sliderDescription_: String,
+
+    /**
+     * Used only for the Flash to persist the Ask First checkbox state.
+     * Defaults to true, as the checkbox should be checked unless the user
+     * has explicitly unchecked it or has the ALLOW setting on Flash.
+     */
+    flashAskFirst_: {
       type: Boolean,
+      value: true,
     },
 
     /**
-     * The ID of the category this widget is displaying data for.
+     * Used only for Cookies to keep track of the Session Only state.
+     * Defaults to true, as the checkbox should be checked unless the user
+     * has explicitly unchecked it or has the ALLOW setting on Cookies.
      */
-    category: {
-      type: Number,
-    },
-
-    /**
-     * The origin that was selected by the user in the dropdown list.
-     */
-    selectedOrigin: {
-      type: String,
-      observer: 'onSelectedOriginChanged_',
+    cookiesSessionOnly_: {
+      type: Boolean,
+      value: true,
     },
   },
 
   observers: [
-    'categoryPrefChanged_(prefs.profile.default_content_setting_values.*)',
+    'onCategoryChanged_(category)',
   ],
 
   ready: function() {
-    this.$.blockList.categorySubtype = settings.PermissionValues.BLOCK;
-    this.$.allowList.categorySubtype = settings.PermissionValues.ALLOW;
-
-    CrSettingsPrefs.initialized.then(function() {
-      this.categoryEnabled = this.isCategoryAllowed(this.category);
-    }.bind(this));
+    this.addWebUIListener('contentSettingCategoryChanged',
+        this.defaultValueForCategoryChanged_.bind(this));
   },
 
   /**
-   * A handler for flipping the toggle value.
+   * Called when the default value for a category has been changed.
+   * @param {number} category The category that changed.
    * @private
    */
-  onToggleChange_: function(event) {
+  defaultValueForCategoryChanged_: function(category) {
+    if (category == this.category)
+      this.onCategoryChanged_();
+  },
+
+  /**
+   * A handler for changing the default permission value for a content type.
+   * @private
+   */
+  onChangePermissionControl_: function() {
     switch (this.category) {
-      case settings.ContentSettingsTypes.COOKIES:
+      case settings.ContentSettingsTypes.BACKGROUND_SYNC:
+      case settings.ContentSettingsTypes.IMAGES:
       case settings.ContentSettingsTypes.JAVASCRIPT:
+      case settings.ContentSettingsTypes.KEYGEN:
       case settings.ContentSettingsTypes.POPUPS:
+      case settings.ContentSettingsTypes.PROTOCOL_HANDLERS:
         // "Allowed" vs "Blocked".
-        this.setPrefValue(this.computeCategoryPrefName(this.category),
-                          this.categoryEnabled ?
-                              settings.PermissionValues.ALLOW :
-                              settings.PermissionValues.BLOCK);
+        this.browserProxy.setDefaultValueForContentType(
+            this.category,
+            this.categoryEnabled ?
+                settings.PermissionValues.ALLOW :
+                settings.PermissionValues.BLOCK);
         break;
-      case settings.ContentSettingsTypes.NOTIFICATION:
-      case settings.ContentSettingsTypes.GEOLOCATION:
+      case settings.ContentSettingsTypes.AUTOMATIC_DOWNLOADS:
       case settings.ContentSettingsTypes.CAMERA:
+      case settings.ContentSettingsTypes.GEOLOCATION:
       case settings.ContentSettingsTypes.MIC:
+      case settings.ContentSettingsTypes.NOTIFICATIONS:
+      case settings.ContentSettingsTypes.UNSANDBOXED_PLUGINS:
         // "Ask" vs "Blocked".
-        this.setPrefValue(this.computeCategoryPrefName(this.category),
-                          this.categoryEnabled ?
-                              settings.PermissionValues.ASK :
-                              settings.PermissionValues.BLOCK);
+        this.browserProxy.setDefaultValueForContentType(
+            this.category,
+            this.categoryEnabled ?
+                settings.PermissionValues.ASK :
+                settings.PermissionValues.BLOCK);
         break;
-      case settings.ContentSettingsTypes.FULLSCREEN:
-        // "Allowed" vs. "Ask first".
-        this.setPrefValue(this.computeCategoryPrefName(this.category),
-                          this.categoryEnabled ?
-                              settings.PermissionValues.ALLOW :
-                              settings.PermissionValues.ASK);
+      case settings.ContentSettingsTypes.COOKIES:
+        // This category is tri-state: "Allow", "Block", "Keep data until
+        // browser quits".
+        var value = settings.PermissionValues.BLOCK;
+        if (this.categoryEnabled) {
+          value = this.cookiesSessionOnly_ ?
+              settings.PermissionValues.SESSION_ONLY :
+              settings.PermissionValues.ALLOW;
+        }
+        this.browserProxy.setDefaultValueForContentType(this.category, value);
+        break;
+      case settings.ContentSettingsTypes.PLUGINS:
+        // This category is tri-state: "Allow", "Block", "Ask before running".
+        var value = settings.PermissionValues.BLOCK;
+        if (this.categoryEnabled) {
+          value = this.flashAskFirst_ ?
+              settings.PermissionValues.IMPORTANT_CONTENT :
+              settings.PermissionValues.ALLOW;
+        }
+        this.browserProxy.setDefaultValueForContentType(this.category, value);
         break;
       default:
-        assertNotReached();
+        assertNotReached('Invalid category: ' + this.category);
     }
   },
 
-  onSelectedOriginChanged_: function() {
-    this.$.pages.setSubpageChain(['site-details']);
-  },
-
   /**
-   * Handles when the global toggle changes.
+   * Handles changes to the category pref and the |category| member variable.
    * @private
    */
-  categoryPrefChanged_: function() {
-    this.categoryEnabled = this.isCategoryAllowed(this.category);
+  onCategoryChanged_: function() {
+    settings.SiteSettingsPrefsBrowserProxyImpl.getInstance()
+        .getDefaultValueForContentType(
+            this.category).then(function(defaultValue) {
+              var setting = defaultValue.setting;
+              this.categoryEnabled = this.computeIsSettingEnabled(setting);
+
+              // Flash only shows ALLOW or BLOCK descriptions on the slider.
+              var sliderSetting = setting;
+              if (this.category == settings.ContentSettingsTypes.PLUGINS &&
+                  setting == settings.PermissionValues.IMPORTANT_CONTENT) {
+                sliderSetting = settings.PermissionValues.ALLOW;
+              } else if (
+                  this.category == settings.ContentSettingsTypes.COOKIES &&
+                  setting == settings.PermissionValues.SESSION_ONLY) {
+                sliderSetting = settings.PermissionValues.ALLOW;
+              }
+              this.sliderDescription_ =
+                  this.computeCategoryDesc(this.category, sliderSetting, true);
+
+              if (this.category == settings.ContentSettingsTypes.PLUGINS) {
+                // The checkbox should only be cleared when the Flash setting
+                // is explicitly set to ALLOW.
+                if (setting == settings.PermissionValues.ALLOW)
+                  this.flashAskFirst_ = false;
+                if (setting == settings.PermissionValues.IMPORTANT_CONTENT)
+                  this.flashAskFirst_ = true;
+              } else if (
+                  this.category == settings.ContentSettingsTypes.COOKIES) {
+                if (setting == settings.PermissionValues.ALLOW)
+                  this.cookiesSessionOnly_ = false;
+                else if (setting == settings.PermissionValues.SESSION_ONLY)
+                  this.cookiesSessionOnly_ = true;
+              }
+            }.bind(this));
+  },
+
+  /** @private */
+  isFlashCategory_: function(category) {
+    return category == settings.ContentSettingsTypes.PLUGINS;
+  },
+
+  /** @private */
+  isCookiesCategory_: function(category) {
+    return category == settings.ContentSettingsTypes.COOKIES;
   },
 });

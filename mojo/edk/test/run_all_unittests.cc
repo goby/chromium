@@ -5,10 +5,13 @@
 #include <signal.h>
 
 #include "base/bind.h"
+#include "base/command_line.h"
 #include "base/test/launcher/unit_test_launcher.h"
+#include "base/test/multiprocess_test.h"
 #include "base/test/test_io_thread.h"
 #include "base/test/test_suite.h"
 #include "mojo/edk/embedder/embedder.h"
+#include "mojo/edk/test/multiprocess_test_helper.h"
 #include "mojo/edk/test/scoped_ipc_support.h"
 #include "mojo/edk/test/test_support_impl.h"
 #include "mojo/public/tests/test_support_private.h"
@@ -23,6 +26,10 @@ int main(int argc, char** argv) {
   testing::GTEST_FLAG(death_test_style) = "threadsafe";
 #endif
 #if defined(OS_ANDROID)
+  // Enable the alternate test child implementation. This is needed because Mojo
+  // tests need to spawn test children after initialising the Mojo system.
+  base::InitAndroidMultiProcessTestHelper(main);
+
   // On android, the test framework has a signal handler that will print a
   // [ CRASH ] line when the application crashes. This breaks death test has the
   // test runner will consider the death of the child process a test failure.
@@ -33,10 +40,11 @@ int main(int argc, char** argv) {
   base::TestSuite test_suite(argc, argv);
 
   mojo::edk::Init();
+
   mojo::test::TestSupport::Init(new mojo::edk::test::TestSupportImpl());
   base::TestIOThread test_io_thread(base::TestIOThread::kAutoStart);
-  mojo::edk::test::ScopedIPCSupport ipc_support(test_io_thread.task_runner());
 
+  mojo::edk::test::ScopedIPCSupport ipc_support(test_io_thread.task_runner());
   return base::LaunchUnitTests(
       argc, argv,
       base::Bind(&base::TestSuite::Run, base::Unretained(&test_suite)));

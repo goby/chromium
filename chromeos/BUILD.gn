@@ -2,12 +2,16 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import("//build/config/allocator.gni")
 import("//build/config/ui.gni")
 import("//testing/test.gni")
 import("//third_party/protobuf/proto_library.gni")
 
 assert(is_chromeos, "Non-ChromeOS builds must not depend on //chromeos")
+
+declare_args() {
+  # Use binder. Binder related code is compiled only when true.
+  use_binder = false
+}
 
 gypi_values = exec_script("//build/gypi_to_gn.py",
                           [ rebase_path("chromeos.gyp") ],
@@ -15,26 +19,31 @@ gypi_values = exec_script("//build/gypi_to_gn.py",
                           [ "chromeos.gyp" ])
 
 component("chromeos") {
-  configs += [ "//net/third_party/nss/ssl:ssl_config" ]
+  configs += [ "//third_party/nss:system_nss_no_ssl_config" ]
   public_deps = [
     "//dbus",
   ]
   deps = [
+    ":attestation_proto",
     ":cryptohome_proto",
     ":power_manager_proto",
     "//base",
     "//base:i18n",
-    "//base:prefs",
     "//base/third_party/dynamic_annotations",
-    "//chromeos/ime:gencode",
+    "//chrome/browser/chromeos:device_policy_proto",
     "//components/device_event_log",
     "//components/onc",
     "//components/policy/proto",
+    "//components/pref_registry",
+    "//components/prefs",
     "//components/proxy_config",
     "//components/signin/core/account_id",
+    "//components/user_manager",
     "//crypto",
     "//crypto:platform",
     "//google_apis",
+    "//net",
+    "//skia",  # For components/user_manager
     "//third_party/icu",
     "//third_party/libxml",
     "//third_party/protobuf:protobuf_lite",
@@ -42,22 +51,33 @@ component("chromeos") {
   ]
   sources = gypi_values.chromeos_sources
   defines = [ "CHROMEOS_IMPLEMENTATION" ]
+  if (current_cpu == "arm" || current_cpu == "x86") {
+    defines += [ "BINDER_IPC_32BIT" ]
+  }
 }
 
-# TYhis must be a static library instead of a source set because some of the
+# This must be a static library instead of a source set because some of the
 # files pull in things with dependencies that aren't linked in all cases.
 #
 # TODO this should probably be changed such that it links in all cases and
 # can be converted to a source set.
 static_library("test_support") {
   testonly = true
-  configs += [ "//build/config/linux:dbus" ]
+  configs += [ "//build/config/linux/dbus" ]
   public_deps = [
+    ":attestation_proto",
     ":chromeos",
     ":cryptohome_proto",
     ":power_manager_proto",
+  ]
+  deps = [
     ":test_support_without_gmock",
+    "//components/signin/core/account_id",
+    "//dbus:test_support",
+    "//google_apis",
+    "//net:test_support",
     "//testing/gmock",
+    "//testing/gtest",
   ]
   sources = [
     "attestation/mock_attestation_flow.cc",
@@ -98,17 +118,18 @@ static_library("test_support") {
     "network/fake_network_device_handler.h",
     "network/mock_managed_network_configuration_handler.cc",
     "network/mock_managed_network_configuration_handler.h",
+    "network/mock_network_device_handler.cc",
+    "network/mock_network_device_handler.h",
     "network/onc/onc_test_utils.cc",
     "network/onc/onc_test_utils.h",
-    "system/fake_statistics_provider.cc",
-    "system/fake_statistics_provider.h",
   ]
 }
 
 static_library("test_support_without_gmock") {
   testonly = true
-  configs += [ "//build/config/linux:dbus" ]
+  configs += [ "//build/config/linux/dbus" ]
   deps = [
+    ":attestation_proto",
     ":chromeos",
     ":cryptohome_proto",
     ":power_manager_proto",
@@ -128,18 +149,20 @@ static_library("test_support_without_gmock") {
 
 test("chromeos_unittests") {
   configs += [
-    "//build/config/linux:dbus",
-    "//net/third_party/nss/ssl:ssl_config",
+    "//build/config/linux/dbus",
+    "//third_party/nss:system_nss_no_ssl_config",
   ]
   deps = [
+    ":attestation_proto",
     ":cryptohome_proto",
     ":power_manager_proto",
     ":test_support",
-    "//base:prefs_test_support",
     "//base/test:run_all_unittests",
     "//base/test:test_support",
     "//components/onc",
+    "//components/prefs:test_support",
     "//components/proxy_config",
+    "//components/signin/core/account_id",
     "//crypto",
     "//crypto:test_support",
     "//dbus:test_support",
@@ -152,9 +175,16 @@ test("chromeos_unittests") {
     "//url",
   ]
   sources = gypi_values.chromeos_test_sources
-  if (use_allocator != "none") {
-    deps += [ "//base/allocator" ]
+  if (use_binder) {
+    if (current_cpu == "arm" || current_cpu == "x86") {
+      defines += [ "BINDER_IPC_32BIT" ]
+    }
+    sources += gypi_values.chromeos_binder_test_sources
   }
+
+  data = [
+    "test/data/",
+  ]
 }
 
 proto_library("power_manager_proto") {
@@ -176,6 +206,14 @@ proto_library("cryptohome_proto") {
   ]
 
   proto_out_dir = "chromeos/dbus/cryptohome"
+}
+
+proto_library("attestation_proto") {
+  sources = [
+    "dbus/proto/attestation.proto",
+  ]
+
+  proto_out_dir = "chromeos/attestation"
 }
 
 proto_library("cryptohome_signkey_proto") {

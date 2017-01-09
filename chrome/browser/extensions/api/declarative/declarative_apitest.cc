@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include <memory>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/command_line.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/test/thread_test_helper.h"
@@ -120,7 +123,7 @@ class DeclarativeApiTest : public ExtensionApiTest {
         base::Bind(
             &RulesRegistry::GetAllRules, rules_registry, extension_id, &rules));
     scoped_refptr<base::ThreadTestHelper> io_helper(new base::ThreadTestHelper(
-        BrowserThread::GetMessageLoopProxyForThread(BrowserThread::IO).get()));
+        BrowserThread::GetTaskRunnerForThread(BrowserThread::IO).get()));
     EXPECT_TRUE(io_helper->Run());
     return rules.size();
   }

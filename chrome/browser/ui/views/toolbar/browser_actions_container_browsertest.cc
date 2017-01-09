@@ -4,6 +4,9 @@
 
 #include "chrome/browser/ui/views/toolbar/browser_actions_container.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "chrome/browser/extensions/api/extension_action/extension_action_api.h"
 #include "chrome/browser/extensions/browser_action_test_util.h"
 #include "chrome/browser/extensions/extension_context_menu_model.h"
@@ -44,6 +47,14 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
       BrowserView::GetBrowserViewForBrowser(browser())
           ->toolbar()->browser_actions();
 
+  // The order of the child views should be the same.
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
+            container->child_at(0));
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
+            container->child_at(1));
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
+            container->child_at(2));
+
   // Simulate a drag and drop to the right.
   ui::OSExchangeData drop_data;
   // Drag extension A from index 0...
@@ -63,6 +74,12 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(0));
   EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(2));
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
+            container->child_at(0));
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
+            container->child_at(1));
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
+            container->child_at(2));
 
   const extensions::ExtensionSet& extension_set =
       extensions::ExtensionRegistry::Get(profile())->enabled_extensions();
@@ -92,12 +109,16 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   EXPECT_EQ(extension_a()->id(), browser_actions_bar()->GetExtensionId(0));
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(2));
+  EXPECT_EQ(container->GetViewForId(extension_a()->id()),
+            container->child_at(0));
+  EXPECT_EQ(container->GetViewForId(extension_b()->id()),
+            container->child_at(1));
+  EXPECT_EQ(container->GetViewForId(extension_c()->id()),
+            container->child_at(2));
 
   // Shrink the size of the container so we have an overflow menu.
   toolbar_model()->SetVisibleIconCount(2u);
   EXPECT_EQ(2u, container->VisibleBrowserActions());
-  ASSERT_TRUE(container->chevron());
-  EXPECT_TRUE(container->chevron()->visible());
 
   // Simulate a drag and drop from the overflow menu.
   ui::OSExchangeData drop_data3;
@@ -120,13 +141,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, DragBrowserActions) {
   EXPECT_EQ(extension_c()->id(), browser_actions_bar()->GetExtensionId(1));
   EXPECT_EQ(extension_b()->id(), browser_actions_bar()->GetExtensionId(2));
   EXPECT_EQ(3u, container->VisibleBrowserActions());
-  EXPECT_FALSE(container->chevron()->visible());
   EXPECT_TRUE(toolbar_model()->all_icons_visible());
-
-  // TODO(devlin): Ideally, we'd also have tests for dragging from the legacy
-  // overflow menu (i.e., chevron) to the main bar, but this requires either
-  // having a fairly complicated interactive UI test or finding a good way to
-  // mock up the BrowserActionOverflowMenuController.
 }
 
 // Test that changes performed in one container affect containers in other
@@ -138,8 +153,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, MultipleWindows) {
           browser_actions();
 
   // Create a second browser.
-  Browser* second_browser = new Browser(
-      Browser::CreateParams(profile(), browser()->host_desktop_type()));
+  Browser* second_browser = new Browser(Browser::CreateParams(profile()));
   BrowserActionsContainer* second =
       BrowserView::GetBrowserViewForBrowser(second_browser)->toolbar()->
           browser_actions();
@@ -172,8 +186,6 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, MultipleWindows) {
 
   // Semi-random placement for a regression test for crbug.com/539744.
   first->Layout();
-  EXPECT_FALSE(first->chevron_for_testing()->visible());
-
   first->OnPerformDrop(target_event);
 
   // The new order, B A C, should be reflected in *both* containers, even
@@ -190,8 +202,6 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, MultipleWindows) {
   // The first and second container should each have resized.
   EXPECT_EQ(2u, first->VisibleBrowserActions());
   EXPECT_EQ(2u, second->VisibleBrowserActions());
-  EXPECT_TRUE(first->chevron_for_testing()->visible());
-  EXPECT_TRUE(second->chevron_for_testing()->visible());
 }
 
 // Test that the BrowserActionsContainer responds correctly when the underlying
@@ -238,7 +248,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionsBarBrowserTest, HighlightMode) {
 
 // Test the behavior of the overflow container for Extension Actions.
 class BrowserActionsContainerOverflowTest
-    : public BrowserActionsBarRedesignBrowserTest {
+    : public BrowserActionsBarBrowserTest {
  public:
   BrowserActionsContainerOverflowTest() : main_bar_(nullptr),
                                           overflow_bar_(nullptr) {
@@ -269,7 +279,7 @@ class BrowserActionsContainerOverflowTest
   BrowserActionsContainer* main_bar_;
 
   // A parent view for the overflow menu.
-  scoped_ptr<views::View> overflow_parent_;
+  std::unique_ptr<views::View> overflow_parent_;
 
   // The overflow BrowserActionsContainer. We manufacture this so that we don't
   // have to open the app menu.

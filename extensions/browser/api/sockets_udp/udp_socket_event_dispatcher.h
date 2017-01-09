@@ -5,6 +5,8 @@
 #ifndef EXTENSIONS_BROWSER_API_SOCKETS_UDP_UDP_SOCKET_EVENT_DISPATCHER_H_
 #define EXTENSIONS_BROWSER_API_SOCKETS_UDP_UDP_SOCKET_EVENT_DISPATCHER_H_
 
+#include <stdint.h>
+
 #include <string>
 
 #include "extensions/browser/api/api_resource_manager.h"
@@ -56,6 +58,7 @@ class UDPSocketEventDispatcher
   // as a workaround that limitation for invoking StartReceive.
   struct ReceiveParams {
     ReceiveParams();
+    ReceiveParams(const ReceiveParams& other);
     ~ReceiveParams();
 
     content::BrowserThread::ID thread_id;
@@ -72,16 +75,18 @@ class UDPSocketEventDispatcher
   static void ReceiveCallback(const ReceiveParams& params,
                               int bytes_read,
                               scoped_refptr<net::IOBuffer> io_buffer,
+                              bool socket_destroying,
                               const std::string& address,
-                              uint16 port);
+                              uint16_t port);
 
   // Post an extension event from IO to UI thread
-  static void PostEvent(const ReceiveParams& params, scoped_ptr<Event> event);
+  static void PostEvent(const ReceiveParams& params,
+                        std::unique_ptr<Event> event);
 
   // Dispatch an extension event on to EventRouter instance on UI thread.
   static void DispatchEvent(void* browser_context_id,
                             const std::string& extension_id,
-                            scoped_ptr<Event> event);
+                            std::unique_ptr<Event> event);
 
   // Usually IO thread (except for unit testing).
   content::BrowserThread::ID thread_id_;

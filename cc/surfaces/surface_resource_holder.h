@@ -5,7 +5,8 @@
 #ifndef CC_SURFACES_SURFACE_RESOURCE_HOLDER_H_
 #define CC_SURFACES_SURFACE_RESOURCE_HOLDER_H_
 
-#include "base/containers/hash_tables.h"
+#include <unordered_map>
+
 #include "base/macros.h"
 #include "cc/base/resource_id.h"
 #include "cc/resources/returned_resource.h"
@@ -24,6 +25,7 @@ class CC_SURFACES_EXPORT SurfaceResourceHolder {
   explicit SurfaceResourceHolder(SurfaceFactoryClient* client);
   ~SurfaceResourceHolder();
 
+  void Reset();
   void ReceiveFromChild(const TransferableResourceArray& resources);
   void RefResources(const TransferableResourceArray& resources);
   void UnrefResources(const ReturnedResourceArray& resources);
@@ -36,12 +38,14 @@ class CC_SURFACES_EXPORT SurfaceResourceHolder {
 
     int refs_received_from_child;
     int refs_holding_resource_alive;
+    gpu::SyncToken sync_token;
   };
   // Keeps track of the number of users currently in flight for each resource
   // ID we've received from the client. When this counter hits zero for a
-  // particular resource, that ID is available to return to the client.
-  typedef base::hash_map<ResourceId, ResourceRefs> ResourceIdCountMap;
-  ResourceIdCountMap resource_id_use_count_map_;
+  // particular resource, that ID is available to return to the client with
+  // the most recently given non-empty sync token.
+  using ResourceIdInfoMap = std::unordered_map<ResourceId, ResourceRefs>;
+  ResourceIdInfoMap resource_id_info_map_;
 
   DISALLOW_COPY_AND_ASSIGN(SurfaceResourceHolder);
 };

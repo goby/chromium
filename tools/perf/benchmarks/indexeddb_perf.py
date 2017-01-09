@@ -25,10 +25,9 @@ import os
 from core import path_util
 from core import perf_benchmark
 
-from telemetry import benchmark
 from telemetry import page as page_module
 from telemetry import story
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.value import scalar
 
 from metrics import memory
@@ -36,14 +35,16 @@ from metrics import power
 
 import page_sets
 
-from telemetry.timeline import tracing_category_filter
+from telemetry.timeline import chrome_trace_category_filter
 from telemetry.web_perf import timeline_based_measurement
 
 
 IDB_CATEGORY = 'IndexedDB'
 TIMELINE_REQUIRED_CATEGORY = 'blink.console'
 
-class _IndexedDbMeasurement(page_test.PageTest):
+
+class _IndexedDbMeasurement(legacy_page_test.LegacyPageTest):
+
   def __init__(self):
     super(_IndexedDbMeasurement, self).__init__()
     self._memory_metric = None
@@ -71,7 +72,7 @@ class _IndexedDbMeasurement(page_test.PageTest):
     self._memory_metric.AddResults(tab, results)
     self._power_metric.AddResults(tab, results)
 
-    js_get_results = "JSON.stringify(automation.getResults());"
+    js_get_results = 'JSON.stringify(automation.getResults());'
     result_dict = json.loads(tab.EvaluateJavaScript(js_get_results))
     total = 0.0
     for key in result_dict:
@@ -84,7 +85,6 @@ class _IndexedDbMeasurement(page_test.PageTest):
       total += msec
     results.AddValue(scalar.ScalarValue(
         results.current_page, 'Total Perf', 'ms', total))
-
 
   def CustomizeBrowserOptions(self, options):
     memory.MemoryMetric.CustomizeBrowserOptions(options)
@@ -117,13 +117,12 @@ class IndexedDbOriginalSectioned(perf_benchmark.PerfBenchmark):
     return 'storage.indexeddb_endure'
 
 
-@benchmark.Disabled('reference') # http://crbug.com/534409
 class IndexedDbTracing(perf_benchmark.PerfBenchmark):
   """IndexedDB Performance tests that use tracing."""
   page_set = page_sets.IndexedDBEndurePageSet
 
   def CreateTimelineBasedMeasurementOptions(self):
-    cat_filter = tracing_category_filter.CreateMinimalOverheadFilter()
+    cat_filter = chrome_trace_category_filter.ChromeTraceCategoryFilter()
     cat_filter.AddIncludedCategory(IDB_CATEGORY)
     cat_filter.AddIncludedCategory(TIMELINE_REQUIRED_CATEGORY)
 

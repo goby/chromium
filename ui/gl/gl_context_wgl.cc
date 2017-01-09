@@ -6,27 +6,67 @@
 
 #include "ui/gl/gl_context_wgl.h"
 
+#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_bindings.h"
 #include "ui/gl/gl_implementation.h"
 #include "ui/gl/gl_surface_wgl.h"
 
-namespace gfx {
+namespace gl {
 
 GLContextWGL::GLContextWGL(GLShareGroup* share_group)
     : GLContextReal(share_group), context_(nullptr) {
 }
 
-bool GLContextWGL::Initialize(
-    GLSurface* compatible_surface, GpuPreference gpu_preference) {
+bool GLContextWGL::Initialize(GLSurface* compatible_surface,
+                              const GLContextAttribs& attribs) {
+  // webgl_compatibility_context and disabling bind_generates_resource are not
+  // supported.
+  DCHECK(!attribs.webgl_compatibility_context &&
+         attribs.bind_generates_resource);
+
   // Get the handle of another initialized context in the share group _before_
   // setting context_. Otherwise this context will be considered initialized
   // and could potentially be returned by GetHandle.
   HGLRC share_handle = static_cast<HGLRC>(share_group()->GetHandle());
 
-  context_ = wglCreateContext(
-      static_cast<HDC>(compatible_surface->GetHandle()));
+  HDC device_context = static_cast<HDC>(compatible_surface->GetHandle());
+  bool has_wgl_create_context_arb =
+      strstr(wglGetExtensionsStringARB(device_context),
+             "WGL_ARB_create_context") != nullptr;
+  bool create_core_profile = has_wgl_create_context_arb &&
+                             !base::CommandLine::ForCurrentProcess()->HasSwitch(
+                                 switches::kDisableES3GLContext);
+
+  if (create_core_profile) {
+    std::pair<int, int> attempt_versions[] = {
+        {4, 5}, {4, 4}, {4, 3}, {4, 2}, {4, 1}, {4, 0}, {3, 3}, {3, 2},
+    };
+
+    for (const auto& version : attempt_versions) {
+      const int attribs[] = {
+          WGL_CONTEXT_MAJOR_VERSION_ARB,
+          version.first,
+          WGL_CONTEXT_MINOR_VERSION_ARB,
+          version.second,
+          WGL_CONTEXT_PROFILE_MASK_ARB,
+          WGL_CONTEXT_CORE_PROFILE_BIT_ARB,
+          0,
+          0,
+      };
+
+      context_ =
+          wglCreateContextAttribsARB(device_context, share_handle, attribs);
+      if (context_) {
+        break;
+      }
+    }
+  }
+
+  if (!context_) {
+    context_ = wglCreateContext(device_context);
+  }
   if (!context_) {
     LOG(ERROR) << "Failed to create GL context.";
     Destroy();
@@ -68,9 +108,7 @@ bool GLContextWGL::MakeCurrent(GLSurface* surface) {
   SetRealGLApi();
 
   SetCurrent(surface);
-  if (!InitializeDynamicBindings()) {
-    return false;
-  }
+  InitializeDynamicBindings();
 
   if (!surface->OnMakeCurrent(this)) {
     LOG(ERROR) << "Could not make current.";
@@ -115,7 +153,7 @@ void* GLContextWGL::GetHandle() {
 
 void GLContextWGL::OnSetSwapInterval(int interval) {
   DCHECK(IsCurrent(nullptr));
-  if (gfx::g_driver_wgl.ext.b_WGL_EXT_swap_control) {
+  if (g_driver_wgl.ext.b_WGL_EXT_swap_control) {
     wglSwapIntervalEXT(interval);
   } else {
       LOG(WARNING) <<
@@ -141,4 +179,4 @@ GLContextWGL::~GLContextWGL() {
   Destroy();
 }
 
-}  // namespace gfx
+}  // namespace gl

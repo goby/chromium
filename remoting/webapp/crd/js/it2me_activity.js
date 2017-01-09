@@ -24,7 +24,7 @@ remoting.It2MeActivity = function() {
   /** @private */
   this.passCode_ = '';
 
-  var form = document.getElementById('access-code-form');
+  var form = base.getHtmlElement('access-code-form');
   /** @private */
   this.accessCodeDialog_ = remoting.modalDialogFactory.createInputDialog(
     remoting.AppMode.CLIENT_UNCONNECTED,
@@ -106,7 +106,11 @@ remoting.It2MeActivity.prototype.stop = function() {
  * @param {!remoting.Error} error
  */
 remoting.It2MeActivity.prototype.onConnectionFailed = function(error) {
-  this.showErrorMessage_(error);
+  // onConnectionFailed is also called if the connection is canceled, in which
+  // case no error message should be shown.
+  if (!error.isNone()) {
+    this.showErrorMessage_(error);
+  }
   base.dispose(this.desktopActivity_);
   this.desktopActivity_ = null;
 };
@@ -151,7 +155,7 @@ remoting.It2MeActivity.prototype.getDesktopActivityForTesting = function() {
 remoting.It2MeActivity.prototype.showFinishDialog_ = function(mode) {
   var finishDialog = new remoting.MessageDialog(
       mode,
-      document.getElementById('client-finished-it2me-button'));
+      base.getHtmlElement('client-finished-it2me-button'));
   finishDialog.show().then(function() {
     remoting.setMode(remoting.AppMode.HOME);
   });

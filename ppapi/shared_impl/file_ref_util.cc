@@ -4,9 +4,12 @@
 
 #include "ppapi/shared_impl/file_ref_util.h"
 
+#include <stddef.h>
+
 #include "base/files/file_path.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 
 namespace ppapi {
 
@@ -49,7 +52,7 @@ bool IsValidExternalPath(const base::FilePath& path) {
 }
 
 void NormalizeInternalPath(std::string* path) {
-  if (path->size() > 1 && path->at(path->size() - 1) == '/')
+  if (path->size() > 1 && path->back() == '/')
     path->erase(path->size() - 1, 1);
 }
 

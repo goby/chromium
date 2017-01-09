@@ -8,6 +8,7 @@
 #include "base/files/scoped_temp_dir.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "components/nacl/common/pnacl_types.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/test/test_browser_thread_bundle.h"
@@ -47,7 +48,7 @@ class PnaclTranslationCacheTest : public testing::Test {
   void StoreNexe(const std::string& key, const std::string& nexe);
   std::string GetNexe(const std::string& key);
 
-  scoped_ptr<PnaclTranslationCache> cache_;
+  std::unique_ptr<PnaclTranslationCache> cache_;
   content::TestBrowserThreadBundle thread_bundle_;
   base::ScopedTempDir temp_dir_;
 };
@@ -59,7 +60,7 @@ void PnaclTranslationCacheTest::InitBackend(bool in_mem) {
   }
   // Use the private init method so we can control the size
   int rv = cache_->Init(in_mem ? net::MEMORY_CACHE : net::PNACL_CACHE,
-                        temp_dir_.path(),
+                        in_mem ? base::FilePath() : temp_dir_.GetPath(),
                         in_mem ? kMaxMemCacheSize : kTestDiskCacheSize,
                         init_cb.callback());
   if (in_mem)
@@ -225,11 +226,6 @@ TEST_F(PnaclTranslationCacheTest, StoreSmallOnDisk) {
 }
 
 TEST_F(PnaclTranslationCacheTest, StoreLargeOnDisk) {
-#if defined(OS_WIN)
-  // Flaky on XP bot http://crbug.com/468741
-  if (base::win::GetVersion() <= base::win::VERSION_XP)
-    return;
-#endif
   // Test a value too large(?) for a single I/O operation
   InitBackend(false);
   const std::string large_buffer(kLargeNexeSize, 'a');

@@ -108,11 +108,6 @@ public interface WebContents extends Parcelable {
     void unselect();
 
     /**
-     * Inserts css into main frame's document.
-     */
-    void insertCSS(String css);
-
-    /**
      * To be called when the ContentView is hidden.
      */
     void onHide();
@@ -123,9 +118,23 @@ public interface WebContents extends Parcelable {
     void onShow();
 
     /**
-     * Stops all media players for this WebContents.
+     * Removes handles used in text selection.
      */
-    void releaseMediaPlayers();
+    void dismissTextHandles();
+
+    /**
+     * Suspends all media players for this WebContents.  Note: There may still
+     * be activities generating audio, so setAudioMuted() should also be called
+     * to ensure all audible activity is silenced.
+     */
+    void suspendAllMediaPlayers();
+
+    /**
+     * Sets whether all audio output from this WebContents is muted.
+     *
+     * @param mute Set to true to mute the WebContents, false to unmute.
+     */
+    void setAudioMuted(boolean mute);
 
     /**
      * Get the Background color from underlying RenderWidgetHost for this WebContent.
@@ -166,19 +175,13 @@ public interface WebContents extends Parcelable {
     void exitFullscreen();
 
     /**
-     * Changes whether hiding the top controls is enabled.
+     * Changes whether hiding the browser controls is enabled.
      *
-     * @param enableHiding Whether hiding the top controls should be enabled or not.
-     * @param enableShowing Whether showing the top controls should be enabled or not.
+     * @param enableHiding Whether hiding the browser controls should be enabled or not.
+     * @param enableShowing Whether showing the browser controls should be enabled or not.
      * @param animate Whether the transition should be animated or not.
      */
-    void updateTopControlsState(boolean enableHiding, boolean enableShowing,
-            boolean animate);
-
-    /**
-     * Shows the IME if the focused widget could accept text input.
-     */
-    void showImeIfNeeded();
+    void updateBrowserControlsState(boolean enableHiding, boolean enableShowing, boolean animate);
 
     /**
      * Brings the Editable to the visible area while IME is up to make easier for inputing text.
@@ -264,7 +267,16 @@ public interface WebContents extends Parcelable {
     /**
      * Dispatches a Message event to the specified frame.
      */
-    void sendMessageToFrame(String frameName, String message, String targetOrigin);
+    void postMessageToFrame(
+            String frameName, String message, String targetOrigin, int[] sentPortIds);
+
+    /**
+     * Creates a message channel for sending postMessage requests and returns the ports for
+     * each end of the channel.
+     * @param service The message port service to register the channel with.
+     * @return The ports that forms the ends of the message channel created.
+     */
+    MessagePort[] createMessageChannel(MessagePortService service);
 
     /**
      * Returns whether the initial empty page has been accessed by a script from another
@@ -275,38 +287,22 @@ public interface WebContents extends Parcelable {
     boolean hasAccessedInitialDocument();
 
     /**
-     * This returns the theme color as set by the theme-color meta tag after getting rid of the
-     * alpha.
-     * @param defaultColor The default color to be returned if the cached color is not valid.
+     * This returns the theme color as set by the theme-color meta tag.
+     * <p>
+     * The color returned may retain non-fully opaque alpha components.  A value of
+     * {@link android.graphics.Color#TRANSPARENT} means there was no theme color specified.
+     *
      * @return The theme color for the content as set by the theme-color meta tag.
      */
-    int getThemeColor(int defaultColor);
+    int getThemeColor();
 
     /**
      * Requests a snapshop of accessibility tree. The result is provided asynchronously
      * using the callback
      * @param callback The callback to be called when the snapshot is ready. The callback
      *                 cannot be null.
-     * @param offsetY The Physical on-screen Y offset amount below the top controls.
-     * @param scrollX Horizontal scroll offset in physical pixels
      */
-    void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback, float offsetY,
-            float scrollX);
-
-    /**
-     * Resumes the current media session.
-     */
-    void resumeMediaSession();
-
-    /**
-     * Suspends the current media session.
-     */
-    void suspendMediaSession();
-
-    /**
-     * Stops the current media session.
-     */
-    void stopMediaSession();
+    void requestAccessibilitySnapshot(AccessibilitySnapshotCallback callback);
 
     /**
      * Add an observer to the WebContents
@@ -322,12 +318,30 @@ public interface WebContents extends Parcelable {
      */
     void removeObserver(WebContentsObserver observer);
 
-    /**
-     * @return The character encoding for the current visible page.
-     */
-    @VisibleForTesting
-    String getEncoding();
-
     public void getContentBitmapAsync(Bitmap.Config config, float scale, Rect srcRect,
             ContentBitmapCallback callback);
+    /**
+     * Reloads all the Lo-Fi images in this WebContents.
+     */
+    public void reloadLoFiImages();
+
+    /**
+     * Sends a request to download the given image {@link url}.
+     * This method delegates the call to the downloadImage() method of native WebContents.
+     * @param url The URL of the image to download.
+     * @param isFavicon Whether the image is a favicon. If true, the cookies are not sent and not
+     *                 accepted during download.
+     * @param maxBitmapSize The maximum bitmap size. Bitmaps with pixel sizes larger than {@link
+     *                 max_bitmap_size} are filtered out from the bitmap results. If there are no
+     *                 bitmap results <= {@link max_bitmap_size}, the smallest bitmap is resized to
+     *                 {@link max_bitmap_size} and is the only result. A {@link max_bitmap_size} of
+     *                 0 means unlimited.
+     * @param bypassCache If true, {@link url} is requested from the server even if it is present in
+     *                 the browser cache.
+     * @param callback The callback which will be called when the bitmaps are received from the
+     *                 renderer.
+     * @return The unique id of the download request
+     */
+    public int downloadImage(String url, boolean isFavicon, int maxBitmapSize,
+            boolean bypassCache, ImageDownloadCallback callback);
 }

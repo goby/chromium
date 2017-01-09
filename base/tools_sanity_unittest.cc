@@ -6,12 +6,15 @@
 // crashes if the test is ran without special memory testing tools. We use these
 // errors to verify the sanity of the tools.
 
+#include <stddef.h>
+
 #include "base/atomicops.h"
 #include "base/debug/asan_invalid_access.h"
 #include "base/debug/profiler.h"
 #include "base/message_loop/message_loop.h"
 #include "base/third_party/dynamic_annotations/dynamic_annotations.h"
 #include "base/threading/thread.h"
+#include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace base {
@@ -340,6 +343,8 @@ TEST(ToolsSanityTest, AtomicsAreIgnored) {
 }
 
 #if defined(CFI_ENFORCEMENT)
+// TODO(krasin): remove CFI_CAST_CHECK, see https://crbug.com/626794.
+#if defined(CFI_CAST_CHECK)
 TEST(ToolsSanityTest, BadCast) {
   class A {
     virtual void f() {}
@@ -352,6 +357,32 @@ TEST(ToolsSanityTest, BadCast) {
   A a;
   EXPECT_DEATH((void)(B*)&a, "ILL_ILLOPN");
 }
-#endif
+#endif // CFI_CAST_CHECK
+
+class A {
+ public:
+  A(): n_(0) {}
+  virtual void f() { n_++; }
+ protected:
+  int n_;
+};
+
+class B: public A {
+ public:
+  void f() override { n_--; }
+};
+
+NOINLINE void KillVptrAndCall(A *obj) {
+  *reinterpret_cast<void **>(obj) = 0;
+  obj->f();
+}
+
+TEST(ToolsSanityTest, BadVirtualCall) {
+  A a;
+  B b;
+  EXPECT_DEATH({ KillVptrAndCall(&a); KillVptrAndCall(&b); }, "ILL_ILLOPN");
+}
+
+#endif // CFI_ENFORCEMENT
 
 }  // namespace base

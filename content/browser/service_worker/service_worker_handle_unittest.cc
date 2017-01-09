@@ -2,7 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/basictypes.h"
+#include <tuple>
+#include <vector>
+
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "content/browser/service_worker/embedded_worker_registry.h"
 #include "content/browser/service_worker/embedded_worker_test_helper.h"
@@ -14,6 +17,7 @@
 #include "content/browser/service_worker/service_worker_version.h"
 #include "content/common/service_worker/embedded_worker_messages.h"
 #include "content/common/service_worker/service_worker_messages.h"
+#include "content/common/service_worker/service_worker_types.h"
 #include "content/public/test/mock_resource_context.h"
 #include "content/public/test/test_browser_thread_bundle.h"
 #include "ipc/ipc_message.h"
@@ -25,7 +29,6 @@ namespace content {
 
 namespace {
 
-const int kRenderProcessId = 88;  // A dummy ID for testing.
 const int kRenderFrameId = 44;  // A dummy ID for testing.
 
 void VerifyStateChangedMessage(int expected_handle_id,
@@ -35,8 +38,8 @@ void VerifyStateChangedMessage(int expected_handle_id,
   ServiceWorkerMsg_ServiceWorkerStateChanged::Param param;
   ASSERT_TRUE(ServiceWorkerMsg_ServiceWorkerStateChanged::Read(
       message, &param));
-  EXPECT_EQ(expected_handle_id, base::get<1>(param));
-  EXPECT_EQ(expected_state, base::get<2>(param));
+  EXPECT_EQ(expected_handle_id, std::get<1>(param));
+  EXPECT_EQ(expected_state, std::get<2>(param));
 }
 
 }  // namespace
@@ -71,11 +74,10 @@ class ServiceWorkerHandleTest : public testing::Test {
       : browser_thread_bundle_(TestBrowserThreadBundle::IO_MAINLOOP) {}
 
   void SetUp() override {
-    helper_.reset(
-        new EmbeddedWorkerTestHelper(base::FilePath(), kRenderProcessId));
+    helper_.reset(new EmbeddedWorkerTestHelper(base::FilePath()));
 
     dispatcher_host_ = new TestingServiceWorkerDispatcherHost(
-        kRenderProcessId, helper_->context_wrapper(),
+        helper_->mock_render_process_id(), helper_->context_wrapper(),
         &resource_context_, helper_.get());
 
     const GURL pattern("http://www.example.com/");
@@ -92,6 +94,9 @@ class ServiceWorkerHandleTest : public testing::Test {
     records.push_back(
         ServiceWorkerDatabase::ResourceRecord(10, version_->script_url(), 100));
     version_->script_cache_map()->SetResources(records);
+    version_->set_fetch_handler_existence(
+        ServiceWorkerVersion::FetchHandlerExistence::EXISTS);
+    version_->SetStatus(ServiceWorkerVersion::INSTALLING);
 
     // Make the registration findable via storage functions.
     helper_->context()->storage()->LazyInitialize(base::Bind(&base::DoNothing));
@@ -105,10 +110,13 @@ class ServiceWorkerHandleTest : public testing::Test {
     ASSERT_EQ(SERVICE_WORKER_OK, status);
 
     provider_host_.reset(new ServiceWorkerProviderHost(
-        kRenderProcessId, kRenderFrameId, 1, SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+        helper_->mock_render_process_id(), kRenderFrameId, 1,
+        SERVICE_WORKER_PROVIDER_FOR_WINDOW,
+        ServiceWorkerProviderHost::FrameSecurityLevel::SECURE,
         helper_->context()->AsWeakPtr(), dispatcher_host_.get()));
 
-    helper_->SimulateAddProcessToPattern(pattern, kRenderProcessId);
+    helper_->SimulateAddProcessToPattern(pattern,
+                                         helper_->mock_render_process_id());
   }
 
   void TearDown() override {
@@ -124,8 +132,8 @@ class ServiceWorkerHandleTest : public testing::Test {
   TestBrowserThreadBundle browser_thread_bundle_;
   MockResourceContext resource_context_;
 
-  scoped_ptr<EmbeddedWorkerTestHelper> helper_;
-  scoped_ptr<ServiceWorkerProviderHost> provider_host_;
+  std::unique_ptr<EmbeddedWorkerTestHelper> helper_;
+  std::unique_ptr<ServiceWorkerProviderHost> provider_host_;
   scoped_refptr<ServiceWorkerRegistration> registration_;
   scoped_refptr<ServiceWorkerVersion> version_;
   scoped_refptr<TestingServiceWorkerDispatcherHost> dispatcher_host_;
@@ -134,44 +142,45 @@ class ServiceWorkerHandleTest : public testing::Test {
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerHandleTest);
 };
 
-TEST_F(ServiceWorkerHandleTest, OnVersionStateChanged) {
-  scoped_ptr<ServiceWorkerHandle> handle =
+class ServiceWorkerHandleTestP
+    : public MojoServiceWorkerTestP<ServiceWorkerHandleTest> {};
+
+TEST_P(ServiceWorkerHandleTestP, OnVersionStateChanged) {
+  std::unique_ptr<ServiceWorkerHandle> handle =
       ServiceWorkerHandle::Create(helper_->context()->AsWeakPtr(),
-                                  provider_host_->AsWeakPtr(),
-                                  version_.get());
+                                  provider_host_->AsWeakPtr(), version_.get());
 
   // Start the worker, and then...
   ServiceWorkerStatusCode status = SERVICE_WORKER_ERROR_FAILED;
-  version_->StartWorker(CreateReceiverOnCurrentThread(&status));
+  version_->StartWorker(ServiceWorkerMetrics::EventType::UNKNOWN,
+                        CreateReceiverOnCurrentThread(&status));
   base::RunLoop().RunUntilIdle();
   EXPECT_EQ(SERVICE_WORKER_OK, status);
 
-  // ...dispatch install event.
-  status = SERVICE_WORKER_ERROR_FAILED;
-  version_->SetStatus(ServiceWorkerVersion::INSTALLING);
-  version_->DispatchInstallEvent(CreateReceiverOnCurrentThread(&status));
-  base::RunLoop().RunUntilIdle();
-  EXPECT_EQ(SERVICE_WORKER_OK, status);
-
+  // ...update state to installed.
   version_->SetStatus(ServiceWorkerVersion::INSTALLED);
 
-  ASSERT_EQ(4UL, ipc_sink()->message_count());
   ASSERT_EQ(0L, dispatcher_host_->bad_message_received_count_);
 
-  // We should be sending 1. StartWorker,
-  EXPECT_EQ(EmbeddedWorkerMsg_StartWorker::ID,
-            ipc_sink()->GetMessageAt(0)->type());
-  // 2. StateChanged (state == Installing),
+  const IPC::Message* message = nullptr;
+  if (is_mojo_enabled()) {
+    // StartWorker shouldn't be recorded here.
+    ASSERT_EQ(1UL, ipc_sink()->message_count());
+    message = ipc_sink()->GetMessageAt(0);
+  } else {
+    ASSERT_EQ(2UL, ipc_sink()->message_count());
+    // We should be sending 1. StartWorker,
+    EXPECT_EQ(EmbeddedWorkerMsg_StartWorker::ID,
+              ipc_sink()->GetMessageAt(0)->type());
+    message = ipc_sink()->GetMessageAt(1);
+  }
+  // StateChanged (state == Installed).
   VerifyStateChangedMessage(handle->handle_id(),
-                            blink::WebServiceWorkerStateInstalling,
-                            ipc_sink()->GetMessageAt(1));
-  // 3. SendMessageToWorker (to send InstallEvent), and
-  EXPECT_EQ(EmbeddedWorkerContextMsg_MessageToWorker::ID,
-            ipc_sink()->GetMessageAt(2)->type());
-  // 4. StateChanged (state == Installed).
-  VerifyStateChangedMessage(handle->handle_id(),
-                            blink::WebServiceWorkerStateInstalled,
-                            ipc_sink()->GetMessageAt(3));
+                            blink::WebServiceWorkerStateInstalled, message);
 }
+
+INSTANTIATE_TEST_CASE_P(ServiceWorkerHandleTest,
+                        ServiceWorkerHandleTestP,
+                        ::testing::Values(false, true));
 
 }  // namespace content

@@ -4,13 +4,15 @@
 
 #include "extensions/browser/lazy_background_task_queue.h"
 
+#include <memory>
+
 #include "base/bind.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/testing_pref_service.h"
+#include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/pref_registry/testing_pref_service_syncable.h"
+#include "components/prefs/testing_pref_service.h"
+#include "components/sync_preferences/testing_pref_service_syncable.h"
 #include "components/user_prefs/user_prefs.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/test/test_browser_context.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/extension_registry_factory.h"
@@ -54,8 +56,9 @@ class TestProcessManager : public ProcessManager {
   DISALLOW_COPY_AND_ASSIGN(TestProcessManager);
 };
 
-scoped_ptr<KeyedService> CreateTestProcessManager(BrowserContext* context) {
-  return make_scoped_ptr(new TestProcessManager(context));
+std::unique_ptr<KeyedService> CreateTestProcessManager(
+    BrowserContext* context) {
+  return base::MakeUnique<TestProcessManager>(context);
 }
 
 }  // namespace
@@ -64,10 +67,7 @@ scoped_ptr<KeyedService> CreateTestProcessManager(BrowserContext* context) {
 // initialization.
 class LazyBackgroundTaskQueueTest : public ExtensionsTest {
  public:
-  LazyBackgroundTaskQueueTest()
-      : notification_service_(content::NotificationService::Create()),
-        task_run_count_(0) {
-  }
+  LazyBackgroundTaskQueueTest() : task_run_count_(0) {}
   ~LazyBackgroundTaskQueueTest() override {}
 
   int task_run_count() { return task_run_count_; }
@@ -79,30 +79,35 @@ class LazyBackgroundTaskQueueTest : public ExtensionsTest {
 
   // Creates and registers an extension without a background page.
   scoped_refptr<Extension> CreateSimpleExtension() {
-    scoped_refptr<Extension> extension = ExtensionBuilder()
-        .SetManifest(DictionaryBuilder()
-                     .Set("name", "No background")
-                     .Set("version", "1")
-                     .Set("manifest_version", 2))
-        .SetID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
-        .Build();
+    scoped_refptr<Extension> extension =
+        ExtensionBuilder()
+            .SetManifest(DictionaryBuilder()
+                             .Set("name", "No background")
+                             .Set("version", "1")
+                             .Set("manifest_version", 2)
+                             .Build())
+            .SetID("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .Build();
     ExtensionRegistry::Get(browser_context())->AddEnabled(extension);
     return extension;
   }
 
   // Creates and registers an extension with a lazy background page.
   scoped_refptr<Extension> CreateLazyBackgroundExtension() {
-    scoped_refptr<Extension> extension = ExtensionBuilder()
-        .SetManifest(DictionaryBuilder()
-            .Set("name", "Lazy background")
-            .Set("version", "1")
-            .Set("manifest_version", 2)
-            .Set("background",
-                  DictionaryBuilder()
-                  .Set("page", "background.html")
-                  .SetBoolean("persistent", false)))
-        .SetID("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-        .Build();
+    scoped_refptr<Extension> extension =
+        ExtensionBuilder()
+            .SetManifest(
+                DictionaryBuilder()
+                    .Set("name", "Lazy background")
+                    .Set("version", "1")
+                    .Set("manifest_version", 2)
+                    .Set("background", DictionaryBuilder()
+                                           .Set("page", "background.html")
+                                           .SetBoolean("persistent", false)
+                                           .Build())
+                    .Build())
+            .SetID("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            .Build();
     ExtensionRegistry::Get(browser_context())->AddEnabled(extension);
     return extension;
   }
@@ -113,9 +118,7 @@ class LazyBackgroundTaskQueueTest : public ExtensionsTest {
   }
 
  private:
-  scoped_ptr<content::NotificationService> notification_service_;
-
-  user_prefs::TestingPrefServiceSyncable testing_pref_service_;
+  sync_preferences::TestingPrefServiceSyncable testing_pref_service_;
 
   // The total number of pending tasks that have been executed.
   int task_run_count_;

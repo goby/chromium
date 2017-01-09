@@ -4,7 +4,7 @@
 
 #include "content/browser/web_contents/aura/shadow_layer_delegate.h"
 
-#include "base/bind.h"
+#include "base/macros.h"
 #include "third_party/skia/include/effects/SkGradientShader.h"
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
@@ -41,14 +41,12 @@ void ShadowLayerDelegate::OnPaintLayer(const ui::PaintContext& context) {
   points[0].iset(0, 0);
   points[1].iset(kShadowThick, 0);
 
-  skia::RefPtr<SkShader> shader = skia::AdoptRef(
-      SkGradientShader::CreateLinear(points, kShadowColors, NULL,
-          arraysize(points), SkShader::kRepeat_TileMode));
-
   gfx::Rect paint_rect = gfx::Rect(0, 0, kShadowThick,
                                    layer_->bounds().height());
   SkPaint paint;
-  paint.setShader(shader.get());
+  paint.setShader(SkGradientShader::MakeLinear(points, kShadowColors, NULL,
+                                               arraysize(points),
+                                               SkShader::kRepeat_TileMode));
   ui::PaintRecorder recorder(context, layer_->size());
   recorder.canvas()->DrawRect(paint_rect, paint);
 }
@@ -58,10 +56,6 @@ void ShadowLayerDelegate::OnDelegatedFrameDamage(
 }
 
 void ShadowLayerDelegate::OnDeviceScaleFactorChanged(float scale_factor) {
-}
-
-base::Closure ShadowLayerDelegate::PrepareForLayerBoundsChange() {
-  return base::Bind(&base::DoNothing);
 }
 
 }  // namespace content

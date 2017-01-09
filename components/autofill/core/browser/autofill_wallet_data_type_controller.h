@@ -2,57 +2,50 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef COMPONENTS_SYNC_DRIVER_GLUE_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
-#define COMPONENTS_SYNC_DRIVER_GLUE_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
+#ifndef COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
+#define COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
 
-#include "base/basictypes.h"
-#include "base/prefs/pref_change_registrar.h"
-#include "components/sync_driver/non_ui_data_type_controller.h"
+#include "base/macros.h"
+#include "components/prefs/pref_change_registrar.h"
+#include "components/sync/driver/async_directory_type_controller.h"
+
+namespace autofill {
+class AutofillWebDataService;
+}
 
 namespace browser_sync {
 
 // Controls syncing of either AUTOFILL_WALLET or AUTOFILL_WALLET_METADATA.
 class AutofillWalletDataTypeController
-    : public sync_driver::NonUIDataTypeController {
+    : public syncer::AsyncDirectoryTypeController {
  public:
-  // |model_type| should be either AUTOFILL_WALLET or AUTOFILL_WALLET_METADATA.
+  // |type| should be either AUTOFILL_WALLET or AUTOFILL_WALLET_METADATA.
+  // |dump_stack| is called when an unrecoverable error occurs.
   AutofillWalletDataTypeController(
-      const scoped_refptr<base::SingleThreadTaskRunner>& ui_thread,
-      const scoped_refptr<base::SingleThreadTaskRunner>& db_thread,
-      const base::Closure& error_callback,
-      sync_driver::SyncClient* sync_client,
-      syncer::ModelType model_type);
-
-  // NonUIDataTypeController implementation.
-  syncer::ModelType type() const override;
-  syncer::ModelSafeGroup model_safe_group() const override;
-
- protected:
+      syncer::ModelType type,
+      scoped_refptr<base::SingleThreadTaskRunner> db_thread,
+      const base::Closure& dump_stack,
+      syncer::SyncClient* sync_client,
+      const scoped_refptr<autofill::AutofillWebDataService>& web_data_service);
   ~AutofillWalletDataTypeController() override;
 
  private:
-  // NonUIDataTypeController implementation.
-  bool PostTaskOnBackendThread(const tracked_objects::Location& from_here,
-                               const base::Closure& task) override;
+  // AsyncDirectoryTypeController implementation.
   bool StartModels() override;
   void StopModels() override;
   bool ReadyForStart() const override;
 
-  // Callback for changes to the autofill prefs.
-  void OnSyncPrefChanged();
+  // Callback for changes to the autofill pref.
+  void OnUserPrefChanged();
 
   // Returns true if the prefs are set such that wallet sync should be enabled.
   bool IsEnabled();
 
-  // A reference to the UI thread's task runner.
-  const scoped_refptr<base::SingleThreadTaskRunner> ui_thread_;
-
-  // A reference to the DB thread's task runner.
-  const scoped_refptr<base::SingleThreadTaskRunner> db_thread_;
-
-  sync_driver::SyncClient* const sync_client_;
+  // Whether the database loaded callback has been registered.
   bool callback_registered_;
-  syncer::ModelType model_type_;
+
+  // A reference to the AutofillWebDataService for this controller.
+  scoped_refptr<autofill::AutofillWebDataService> web_data_service_;
 
   // Stores whether we're currently syncing wallet data. This is the last
   // value computed by IsEnabled.
@@ -66,4 +59,4 @@ class AutofillWalletDataTypeController
 
 }  // namespace browser_sync
 
-#endif  // COMPONENTS_SYNC_DRIVER_GLUE_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_
+#endif  // COMPONENTS_AUTOFILL_CORE_BROWSER_AUTOFILL_WALLET_DATA_TYPE_CONTROLLER_H_

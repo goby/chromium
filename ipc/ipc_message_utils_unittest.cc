@@ -4,9 +4,14 @@
 
 #include "ipc/ipc_message_utils.h"
 
+#include <stddef.h>
 #include <stdint.h>
+#include <memory>
 
 #include "base/files/file_path.h"
+#include "base/json/json_reader.h"
+#include "base/unguessable_token.h"
+#include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_message.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -87,6 +92,126 @@ TEST(IPCMessageUtilsTest, StackVector) {
   EXPECT_TRUE(IPC::ReadParam(&msg, &iter, &output));
   for (size_t i = 0; i < 2 * stack_capacity; i++)
     EXPECT_EQ(stack_vector[i], output[i]);
+}
+
+// Tests that PickleSizer and Pickle agree on the size of a complex base::Value.
+TEST(IPCMessageUtilsTest, ValueSize) {
+  std::unique_ptr<base::DictionaryValue> value(new base::DictionaryValue);
+  value->SetWithoutPathExpansion("foo", new base::FundamentalValue(42));
+  value->SetWithoutPathExpansion("bar", new base::FundamentalValue(3.14));
+  value->SetWithoutPathExpansion("baz", new base::StringValue("hello"));
+  value->SetWithoutPathExpansion("qux", base::Value::CreateNullValue());
+
+  std::unique_ptr<base::DictionaryValue> nested_dict(new base::DictionaryValue);
+  nested_dict->SetWithoutPathExpansion("foobar", new base::FundamentalValue(5));
+  value->SetWithoutPathExpansion("nested", std::move(nested_dict));
+
+  std::unique_ptr<base::ListValue> list_value(new base::ListValue);
+  list_value->AppendString("im a string");
+  list_value->AppendString("im another string");
+  value->SetWithoutPathExpansion("awesome-list", std::move(list_value));
+
+  base::Pickle pickle;
+  IPC::WriteParam(&pickle, *value);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, *value);
+
+  EXPECT_EQ(sizer.payload_size(), pickle.payload_size());
+}
+
+TEST(IPCMessageUtilsTest, JsonValueSize) {
+  const char kJson[] = "[ { \"foo\": \"bar\", \"baz\": 1234.0 } ]";
+  std::unique_ptr<base::Value> json_value = base::JSONReader::Read(kJson);
+  EXPECT_NE(nullptr, json_value);
+  base::ListValue value;
+  value.Append(std::move(json_value));
+
+  base::Pickle pickle;
+  IPC::WriteParam(&pickle, value);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, value);
+
+  EXPECT_EQ(sizer.payload_size(), pickle.payload_size());
+}
+
+TEST(IPCMessageUtilsTest, MojoChannelHandle) {
+  mojo::MessagePipe message_pipe;
+  IPC::ChannelHandle channel_handle(message_pipe.handle0.release());
+
+  IPC::Message message;
+  IPC::WriteParam(&message, channel_handle);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, channel_handle);
+  EXPECT_EQ(sizer.payload_size(), message.payload_size());
+
+  base::PickleIterator iter(message);
+  IPC::ChannelHandle result_handle;
+  EXPECT_TRUE(IPC::ReadParam(&message, &iter, &result_handle));
+  EXPECT_EQ(channel_handle.mojo_handle, result_handle.mojo_handle);
+}
+
+TEST(IPCMessageUtilsTest, OptionalUnset) {
+  base::Optional<int> opt;
+  base::Pickle pickle;
+  IPC::WriteParam(&pickle, opt);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, opt);
+
+  EXPECT_EQ(sizer.payload_size(), pickle.payload_size());
+
+  std::string log;
+  IPC::LogParam(opt, &log);
+  EXPECT_EQ("(unset)", log);
+
+  base::Optional<int> unserialized_opt;
+  base::PickleIterator iter(pickle);
+  EXPECT_TRUE(IPC::ReadParam(&pickle, &iter, &unserialized_opt));
+  EXPECT_FALSE(unserialized_opt);
+}
+
+TEST(IPCMessageUtilsTest, OptionalSet) {
+  base::Optional<int> opt(10);
+  base::Pickle pickle;
+  IPC::WriteParam(&pickle, opt);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, opt);
+
+  EXPECT_EQ(sizer.payload_size(), pickle.payload_size());
+
+  std::string log;
+  IPC::LogParam(opt, &log);
+  EXPECT_EQ("10", log);
+
+  base::Optional<int> unserialized_opt;
+  base::PickleIterator iter(pickle);
+  EXPECT_TRUE(IPC::ReadParam(&pickle, &iter, &unserialized_opt));
+  EXPECT_TRUE(unserialized_opt);
+  EXPECT_EQ(opt.value(), unserialized_opt.value());
+}
+
+TEST(IPCMessageUtilsTest, UnguessableTokenTest) {
+  base::UnguessableToken token = base::UnguessableToken::Create();
+  base::Pickle pickle;
+  IPC::WriteParam(&pickle, token);
+
+  base::PickleSizer sizer;
+  IPC::GetParamSize(&sizer, token);
+
+  EXPECT_EQ(sizer.payload_size(), pickle.payload_size());
+
+  std::string log;
+  IPC::LogParam(token, &log);
+  EXPECT_EQ(token.ToString(), log);
+
+  base::UnguessableToken deserialized_token;
+  base::PickleIterator iter(pickle);
+  EXPECT_TRUE(IPC::ReadParam(&pickle, &iter, &deserialized_token));
+  EXPECT_EQ(token, deserialized_token);
 }
 
 }  // namespace

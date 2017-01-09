@@ -5,22 +5,27 @@
 #ifndef CC_TREES_PROXY_COMMON_H_
 #define CC_TREES_PROXY_COMMON_H_
 
+#include <stddef.h>
+
+#include "base/callback_forward.h"
 #include "cc/base/cc_export.h"
 #include "cc/output/begin_frame_args.h"
 #include "cc/trees/layer_tree_host_common.h"
 
 namespace cc {
-class LayerTreeHost;
+
+using BeginFrameCallbackList = std::vector<base::Closure>;
 
 struct CC_EXPORT BeginMainFrameAndCommitState {
   BeginMainFrameAndCommitState();
   ~BeginMainFrameAndCommitState();
 
-  unsigned int begin_frame_id;
+  unsigned int begin_frame_id = 0;
   BeginFrameArgs begin_frame_args;
-  scoped_ptr<ScrollAndScaleSet> scroll_info;
-  size_t memory_allocation_limit_bytes;
-  bool evicted_ui_resources;
+  std::unique_ptr<BeginFrameCallbackList> begin_frame_callbacks;
+  std::unique_ptr<ScrollAndScaleSet> scroll_info;
+  size_t memory_allocation_limit_bytes = 0;
+  bool evicted_ui_resources = false;
 };
 
 }  // namespace cc

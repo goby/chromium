@@ -5,10 +5,9 @@
 #include "ash/rotator/screen_rotation_animator.h"
 
 #include <string>
+#include <utility>
 #include <vector>
 
-#include "ash/display/display_info.h"
-#include "ash/display/display_manager.h"
 #include "ash/display/window_tree_host_manager.h"
 #include "ash/rotator/screen_rotation_animation.h"
 #include "ash/shell.h"
@@ -21,8 +20,10 @@
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/layer_owner.h"
 #include "ui/compositor/layer_tree_owner.h"
+#include "ui/display/display.h"
+#include "ui/display/manager/display_manager.h"
+#include "ui/display/manager/managed_display_info.h"
 #include "ui/gfx/animation/tween.h"
-#include "ui/gfx/display.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -42,7 +43,7 @@ const int kRotationDurationInMs = 250;
 
 // Gets the current display rotation for the display with the specified
 // |display_id|.
-gfx::Display::Rotation GetCurrentRotation(int64 display_id) {
+display::Display::Rotation GetCurrentRotation(int64_t display_id) {
   return Shell::GetInstance()
       ->display_manager()
       ->GetDisplayInfo(display_id)
@@ -51,8 +52,8 @@ gfx::Display::Rotation GetCurrentRotation(int64 display_id) {
 
 // Returns true if the rotation between |initial_rotation| and |new_rotation| is
 // 180 degrees.
-bool Is180DegreeFlip(gfx::Display::Rotation initial_rotation,
-                     gfx::Display::Rotation new_rotation) {
+bool Is180DegreeFlip(display::Display::Rotation initial_rotation,
+                     display::Display::Rotation new_rotation) {
   return (initial_rotation + 2) % 4 == new_rotation;
 }
 
@@ -61,7 +62,7 @@ bool Is180DegreeFlip(gfx::Display::Rotation initial_rotation,
 class LayerCleanupObserver : public ui::LayerAnimationObserver {
  public:
   explicit LayerCleanupObserver(
-      scoped_ptr<ui::LayerTreeOwner> layer_tree_owner);
+      std::unique_ptr<ui::LayerTreeOwner> layer_tree_owner);
   ~LayerCleanupObserver() override;
 
   // Get the root layer of the owned layer tree.
@@ -87,7 +88,7 @@ class LayerCleanupObserver : public ui::LayerAnimationObserver {
   void AbortAnimations(ui::Layer* layer);
 
   // The owned layer tree.
-  scoped_ptr<ui::LayerTreeOwner> layer_tree_owner_;
+  std::unique_ptr<ui::LayerTreeOwner> layer_tree_owner_;
 
   // The LayerAnimationSequence that |this| has been attached to. Defaults to
   // nullptr.
@@ -97,9 +98,8 @@ class LayerCleanupObserver : public ui::LayerAnimationObserver {
 };
 
 LayerCleanupObserver::LayerCleanupObserver(
-    scoped_ptr<ui::LayerTreeOwner> layer_tree_owner)
-    : layer_tree_owner_(layer_tree_owner.Pass()), sequence_(nullptr) {
-}
+    std::unique_ptr<ui::LayerTreeOwner> layer_tree_owner)
+    : layer_tree_owner_(std::move(layer_tree_owner)), sequence_(nullptr) {}
 
 LayerCleanupObserver::~LayerCleanupObserver() {
   // We must eplicitly detach from |sequence_| because we return true from
@@ -145,14 +145,14 @@ void LayerCleanupObserver::AbortAnimations(ui::Layer* layer) {
 // layer towards the new orientation through |rotation_degrees| while fading
 // out, and the new orientation's layer will be rotated in to the
 // |new_orientation| through |rotation_degrees| arc.
-void RotateScreen(int64 display_id,
-                  gfx::Display::Rotation new_rotation,
-                  gfx::Display::RotationSource source) {
+void RotateScreen(int64_t display_id,
+                  display::Display::Rotation new_rotation,
+                  display::Display::RotationSource source) {
   aura::Window* root_window = Shell::GetInstance()
                                   ->window_tree_host_manager()
                                   ->GetRootWindowForDisplayId(display_id);
 
-  const gfx::Display::Rotation initial_orientation =
+  const display::Display::Rotation initial_orientation =
       GetCurrentRotation(display_id);
 
   const gfx::Rect original_screen_bounds = root_window->GetTargetBounds();
@@ -168,15 +168,15 @@ void RotateScreen(int64 display_id,
 
   const gfx::Tween::Type tween_type = gfx::Tween::FAST_OUT_LINEAR_IN;
 
-  scoped_ptr<ui::LayerTreeOwner> old_layer_tree =
-      wm::RecreateLayers(root_window);
+  std::unique_ptr<ui::LayerTreeOwner> old_layer_tree =
+      ::wm::RecreateLayers(root_window);
 
   // Add the cloned layer tree in to the root, so it will be rendered.
   root_window->layer()->Add(old_layer_tree->root());
   root_window->layer()->StackAtTop(old_layer_tree->root());
 
-  scoped_ptr<LayerCleanupObserver> layer_cleanup_observer(
-      new LayerCleanupObserver(old_layer_tree.Pass()));
+  std::unique_ptr<LayerCleanupObserver> layer_cleanup_observer(
+      new LayerCleanupObserver(std::move(old_layer_tree)));
 
   Shell::GetInstance()->display_manager()->SetDisplayRotation(
       display_id, new_rotation, source);
@@ -196,7 +196,7 @@ void RotateScreen(int64 display_id,
     if (child_layer == layer_cleanup_observer->GetRootLayer())
       continue;
 
-    scoped_ptr<ScreenRotationAnimation> screen_rotation(
+    std::unique_ptr<ScreenRotationAnimation> screen_rotation(
         new ScreenRotationAnimation(
             child_layer, kRotationDegrees * rotation_factor,
             0 /* end_degrees */, child_layer->opacity(),
@@ -205,7 +205,7 @@ void RotateScreen(int64 display_id,
     ui::LayerAnimator* animator = child_layer->GetAnimator();
     animator->set_preemption_strategy(
         ui::LayerAnimator::REPLACE_QUEUED_ANIMATIONS);
-    scoped_ptr<ui::LayerAnimationSequence> animation_sequence(
+    std::unique_ptr<ui::LayerAnimationSequence> animation_sequence(
         new ui::LayerAnimationSequence(screen_rotation.release()));
     animator->StartAnimation(animation_sequence.release());
   }
@@ -220,7 +220,7 @@ void RotateScreen(int64 display_id,
       (rotated_screen_bounds.height() - original_screen_bounds.height()) / 2);
   layer_cleanup_observer->GetRootLayer()->SetTransform(translate_transform);
 
-  scoped_ptr<ScreenRotationAnimation> screen_rotation(
+  std::unique_ptr<ScreenRotationAnimation> screen_rotation(
       new ScreenRotationAnimation(
           layer_cleanup_observer->GetRootLayer(),
           old_layer_initial_rotation_degrees * rotation_factor,
@@ -233,7 +233,7 @@ void RotateScreen(int64 display_id,
       layer_cleanup_observer->GetRootLayer()->GetAnimator();
   animator->set_preemption_strategy(
       ui::LayerAnimator::REPLACE_QUEUED_ANIMATIONS);
-  scoped_ptr<ui::LayerAnimationSequence> animation_sequence(
+  std::unique_ptr<ui::LayerAnimationSequence> animation_sequence(
       new ui::LayerAnimationSequence(screen_rotation.release()));
   // Add an observer so that the cloned layers can be cleaned up with the
   // animation completes/aborts.
@@ -243,12 +243,10 @@ void RotateScreen(int64 display_id,
 
 }  // namespace
 
-ScreenRotationAnimator::ScreenRotationAnimator(int64 display_id)
-    : display_id_(display_id) {
-}
+ScreenRotationAnimator::ScreenRotationAnimator(int64_t display_id)
+    : display_id_(display_id) {}
 
-ScreenRotationAnimator::~ScreenRotationAnimator() {
-}
+ScreenRotationAnimator::~ScreenRotationAnimator() {}
 
 bool ScreenRotationAnimator::CanAnimate() const {
   return Shell::GetInstance()
@@ -257,9 +255,9 @@ bool ScreenRotationAnimator::CanAnimate() const {
       .is_valid();
 }
 
-void ScreenRotationAnimator::Rotate(gfx::Display::Rotation new_rotation,
-                                    gfx::Display::RotationSource source) {
-  const gfx::Display::Rotation current_rotation =
+void ScreenRotationAnimator::Rotate(display::Display::Rotation new_rotation,
+                                    display::Display::RotationSource source) {
+  const display::Display::Rotation current_rotation =
       GetCurrentRotation(display_id_);
 
   if (current_rotation == new_rotation)

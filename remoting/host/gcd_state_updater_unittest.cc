@@ -5,12 +5,14 @@
 #include "remoting/host/gcd_state_updater.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
+#include "base/memory/ptr_util.h"
 #include "base/strings/stringize_macros.h"
 #include "base/test/simple_test_clock.h"
 #include "base/test/test_mock_time_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "remoting/base/constants.h"
 #include "remoting/host/fake_oauth_token_getter.h"
@@ -39,7 +41,7 @@ class GcdStateUpdaterTest : public testing::Test {
             nullptr,
             &token_getter_)),
         signal_strategy_("local_jid") {
-    rest_client_->SetClockForTest(make_scoped_ptr(new base::SimpleTestClock));
+    rest_client_->SetClockForTest(base::WrapUnique(new base::SimpleTestClock));
   }
 
   void OnSuccess() { on_success_count_++; }
@@ -49,20 +51,20 @@ class GcdStateUpdaterTest : public testing::Test {
  protected:
   scoped_refptr<base::TestMockTimeTaskRunner> task_runner_;
   base::ThreadTaskRunnerHandle runner_handler_;
-  scoped_ptr<base::Clock> clock_;
+  std::unique_ptr<base::Clock> clock_;
   net::TestURLFetcherFactory url_fetcher_factory_;
   FakeOAuthTokenGetter token_getter_;
-  scoped_ptr<GcdRestClient> rest_client_;
+  std::unique_ptr<GcdRestClient> rest_client_;
   FakeSignalStrategy signal_strategy_;
   int on_success_count_ = 0;
   int on_host_id_error_count_ = 0;
 };
 
 TEST_F(GcdStateUpdaterTest, Success) {
-  scoped_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
+  std::unique_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
       base::Bind(&GcdStateUpdaterTest::OnSuccess, base::Unretained(this)),
       base::Bind(&GcdStateUpdaterTest::OnHostIdError, base::Unretained(this)),
-      &signal_strategy_, rest_client_.Pass()));
+      &signal_strategy_, std::move(rest_client_)));
 
   signal_strategy_.Connect();
   task_runner_->RunUntilIdle();
@@ -83,10 +85,10 @@ TEST_F(GcdStateUpdaterTest, Success) {
 }
 
 TEST_F(GcdStateUpdaterTest, QueuedRequests) {
-  scoped_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
+  std::unique_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
       base::Bind(&GcdStateUpdaterTest::OnSuccess, base::Unretained(this)),
       base::Bind(&GcdStateUpdaterTest::OnHostIdError, base::Unretained(this)),
-      &signal_strategy_, rest_client_.Pass()));
+      &signal_strategy_, std::move(rest_client_)));
 
   // Connect, then re-connect with a different JID while the status
   // update for the first connection is pending.
@@ -127,10 +129,10 @@ TEST_F(GcdStateUpdaterTest, QueuedRequests) {
 }
 
 TEST_F(GcdStateUpdaterTest, Retry) {
-  scoped_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
+  std::unique_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
       base::Bind(&GcdStateUpdaterTest::OnSuccess, base::Unretained(this)),
       base::Bind(&GcdStateUpdaterTest::OnHostIdError, base::Unretained(this)),
-      &signal_strategy_, rest_client_.Pass()));
+      &signal_strategy_, std::move(rest_client_)));
 
   signal_strategy_.Connect();
   task_runner_->RunUntilIdle();
@@ -152,10 +154,10 @@ TEST_F(GcdStateUpdaterTest, Retry) {
 }
 
 TEST_F(GcdStateUpdaterTest, UnknownHost) {
-  scoped_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
+  std::unique_ptr<GcdStateUpdater> updater(new GcdStateUpdater(
       base::Bind(&GcdStateUpdaterTest::OnSuccess, base::Unretained(this)),
       base::Bind(&GcdStateUpdaterTest::OnHostIdError, base::Unretained(this)),
-      &signal_strategy_, rest_client_.Pass()));
+      &signal_strategy_, std::move(rest_client_)));
 
   signal_strategy_.Connect();
   task_runner_->RunUntilIdle();

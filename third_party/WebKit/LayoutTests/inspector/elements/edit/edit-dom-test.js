@@ -11,16 +11,16 @@ InspectorTest.doAddAttribute = function(testName, dataNodeId, attributeText, nex
     function testBody(node, done)
     {
         var editorElement = InspectorTest.editNodePart(node, "webkit-html-attribute");
-        editorElement.dispatchEvent(InspectorTest.createKeyEvent("U+0009")); // Tab
+        eventSender.keyDown("Tab");
 
-        InspectorTest.runAfterPendingDispatches(testContinuation);
+        InspectorTest.deprecatedRunAfterPendingDispatches(testContinuation);
 
         function testContinuation()
         {
-            var editorElement = WebInspector.panels.elements._treeOutlines[0]._shadowRoot.getSelection().anchorNode.parentElement;
+            var editorElement = UI.panels.elements._treeOutlines[0]._shadowRoot.getSelection().anchorNode.parentElement;
             editorElement.textContent = attributeText;
             editorElement.dispatchEvent(InspectorTest.createKeyEvent("Enter"));
-            InspectorTest.addSniffer(WebInspector.ElementsTreeOutline.prototype, "_updateModifiedNodes", done);
+            InspectorTest.addSniffer(Elements.ElementsTreeOutline.prototype, "_updateModifiedNodes", done);
         }
     }
 }
@@ -44,7 +44,7 @@ InspectorTest.domActionTest = function(testName, dataNodeSelectionCallback, test
 
     function step0(node)
     {
-        InspectorTest.runAfterPendingDispatches(step1.bind(null, node));
+        InspectorTest.deprecatedRunAfterPendingDispatches(step1.bind(null, node));
     }
 
     function step1(node)
@@ -76,9 +76,9 @@ InspectorTest.editNodePartAndRun = function(node, className, newValue, step2, us
     editorElement.textContent = newValue;
     editorElement.dispatchEvent(InspectorTest.createKeyEvent("Enter"));
     if (useSniffer)
-        InspectorTest.addSniffer(WebInspector.ElementsTreeOutline.prototype, "_updateModifiedNodes", step2);
+        InspectorTest.addSniffer(Elements.ElementsTreeOutline.prototype, "_updateModifiedNodes", step2);
     else
-        InspectorTest.runAfterPendingDispatches(step2);
+        InspectorTest.deprecatedRunAfterPendingDispatches(step2);
 }
 
 }

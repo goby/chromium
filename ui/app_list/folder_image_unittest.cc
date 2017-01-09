@@ -2,9 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <string>
-
 #include "ui/app_list/folder_image.h"
+
+#include <string>
+#include <utility>
 
 #include "base/macros.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -73,9 +74,9 @@ class FolderImageTest : public testing::Test {
 
  protected:
   void AddAppWithColoredIcon(const std::string& id, SkColor icon_color) {
-    scoped_ptr<AppListItem> item(new AppListItem(id));
+    std::unique_ptr<AppListItem> item(new AppListItem(id));
     item->SetIcon(CreateSquareBitmapWithColor(kListIconSize, icon_color));
-    app_list_model_.AddItem(item.Pass());
+    app_list_model_.AddItem(std::move(item));
   }
 
   AppListModel app_list_model_;

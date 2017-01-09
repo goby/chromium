@@ -4,6 +4,8 @@
 
 #include "media/cast/sender/h264_vt_encoder.h"
 
+#include <stddef.h>
+
 #include <string>
 #include <vector>
 
@@ -15,9 +17,9 @@
 #include "base/macros.h"
 #include "base/power_monitor/power_monitor.h"
 #include "base/synchronization/lock.h"
-#include "media/base/mac/corevideo_glue.h"
+#include "build/build_config.h"
 #include "media/base/mac/video_frame_mac.h"
-#include "media/cast/cast_defines.h"
+#include "media/cast/common/rtp_time.h"
 #include "media/cast/constants.h"
 #include "media/cast/sender/video_frame_factory.h"
 
@@ -28,183 +30,17 @@ namespace {
 
 // Container for the associated data of a video frame being processed.
 struct InProgressFrameEncode {
-  const RtpTimestamp rtp_timestamp;
+  const RtpTimeTicks rtp_timestamp;
   const base::TimeTicks reference_time;
   const VideoEncoder::FrameEncodedCallback frame_encoded_callback;
 
-  InProgressFrameEncode(RtpTimestamp rtp,
+  InProgressFrameEncode(RtpTimeTicks rtp,
                         base::TimeTicks r_time,
                         VideoEncoder::FrameEncodedCallback callback)
       : rtp_timestamp(rtp),
         reference_time(r_time),
         frame_encoded_callback(callback) {}
 };
-
-base::ScopedCFTypeRef<CFDictionaryRef>
-DictionaryWithKeysAndValues(CFTypeRef* keys, CFTypeRef* values, size_t size) {
-  return base::ScopedCFTypeRef<CFDictionaryRef>(CFDictionaryCreate(
-      kCFAllocatorDefault, keys, values, size, &kCFTypeDictionaryKeyCallBacks,
-      &kCFTypeDictionaryValueCallBacks));
-}
-
-base::ScopedCFTypeRef<CFDictionaryRef> DictionaryWithKeyValue(CFTypeRef key,
-                                                              CFTypeRef value) {
-  CFTypeRef keys[1] = {key};
-  CFTypeRef values[1] = {value};
-  return DictionaryWithKeysAndValues(keys, values, 1);
-}
-
-base::ScopedCFTypeRef<CFArrayRef> ArrayWithIntegers(const int* v, size_t size) {
-  std::vector<CFNumberRef> numbers;
-  numbers.reserve(size);
-  for (const int* end = v + size; v < end; ++v)
-    numbers.push_back(CFNumberCreate(nullptr, kCFNumberSInt32Type, v));
-  base::ScopedCFTypeRef<CFArrayRef> array(CFArrayCreate(
-      kCFAllocatorDefault, reinterpret_cast<const void**>(&numbers[0]),
-      numbers.size(), &kCFTypeArrayCallBacks));
-  for (auto& number : numbers) {
-    CFRelease(number);
-  }
-  return array;
-}
-
-template <typename NalSizeType>
-void CopyNalsToAnnexB(char* avcc_buffer,
-                      const size_t avcc_size,
-                      std::string* annexb_buffer) {
-  static_assert(sizeof(NalSizeType) == 1 || sizeof(NalSizeType) == 2 ||
-                    sizeof(NalSizeType) == 4,
-                "NAL size type has unsupported size");
-  static const char startcode_3[3] = {0, 0, 1};
-  DCHECK(avcc_buffer);
-  DCHECK(annexb_buffer);
-  size_t bytes_left = avcc_size;
-  while (bytes_left > 0) {
-    DCHECK_GT(bytes_left, sizeof(NalSizeType));
-    NalSizeType nal_size;
-    base::ReadBigEndian(avcc_buffer, &nal_size);
-    bytes_left -= sizeof(NalSizeType);
-    avcc_buffer += sizeof(NalSizeType);
-
-    DCHECK_GE(bytes_left, nal_size);
-    annexb_buffer->append(startcode_3, sizeof(startcode_3));
-    annexb_buffer->append(avcc_buffer, nal_size);
-    bytes_left -= nal_size;
-    avcc_buffer += nal_size;
-  }
-}
-
-// Copy a H.264 frame stored in a CM sample buffer to an Annex B buffer. Copies
-// parameter sets for keyframes before the frame data as well.
-void CopySampleBufferToAnnexBBuffer(CoreMediaGlue::CMSampleBufferRef sbuf,
-                                    std::string* annexb_buffer,
-                                    bool keyframe) {
-  // Perform two pass, one to figure out the total output size, and another to
-  // copy the data after having performed a single output allocation. Note that
-  // we'll allocate a bit more because we'll count 4 bytes instead of 3 for
-  // video NALs.
-
-  OSStatus status;
-
-  // Get the sample buffer's block buffer and format description.
-  auto bb = CoreMediaGlue::CMSampleBufferGetDataBuffer(sbuf);
-  DCHECK(bb);
-  auto fdesc = CoreMediaGlue::CMSampleBufferGetFormatDescription(sbuf);
-  DCHECK(fdesc);
-
-  size_t bb_size = CoreMediaGlue::CMBlockBufferGetDataLength(bb);
-  size_t total_bytes = bb_size;
-
-  size_t pset_count;
-  int nal_size_field_bytes;
-  status = CoreMediaGlue::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-      fdesc, 0, nullptr, nullptr, &pset_count, &nal_size_field_bytes);
-  if (status ==
-      CoreMediaGlue::kCMFormatDescriptionBridgeError_InvalidParameter) {
-    DLOG(WARNING) << " assuming 2 parameter sets and 4 bytes NAL length header";
-    pset_count = 2;
-    nal_size_field_bytes = 4;
-  } else if (status != noErr) {
-    DLOG(ERROR)
-        << " CMVideoFormatDescriptionGetH264ParameterSetAtIndex failed: "
-        << status;
-    return;
-  }
-
-  if (keyframe) {
-    const uint8_t* pset;
-    size_t pset_size;
-    for (size_t pset_i = 0; pset_i < pset_count; ++pset_i) {
-      status =
-          CoreMediaGlue::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-              fdesc, pset_i, &pset, &pset_size, nullptr, nullptr);
-      if (status != noErr) {
-        DLOG(ERROR)
-            << " CMVideoFormatDescriptionGetH264ParameterSetAtIndex failed: "
-            << status;
-        return;
-      }
-      total_bytes += pset_size + nal_size_field_bytes;
-    }
-  }
-
-  annexb_buffer->reserve(total_bytes);
-
-  // Copy all parameter sets before keyframes.
-  if (keyframe) {
-    const uint8_t* pset;
-    size_t pset_size;
-    for (size_t pset_i = 0; pset_i < pset_count; ++pset_i) {
-      status =
-          CoreMediaGlue::CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-              fdesc, pset_i, &pset, &pset_size, nullptr, nullptr);
-      if (status != noErr) {
-        DLOG(ERROR)
-            << " CMVideoFormatDescriptionGetH264ParameterSetAtIndex failed: "
-            << status;
-        return;
-      }
-      static const char startcode_4[4] = {0, 0, 0, 1};
-      annexb_buffer->append(startcode_4, sizeof(startcode_4));
-      annexb_buffer->append(reinterpret_cast<const char*>(pset), pset_size);
-    }
-  }
-
-  // Block buffers can be composed of non-contiguous chunks. For the sake of
-  // keeping this code simple, flatten non-contiguous block buffers.
-  base::ScopedCFTypeRef<CoreMediaGlue::CMBlockBufferRef> contiguous_bb(
-      bb, base::scoped_policy::RETAIN);
-  if (!CoreMediaGlue::CMBlockBufferIsRangeContiguous(bb, 0, 0)) {
-    contiguous_bb.reset();
-    status = CoreMediaGlue::CMBlockBufferCreateContiguous(
-        kCFAllocatorDefault, bb, kCFAllocatorDefault, nullptr, 0, 0, 0,
-        contiguous_bb.InitializeInto());
-    if (status != noErr) {
-      DLOG(ERROR) << " CMBlockBufferCreateContiguous failed: " << status;
-      return;
-    }
-  }
-
-  // Copy all the NAL units. In the process convert them from AVCC format
-  // (length header) to AnnexB format (start code).
-  char* bb_data;
-  status = CoreMediaGlue::CMBlockBufferGetDataPointer(contiguous_bb, 0, nullptr,
-                                                      nullptr, &bb_data);
-  if (status != noErr) {
-    DLOG(ERROR) << " CMBlockBufferGetDataPointer failed: " << status;
-    return;
-  }
-
-  if (nal_size_field_bytes == 1) {
-    CopyNalsToAnnexB<uint8_t>(bb_data, bb_size, annexb_buffer);
-  } else if (nal_size_field_bytes == 2) {
-    CopyNalsToAnnexB<uint16_t>(bb_data, bb_size, annexb_buffer);
-  } else if (nal_size_field_bytes == 4) {
-    CopyNalsToAnnexB<uint32_t>(bb_data, bb_size, annexb_buffer);
-  } else {
-    NOTREACHED();
-  }
-}
 
 }  // namespace
 
@@ -310,19 +146,18 @@ class H264VideoToolboxEncoder::VideoFrameFactoryImpl::Proxy
 
 // static
 bool H264VideoToolboxEncoder::IsSupported(
-    const VideoSenderConfig& video_config) {
-  return video_config.codec == CODEC_VIDEO_H264 && VideoToolboxGlue::Get();
+    const FrameSenderConfig& video_config) {
+  return video_config.codec == CODEC_VIDEO_H264;
 }
 
 H264VideoToolboxEncoder::H264VideoToolboxEncoder(
     const scoped_refptr<CastEnvironment>& cast_environment,
-    const VideoSenderConfig& video_config,
+    const FrameSenderConfig& video_config,
     const StatusChangeCallback& status_change_cb)
     : cast_environment_(cast_environment),
-      videotoolbox_glue_(VideoToolboxGlue::Get()),
       video_config_(video_config),
       status_change_cb_(status_change_cb),
-      last_frame_id_(kFirstFrameId - 1),
+      next_frame_id_(FrameId::first()),
       encode_next_frame_as_keyframe_(false),
       power_suspended_(false),
       weak_factory_(this) {
@@ -346,7 +181,7 @@ H264VideoToolboxEncoder::H264VideoToolboxEncoder(
             weak_factory_.GetWeakPtr(), cast_environment_));
 
     // Register for power state changes.
-    auto power_monitor = base::PowerMonitor::Get();
+    auto* power_monitor = base::PowerMonitor::Get();
     if (power_monitor) {
       power_monitor->AddObserver(this);
       VLOG(1) << "Registered for power state changes.";
@@ -363,7 +198,7 @@ H264VideoToolboxEncoder::~H264VideoToolboxEncoder() {
   // If video_frame_factory_ is not null, the encoder registered for power state
   // changes in the ctor and it must now unregister.
   if (video_frame_factory_) {
-    auto power_monitor = base::PowerMonitor::Get();
+    auto* power_monitor = base::PowerMonitor::Get();
     if (power_monitor)
       power_monitor->RemoveObserver(this);
   }
@@ -388,15 +223,13 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   // all configurations (some of which are used for testing).
   base::ScopedCFTypeRef<CFDictionaryRef> encoder_spec;
 #if !defined(OS_IOS)
-  encoder_spec = DictionaryWithKeyValue(
-      videotoolbox_glue_
-          ->kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder(),
+  encoder_spec = video_toolbox::DictionaryWithKeyValue(
+      kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder,
       kCFBooleanTrue);
 #endif
 
   // Force 420v so that clients can easily use these buffers as GPU textures.
-  const int format[] = {
-      CoreVideoGlue::kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange};
+  const int format[] = {kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange};
 
   // Keep these attachment settings in-sync with those in ConfigureSession().
   CFTypeRef attachments_keys[] = {kCVImageBufferColorPrimariesKey,
@@ -408,14 +241,15 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   CFTypeRef buffer_attributes_keys[] = {kCVPixelBufferPixelFormatTypeKey,
                                         kCVBufferPropagatedAttachmentsKey};
   CFTypeRef buffer_attributes_values[] = {
-      ArrayWithIntegers(format, arraysize(format)).release(),
-      DictionaryWithKeysAndValues(attachments_keys, attachments_values,
-                                  arraysize(attachments_keys)).release()};
+      video_toolbox::ArrayWithIntegers(format, arraysize(format)).release(),
+      video_toolbox::DictionaryWithKeysAndValues(
+          attachments_keys, attachments_values, arraysize(attachments_keys))
+          .release()};
   const base::ScopedCFTypeRef<CFDictionaryRef> buffer_attributes =
-      DictionaryWithKeysAndValues(buffer_attributes_keys,
-                                  buffer_attributes_values,
-                                  arraysize(buffer_attributes_keys));
-  for (auto& v : buffer_attributes_values)
+      video_toolbox::DictionaryWithKeysAndValues(
+          buffer_attributes_keys, buffer_attributes_values,
+          arraysize(buffer_attributes_keys));
+  for (auto* v : buffer_attributes_values)
     CFRelease(v);
 
   // Create the compression session.
@@ -428,9 +262,9 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
   // and invalidated. Internally, VideoToolbox will join all of its threads
   // before returning to the client. Therefore, when control returns to us, we
   // are guaranteed that the output callback will not execute again.
-  OSStatus status = videotoolbox_glue_->VTCompressionSessionCreate(
+  OSStatus status = VTCompressionSessionCreate(
       kCFAllocatorDefault, frame_size_.width(), frame_size_.height(),
-      CoreMediaGlue::kCMVideoCodecType_H264, encoder_spec, buffer_attributes,
+      kCMVideoCodecType_H264, encoder_spec, buffer_attributes,
       nullptr /* compressedDataAllocator */,
       &H264VideoToolboxEncoder::CompressionCallback,
       reinterpret_cast<void*>(this), compression_session_.InitializeInto());
@@ -449,8 +283,7 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
 
   // Update the video frame factory.
   base::ScopedCFTypeRef<CVPixelBufferPoolRef> pool(
-      videotoolbox_glue_->VTCompressionSessionGetPixelBufferPool(
-          compression_session_),
+      VTCompressionSessionGetPixelBufferPool(compression_session_),
       base::scoped_policy::RETAIN);
   video_frame_factory_->Update(pool, frame_size_);
 
@@ -461,42 +294,36 @@ void H264VideoToolboxEncoder::ResetCompressionSession() {
 }
 
 void H264VideoToolboxEncoder::ConfigureCompressionSession() {
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_ProfileLevel(),
-      videotoolbox_glue_->kVTProfileLevel_H264_Main_AutoLevel());
-  SetSessionProperty(videotoolbox_glue_->kVTCompressionPropertyKey_RealTime(),
-                     true);
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_AllowFrameReordering(),
-      false);
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_MaxKeyFrameInterval(), 240);
-  SetSessionProperty(
-      videotoolbox_glue_
-          ->kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration(),
-      240);
+  video_toolbox::SessionPropertySetter session_property_setter(
+      compression_session_);
+  session_property_setter.Set(kVTCompressionPropertyKey_ProfileLevel,
+                              kVTProfileLevel_H264_Main_AutoLevel);
+  session_property_setter.Set(kVTCompressionPropertyKey_RealTime, true);
+  session_property_setter.Set(kVTCompressionPropertyKey_AllowFrameReordering,
+                              false);
+  session_property_setter.Set(kVTCompressionPropertyKey_MaxKeyFrameInterval,
+                              240);
+  session_property_setter.Set(
+      kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 240);
   // TODO(jfroy): implement better bitrate control
   //              https://crbug.com/425352
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_AverageBitRate(),
+  session_property_setter.Set(
+      kVTCompressionPropertyKey_AverageBitRate,
       (video_config_.min_bitrate + video_config_.max_bitrate) / 2);
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_ExpectedFrameRate(),
-      video_config_.max_frame_rate);
+  session_property_setter.Set(
+      kVTCompressionPropertyKey_ExpectedFrameRate,
+      static_cast<int>(video_config_.max_frame_rate + 0.5));
   // Keep these attachment settings in-sync with those in Initialize().
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_ColorPrimaries(),
-      kCVImageBufferColorPrimaries_ITU_R_709_2);
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_TransferFunction(),
-      kCVImageBufferTransferFunction_ITU_R_709_2);
-  SetSessionProperty(
-      videotoolbox_glue_->kVTCompressionPropertyKey_YCbCrMatrix(),
-      kCVImageBufferYCbCrMatrix_ITU_R_709_2);
-  if (video_config_.max_number_of_video_buffers_used > 0) {
-    SetSessionProperty(
-        videotoolbox_glue_->kVTCompressionPropertyKey_MaxFrameDelayCount(),
-        video_config_.max_number_of_video_buffers_used);
+  session_property_setter.Set(kVTCompressionPropertyKey_ColorPrimaries,
+                              kCVImageBufferColorPrimaries_ITU_R_709_2);
+  session_property_setter.Set(kVTCompressionPropertyKey_TransferFunction,
+                              kCVImageBufferTransferFunction_ITU_R_709_2);
+  session_property_setter.Set(kVTCompressionPropertyKey_YCbCrMatrix,
+                              kCVImageBufferYCbCrMatrix_ITU_R_709_2);
+  if (video_config_.video_codec_params.max_number_of_video_buffers_used > 0) {
+    session_property_setter.Set(
+        kVTCompressionPropertyKey_MaxFrameDelayCount,
+        video_config_.video_codec_params.max_number_of_video_buffers_used);
   }
 }
 
@@ -518,7 +345,7 @@ void H264VideoToolboxEncoder::DestroyCompressionSession() {
   if (compression_session_) {
     video_frame_factory_->Update(
         base::ScopedCFTypeRef<CVPixelBufferPoolRef>(nullptr), frame_size_);
-    videotoolbox_glue_->VTCompressionSessionInvalidate(compression_session_);
+    VTCompressionSessionInvalidate(compression_session_);
     compression_session_.reset();
   }
 }
@@ -562,30 +389,28 @@ bool H264VideoToolboxEncoder::EncodeVideoFrame(
   }
 
   // Convert the frame timestamp to CMTime.
-  auto timestamp_cm = CoreMediaGlue::CMTimeMake(
-      (reference_time - base::TimeTicks()).InMicroseconds(), USEC_PER_SEC);
+  auto timestamp_cm =
+      CMTimeMake(video_frame->timestamp().InMicroseconds(), USEC_PER_SEC);
 
   // Wrap information we'll need after the frame is encoded in a heap object.
   // We'll get the pointer back from the VideoToolbox completion callback.
-  scoped_ptr<InProgressFrameEncode> request(new InProgressFrameEncode(
-      TimeDeltaToRtpDelta(video_frame->timestamp(), kVideoFrequency),
+  std::unique_ptr<InProgressFrameEncode> request(new InProgressFrameEncode(
+      RtpTimeTicks::FromTimeDelta(video_frame->timestamp(), kVideoFrequency),
       reference_time, frame_encoded_callback));
 
   // Build a suitable frame properties dictionary for keyframes.
   base::ScopedCFTypeRef<CFDictionaryRef> frame_props;
   if (encode_next_frame_as_keyframe_) {
-    frame_props = DictionaryWithKeyValue(
-        videotoolbox_glue_->kVTEncodeFrameOptionKey_ForceKeyFrame(),
-        kCFBooleanTrue);
+    frame_props = video_toolbox::DictionaryWithKeyValue(
+        kVTEncodeFrameOptionKey_ForceKeyFrame, kCFBooleanTrue);
     encode_next_frame_as_keyframe_ = false;
   }
 
   // Submit the frame to the compression session. The function returns as soon
   // as the frame has been enqueued.
-  OSStatus status = videotoolbox_glue_->VTCompressionSessionEncodeFrame(
-      compression_session_, pixel_buffer, timestamp_cm,
-      CoreMediaGlue::CMTime{0, 0, 0, 0}, frame_props,
-      reinterpret_cast<void*>(request.release()), nullptr);
+  OSStatus status = VTCompressionSessionEncodeFrame(
+      compression_session_, pixel_buffer, timestamp_cm, CMTime{0, 0, 0, 0},
+      frame_props, reinterpret_cast<void*>(request.release()), nullptr);
   if (status != noErr) {
     DLOG(ERROR) << " VTCompressionSessionEncodeFrame failed: " << status;
     return false;
@@ -630,10 +455,10 @@ void H264VideoToolboxEncoder::GenerateKeyFrame() {
   encode_next_frame_as_keyframe_ = true;
 }
 
-scoped_ptr<VideoFrameFactory>
+std::unique_ptr<VideoFrameFactory>
 H264VideoToolboxEncoder::CreateVideoFrameFactory() {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return scoped_ptr<VideoFrameFactory>(
+  return std::unique_ptr<VideoFrameFactory>(
       new VideoFrameFactoryImpl::Proxy(video_frame_factory_));
 }
 
@@ -642,8 +467,8 @@ void H264VideoToolboxEncoder::EmitFrames() {
   if (!compression_session_)
     return;
 
-  OSStatus status = videotoolbox_glue_->VTCompressionSessionCompleteFrames(
-      compression_session_, CoreMediaGlue::CMTime{0, 0, 0, 0});
+  OSStatus status = VTCompressionSessionCompleteFrames(compression_session_,
+                                                       CMTime{0, 0, 0, 0});
   if (status != noErr) {
     DLOG(ERROR) << " VTCompressionSessionCompleteFrames failed: " << status;
   }
@@ -670,33 +495,13 @@ void H264VideoToolboxEncoder::OnResume() {
   }
 }
 
-bool H264VideoToolboxEncoder::SetSessionProperty(CFStringRef key,
-                                                 int32_t value) {
-  base::ScopedCFTypeRef<CFNumberRef> cfvalue(
-      CFNumberCreate(nullptr, kCFNumberSInt32Type, &value));
-  return videotoolbox_glue_->VTSessionSetProperty(compression_session_, key,
-                                                  cfvalue) == noErr;
-}
-
-bool H264VideoToolboxEncoder::SetSessionProperty(CFStringRef key, bool value) {
-  CFBooleanRef cfvalue = (value) ? kCFBooleanTrue : kCFBooleanFalse;
-  return videotoolbox_glue_->VTSessionSetProperty(compression_session_, key,
-                                                  cfvalue) == noErr;
-}
-
-bool H264VideoToolboxEncoder::SetSessionProperty(CFStringRef key,
-                                                 CFStringRef value) {
-  return videotoolbox_glue_->VTSessionSetProperty(compression_session_, key,
-                                                  value) == noErr;
-}
-
 void H264VideoToolboxEncoder::CompressionCallback(void* encoder_opaque,
                                                   void* request_opaque,
                                                   OSStatus status,
                                                   VTEncodeInfoFlags info,
                                                   CMSampleBufferRef sbuf) {
-  auto encoder = reinterpret_cast<H264VideoToolboxEncoder*>(encoder_opaque);
-  const scoped_ptr<InProgressFrameEncode> request(
+  auto* encoder = reinterpret_cast<H264VideoToolboxEncoder*>(encoder_opaque);
+  const std::unique_ptr<InProgressFrameEncode> request(
       reinterpret_cast<InProgressFrameEncode*>(request_opaque));
   bool keyframe = false;
   bool has_frame_data = false;
@@ -706,28 +511,26 @@ void H264VideoToolboxEncoder::CompressionCallback(void* encoder_opaque,
     encoder->cast_environment_->PostTask(
         CastEnvironment::MAIN, FROM_HERE,
         base::Bind(encoder->status_change_cb_, STATUS_CODEC_RUNTIME_ERROR));
-  } else if ((info & VideoToolboxGlue::kVTEncodeInfo_FrameDropped)) {
+  } else if ((info & kVTEncodeInfo_FrameDropped)) {
     DVLOG(2) << " frame dropped";
   } else {
-    auto sample_attachments =
+    auto* sample_attachments =
         static_cast<CFDictionaryRef>(CFArrayGetValueAtIndex(
-            CoreMediaGlue::CMSampleBufferGetSampleAttachmentsArray(sbuf, true),
-            0));
+            CMSampleBufferGetSampleAttachmentsArray(sbuf, true), 0));
 
     // If the NotSync key is not present, it implies Sync, which indicates a
     // keyframe (at least I think, VT documentation is, erm, sparse). Could
     // alternatively use kCMSampleAttachmentKey_DependsOnOthers == false.
-    keyframe = !CFDictionaryContainsKey(
-                   sample_attachments,
-                   CoreMediaGlue::kCMSampleAttachmentKey_NotSync());
+    keyframe = !CFDictionaryContainsKey(sample_attachments,
+                                        kCMSampleAttachmentKey_NotSync);
     has_frame_data = true;
   }
 
-  // Increment the encoder-scoped frame id and assign the new value to this
-  // frame. VideoToolbox calls the output callback serially, so this is safe.
-  const uint32 frame_id = ++encoder->last_frame_id_;
+  // Grab the next frame ID and increment |next_frame_id_| for next time.
+  // VideoToolbox calls the output callback serially, so this is safe.
+  const FrameId frame_id = encoder->next_frame_id_++;
 
-  scoped_ptr<SenderEncodedFrame> encoded_frame(new SenderEncodedFrame());
+  std::unique_ptr<SenderEncodedFrame> encoded_frame(new SenderEncodedFrame());
   encoded_frame->frame_id = frame_id;
   encoded_frame->reference_time = request->reference_time;
   encoded_frame->rtp_timestamp = request->rtp_timestamp;
@@ -748,10 +551,12 @@ void H264VideoToolboxEncoder::CompressionCallback(void* encoder_opaque,
     encoded_frame->referenced_frame_id = frame_id - 1;
   }
 
-  if (has_frame_data)
-    CopySampleBufferToAnnexBBuffer(sbuf, &encoded_frame->data, keyframe);
+  if (has_frame_data) {
+    video_toolbox::CopySampleBufferToAnnexBBuffer(sbuf, keyframe,
+                                                  &encoded_frame->data);
+  }
 
-  // TODO(miu): Compute and populate the |deadline_utilization| and
+  // TODO(miu): Compute and populate the |encoder_utilization| and
   // |lossy_utilization| performance metrics in |encoded_frame|.
 
   encoded_frame->encode_completion_time =

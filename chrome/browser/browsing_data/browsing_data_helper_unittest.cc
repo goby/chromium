@@ -4,14 +4,15 @@
 
 #include "chrome/browser/browsing_data/browsing_data_helper.h"
 
-#include "base/strings/stringprintf.h"
+#include "base/macros.h"
 #include "chrome/common/url_constants.h"
 #include "extensions/common/constants.h"
+#include "extensions/features/features.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 #include "chrome/browser/extensions/mock_extension_special_storage_policy.h"
 #endif
 
@@ -78,8 +79,6 @@ TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotWebSafe) {
   EXPECT_FALSE(IsWebScheme(content::kChromeUIScheme));
   EXPECT_FALSE(IsWebScheme(url::kJavaScriptScheme));
   EXPECT_FALSE(IsWebScheme(url::kMailToScheme));
-  EXPECT_FALSE(IsWebScheme(content::kMetadataScheme));
-  EXPECT_FALSE(IsWebScheme(content::kSwappedOutScheme));
   EXPECT_FALSE(IsWebScheme(content::kViewSourceScheme));
 }
 
@@ -102,12 +101,10 @@ TEST_F(BrowsingDataHelperTest, ChromeSchemesAreNotAllExtension) {
   EXPECT_FALSE(IsExtensionScheme(content::kChromeUIScheme));
   EXPECT_FALSE(IsExtensionScheme(url::kJavaScriptScheme));
   EXPECT_FALSE(IsExtensionScheme(url::kMailToScheme));
-  EXPECT_FALSE(IsExtensionScheme(content::kMetadataScheme));
-  EXPECT_FALSE(IsExtensionScheme(content::kSwappedOutScheme));
   EXPECT_FALSE(IsExtensionScheme(content::kViewSourceScheme));
 }
 
-#if defined(ENABLE_EXTENSIONS)
+#if BUILDFLAG(ENABLE_EXTENSIONS)
 TEST_F(BrowsingDataHelperTest, TestMatches) {
   scoped_refptr<MockExtensionSpecialStoragePolicy> mock_policy =
       new MockExtensionSpecialStoragePolicy;

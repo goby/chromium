@@ -5,10 +5,13 @@
 #ifndef TOOLS_GN_PARSE_TREE_H_
 #define TOOLS_GN_PARSE_TREE_H_
 
+#include <stddef.h>
+
+#include <memory>
+#include <utility>
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "tools/gn/err.h"
 #include "tools/gn/token.h"
 #include "tools/gn/value.h"
@@ -98,7 +101,7 @@ class ParseNode {
   void PrintComments(std::ostream& out, int indent) const;
 
  private:
-  scoped_ptr<Comments> comments_;
+  std::unique_ptr<Comments> comments_;
 
   DISALLOW_COPY_AND_ASSIGN(ParseNode);
 };
@@ -148,14 +151,23 @@ class AccessorNode : public ParseNode {
 
   // Index is the expression inside the []. Will be null if member is set.
   const ParseNode* index() const { return index_.get(); }
-  void set_index(scoped_ptr<ParseNode> i) { index_ = i.Pass(); }
+  void set_index(std::unique_ptr<ParseNode> i) { index_ = std::move(i); }
 
   // The member is the identifier on the right hand side of the dot. Will be
   // null if the index is set.
   const IdentifierNode* member() const { return member_.get(); }
-  void set_member(scoped_ptr<IdentifierNode> i) { member_ = i.Pass(); }
+  void set_member(std::unique_ptr<IdentifierNode> i) { member_ = std::move(i); }
 
   void SetNewLocation(int line_number);
+
+  // Evaluates the index for list accessor operations and range checks it
+  // against the max length of the list. If the index is OK, sets
+  // |*computed_index| and returns true. Otherwise sets the |*err| and returns
+  // false.
+  bool ComputeAndValidateListIndex(Scope* scope,
+                                   size_t max_len,
+                                   size_t* computed_index,
+                                   Err* err) const;
 
  private:
   Value ExecuteArrayAccess(Scope* scope, Err* err) const;
@@ -165,8 +177,8 @@ class AccessorNode : public ParseNode {
 
   // Either index or member will be set according to what type of access this
   // is.
-  scoped_ptr<ParseNode> index_;
-  scoped_ptr<IdentifierNode> member_;
+  std::unique_ptr<ParseNode> index_;
+  std::unique_ptr<IdentifierNode> member_;
 
   DISALLOW_COPY_AND_ASSIGN(AccessorNode);
 };
@@ -190,19 +202,17 @@ class BinaryOpNode : public ParseNode {
   void set_op(const Token& t) { op_ = t; }
 
   const ParseNode* left() const { return left_.get(); }
-  void set_left(scoped_ptr<ParseNode> left) {
-    left_ = left.Pass();
-  }
+  void set_left(std::unique_ptr<ParseNode> left) { left_ = std::move(left); }
 
   const ParseNode* right() const { return right_.get(); }
-  void set_right(scoped_ptr<ParseNode> right) {
-    right_ = right.Pass();
+  void set_right(std::unique_ptr<ParseNode> right) {
+    right_ = std::move(right);
   }
 
  private:
-  scoped_ptr<ParseNode> left_;
+  std::unique_ptr<ParseNode> left_;
   Token op_;
-  scoped_ptr<ParseNode> right_;
+  std::unique_ptr<ParseNode> right_;
 
   DISALLOW_COPY_AND_ASSIGN(BinaryOpNode);
 };
@@ -211,7 +221,18 @@ class BinaryOpNode : public ParseNode {
 
 class BlockNode : public ParseNode {
  public:
-  BlockNode();
+  // How Execute manages the scopes and results.
+  enum ResultMode {
+    // Creates a new scope for the execution of this block and returns it as
+    // a Value from Execute().
+    RETURNS_SCOPE,
+
+    // Executes in the context of the calling scope (variables set will go
+    // into the invoking scope) and Execute will return an empty Value.
+    DISCARDS_RESULT
+  };
+
+  BlockNode(ResultMode result_mode);
   ~BlockNode() override;
 
   const BlockNode* AsBlock() const override;
@@ -223,22 +244,27 @@ class BlockNode : public ParseNode {
   void Print(std::ostream& out, int indent) const override;
 
   void set_begin_token(const Token& t) { begin_token_ = t; }
-  void set_end(scoped_ptr<EndNode> e) { end_ = e.Pass(); }
+  void set_end(std::unique_ptr<EndNode> e) { end_ = std::move(e); }
   const EndNode* End() const { return end_.get(); }
 
-  const std::vector<ParseNode*>& statements() const { return statements_; }
-  void append_statement(scoped_ptr<ParseNode> s) {
-    statements_.push_back(s.release());
+  ResultMode result_mode() const { return result_mode_; }
+
+  const std::vector<std::unique_ptr<ParseNode>>& statements() const {
+    return statements_;
+  }
+  void append_statement(std::unique_ptr<ParseNode> s) {
+    statements_.push_back(std::move(s));
   }
 
  private:
+  const ResultMode result_mode_;
+
   // Tokens corresponding to { and }, if any (may be NULL). The end is stored
   // in a custom parse node so that it can have comments hung off of it.
   Token begin_token_;
-  scoped_ptr<EndNode> end_;
+  std::unique_ptr<EndNode> end_;
 
-  // Owning pointers, use unique_ptr when we can use C++11.
-  std::vector<ParseNode*> statements_;
+  std::vector<std::unique_ptr<ParseNode>> statements_;
 
   DISALLOW_COPY_AND_ASSIGN(BlockNode);
 };
@@ -261,29 +287,25 @@ class ConditionNode : public ParseNode {
   void set_if_token(const Token& token) { if_token_ = token; }
 
   const ParseNode* condition() const { return condition_.get(); }
-  void set_condition(scoped_ptr<ParseNode> c) {
-    condition_ = c.Pass();
+  void set_condition(std::unique_ptr<ParseNode> c) {
+    condition_ = std::move(c);
   }
 
   const BlockNode* if_true() const { return if_true_.get(); }
-  void set_if_true(scoped_ptr<BlockNode> t) {
-    if_true_ = t.Pass();
-  }
+  void set_if_true(std::unique_ptr<BlockNode> t) { if_true_ = std::move(t); }
 
   // This is either empty, a block (for the else clause), or another
   // condition.
   const ParseNode* if_false() const { return if_false_.get(); }
-  void set_if_false(scoped_ptr<ParseNode> f) {
-    if_false_ = f.Pass();
-  }
+  void set_if_false(std::unique_ptr<ParseNode> f) { if_false_ = std::move(f); }
 
  private:
   // Token corresponding to the "if" string.
   Token if_token_;
 
-  scoped_ptr<ParseNode> condition_;  // Always non-null.
-  scoped_ptr<BlockNode> if_true_;  // Always non-null.
-  scoped_ptr<ParseNode> if_false_;  // May be null.
+  std::unique_ptr<ParseNode> condition_;  // Always non-null.
+  std::unique_ptr<BlockNode> if_true_;    // Always non-null.
+  std::unique_ptr<ParseNode> if_false_;   // May be null.
 
   DISALLOW_COPY_AND_ASSIGN(ConditionNode);
 };
@@ -307,15 +329,15 @@ class FunctionCallNode : public ParseNode {
   void set_function(Token t) { function_ = t; }
 
   const ListNode* args() const { return args_.get(); }
-  void set_args(scoped_ptr<ListNode> a) { args_ = a.Pass(); }
+  void set_args(std::unique_ptr<ListNode> a) { args_ = std::move(a); }
 
   const BlockNode* block() const { return block_.get(); }
-  void set_block(scoped_ptr<BlockNode> b) { block_ = b.Pass(); }
+  void set_block(std::unique_ptr<BlockNode> b) { block_ = std::move(b); }
 
  private:
   Token function_;
-  scoped_ptr<ListNode> args_;
-  scoped_ptr<BlockNode> block_;  // May be null.
+  std::unique_ptr<ListNode> args_;
+  std::unique_ptr<BlockNode> block_;  // May be null.
 
   DISALLOW_COPY_AND_ASSIGN(FunctionCallNode);
 };
@@ -363,13 +385,15 @@ class ListNode : public ParseNode {
   void Print(std::ostream& out, int indent) const override;
 
   void set_begin_token(const Token& t) { begin_token_ = t; }
-  void set_end(scoped_ptr<EndNode> e) { end_ = e.Pass(); }
+  void set_end(std::unique_ptr<EndNode> e) { end_ = std::move(e); }
   const EndNode* End() const { return end_.get(); }
 
-  void append_item(scoped_ptr<ParseNode> s) {
-    contents_.push_back(s.release());
+  void append_item(std::unique_ptr<ParseNode> s) {
+    contents_.push_back(std::move(s));
   }
-  const std::vector<const ParseNode*>& contents() const { return contents_; }
+  const std::vector<std::unique_ptr<const ParseNode>>& contents() const {
+    return contents_;
+  }
 
   void SortAsStringsList();
   void SortAsDepsList();
@@ -397,11 +421,10 @@ class ListNode : public ParseNode {
   // Tokens corresponding to the [ and ]. The end token is stored in inside an
   // custom parse node so that it can have comments hung off of it.
   Token begin_token_;
-  scoped_ptr<EndNode> end_;
+  std::unique_ptr<EndNode> end_;
   bool prefer_multiline_;
 
-  // Owning pointers, use unique_ptr when we can use C++11.
-  std::vector<const ParseNode*> contents_;
+  std::vector<std::unique_ptr<const ParseNode>> contents_;
 
   DISALLOW_COPY_AND_ASSIGN(ListNode);
 };
@@ -452,13 +475,13 @@ class UnaryOpNode : public ParseNode {
   void set_op(const Token& t) { op_ = t; }
 
   const ParseNode* operand() const { return operand_.get(); }
-  void set_operand(scoped_ptr<ParseNode> operand) {
-    operand_ = operand.Pass();
+  void set_operand(std::unique_ptr<ParseNode> operand) {
+    operand_ = std::move(operand);
   }
 
  private:
   Token op_;
-  scoped_ptr<ParseNode> operand_;
+  std::unique_ptr<ParseNode> operand_;
 
   DISALLOW_COPY_AND_ASSIGN(UnaryOpNode);
 };

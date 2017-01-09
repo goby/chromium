@@ -2,7 +2,12 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+
+#include "base/macros.h"
+#include "base/run_loop.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/cookie_settings_factory.h"
 #include "chrome/browser/content_settings/host_content_settings_map_factory.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
@@ -105,8 +110,8 @@ class ExtensionSpecialStoragePolicyTest : public testing::Test {
     manifest.SetString(keys::kVersion, "1");
     manifest.SetString(keys::kLaunchWebURL, "http://explicit/protected/start");
     base::ListValue* list = new base::ListValue();
-    list->Append(new base::StringValue("http://explicit/protected"));
-    list->Append(new base::StringValue("*://*.wildcards/protected"));
+    list->AppendString("http://explicit/protected");
+    list->AppendString("*://*.wildcards/protected");
     manifest.Set(keys::kWebURLs, list);
     std::string error;
     scoped_refptr<Extension> protected_app = Extension::Create(
@@ -127,11 +132,11 @@ class ExtensionSpecialStoragePolicyTest : public testing::Test {
     manifest.SetString(keys::kVersion, "1");
     manifest.SetString(keys::kLaunchWebURL, "http://explicit/unlimited/start");
     base::ListValue* list = new base::ListValue();
-    list->Append(new base::StringValue("unlimitedStorage"));
+    list->AppendString("unlimitedStorage");
     manifest.Set(keys::kPermissions, list);
     list = new base::ListValue();
-    list->Append(new base::StringValue("http://explicit/unlimited"));
-    list->Append(new base::StringValue("*://*.wildcards/unlimited"));
+    list->AppendString("http://explicit/unlimited");
+    list->AppendString("*://*.wildcards/unlimited");
     manifest.Set(keys::kWebURLs, list);
     std::string error;
     scoped_refptr<Extension> unlimited_app = Extension::Create(
@@ -327,18 +332,13 @@ TEST_F(ExtensionSpecialStoragePolicyTest, HasSessionOnlyOrigins) {
   EXPECT_FALSE(policy_->HasSessionOnlyOrigins());
 
   // Or the session-onlyness can affect individual origins.
-  ContentSettingsPattern pattern =
-      ContentSettingsPattern::FromString("pattern.com");
-
-  cookie_settings->SetCookieSetting(pattern,
-                                    ContentSettingsPattern::Wildcard(),
-                                    CONTENT_SETTING_SESSION_ONLY);
+  GURL url("http://pattern.com");
+  cookie_settings->SetCookieSetting(url, CONTENT_SETTING_SESSION_ONLY);
 
   EXPECT_TRUE(policy_->HasSessionOnlyOrigins());
 
   // Clearing an origin-specific rule.
-  cookie_settings->ResetCookieSetting(pattern,
-                                      ContentSettingsPattern::Wildcard());
+  cookie_settings->ResetCookieSetting(url);
 
   EXPECT_FALSE(policy_->HasSessionOnlyOrigins());
 }
@@ -354,10 +354,9 @@ TEST_F(ExtensionSpecialStoragePolicyTest, IsStorageDurableTest) {
 
   HostContentSettingsMap* content_settings_map =
       HostContentSettingsMapFactory::GetForProfile(&profile);
-  content_settings_map->SetContentSetting(
-      ContentSettingsPattern::FromString("foo.com"),
-      ContentSettingsPattern::Wildcard(), CONTENT_SETTINGS_TYPE_DURABLE_STORAGE,
-      std::string(), CONTENT_SETTING_ALLOW);
+  content_settings_map->SetContentSettingDefaultScope(
+      kHttpUrl, GURL(), CONTENT_SETTINGS_TYPE_DURABLE_STORAGE, std::string(),
+      CONTENT_SETTING_ALLOW);
 
   EXPECT_TRUE(policy_->IsStorageDurable(kHttpUrl));
 }
@@ -383,14 +382,14 @@ TEST_F(ExtensionSpecialStoragePolicyTest, NotificationTest) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     observer.ExpectGrant(apps[i]->id(), change_flags[i]);
     policy_->GrantRightsForExtension(apps[i].get(), NULL);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
   for (size_t i = 0; i < arraysize(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     policy_->GrantRightsForExtension(apps[i].get(), NULL);
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
@@ -398,20 +397,20 @@ TEST_F(ExtensionSpecialStoragePolicyTest, NotificationTest) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     observer.ExpectRevoke(apps[i]->id(), change_flags[i]);
     policy_->RevokeRightsForExtension(apps[i].get());
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
   for (size_t i = 0; i < arraysize(apps); ++i) {
     SCOPED_TRACE(testing::Message() << "i: " << i);
     policy_->RevokeRightsForExtension(apps[i].get());
-    base::MessageLoop::current()->RunUntilIdle();
+    base::RunLoop().RunUntilIdle();
     EXPECT_TRUE(observer.IsCompleted());
   }
 
   observer.ExpectClear();
   policy_->RevokeRightsForAllExtensions();
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
   EXPECT_TRUE(observer.IsCompleted());
 
   policy_->RemoveObserver(&observer);

@@ -2,16 +2,20 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include <deque>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <vector>
 
 #include "base/bind.h"
 #include "base/format_macros.h"
+#include "base/macros.h"
 #include "base/md5.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/sys_byteorder.h"
+#include "base/threading/platform_thread.h"
 #include "build/build_config.h"
 #include "media/base/audio_buffer.h"
 #include "media/base/audio_bus.h"
@@ -25,26 +29,53 @@
 #include "media/filters/audio_file_reader.h"
 #include "media/filters/ffmpeg_audio_decoder.h"
 #include "media/filters/in_memory_url_protocol.h"
-#include "media/filters/opus_audio_decoder.h"
 #include "testing/gtest/include/gtest/gtest.h"
+
+#if defined(OS_ANDROID)
+#include "base/android/build_info.h"
+#include "media/base/android/media_codec_util.h"
+#include "media/filters/android/media_codec_audio_decoder.h"
+
+#if defined(USE_PROPRIETARY_CODECS)
+#include "media/formats/mpeg/adts_stream_parser.h"
+#endif
+
+// Helper macro to skip the test if MediaCodec is not available.
+#define SKIP_TEST_IF_NO_MEDIA_CODEC()                                \
+  do {                                                               \
+    if (GetParam().decoder_type == MEDIA_CODEC) {                    \
+      if (!MediaCodecUtil::IsMediaCodecAvailable()) {                \
+        VLOG(0) << "Could not run test - no MediaCodec on device.";  \
+        return;                                                      \
+      }                                                              \
+      if (GetParam().codec == kCodecOpus &&                          \
+          base::android::BuildInfo::GetInstance()->sdk_int() < 21) { \
+        VLOG(0) << "Could not run test - Opus is not supported";     \
+        return;                                                      \
+      }                                                              \
+    }                                                                \
+  } while (0)
+#else
+#define SKIP_TEST_IF_NO_MEDIA_CODEC() \
+  do {                                \
+  } while (0)
+#endif  // !defined(OS_ANDROID)
 
 namespace media {
 
 // The number of packets to read and then decode from each file.
 static const size_t kDecodeRuns = 3;
-static const uint8_t kOpusExtraData[] = {
-    0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 0x01, 0x02,
-    // The next two bytes represent the codec delay.
-    0x00, 0x00, 0x80, 0xbb, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 enum AudioDecoderType {
   FFMPEG,
-  OPUS,
+#if defined(OS_ANDROID)
+  MEDIA_CODEC,
+#endif
 };
 
 struct DecodedBufferExpectations {
-  const int64 timestamp;
-  const int64 duration;
+  const int64_t timestamp;
+  const int64_t duration;
   const char* hash;
 };
 
@@ -72,7 +103,7 @@ static void SetDiscardPadding(AVPacket* packet,
   // Discard negative timestamps.
   if (buffer->timestamp() + buffer->duration() < base::TimeDelta()) {
     buffer->set_discard_padding(
-        std::make_pair(kInfiniteDuration(), base::TimeDelta()));
+        std::make_pair(kInfiniteDuration, base::TimeDelta()));
     return;
   }
   if (buffer->timestamp() < base::TimeDelta()) {
@@ -83,8 +114,8 @@ static void SetDiscardPadding(AVPacket* packet,
 
   // If the timestamp is positive, try to use FFmpeg's discard data.
   int skip_samples_size = 0;
-  const uint32* skip_samples_ptr =
-      reinterpret_cast<const uint32*>(av_packet_get_side_data(
+  const uint32_t* skip_samples_ptr =
+      reinterpret_cast<const uint32_t*>(av_packet_get_side_data(
           packet, AV_PKT_DATA_SKIP_SAMPLES, &skip_samples_size));
   if (skip_samples_size < 4)
     return;
@@ -99,16 +130,17 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
   AudioDecoderTest()
       : pending_decode_(false),
         pending_reset_(false),
-        last_decode_status_(AudioDecoder::kDecodeError) {
+        last_decode_status_(DecodeStatus::DECODE_ERROR) {
     switch (GetParam().decoder_type) {
       case FFMPEG:
         decoder_.reset(new FFmpegAudioDecoder(message_loop_.task_runner(),
                                               new MediaLog()));
         break;
-      case OPUS:
-        decoder_.reset(
-            new OpusAudioDecoder(message_loop_.task_runner()));
+#if defined(OS_ANDROID)
+      case MEDIA_CODEC:
+        decoder_.reset(new MediaCodecAudioDecoder(message_loop_.task_runner()));
         break;
+#endif
     }
   }
 
@@ -121,17 +153,17 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
   void DecodeBuffer(const scoped_refptr<DecoderBuffer>& buffer) {
     ASSERT_FALSE(pending_decode_);
     pending_decode_ = true;
-    last_decode_status_ = AudioDecoder::kDecodeError;
+    last_decode_status_ = DecodeStatus::DECODE_ERROR;
+
+    base::RunLoop run_loop;
     decoder_->Decode(
-        buffer,
-        base::Bind(&AudioDecoderTest::DecodeFinished, base::Unretained(this)));
-    base::RunLoop().RunUntilIdle();
+        buffer, base::Bind(&AudioDecoderTest::DecodeFinished,
+                           base::Unretained(this), run_loop.QuitClosure()));
+    run_loop.Run();
     ASSERT_FALSE(pending_decode_);
   }
 
-  void SendEndOfStream() {
-    DecodeBuffer(DecoderBuffer::CreateEOSBuffer());
-  }
+  void SendEndOfStream() { DecodeBuffer(DecoderBuffer::CreateEOSBuffer()); }
 
   void Initialize() {
     // Load the test data file.
@@ -147,14 +179,34 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
     EXPECT_EQ(GetParam().first_packet_pts, packet.pts);
     start_timestamp_ = ConvertFromTimeBase(
         reader_->GetAVStreamForTesting()->time_base, packet.pts);
-    av_packet_unref(&packet);
 
     // Seek back to the beginning.
     ASSERT_TRUE(reader_->SeekForTesting(start_timestamp_));
 
     AudioDecoderConfig config;
     ASSERT_TRUE(AVCodecContextToAudioDecoderConfig(
-        reader_->codec_context_for_testing(), false, &config));
+        reader_->codec_context_for_testing(), Unencrypted(), &config));
+
+#if defined(OS_ANDROID) && defined(USE_PROPRIETARY_CODECS)
+    // MEDIA_CODEC type requires config->extra_data() for AAC codec. For ADTS
+    // streams we need to extract it with a separate procedure.
+    if (GetParam().decoder_type == MEDIA_CODEC &&
+        GetParam().codec == kCodecAAC && config.extra_data().empty()) {
+      int sample_rate;
+      ChannelLayout channel_layout;
+      std::vector<uint8_t> extra_data;
+      ASSERT_GT(ADTSStreamParser().ParseFrameHeader(
+                    packet.data, packet.size, nullptr, &sample_rate,
+                    &channel_layout, nullptr, nullptr, &extra_data),
+                0);
+      config.Initialize(kCodecAAC, kSampleFormatS16, channel_layout,
+                        sample_rate, extra_data, Unencrypted(),
+                        base::TimeDelta(), 0);
+      ASSERT_FALSE(config.extra_data().empty());
+    }
+#endif
+
+    av_packet_unref(&packet);
 
     EXPECT_EQ(GetParam().codec, config.codec());
     EXPECT_EQ(GetParam().samples_per_second, config.samples_per_second());
@@ -170,7 +222,7 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
   void InitializeDecoderWithResult(const AudioDecoderConfig& config,
                                    bool success) {
     decoder_->Initialize(
-        config, SetCdmReadyCB(), NewExpectedBoolCB(success),
+        config, nullptr, NewExpectedBoolCB(success),
         base::Bind(&AudioDecoderTest::OnDecoderOutput, base::Unretained(this)));
     base::RunLoop().RunUntilIdle();
   }
@@ -193,7 +245,7 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
 
     // Don't set discard padding for Opus, it already has discard behavior set
     // based on the codec delay in the AudioDecoderConfig.
-    if (GetParam().decoder_type == FFMPEG)
+    if (GetParam().decoder_type == FFMPEG && GetParam().codec != kCodecOpus)
       SetDiscardPadding(&packet, buffer, GetParam().samples_per_second);
 
     // DecodeBuffer() shouldn't need the original packet since it uses the copy.
@@ -221,11 +273,12 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
     decoded_audio_.push_back(buffer);
   }
 
-  void DecodeFinished(AudioDecoder::Status status) {
+  void DecodeFinished(const base::Closure& quit_closure, DecodeStatus status) {
     EXPECT_TRUE(pending_decode_);
     EXPECT_FALSE(pending_reset_);
     pending_decode_ = false;
     last_decode_status_ = status;
+    quit_closure.Run();
   }
 
   void ResetFinished() {
@@ -240,7 +293,7 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
     CHECK_LT(i, decoded_audio_.size());
     const scoped_refptr<AudioBuffer>& buffer = decoded_audio_[i];
 
-    scoped_ptr<AudioBus> output =
+    std::unique_ptr<AudioBus> output =
         AudioBus::Create(buffer->channel_count(), buffer->frame_count());
     buffer->ReadFrames(buffer->frame_count(), 0, 0, output.get());
 
@@ -257,23 +310,41 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
     return base::MD5DigestToBase16(digest);
   }
 
+  // Android MediaCodec returns wrong timestamps (shifted one frame forward)
+  // for AAC before Android L. Skip the timestamp check in this situation.
+  bool SkipBufferTimestampCheck() const {
+#if defined(OS_ANDROID)
+    return (base::android::BuildInfo::GetInstance()->sdk_int() < 21) &&
+           GetParam().decoder_type == MEDIA_CODEC &&
+           GetParam().codec == kCodecAAC;
+#else
+    return false;
+#endif
+  }
+
   void ExpectDecodedAudio(size_t i, const std::string& exact_hash) {
     CHECK_LT(i, decoded_audio_.size());
     const scoped_refptr<AudioBuffer>& buffer = decoded_audio_[i];
 
     const DecodedBufferExpectations& sample_info = GetParam().expectations[i];
-    EXPECT_EQ(sample_info.timestamp, buffer->timestamp().InMicroseconds());
+
+    // Android MediaCodec returns wrong timestamps (shifted one frame forward)
+    // for AAC before Android L. Ignore sample_info.timestamp in this situation.
+    if (!SkipBufferTimestampCheck())
+      EXPECT_EQ(sample_info.timestamp, buffer->timestamp().InMicroseconds());
     EXPECT_EQ(sample_info.duration, buffer->duration().InMicroseconds());
     EXPECT_FALSE(buffer->end_of_stream());
 
-    scoped_ptr<AudioBus> output =
+    std::unique_ptr<AudioBus> output =
         AudioBus::Create(buffer->channel_count(), buffer->frame_count());
     buffer->ReadFrames(buffer->frame_count(), 0, 0, output.get());
 
     // Generate a lossy hash of the audio used for comparison across platforms.
     AudioHash audio_hash;
     audio_hash.Update(output.get(), output->frames());
-    EXPECT_EQ(sample_info.hash, audio_hash.ToString());
+    EXPECT_TRUE(audio_hash.IsEquivalent(sample_info.hash, 0.02))
+        << "Audio hashes differ. Expected: " << sample_info.hash
+        << " Actual: " << audio_hash.ToString();
 
     if (!exact_hash.empty()) {
       EXPECT_EQ(exact_hash, GetDecodedAudioMD5(i));
@@ -290,20 +361,18 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
   const scoped_refptr<AudioBuffer>& decoded_audio(size_t i) {
     return decoded_audio_[i];
   }
-  AudioDecoder::Status last_decode_status() const {
-    return last_decode_status_;
-  }
+  DecodeStatus last_decode_status() const { return last_decode_status_; }
 
  private:
   base::MessageLoop message_loop_;
   scoped_refptr<DecoderBuffer> data_;
-  scoped_ptr<InMemoryUrlProtocol> protocol_;
-  scoped_ptr<AudioFileReader> reader_;
+  std::unique_ptr<InMemoryUrlProtocol> protocol_;
+  std::unique_ptr<AudioFileReader> reader_;
 
-  scoped_ptr<AudioDecoder> decoder_;
+  std::unique_ptr<AudioDecoder> decoder_;
   bool pending_decode_;
   bool pending_reset_;
-  AudioDecoder::Status last_decode_status_;
+  DecodeStatus last_decode_status_;
 
   std::deque<scoped_refptr<AudioBuffer> > decoded_audio_;
   base::TimeDelta start_timestamp_;
@@ -311,34 +380,40 @@ class AudioDecoderTest : public testing::TestWithParam<DecoderTestData> {
   DISALLOW_COPY_AND_ASSIGN(AudioDecoderTest);
 };
 
-class OpusAudioDecoderBehavioralTest : public AudioDecoderTest {};
 class FFmpegAudioDecoderBehavioralTest : public AudioDecoderTest {};
 
 TEST_P(AudioDecoderTest, Initialize) {
+  SKIP_TEST_IF_NO_MEDIA_CODEC();
   ASSERT_NO_FATAL_FAILURE(Initialize());
 }
 
 // Verifies decode audio as well as the Decode() -> Reset() sequence.
 TEST_P(AudioDecoderTest, ProduceAudioSamples) {
+  SKIP_TEST_IF_NO_MEDIA_CODEC();
   ASSERT_NO_FATAL_FAILURE(Initialize());
 
   // Run the test multiple times with a seek back to the beginning in between.
   std::vector<std::string> decoded_audio_md5_hashes;
   for (int i = 0; i < 2; ++i) {
-    for (size_t j = 0; j < kDecodeRuns; ++j) {
-      do {
-        Decode();
-        ASSERT_EQ(last_decode_status(), AudioDecoder::kOk);
-        // Some codecs have a multiple buffer delay and require an extra
-        // Decode() step to extract the desired number of output buffers.
-      } while (j == 0 && decoded_audio_size() == 0);
+    // Run decoder until we get at least |kDecodeRuns| output buffers.
+    // Keeping Decode() in a loop seems to be the simplest way to guarantee that
+    // the predefined number of output buffers are produced without draining
+    // (i.e. decoding EOS).
+    do {
+      Decode();
+      ASSERT_EQ(last_decode_status(), DecodeStatus::OK);
+    } while (decoded_audio_size() < kDecodeRuns);
 
-      // On the first pass record the exact MD5 hash for each decoded buffer.
-      if (i == 0)
+    // With MediaCodecAudioDecoder the output buffers might appear after
+    // some delay. Since we keep decoding in a loop, the number of output
+    // buffers when they eventually appear might exceed |kDecodeRuns|.
+    ASSERT_LE(kDecodeRuns, decoded_audio_size());
+
+    // On the first pass record the exact MD5 hash for each decoded buffer.
+    if (i == 0) {
+      for (size_t j = 0; j < kDecodeRuns; ++j)
         decoded_audio_md5_hashes.push_back(GetDecodedAudioMD5(j));
     }
-
-    ASSERT_EQ(kDecodeRuns, decoded_audio_size());
 
     // On the first pass verify the basic audio hash and sample info.  On the
     // second, verify the exact MD5 sum for each packet.  It shouldn't change.
@@ -348,7 +423,6 @@ TEST_P(AudioDecoderTest, ProduceAudioSamples) {
     }
 
     SendEndOfStream();
-    ASSERT_EQ(kDecodeRuns, decoded_audio_size());
 
     // Seek back to the beginning.  Calls Reset() on the decoder.
     Seek(start_timestamp());
@@ -356,73 +430,26 @@ TEST_P(AudioDecoderTest, ProduceAudioSamples) {
 }
 
 TEST_P(AudioDecoderTest, Decode) {
+  SKIP_TEST_IF_NO_MEDIA_CODEC();
   ASSERT_NO_FATAL_FAILURE(Initialize());
   Decode();
-  EXPECT_EQ(AudioDecoder::kOk, last_decode_status());
+  EXPECT_EQ(DecodeStatus::OK, last_decode_status());
 }
 
 TEST_P(AudioDecoderTest, Reset) {
+  SKIP_TEST_IF_NO_MEDIA_CODEC();
   ASSERT_NO_FATAL_FAILURE(Initialize());
   Reset();
 }
 
 TEST_P(AudioDecoderTest, NoTimestamp) {
+  SKIP_TEST_IF_NO_MEDIA_CODEC();
   ASSERT_NO_FATAL_FAILURE(Initialize());
   scoped_refptr<DecoderBuffer> buffer(new DecoderBuffer(0));
-  buffer->set_timestamp(kNoTimestamp());
+  buffer->set_timestamp(kNoTimestamp);
   DecodeBuffer(buffer);
-  EXPECT_EQ(AudioDecoder::kDecodeError, last_decode_status());
+  EXPECT_EQ(DecodeStatus::DECODE_ERROR, last_decode_status());
 }
-
-TEST_P(OpusAudioDecoderBehavioralTest, InitializeWithNoCodecDelay) {
-  ASSERT_EQ(GetParam().decoder_type, OPUS);
-  std::vector<uint8_t> extra_data(
-      kOpusExtraData,
-      kOpusExtraData + arraysize(kOpusExtraData));
-  AudioDecoderConfig decoder_config;
-  decoder_config.Initialize(kCodecOpus,
-                            kSampleFormatF32,
-                            CHANNEL_LAYOUT_STEREO,
-                            48000,
-                            extra_data,
-                            false,
-                            base::TimeDelta::FromMilliseconds(80),
-                            0);
-  InitializeDecoder(decoder_config);
-}
-
-TEST_P(OpusAudioDecoderBehavioralTest, InitializeWithBadCodecDelay) {
-  ASSERT_EQ(GetParam().decoder_type, OPUS);
-  std::vector<uint8_t> extra_data(
-      kOpusExtraData,
-      kOpusExtraData + arraysize(kOpusExtraData));
-  AudioDecoderConfig decoder_config;
-  decoder_config.Initialize(
-      kCodecOpus,
-      kSampleFormatF32,
-      CHANNEL_LAYOUT_STEREO,
-      48000,
-      extra_data,
-      false,
-      base::TimeDelta::FromMilliseconds(80),
-      // Use a different codec delay than in the extradata.
-      100);
-  InitializeDecoderWithResult(decoder_config, false);
-}
-
-#if defined(OPUS_FIXED_POINT)
-const DecodedBufferExpectations kSfxOpusExpectations[] = {
-    {0, 13500, "-2.70,-1.41,-0.78,-1.27,-2.56,-3.73,"},
-    {13500, 20000, "5.48,5.93,6.05,5.83,5.54,5.46,"},
-    {33500, 20000, "-3.44,-3.34,-3.57,-4.11,-4.74,-5.13,"},
-};
-#else
-const DecodedBufferExpectations kSfxOpusExpectations[] = {
-    {0, 13500, "-2.70,-1.41,-0.78,-1.27,-2.56,-3.73,"},
-    {13500, 20000, "5.48,5.93,6.04,5.83,5.54,5.45,"},
-    {33500, 20000, "-3.45,-3.35,-3.57,-4.12,-4.74,-5.14,"},
-};
-#endif
 
 const DecodedBufferExpectations kBearOpusExpectations[] = {
     {500, 3500, "-0.26,0.87,1.36,0.84,-0.30,-1.22,"},
@@ -430,24 +457,36 @@ const DecodedBufferExpectations kBearOpusExpectations[] = {
     {14000, 10000, "0.10,0.24,0.23,0.04,-0.14,-0.23,"},
 };
 
-const DecoderTestData kOpusTests[] = {
-    {OPUS, kCodecOpus, "sfx-opus.ogg", kSfxOpusExpectations, -312, 48000,
-     CHANNEL_LAYOUT_MONO},
-    {OPUS, kCodecOpus, "bear-opus.ogg", kBearOpusExpectations, 24, 48000,
+#if defined(OS_ANDROID)
+#if defined(USE_PROPRIETARY_CODECS)
+const DecodedBufferExpectations kSfxAdtsMcExpectations[] = {
+    {0, 23219, "-1.80,-1.49,-0.23,1.11,1.54,-0.11,"},
+    {23219, 23219, "-1.90,-1.53,-0.15,1.28,1.23,-0.33,"},
+    {46439, 23219, "0.54,0.88,2.19,3.54,3.24,1.63,"},
+};
+
+const DecodedBufferExpectations kHeAacMcExpectations[] = {
+    {0, 42666, "-1.76,-0.12,1.72,1.45,0.10,-1.32,"},
+    {42666, 42666, "-1.78,-0.13,1.70,1.44,0.09,-1.32,"},
+    {85333, 42666, "-1.78,-0.13,1.70,1.44,0.08,-1.33,"},
+};
+#endif
+
+const DecoderTestData kMediaCodecTests[] = {
+    {MEDIA_CODEC, kCodecOpus, "bear-opus.ogg", kBearOpusExpectations, 24, 48000,
      CHANNEL_LAYOUT_STEREO},
+#if defined(USE_PROPRIETARY_CODECS)
+    {MEDIA_CODEC, kCodecAAC, "sfx.adts", kSfxAdtsMcExpectations, 0, 44100,
+     CHANNEL_LAYOUT_MONO},
+    {MEDIA_CODEC, kCodecAAC, "bear-audio-implicit-he-aac-v2.aac",
+     kHeAacMcExpectations, 0, 24000, CHANNEL_LAYOUT_MONO},
+#endif
 };
 
-// Dummy data for behavioral tests.
-const DecoderTestData kOpusBehavioralTest[] = {
-    {OPUS, kUnknownAudioCodec, "", NULL, 0, 0, CHANNEL_LAYOUT_NONE},
-};
-
-INSTANTIATE_TEST_CASE_P(OpusAudioDecoderTest,
+INSTANTIATE_TEST_CASE_P(MediaCodecAudioDecoderTest,
                         AudioDecoderTest,
-                        testing::ValuesIn(kOpusTests));
-INSTANTIATE_TEST_CASE_P(OpusAudioDecoderBehavioralTest,
-                        OpusAudioDecoderBehavioralTest,
-                        testing::ValuesIn(kOpusBehavioralTest));
+                        testing::ValuesIn(kMediaCodecTests));
+#endif  // defined(OS_ANDROID)
 
 #if defined(USE_PROPRIETARY_CODECS)
 const DecodedBufferExpectations kSfxMp3Expectations[] = {
@@ -463,13 +502,11 @@ const DecodedBufferExpectations kSfxAdtsExpectations[] = {
 };
 #endif
 
-#if defined(OS_CHROMEOS)
 const DecodedBufferExpectations kSfxFlacExpectations[] = {
     {0, 104489, "-2.42,-1.12,0.71,1.70,1.09,-0.68,"},
     {104489, 104489, "-1.99,-0.67,1.18,2.19,1.60,-0.16,"},
     {208979, 79433, "2.84,2.70,3.23,4.06,4.59,4.44,"},
 };
-#endif
 
 const DecodedBufferExpectations kSfxWaveExpectations[] = {
     {0, 23219, "-1.23,-0.87,0.47,1.85,1.88,0.29,"},
@@ -495,6 +532,20 @@ const DecodedBufferExpectations kBearOgvExpectations[] = {
     {36281, 23219, "-1.43,-1.25,0.11,1.29,1.86,0.14,"},
 };
 
+#if defined(OPUS_FIXED_POINT)
+const DecodedBufferExpectations kSfxOpusExpectations[] = {
+    {0, 13500, "-2.70,-1.41,-0.78,-1.27,-2.56,-3.73,"},
+    {13500, 20000, "5.48,5.93,6.05,5.83,5.54,5.46,"},
+    {33500, 20000, "-3.44,-3.34,-3.57,-4.11,-4.74,-5.13,"},
+};
+#else
+const DecodedBufferExpectations kSfxOpusExpectations[] = {
+    {0, 13500, "-2.70,-1.41,-0.78,-1.27,-2.56,-3.73,"},
+    {13500, 20000, "5.48,5.93,6.04,5.83,5.54,5.45,"},
+    {33500, 20000, "-3.45,-3.35,-3.57,-4.12,-4.74,-5.14,"},
+};
+#endif
+
 const DecoderTestData kFFmpegTests[] = {
 #if defined(USE_PROPRIETARY_CODECS)
     {FFMPEG, kCodecMP3, "sfx.mp3", kSfxMp3Expectations, 0, 44100,
@@ -502,10 +553,8 @@ const DecoderTestData kFFmpegTests[] = {
     {FFMPEG, kCodecAAC, "sfx.adts", kSfxAdtsExpectations, 0, 44100,
      CHANNEL_LAYOUT_MONO},
 #endif
-#if defined(OS_CHROMEOS)
     {FFMPEG, kCodecFLAC, "sfx.flac", kSfxFlacExpectations, 0, 44100,
      CHANNEL_LAYOUT_MONO},
-#endif
     {FFMPEG, kCodecPCM, "sfx_f32le.wav", kSfxWaveExpectations, 0, 44100,
      CHANNEL_LAYOUT_MONO},
     {FFMPEG, kCodecPCM, "4ch.wav", kFourChannelWaveExpectations, 0, 44100,
@@ -515,6 +564,10 @@ const DecoderTestData kFFmpegTests[] = {
     // Note: bear.ogv is incorrectly muxed such that valid samples are given
     // negative timestamps, this marks them for discard per the ogg vorbis spec.
     {FFMPEG, kCodecVorbis, "bear.ogv", kBearOgvExpectations, -704, 44100,
+     CHANNEL_LAYOUT_STEREO},
+    {FFMPEG, kCodecOpus, "sfx-opus.ogg", kSfxOpusExpectations, -312, 48000,
+     CHANNEL_LAYOUT_MONO},
+    {FFMPEG, kCodecOpus, "bear-opus.ogg", kBearOpusExpectations, 24, 48000,
      CHANNEL_LAYOUT_STEREO},
 };
 

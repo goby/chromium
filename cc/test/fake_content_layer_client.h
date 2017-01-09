@@ -5,31 +5,34 @@
 #ifndef CC_TEST_FAKE_CONTENT_LAYER_CLIENT_H_
 #define CC_TEST_FAKE_CONTENT_LAYER_CLIENT_H_
 
+#include <stddef.h>
+
 #include <utility>
 #include <vector>
 
 #include "base/compiler_specific.h"
 #include "cc/layers/content_layer_client.h"
+#include "third_party/skia/include/core/SkImage.h"
 #include "third_party/skia/include/core/SkPaint.h"
+#include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
 #include "ui/gfx/transform.h"
-
-class SkImage;
 
 namespace cc {
 
 class FakeContentLayerClient : public ContentLayerClient {
  public:
   struct ImageData {
-    ImageData(const SkImage* image,
+    ImageData(sk_sp<const SkImage> image,
               const gfx::Point& point,
               const SkPaint& paint);
-    ImageData(const SkImage* image,
+    ImageData(sk_sp<const SkImage> image,
               const gfx::Transform& transform,
               const SkPaint& paint);
+    ImageData(const ImageData& other);
     ~ImageData();
-    skia::RefPtr<const SkImage> image;
+    sk_sp<const SkImage> image;
     gfx::Point point;
     gfx::Transform transform;
     SkPaint paint;
@@ -44,6 +47,10 @@ class FakeContentLayerClient : public ContentLayerClient {
   bool FillsBoundsCompletely() const override;
   size_t GetApproximateUnsharedMemoryUsage() const override;
 
+  void set_display_list_use_cached_picture(bool use_cached_picture) {
+    display_list_use_cached_picture_ = use_cached_picture;
+  }
+
   void set_fill_with_nonsolid_color(bool nonsolid) {
     fill_with_nonsolid_color_ = nonsolid;
   }
@@ -56,17 +63,17 @@ class FakeContentLayerClient : public ContentLayerClient {
     draw_rects_.push_back(std::make_pair(rect, paint));
   }
 
-  void add_draw_image(const SkImage* image,
+  void add_draw_image(sk_sp<const SkImage> image,
                       const gfx::Point& point,
                       const SkPaint& paint) {
-    ImageData data(image, point, paint);
+    ImageData data(std::move(image), point, paint);
     draw_images_.push_back(data);
   }
 
-  void add_draw_image_with_transform(const SkImage* image,
+  void add_draw_image_with_transform(sk_sp<const SkImage> image,
                                      const gfx::Transform& transform,
                                      const SkPaint& paint) {
-    ImageData data(image, transform, paint);
+    ImageData data(std::move(image), transform, paint);
     draw_images_.push_back(data);
   }
 
@@ -89,6 +96,7 @@ class FakeContentLayerClient : public ContentLayerClient {
   typedef std::vector<std::pair<gfx::RectF, SkPaint>> RectPaintVector;
   typedef std::vector<ImageData> ImageVector;
 
+  bool display_list_use_cached_picture_;
   bool fill_with_nonsolid_color_;
   RectPaintVector draw_rects_;
   ImageVector draw_images_;

@@ -5,9 +5,12 @@
 #ifndef CHROME_BROWSER_UI_WEBUI_OPTIONS_IMPORT_DATA_HANDLER_H_
 #define CHROME_BROWSER_UI_WEBUI_OPTIONS_IMPORT_DATA_HANDLER_H_
 
-#include "base/basictypes.h"
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "chrome/browser/importer/importer_progress_observer.h"
 #include "chrome/browser/ui/webui/options/options_ui.h"
 #include "chrome/common/importer/importer_data_types.h"
@@ -36,7 +39,7 @@ class ImportDataHandler : public OptionsPageUIHandler,
 
  private:
   void StartImport(const importer::SourceProfile& source_profile,
-                   uint16 imported_items);
+                   uint16_t imported_items);
 
   void ImportData(const base::ListValue* args);
 
@@ -54,7 +57,7 @@ class ImportDataHandler : public OptionsPageUIHandler,
   // Opens a file selection dialog to choose the bookmarks HTML file.
   void HandleChooseBookmarksFile(const base::ListValue* args);
 
-  scoped_ptr<ImporterList> importer_list_;
+  std::unique_ptr<ImporterList> importer_list_;
 
   // If non-null it means importing is in progress. ImporterHost takes care
   // of deleting itself when import is complete.

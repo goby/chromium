@@ -4,6 +4,9 @@
 
 #include "components/ssl_errors/error_classification.h"
 
+#include <limits.h>
+#include <stddef.h>
+
 #include <vector>
 
 #include "base/build_time.h"
@@ -12,10 +15,13 @@
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#include "components/network_time/network_time_tracker.h"
 #include "components/ssl_errors/error_info.h"
 #include "components/url_formatter/url_formatter.h"
-#include "net/base/net_util.h"
+#include "net/base/network_change_notifier.h"
 #include "net/base/registry_controlled_domains/registry_controlled_domain.h"
+#include "net/base/url_util.h"
 #include "net/cert/x509_cert_types.h"
 #include "net/cert/x509_certificate.h"
 #include "url/gurl.h"
@@ -61,39 +67,13 @@ void RecordSSLInterstitialCause(bool overridable, SSLInterstitialCause event) {
   }
 }
 
-size_t GetLevensteinDistance(const std::string& str1, const std::string& str2) {
-  if (str1 == str2)
-    return 0;
-  if (str1.size() == 0)
-    return str2.size();
-  if (str2.size() == 0)
-    return str1.size();
-  std::vector<size_t> kFirstRow(str2.size() + 1, 0);
-  std::vector<size_t> kSecondRow(str2.size() + 1, 0);
-
-  for (size_t i = 0; i < kFirstRow.size(); ++i)
-    kFirstRow[i] = i;
-  for (size_t i = 0; i < str1.size(); ++i) {
-    kSecondRow[0] = i + 1;
-    for (size_t j = 0; j < str2.size(); ++j) {
-      int cost = str1[i] == str2[j] ? 0 : 1;
-      kSecondRow[j + 1] =
-          std::min(std::min(kSecondRow[j] + 1, kFirstRow[j + 1] + 1),
-                   kFirstRow[j] + cost);
-    }
-    for (size_t j = 0; j < kFirstRow.size(); j++)
-      kFirstRow[j] = kSecondRow[j];
-  }
-  return kSecondRow[str2.size()];
-}
-
 std::vector<HostnameTokens> GetTokenizedDNSNames(
     const std::vector<std::string>& dns_names) {
   std::vector<HostnameTokens> dns_name_tokens;
   for (const auto& dns_name : dns_names) {
     HostnameTokens dns_name_token_single;
     if (dns_name.empty() || dns_name.find('\0') != std::string::npos ||
-        !(IsHostNameKnownTLD(dns_name))) {
+        !(HostNameHasKnownTLD(dns_name))) {
       dns_name_token_single.push_back(std::string());
     } else {
       dns_name_token_single = Tokenize(dns_name);
@@ -138,30 +118,37 @@ base::LazyInstance<base::Time> g_testing_build_time = LAZY_INSTANCE_INITIALIZER;
 
 }  // namespace
 
+static ssl_errors::ErrorInfo::ErrorType RecordErrorType(int cert_error) {
+  ssl_errors::ErrorInfo::ErrorType error_type =
+      ssl_errors::ErrorInfo::NetErrorToErrorType(cert_error);
+  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl_error_type", error_type,
+                            ssl_errors::ErrorInfo::END_OF_ENUM);
+  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl.connection_type",
+                            net::NetworkChangeNotifier::GetConnectionType(),
+                            net::NetworkChangeNotifier::CONNECTION_LAST);
+  return error_type;
+}
+
 void RecordUMAStatistics(bool overridable,
                          const base::Time& current_time,
                          const GURL& request_url,
                          int cert_error,
                          const net::X509Certificate& cert) {
-  ssl_errors::ErrorInfo::ErrorType type =
-      ssl_errors::ErrorInfo::NetErrorToErrorType(cert_error);
-  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl_error_type", type,
-                            ssl_errors::ErrorInfo::END_OF_ENUM);
-  switch (type) {
+  ssl_errors::ErrorInfo::ErrorType error_type = RecordErrorType(cert_error);
+
+  switch (error_type) {
     case ssl_errors::ErrorInfo::CERT_DATE_INVALID: {
-      if (IsUserClockInThePast(base::Time::NowFromSystemTime())) {
-        RecordSSLInterstitialCause(overridable, CLOCK_PAST);
-      } else if (IsUserClockInTheFuture(base::Time::NowFromSystemTime())) {
-        RecordSSLInterstitialCause(overridable, CLOCK_FUTURE);
-      } else if (cert.HasExpired() &&
-                 (current_time - cert.valid_expiry()).InDays() < 28) {
+      // Note: not reached when displaying the bad clock interstitial.
+      // See |RecordUMAStatisticsForClockInterstitial| below.
+      if (cert.HasExpired() &&
+          (current_time - cert.valid_expiry()).InDays() < 28) {
         RecordSSLInterstitialCause(overridable, EXPIRED_RECENTLY);
       }
       break;
     }
     case ssl_errors::ErrorInfo::CERT_COMMON_NAME_INVALID: {
       std::string host_name = request_url.host();
-      if (IsHostNameKnownTLD(host_name)) {
+      if (HostNameHasKnownTLD(host_name)) {
         HostnameTokens host_name_tokens = Tokenize(host_name);
         if (IsWWWSubDomainMatch(request_url, cert))
           RecordSSLInterstitialCause(overridable, WWW_SUBDOMAIN_MATCH);
@@ -197,56 +184,104 @@ void RecordUMAStatistics(bool overridable,
     default:
       break;
   }
-  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl.connection_type",
-                            net::NetworkChangeNotifier::GetConnectionType(),
-                            net::NetworkChangeNotifier::CONNECTION_LAST);
 }
 
-bool IsUserClockInThePast(const base::Time& time_now) {
-  base::Time build_time;
-  if (!g_testing_build_time.Get().is_null()) {
-    build_time = g_testing_build_time.Get();
-  } else {
-#if defined(DONT_EMBED_BUILD_METADATA) && !defined(OFFICIAL_BUILD)
-    return false;
-#else
-    build_time = base::GetBuildTime();
-#endif
-  }
+void RecordUMAStatisticsForClockInterstitial(bool overridable,
+                                             ssl_errors::ClockState clock_state,
+                                             int cert_error) {
+  ssl_errors::ErrorInfo::ErrorType error_type = RecordErrorType(cert_error);
+  DCHECK(error_type == ssl_errors::ErrorInfo::CERT_DATE_INVALID);
 
-  if (time_now < build_time - base::TimeDelta::FromDays(2))
-    return true;
-  return false;
+  if (clock_state == ssl_errors::CLOCK_STATE_FUTURE) {
+    RecordSSLInterstitialCause(overridable, CLOCK_FUTURE);
+  } else if (clock_state == ssl_errors::CLOCK_STATE_PAST) {
+    RecordSSLInterstitialCause(overridable, CLOCK_PAST);
+  } else {
+    NOTREACHED();
+  }
 }
 
-bool IsUserClockInTheFuture(const base::Time& time_now) {
-  base::Time build_time;
-  if (!g_testing_build_time.Get().is_null()) {
-    build_time = g_testing_build_time.Get();
-  } else {
-#if defined(DONT_EMBED_BUILD_METADATA) && !defined(OFFICIAL_BUILD)
-    return false;
-#else
-    build_time = base::GetBuildTime();
-#endif
+ClockState GetClockState(
+    const base::Time& now_system,
+    const network_time::NetworkTimeTracker* network_time_tracker) {
+  base::Time now_network;
+  base::TimeDelta uncertainty;
+  const base::TimeDelta kNetworkTimeFudge = base::TimeDelta::FromMinutes(5);
+  NetworkClockState network_state = NETWORK_CLOCK_STATE_MAX;
+  network_time::NetworkTimeTracker::NetworkTimeResult network_time_result =
+      network_time_tracker->GetNetworkTime(&now_network, &uncertainty);
+  switch (network_time_result) {
+    case network_time::NetworkTimeTracker::NETWORK_TIME_AVAILABLE:
+      if (now_system < now_network - uncertainty - kNetworkTimeFudge) {
+        network_state = NETWORK_CLOCK_STATE_CLOCK_IN_PAST;
+      } else if (now_system > now_network + uncertainty + kNetworkTimeFudge) {
+        network_state = NETWORK_CLOCK_STATE_CLOCK_IN_FUTURE;
+      } else {
+        network_state = NETWORK_CLOCK_STATE_OK;
+      }
+      break;
+    case network_time::NetworkTimeTracker::NETWORK_TIME_SYNC_LOST:
+      network_state = NETWORK_CLOCK_STATE_UNKNOWN_SYNC_LOST;
+      break;
+    case network_time::NetworkTimeTracker::NETWORK_TIME_NO_SYNC_ATTEMPT:
+      network_state = NETWORK_CLOCK_STATE_UNKNOWN_NO_SYNC_ATTEMPT;
+      break;
+    case network_time::NetworkTimeTracker::NETWORK_TIME_NO_SUCCESSFUL_SYNC:
+      network_state = NETWORK_CLOCK_STATE_UNKNOWN_NO_SUCCESSFUL_SYNC;
+      break;
+    case network_time::NetworkTimeTracker::NETWORK_TIME_FIRST_SYNC_PENDING:
+      network_state = NETWORK_CLOCK_STATE_UNKNOWN_FIRST_SYNC_PENDING;
+      break;
+    case network_time::NetworkTimeTracker::NETWORK_TIME_SUBSEQUENT_SYNC_PENDING:
+      network_state = NETWORK_CLOCK_STATE_UNKNOWN_SUBSEQUENT_SYNC_PENDING;
+      break;
   }
 
-  if (time_now > build_time + base::TimeDelta::FromDays(365))
-    return true;
-  return false;
+  ClockState build_time_state = CLOCK_STATE_UNKNOWN;
+  base::Time build_time = g_testing_build_time.Get().is_null()
+                              ? base::GetBuildTime()
+                              : g_testing_build_time.Get();
+  if (now_system < build_time - base::TimeDelta::FromDays(2)) {
+    build_time_state = CLOCK_STATE_PAST;
+  } else if (now_system > build_time + base::TimeDelta::FromDays(365)) {
+    build_time_state = CLOCK_STATE_FUTURE;
+  }
+
+  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl.clockstate.network3",
+                            network_state, NETWORK_CLOCK_STATE_MAX);
+  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl.clockstate.build_time",
+                            build_time_state, CLOCK_STATE_MAX);
+
+  switch (network_state) {
+    case NETWORK_CLOCK_STATE_UNKNOWN_SYNC_LOST:
+    case NETWORK_CLOCK_STATE_UNKNOWN_NO_SYNC_ATTEMPT:
+    case NETWORK_CLOCK_STATE_UNKNOWN_NO_SUCCESSFUL_SYNC:
+    case NETWORK_CLOCK_STATE_UNKNOWN_FIRST_SYNC_PENDING:
+    case NETWORK_CLOCK_STATE_UNKNOWN_SUBSEQUENT_SYNC_PENDING:
+      return build_time_state;
+    case NETWORK_CLOCK_STATE_OK:
+      return CLOCK_STATE_OK;
+    case NETWORK_CLOCK_STATE_CLOCK_IN_PAST:
+      return CLOCK_STATE_PAST;
+    case NETWORK_CLOCK_STATE_CLOCK_IN_FUTURE:
+      return CLOCK_STATE_FUTURE;
+    case NETWORK_CLOCK_STATE_MAX:
+      NOTREACHED();
+      return CLOCK_STATE_UNKNOWN;
+  }
+
+  NOTREACHED();
+  return CLOCK_STATE_UNKNOWN;
 }
 
 void SetBuildTimeForTesting(const base::Time& testing_time) {
   g_testing_build_time.Get() = testing_time;
 }
 
-bool IsHostNameKnownTLD(const std::string& host_name) {
-  size_t tld_length = net::registry_controlled_domains::GetRegistryLength(
+bool HostNameHasKnownTLD(const std::string& host_name) {
+  return net::registry_controlled_domains::HostHasRegistryControlledDomain(
       host_name, net::registry_controlled_domains::EXCLUDE_UNKNOWN_REGISTRIES,
       net::registry_controlled_domains::INCLUDE_PRIVATE_REGISTRIES);
-  if (tld_length == 0 || tld_length == std::string::npos)
-    return false;
-  return true;
 }
 
 HostnameTokens Tokenize(const std::string& name) {
@@ -259,12 +294,12 @@ bool GetWWWSubDomainMatch(const GURL& request_url,
                           std::string* www_match_host_name) {
   const std::string& host_name = request_url.host();
 
-  if (IsHostNameKnownTLD(host_name)) {
+  if (HostNameHasKnownTLD(host_name)) {
     // Need to account for all possible domains given in the SSL certificate.
     for (const auto& dns_name : dns_names) {
       if (dns_name.empty() || dns_name.find('\0') != std::string::npos ||
           dns_name.length() == host_name.length() ||
-          !IsHostNameKnownTLD(dns_name)) {
+          !HostNameHasKnownTLD(dns_name)) {
         continue;
       } else if (dns_name.length() > host_name.length()) {
         if (url_formatter::StripWWW(base::ASCIIToUTF16(dns_name)) ==
@@ -312,6 +347,36 @@ bool AnyNamesUnderName(const std::vector<HostnameTokens>& potential_children,
   return false;
 }
 
+// Returns the Levenshtein distance between |str1| and |str2|.
+// Which is the minimum number of single-character edits (i.e. insertions,
+// deletions or substitutions) required to change one word into the other.
+// https://en.wikipedia.org/wiki/Levenshtein_distance
+size_t GetLevenshteinDistance(const std::string& str1,
+                              const std::string& str2) {
+  if (str1 == str2)
+    return 0;
+  if (str1.size() == 0)
+    return str2.size();
+  if (str2.size() == 0)
+    return str1.size();
+
+  std::vector<size_t> row(str2.size() + 1);
+  for (size_t i = 0; i < row.size(); ++i)
+    row[i] = i;
+
+  for (size_t i = 0; i < str1.size(); ++i) {
+    row[0] = i + 1;
+    size_t previous = i;
+    for (size_t j = 0; j < str2.size(); ++j) {
+      size_t old_row = row[j + 1];
+      int cost = str1[i] == str2[j] ? 0 : 1;
+      row[j + 1] = std::min(std::min(row[j], row[j + 1]) + 1, previous + cost);
+      previous = old_row;
+    }
+  }
+  return row[str2.size()];
+}
+
 bool IsSubDomainOutsideWildcard(const GURL& request_url,
                                 const net::X509Certificate& cert) {
   std::string host_name = request_url.host();
@@ -325,7 +390,7 @@ bool IsSubDomainOutsideWildcard(const GURL& request_url,
   for (const auto& dns_name : dns_names) {
     if (dns_name.length() < 2 || dns_name.length() >= host_name.length() ||
         dns_name.find('\0') != std::string::npos ||
-        !IsHostNameKnownTLD(dns_name) || dns_name[0] != '*' ||
+        !HostNameHasKnownTLD(dns_name) || dns_name[0] != '*' ||
         dns_name[1] != '.') {
       continue;
     }
@@ -377,11 +442,11 @@ bool IsCertLikelyFromMultiTenantHosting(const GURL& request_url,
   // considered as a shared certificate. Include the host name in the URL also
   // while comparing.
   dns_names.push_back(host_name);
-  static const size_t kMinimumEditDsitance = 5;
+  static const size_t kMinimumEditDistance = 5;
   for (size_t i = 0; i < dns_names_size; ++i) {
     for (size_t j = i + 1; j < dns_names_size; ++j) {
-      size_t edit_distance = GetLevensteinDistance(dns_names[i], dns_names[j]);
-      if (edit_distance < kMinimumEditDsitance)
+      size_t edit_distance = GetLevenshteinDistance(dns_names[i], dns_names[j]);
+      if (edit_distance < kMinimumEditDistance)
         return false;
     }
   }

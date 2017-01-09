@@ -4,6 +4,7 @@
 
 package org.chromium.native_test;
 
+import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.Instrumentation;
@@ -18,28 +19,18 @@ import android.util.SparseArray;
 
 import org.chromium.base.Log;
 import org.chromium.test.reporter.TestStatusReceiver;
-import org.chromium.test.support.ResultsBundleGenerator;
-import org.chromium.test.support.RobotiumBundleGenerator;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
 import java.io.FileReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Queue;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- *  An Instrumentation that runs tests based on NativeTestActivity.
+ *  An Instrumentation that runs tests based on NativeTest.
  */
 public class NativeTestInstrumentationTestRunner extends Instrumentation {
 
@@ -49,6 +40,8 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.ShardNanoTimeout";
     public static final String EXTRA_SHARD_SIZE_LIMIT =
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.ShardSizeLimit";
+    public static final String EXTRA_STDOUT_FILE =
+            "org.chromium.native_test.NativeTestInstrumentationTestRunner.StdoutFile";
     public static final String EXTRA_TEST_LIST_FILE =
             "org.chromium.native_test.NativeTestInstrumentationTestRunner.TestList";
     public static final String EXTRA_TEST =
@@ -61,17 +54,12 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
     private static final int DEFAULT_SHARD_SIZE_LIMIT = 0;
     private static final String DEFAULT_NATIVE_TEST_ACTIVITY =
             "org.chromium.native_test.NativeUnitTestActivity";
-    private static final Pattern RE_TEST_OUTPUT =
-            Pattern.compile("\\[ *([^ ]*) *\\] ?([^ ]+)( .*)?$");
 
-    private ResultsBundleGenerator mBundleGenerator = new RobotiumBundleGenerator();
     private Handler mHandler = new Handler();
     private Bundle mLogBundle = new Bundle();
     private SparseArray<ShardMonitor> mMonitors = new SparseArray<ShardMonitor>();
     private String mNativeTestActivity;
     private TestStatusReceiver mReceiver;
-    private Map<String, ResultsBundleGenerator.TestResult> mResults =
-            new HashMap<String, ResultsBundleGenerator.TestResult>();
     private Queue<ArrayList<String>> mShards = new ArrayDeque<ArrayList<String>>();
     private long mShardNanoTimeout = DEFAULT_SHARD_NANO_TIMEOUT;
     private int mShardSizeLimit = DEFAULT_SHARD_SIZE_LIMIT;
@@ -93,6 +81,23 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
         String shardSizeLimit = arguments.getString(EXTRA_SHARD_SIZE_LIMIT);
         if (shardSizeLimit != null) mShardSizeLimit = Integer.parseInt(shardSizeLimit);
         mTransparentArguments.remove(EXTRA_SHARD_SIZE_LIMIT);
+
+        String stdoutFile = arguments.getString(EXTRA_STDOUT_FILE);
+        if (stdoutFile != null) {
+            mStdoutFile = new File(stdoutFile);
+        } else {
+            try {
+                mStdoutFile = File.createTempFile(
+                        ".temp_stdout_", ".txt", Environment.getExternalStorageDirectory());
+                Log.i(TAG, "stdout file created: %s", mStdoutFile.getAbsolutePath());
+            } catch (IOException e) {
+                Log.e(TAG, "Unable to create temporary stdout file.", e);
+                finish(Activity.RESULT_CANCELED, new Bundle());
+                return;
+            }
+        }
+
+        mTransparentArguments.remove(EXTRA_STDOUT_FILE);
 
         String singleTest = arguments.getString(EXTRA_TEST);
         if (singleTest != null) {
@@ -129,20 +134,11 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
         }
         mTransparentArguments.remove(EXTRA_TEST_LIST_FILE);
 
-        try {
-            mStdoutFile = File.createTempFile(
-                    ".temp_stdout_", ".txt", Environment.getExternalStorageDirectory());
-            Log.i(TAG, "stdout file created: %s", mStdoutFile.getAbsolutePath());
-        } catch (IOException e) {
-            Log.e(TAG, "Unable to create temporary stdout file.", e);
-            finish(Activity.RESULT_CANCELED, new Bundle());
-            return;
-        }
-
         start();
     }
 
     @Override
+    @SuppressLint("DefaultLocale")
     public void onStart() {
         super.onStart();
 
@@ -167,6 +163,14 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
                     mMonitors.remove(pid);
                 }
                 mHandler.post(new ShardEnder(pid));
+            }
+
+            @Override
+            public void uncaughtException(int pid, String stackTrace) {
+                mLogBundle.putString(Instrumentation.REPORT_KEY_STREAMRESULT,
+                        String.format("Uncaught exception in test process (pid: %d)%n%s%n",
+                                pid, stackTrace));
+                sendStatus(0, mLogBundle);
             }
         });
 
@@ -224,7 +228,7 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
         return false;
     }
 
-    /** Starts the NativeTestActivty.
+    /** Starts the NativeTest Activity.
      */
     private class ShardStarter implements Runnable {
         @Override
@@ -235,9 +239,9 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
             i.putExtras(mTransparentArguments);
             if (mShards != null && !mShards.isEmpty()) {
                 ArrayList<String> shard = mShards.remove();
-                i.putStringArrayListExtra(NativeTestActivity.EXTRA_SHARD, shard);
+                i.putStringArrayListExtra(NativeTest.EXTRA_SHARD, shard);
             }
-            i.putExtra(NativeTestActivity.EXTRA_STDOUT_FILE, mStdoutFile.getAbsolutePath());
+            i.putExtra(NativeTest.EXTRA_STDOUT_FILE, mStdoutFile.getAbsolutePath());
             getContext().startActivity(i);
         }
     }
@@ -263,70 +267,11 @@ public class NativeTestInstrumentationTestRunner extends Instrumentation {
                     Log.e(TAG, "%d may still be alive.", mPid, e);
                 }
             }
-            mResults.putAll(parseResults());
-
             if (mShards != null && !mShards.isEmpty()) {
                 mHandler.post(new ShardStarter());
             } else {
-                finish(Activity.RESULT_OK, mBundleGenerator.generate(mResults));
+                finish(Activity.RESULT_OK, new Bundle());
             }
         }
     }
-
-    /**
-     *  Generates a map between test names and test results from the instrumented Activity's
-     *  output.
-     */
-    private Map<String, ResultsBundleGenerator.TestResult> parseResults() {
-        Map<String, ResultsBundleGenerator.TestResult> results =
-                new HashMap<String, ResultsBundleGenerator.TestResult>();
-
-        BufferedReader r = null;
-
-        try {
-            if (mStdoutFile == null || !mStdoutFile.exists()) {
-                Log.e(TAG, "Unable to find stdout file.");
-                return results;
-            }
-
-            r = new BufferedReader(new InputStreamReader(
-                    new BufferedInputStream(new FileInputStream(mStdoutFile))));
-
-            for (String l = r.readLine(); l != null && !l.equals("<<ScopedMainEntryLogger");
-                    l = r.readLine()) {
-                Matcher m = RE_TEST_OUTPUT.matcher(l);
-                if (m.matches()) {
-                    if (m.group(1).equals("RUN")) {
-                        results.put(m.group(2), ResultsBundleGenerator.TestResult.UNKNOWN);
-                    } else if (m.group(1).equals("FAILED")) {
-                        results.put(m.group(2), ResultsBundleGenerator.TestResult.FAILED);
-                    } else if (m.group(1).equals("OK")) {
-                        results.put(m.group(2), ResultsBundleGenerator.TestResult.PASSED);
-                    }
-                }
-                mLogBundle.putString(Instrumentation.REPORT_KEY_STREAMRESULT, l + "\n");
-                sendStatus(0, mLogBundle);
-                Log.i(TAG, l);
-            }
-        } catch (FileNotFoundException e) {
-            Log.e(TAG, "Couldn't find stdout file: ", e);
-        } catch (IOException e) {
-            Log.e(TAG, "Error handling stdout file: ", e);
-        } finally {
-            if (r != null) {
-                try {
-                    r.close();
-                } catch (IOException e) {
-                    Log.e(TAG, "Error while closing stdout reader.", e);
-                }
-            }
-            if (mStdoutFile != null) {
-                if (!mStdoutFile.delete()) {
-                    Log.e(TAG, "Unable to delete %s", mStdoutFile.getAbsolutePath());
-                }
-            }
-        }
-        return results;
-    }
-
 }

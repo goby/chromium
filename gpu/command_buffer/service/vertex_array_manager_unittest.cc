@@ -2,10 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
+#include <memory>
+
 #include "gpu/command_buffer/service/vertex_array_manager.h"
 #include "gpu/command_buffer/service/vertex_attrib_manager.h"
 
-#include "base/memory/scoped_ptr.h"
 #include "gpu/command_buffer/service/feature_info.h"
 #include "gpu/command_buffer/service/gpu_service_test.h"
 #include "gpu/command_buffer/service/test_helper.h"
@@ -20,7 +23,7 @@ namespace gles2 {
 
 class VertexArrayManagerTest : public GpuServiceTest {
  public:
-  static const uint32 kNumVertexAttribs = 8;
+  static const uint32_t kNumVertexAttribs = 8;
 
   VertexArrayManagerTest() {
   }
@@ -38,12 +41,12 @@ class VertexArrayManagerTest : public GpuServiceTest {
     GpuServiceTest::TearDown();
   }
 
-  scoped_ptr<VertexArrayManager> manager_;
+  std::unique_ptr<VertexArrayManager> manager_;
 };
 
 // GCC requires these declarations, but MSVC requires they not be present
 #ifndef COMPILER_MSVC
-const uint32 VertexArrayManagerTest::kNumVertexAttribs;
+const uint32_t VertexArrayManagerTest::kNumVertexAttribs;
 #endif
 
 TEST_F(VertexArrayManagerTest, Basic) {

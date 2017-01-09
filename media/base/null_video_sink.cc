@@ -56,6 +56,7 @@ void NullVideoSink::CallRender() {
   const base::TimeTicks end_of_interval = current_render_time_ + interval_;
   scoped_refptr<VideoFrame> new_frame = callback_->Render(
       current_render_time_, end_of_interval, background_render_);
+  DCHECK(new_frame);
   const bool is_new_frame = new_frame != last_frame_;
   last_frame_ = new_frame;
   if (is_new_frame && !new_frame_cb_.is_null())
@@ -87,9 +88,14 @@ void NullVideoSink::CallRender() {
                                 delay);
 }
 
-void NullVideoSink::PaintFrameUsingOldRenderingPath(
-    const scoped_refptr<VideoFrame>& frame) {
-  new_frame_cb_.Run(frame);
+void NullVideoSink::PaintSingleFrame(const scoped_refptr<VideoFrame>& frame,
+                                     bool repaint_duplicate_frame) {
+  if (!repaint_duplicate_frame && frame == last_frame_)
+    return;
+
+  last_frame_ = frame;
+  if (!new_frame_cb_.is_null())
+    new_frame_cb_.Run(frame);
 }
 
 }  // namespace media

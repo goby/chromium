@@ -32,7 +32,8 @@ const NSInteger kMiddleButtonNumber = 2;
                            popupView:(const OmniboxPopupViewMac&)popupView
                          answerImage:(NSImage*)answerImage {
   base::scoped_nsobject<NSMutableArray> array([[NSMutableArray alloc] init]);
-  CGFloat max_match_contents_width = 0.0f;
+  BOOL isDarkTheme = [tableView hasDarkTheme];
+  CGFloat maxMatchContentsWidth = 0.0f;
   CGFloat contentsOffset = -1.0f;
   for (const AutocompleteMatch& match : result) {
     if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL &&
@@ -43,15 +44,18 @@ const NSInteger kMiddleButtonNumber = 2;
              initWithMatch:match
             contentsOffset:contentsOffset
                      image:popupView.ImageForMatch(match)
-               answerImage:(match.answer ? answerImage : nil)]);
+               answerImage:(match.answer ? answerImage : nil)
+              forDarkTheme:isDarkTheme]);
+    if (isDarkTheme)
+      [cellData setIncognitoImage:popupView.ImageForMatch(match)];
     [array addObject:cellData];
     if (match.type == AutocompleteMatchType::SEARCH_SUGGEST_TAIL) {
-      max_match_contents_width =
-          std::max(max_match_contents_width, [cellData getMatchContentsWidth]);
+      maxMatchContentsWidth =
+          std::max(maxMatchContentsWidth, [cellData getMatchContentsWidth]);
     }
   }
 
-  [tableView setMaxMatchContentsWidth:max_match_contents_width];
+  [tableView setMaxMatchContentsWidth:maxMatchContentsWidth];
   return [self initWithArray:array];
 }
 
@@ -106,7 +110,24 @@ const NSInteger kMiddleButtonNumber = 2;
   if ([[array_ objectAtIndex:row] isAnswer]) {
     OmniboxPopupMatrix* matrix =
         base::mac::ObjCCastStrict<OmniboxPopupMatrix>(tableView);
-    height += [matrix answerLineHeight];
+    NSRect rowRect = [tableView rectOfColumn:0];
+    OmniboxPopupCellData* cellData =
+        base::mac::ObjCCastStrict<OmniboxPopupCellData>(
+            [array_ objectAtIndex:row]);
+    // Subtract any Material Design padding and/or icon.
+    rowRect.size.width = [OmniboxPopupCell getContentAreaWidth:rowRect] -
+                         [matrix contentLeftPadding];
+    NSAttributedString* text = [cellData description];
+    // Provide no more than 3 lines of space.
+    rowRect.size.height =
+        std::min(3, [cellData maxLines]) * [text size].height;
+    NSRect textRect =
+        [text boundingRectWithSize:rowRect.size
+                           options:NSStringDrawingUsesLineFragmentOrigin |
+                                   NSStringDrawingTruncatesLastVisibleLine];
+    // Add a little padding or it looks cramped.
+    int heightProvided = textRect.size.height + 2;
+    height += heightProvided;
   }
   return height;
 }
@@ -117,11 +138,15 @@ const NSInteger kMiddleButtonNumber = 2;
 
 @synthesize separator = separator_;
 @synthesize maxMatchContentsWidth = maxMatchContentsWidth_;
+@synthesize contentLeftPadding = contentLeftPadding_;
 @synthesize answerLineHeight = answerLineHeight_;
+@synthesize hasDarkTheme = hasDarkTheme_;
 
-- (instancetype)initWithObserver:(OmniboxPopupMatrixObserver*)observer {
+- (instancetype)initWithObserver:(OmniboxPopupMatrixObserver*)observer
+                    forDarkTheme:(BOOL)isDarkTheme {
   if ((self = [super initWithFrame:NSZeroRect])) {
     observer_ = observer;
+    hasDarkTheme_ = isDarkTheme;
 
     base::scoped_nsobject<NSTableColumn> column(
         [[NSTableColumn alloc] initWithIdentifier:@"MainColumn"]);
@@ -132,7 +157,9 @@ const NSInteger kMiddleButtonNumber = 2;
     [self setIntercellSpacing:NSMakeSize(0.0, 0.0)];
 
     [self setSelectionHighlightStyle:NSTableViewSelectionHighlightStyleNone];
-    [self setBackgroundColor:[NSColor controlBackgroundColor]];
+    NSColor* backgroundColor =
+        OmniboxPopupViewMac::BackgroundColor(hasDarkTheme_);
+    [self setBackgroundColor:backgroundColor];
     [self setAllowsEmptySelection:YES];
     [self deselectAll:self];
 
@@ -141,8 +168,7 @@ const NSInteger kMiddleButtonNumber = 2;
     base::scoped_nsobject<NSLayoutManager> layoutManager(
         [[NSLayoutManager alloc] init]);
     answerLineHeight_ =
-        [layoutManager defaultLineHeightForFont:OmniboxViewMac::GetLargeFont(
-                                                    gfx::Font::NORMAL)];
+        [layoutManager defaultLineHeightForFont:OmniboxViewMac::GetLargeFont()];
   }
   return self;
 }

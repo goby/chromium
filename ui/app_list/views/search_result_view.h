@@ -5,12 +5,14 @@
 #ifndef UI_APP_LIST_VIEWS_SEARCH_RESULT_VIEW_H_
 #define UI_APP_LIST_VIEWS_SEARCH_RESULT_VIEW_H_
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string16.h"
 #include "ui/app_list/search_result_observer.h"
 #include "ui/app_list/views/search_result_actions_view_delegate.h"
@@ -22,9 +24,9 @@ class RenderText;
 }
 
 namespace views {
-class ImageButton;
 class ImageView;
 class MenuRunner;
+class ProgressBar;
 }
 
 namespace app_list {
@@ -32,10 +34,8 @@ namespace test {
 class SearchResultListViewTest;
 }  // namespace test
 
-class ProgressBarView;
 class SearchResult;
 class SearchResultListView;
-class SearchResultViewDelegate;
 class SearchResultActionsView;
 
 // SearchResultView displays a SearchResult.
@@ -114,12 +114,12 @@ class APP_LIST_EXPORT SearchResultView
 
   views::ImageView* icon_;  // Owned by views hierarchy.
   views::ImageView* badge_icon_;  // Owned by views hierarchy.
-  scoped_ptr<gfx::RenderText> title_text_;
-  scoped_ptr<gfx::RenderText> details_text_;
+  std::unique_ptr<gfx::RenderText> title_text_;
+  std::unique_ptr<gfx::RenderText> details_text_;
   SearchResultActionsView* actions_view_;  // Owned by the views hierarchy.
-  ProgressBarView* progress_bar_;  // Owned by views hierarchy.
+  views::ProgressBar* progress_bar_;       // Owned by views hierarchy.
 
-  scoped_ptr<views::MenuRunner> context_menu_runner_;
+  std::unique_ptr<views::MenuRunner> context_menu_runner_;
 
   DISALLOW_COPY_AND_ASSIGN(SearchResultView);
 };

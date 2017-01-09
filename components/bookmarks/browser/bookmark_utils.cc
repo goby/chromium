@@ -14,16 +14,17 @@
 #include "base/i18n/string_search.h"
 #include "base/macros.h"
 #include "base/metrics/user_metrics_action.h"
-#include "base/prefs/pref_service.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
 #include "components/bookmarks/browser/bookmark_client.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/bookmarks/browser/scoped_group_bookmark_actions.h"
 #include "components/bookmarks/common/bookmark_pref_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
+#include "components/prefs/pref_service.h"
 #include "components/query_parser/query_parser.h"
 #include "components/url_formatter/url_formatter.h"
 #include "ui/base/clipboard/clipboard.h"
@@ -92,16 +93,14 @@ bool DoesBookmarkTextContainWords(const base::string16& text,
 }
 
 // Returns true if |node|s title or url contains the strings in |words|.
-// |languages| argument is user's accept-language setting to decode IDN.
 bool DoesBookmarkContainWords(const BookmarkNode* node,
-                              const std::vector<base::string16>& words,
-                              const std::string& languages) {
+                              const std::vector<base::string16>& words) {
   return DoesBookmarkTextContainWords(node->GetTitle(), words) ||
          DoesBookmarkTextContainWords(base::UTF8ToUTF16(node->url().spec()),
                                       words) ||
          DoesBookmarkTextContainWords(
              url_formatter::FormatUrl(
-                 node->url(), languages, url_formatter::kFormatUrlOmitNothing,
+                 node->url(), url_formatter::kFormatUrlOmitNothing,
                  net::UnescapeRule::NORMAL, NULL, NULL, NULL),
              words);
 }
@@ -190,12 +189,11 @@ void GetBookmarksMatchingPropertiesImpl(
     const QueryFields& query,
     const std::vector<base::string16>& query_words,
     size_t max_count,
-    const std::string& languages,
     std::vector<const BookmarkNode*>* nodes) {
   while (iterator.has_next()) {
     const BookmarkNode* node = iterator.Next();
     if ((!query_words.empty() &&
-         !DoesBookmarkContainWords(node, query_words, languages)) ||
+         !DoesBookmarkContainWords(node, query_words)) ||
         model->is_permanent_node(node)) {
       continue;
     }
@@ -207,6 +205,21 @@ void GetBookmarksMatchingPropertiesImpl(
       return;
   }
 }
+
+#if defined(OS_ANDROID)
+// Returns whether or not a bookmark model contains any bookmarks aside of the
+// permanent nodes.
+bool HasUserCreatedBookmarks(BookmarkModel* model) {
+  const BookmarkNode* root_node = model->root_node();
+
+  for (int i = 0; i < root_node->child_count(); ++i) {
+    const BookmarkNode* node = root_node->GetChild(i);
+    if (node->child_count() > 0)
+      return true;
+  }
+  return false;
+}
+#endif
 
 }  // namespace
 
@@ -397,7 +410,6 @@ bool MoreRecentlyAdded(const BookmarkNode* n1, const BookmarkNode* n2) {
 void GetBookmarksMatchingProperties(BookmarkModel* model,
                                     const QueryFields& query,
                                     size_t max_count,
-                                    const std::string& languages,
                                     std::vector<const BookmarkNode*>* nodes) {
   std::vector<base::string16> query_words;
   query_parser::QueryParser parser;
@@ -417,12 +429,12 @@ void GetBookmarksMatchingProperties(BookmarkModel* model,
       model->GetNodesByURL(url, &url_matched_nodes);
     VectorIterator iterator(&url_matched_nodes);
     GetBookmarksMatchingPropertiesImpl<VectorIterator>(
-        iterator, model, query, query_words, max_count, languages, nodes);
+        iterator, model, query, query_words, max_count, nodes);
   } else {
     ui::TreeNodeIterator<const BookmarkNode> iterator(model->root_node());
     GetBookmarksMatchingPropertiesImpl<
         ui::TreeNodeIterator<const BookmarkNode>>(
-        iterator, model, query, query_words, max_count, languages, nodes);
+        iterator, model, query, query_words, max_count, nodes);
   }
 }
 
@@ -440,6 +452,10 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
       prefs::kShowManagedBookmarksInBookmarkBar,
       true,
       user_prefs::PrefRegistrySyncable::SYNCABLE_PREF);
+  RegisterManagedBookmarksPrefs(registry);
+}
+
+void RegisterManagedBookmarksPrefs(PrefRegistrySimple* registry) {
   // Don't sync this, as otherwise, due to a limitation in sync, it
   // will cause a deadlock (see http://crbug.com/97955).  If we truly
   // want to sync the expanded state of folders, it should be part of
@@ -447,6 +463,8 @@ void RegisterProfilePrefs(user_prefs::PrefRegistrySyncable* registry) {
   registry->RegisterListPref(prefs::kBookmarkEditorExpandedNodes,
                              new base::ListValue);
   registry->RegisterListPref(prefs::kManagedBookmarks);
+  registry->RegisterStringPref(
+      prefs::kManagedBookmarksFolderName, std::string());
   registry->RegisterListPref(prefs::kSupervisedBookmarks);
 }
 
@@ -495,7 +513,7 @@ void AddIfNotBookmarked(BookmarkModel* model,
   if (IsBookmarkedByUser(model, url))
     return;  // Nothing to do, a user bookmark with that url already exists.
   model->client()->RecordAction(base::UserMetricsAction("BookmarkAdded"));
-  const BookmarkNode* parent = model->GetParentForNewNodes();
+  const BookmarkNode* parent = GetParentForNewNodes(model);
   model->AddURL(parent, parent->child_count(), title, url);
 }
 
@@ -514,14 +532,14 @@ void RemoveAllBookmarks(BookmarkModel* model, const GURL& url) {
 
 base::string16 CleanUpUrlForMatching(
     const GURL& gurl,
-    const std::string& languages,
     base::OffsetAdjuster::Adjustments* adjustments) {
   base::OffsetAdjuster::Adjustments tmp_adjustments;
   return base::i18n::ToLower(url_formatter::FormatUrlWithAdjustments(
-      GURL(TruncateUrl(gurl.spec())), languages,
+      GURL(TruncateUrl(gurl.spec())),
       url_formatter::kFormatUrlOmitUsernamePassword,
-      net::UnescapeRule::SPACES | net::UnescapeRule::URL_SPECIAL_CHARS, NULL,
-      NULL, adjustments ? adjustments : &tmp_adjustments));
+      net::UnescapeRule::SPACES | net::UnescapeRule::PATH_SEPARATORS |
+          net::UnescapeRule::URL_SPECIAL_CHARS_EXCEPT_PATH_SEPARATORS,
+      nullptr, nullptr, adjustments ? adjustments : &tmp_adjustments));
 }
 
 base::string16 CleanUpTitleForMatching(const base::string16& title) {
@@ -564,6 +582,17 @@ bool HasDescendantsOf(const std::vector<const BookmarkNode*>& list,
       return true;
   }
   return false;
+}
+
+const BookmarkNode* GetParentForNewNodes(BookmarkModel* model) {
+#if defined(OS_ANDROID)
+  if (!HasUserCreatedBookmarks(model))
+    return model->mobile_node();
+#endif
+  std::vector<const BookmarkNode*> nodes =
+      GetMostRecentlyModifiedUserFolders(model, 1);
+  DCHECK(!nodes.empty());  // This list is always padded with default folders.
+  return nodes[0];
 }
 
 }  // namespace bookmarks

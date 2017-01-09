@@ -4,50 +4,45 @@
 
 #include "components/password_manager/core/browser/stub_password_manager_client.h"
 
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include <memory>
+
 #include "components/password_manager/core/browser/credentials_filter.h"
 #include "components/password_manager/core/browser/password_form_manager.h"
 
 namespace password_manager {
-
-ScopedVector<autofill::PasswordForm>
-StubPasswordManagerClient::PassThroughCredentialsFilter::FilterResults(
-    ScopedVector<autofill::PasswordForm> results) const {
-  return results.Pass();
-}
-
-bool StubPasswordManagerClient::PassThroughCredentialsFilter::ShouldSave(
-    const autofill::PasswordForm& form) const {
-  return true;
-}
 
 StubPasswordManagerClient::StubPasswordManagerClient() {}
 
 StubPasswordManagerClient::~StubPasswordManagerClient() {}
 
 bool StubPasswordManagerClient::PromptUserToSaveOrUpdatePassword(
-    scoped_ptr<PasswordFormManager> form_to_save,
+    std::unique_ptr<PasswordFormManager> form_to_save,
     password_manager::CredentialSourceType type,
     bool update_password) {
   return false;
 }
 
 bool StubPasswordManagerClient::PromptUserToChooseCredentials(
-    ScopedVector<autofill::PasswordForm> local_forms,
-    ScopedVector<autofill::PasswordForm> federated_forms,
+    std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
     const GURL& origin,
-    base::Callback<void(const password_manager::CredentialInfo&)> callback) {
+    const CredentialsCallback& callback) {
   return false;
 }
 
 void StubPasswordManagerClient::NotifyUserAutoSignin(
-    ScopedVector<autofill::PasswordForm> local_forms) {
-}
+    std::vector<std::unique_ptr<autofill::PasswordForm>> local_forms,
+    const GURL& origin) {}
+
+void StubPasswordManagerClient::NotifyUserCouldBeAutoSignedIn(
+    std::unique_ptr<autofill::PasswordForm> form) {}
+
+void StubPasswordManagerClient::NotifySuccessfulLoginWithExistingPassword(
+    const autofill::PasswordForm& form) {}
+
+void StubPasswordManagerClient::NotifyStorePasswordCalled() {}
 
 void StubPasswordManagerClient::AutomaticPasswordSave(
-    scoped_ptr<PasswordFormManager> saved_manager) {
-}
+    std::unique_ptr<PasswordFormManager> saved_manager) {}
 
 PrefService* StubPasswordManagerClient::GetPrefs() {
   return nullptr;

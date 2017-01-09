@@ -5,55 +5,52 @@
 #ifndef ASH_DISPLAY_SCREEN_ASH_H_
 #define ASH_DISPLAY_SCREEN_ASH_H_
 
+#include <stdint.h>
+
 #include "ash/ash_export.h"
-#include "base/compiler_specific.h"
-#include "base/observer_list.h"
-#include "ui/gfx/display_observer.h"
-#include "ui/gfx/screen.h"
+#include "base/macros.h"
+#include "ui/display/screen.h"
+
+namespace display {
+class DisplayManager;
+class DisplayObserver;
+}
 
 namespace gfx {
 class Rect;
 }
 
 namespace ash {
-namespace  internal {
-class DisplayManager;
-}
 
-// Aura implementation of gfx::Screen. Implemented here to avoid circular
+// Aura implementation of display::Screen. Implemented here to avoid circular
 // dependencies.
-class ASH_EXPORT ScreenAsh : public gfx::Screen {
+class ASH_EXPORT ScreenAsh : public display::Screen {
  public:
   ScreenAsh();
   ~ScreenAsh() override;
 
-  // gfx::Screen overrides:
+  // display::Screen overrides:
   gfx::Point GetCursorScreenPoint() override;
-  gfx::NativeWindow GetWindowUnderCursor() override;
+  bool IsWindowUnderCursor(gfx::NativeWindow window) override;
   gfx::NativeWindow GetWindowAtScreenPoint(const gfx::Point& point) override;
   int GetNumDisplays() const override;
-  std::vector<gfx::Display> GetAllDisplays() const override;
-  gfx::Display GetDisplayNearestWindow(gfx::NativeView view) const override;
-  gfx::Display GetDisplayNearestPoint(const gfx::Point& point) const override;
-  gfx::Display GetDisplayMatching(const gfx::Rect& match_rect) const override;
-  gfx::Display GetPrimaryDisplay() const override;
-  void AddObserver(gfx::DisplayObserver* observer) override;
-  void RemoveObserver(gfx::DisplayObserver* observer) override;
+  const std::vector<display::Display>& GetAllDisplays() const override;
+  display::Display GetDisplayNearestWindow(gfx::NativeView view) const override;
+  display::Display GetDisplayNearestPoint(
+      const gfx::Point& point) const override;
+  display::Display GetDisplayMatching(
+      const gfx::Rect& match_rect) const override;
+  display::Display GetPrimaryDisplay() const override;
+  void AddObserver(display::DisplayObserver* observer) override;
+  void RemoveObserver(display::DisplayObserver* observer) override;
+
+  // CreateDisplayManager with a ScreenAsh instance.
+  static display::DisplayManager* CreateDisplayManager();
+
+  // Create a screen instance to be used during shutdown.
+  static void CreateScreenForShutdown();
 
  private:
-  friend class DisplayManager;
-
-  // Notifies observers of display configuration changes.
-  void NotifyMetricsChanged(const gfx::Display& display, uint32_t metrics);
-  void NotifyDisplayAdded(const gfx::Display& display);
-  void NotifyDisplayRemoved(const gfx::Display& display);
-
-  // Creates a screen that can be used during shutdown.
-  // It simply has a copy of the displays.
-  gfx::Screen* CloneForShutdown();
-
-  base::ObserverList<gfx::DisplayObserver> observers_;
-
   DISALLOW_COPY_AND_ASSIGN(ScreenAsh);
 };
 

@@ -6,10 +6,13 @@
 #define DEVICE_HID_HID_SERVICE_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/bind_helpers.h"
+#include "base/logging.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/observer_list.h"
 #include "base/single_thread_task_runner.h"
@@ -45,10 +48,15 @@ class HidService {
 
   // This function should be called on a thread with a MessageLoopForUI and be
   // passed the task runner for a thread with a MessageLoopForIO.
-  static scoped_ptr<HidService> Create(
+  static std::unique_ptr<HidService> Create(
       scoped_refptr<base::SingleThreadTaskRunner> file_task_runner);
 
   virtual ~HidService();
+
+  // Shuts down the HidService. Must be called before destroying the HidService
+  // when tasks can still be posted to the |file_task_runner| provided to
+  // Create().
+  virtual void Shutdown();
 
   // Enumerates available devices. The provided callback will always be posted
   // to the calling thread's task runner.
@@ -84,9 +92,13 @@ class HidService {
 
  private:
   DeviceMap devices_;
-  bool enumeration_ready_;
+  bool enumeration_ready_ = false;
   std::vector<GetDevicesCallback> pending_enumerations_;
   base::ObserverList<Observer, true> observer_list_;
+
+#if DCHECK_IS_ON()
+  bool did_shutdown_ = false;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(HidService);
 };

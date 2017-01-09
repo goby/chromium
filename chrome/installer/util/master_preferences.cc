@@ -4,12 +4,16 @@
 
 #include "chrome/installer/util/master_preferences.h"
 
+#include <stddef.h>
+
 #include "base/environment.h"
 #include "base/files/file_util.h"
 #include "base/json/json_string_value_serializer.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/strings/string_util.h"
+#include "build/build_config.h"
 #include "chrome/common/env_vars.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/installer/util/master_preferences_constants.h"
@@ -54,12 +58,12 @@ base::DictionaryValue* ParseDistributionPreferences(
     const std::string& json_data) {
   JSONStringValueDeserializer json(json_data);
   std::string error;
-  scoped_ptr<base::Value> root(json.Deserialize(NULL, &error));
+  std::unique_ptr<base::Value> root(json.Deserialize(NULL, &error));
   if (!root.get()) {
     LOG(WARNING) << "Failed to parse master prefs file: " << error;
     return NULL;
   }
-  if (!root->IsType(base::Value::TYPE_DICTIONARY)) {
+  if (!root->IsType(base::Value::Type::DICTIONARY)) {
     LOG(WARNING) << "Failed to parse master prefs file: "
                  << "Root item must be a dictionary.";
     return NULL;
@@ -146,7 +150,7 @@ void MasterPreferences::InitializeFromCommandLine(
   };
 
   std::string name(installer::master_preferences::kDistroDict);
-  for (int i = 0; i < arraysize(translate_switches); ++i) {
+  for (size_t i = 0; i < arraysize(translate_switches); ++i) {
     if (cmd_line.HasSwitch(translate_switches[i].cmd_line_switch)) {
       name.assign(installer::master_preferences::kDistroDict);
       name.append(".").append(translate_switches[i].distribution_switch);
@@ -165,11 +169,11 @@ void MasterPreferences::InitializeFromCommandLine(
 
   // Handle the special case of --system-level being implied by the presence of
   // the kGoogleUpdateIsMachineEnvVar environment variable.
-  scoped_ptr<base::Environment> env(base::Environment::Create());
+  std::unique_ptr<base::Environment> env(base::Environment::Create());
   if (env != NULL) {
     std::string is_machine_var;
     env->GetVar(env_vars::kGoogleUpdateIsMachineEnvVar, &is_machine_var);
-    if (!is_machine_var.empty() && is_machine_var[0] == '1') {
+    if (is_machine_var == "1") {
       VLOG(1) << "Taking system-level from environment.";
       name.assign(installer::master_preferences::kDistroDict);
       name.append(".").append(installer::master_preferences::kSystemLevel);
@@ -298,7 +302,7 @@ std::string MasterPreferences::GetVariationsSeedSignature() const {
 std::string MasterPreferences::ExtractPrefString(
     const std::string& name) const {
   std::string result;
-  scoped_ptr<base::Value> pref_value;
+  std::unique_ptr<base::Value> pref_value;
   if (master_dictionary_->Remove(name, &pref_value)) {
     if (!pref_value->GetAsString(&result))
       NOTREACHED();

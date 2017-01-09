@@ -2,6 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include "base/macros.h"
 #include "base/values.h"
 #include "components/webcrypto/algorithm_dispatch.h"
 #include "components/webcrypto/algorithms/test_helpers.h"
@@ -22,11 +26,8 @@ blink::WebCryptoAlgorithm CreateAesGcmAlgorithm(
     unsigned int tag_length_bits) {
   return blink::WebCryptoAlgorithm::adoptParamsAndCreate(
       blink::WebCryptoAlgorithmIdAesGcm,
-      new blink::WebCryptoAesGcmParams(
-          iv.data(), static_cast<unsigned int>(iv.size()), true,
-          additional_data.data(),
-          static_cast<unsigned int>(additional_data.size()), true,
-          tag_length_bits));
+      new blink::WebCryptoAesGcmParams(iv, true, additional_data, true,
+                                       tag_length_bits));
 }
 
 blink::WebCryptoAlgorithm CreateAesGcmKeyGenAlgorithm(
@@ -132,7 +133,7 @@ TEST_F(WebCryptoAesGcmTest, ImportExportJwk) {
 //   * Test decryption with empty input
 //   * Test decryption with tag length of 0.
 TEST_F(WebCryptoAesGcmTest, SampleSets) {
-  scoped_ptr<base::ListValue> tests;
+  std::unique_ptr<base::ListValue> tests;
   ASSERT_TRUE(ReadJsonTestFileToList("aes_gcm.json", &tests));
 
   // Note that WebCrypto appends the authentication tag to the ciphertext.

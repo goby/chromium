@@ -5,15 +5,8 @@
 #include "net/http/des.h"
 
 #include "base/logging.h"
-
-#if defined(USE_OPENSSL)
-#include <openssl/des.h>
 #include "crypto/openssl_util.h"
-#elif defined(OS_IOS)
-#include <CommonCrypto/CommonCryptor.h>
-#else
-#error "Unknown platform"
-#endif
+#include "third_party/boringssl/src/include/openssl/des.h"
 
 // The iOS version of DESEncrypt is our own code.
 // DESSetKeyParity and DESMakeKey are based on
@@ -56,7 +49,7 @@
  * ***** END LICENSE BLOCK ***** */
 
 // Set odd parity bit (in least significant bit position).
-static uint8 DESSetKeyParity(uint8 x) {
+static uint8_t DESSetKeyParity(uint8_t x) {
   if ((((x >> 7) ^ (x >> 6) ^ (x >> 5) ^
         (x >> 4) ^ (x >> 3) ^ (x >> 2) ^
         (x >> 1)) & 0x01) == 0) {
@@ -69,7 +62,7 @@ static uint8 DESSetKeyParity(uint8 x) {
 
 namespace net {
 
-void DESMakeKey(const uint8* raw, uint8* key) {
+void DESMakeKey(const uint8_t* raw, uint8_t* key) {
   key[0] = DESSetKeyParity(raw[0]);
   key[1] = DESSetKeyParity((raw[0] << 7) | (raw[1] >> 1));
   key[2] = DESSetKeyParity((raw[1] << 6) | (raw[2] >> 2));
@@ -80,9 +73,7 @@ void DESMakeKey(const uint8* raw, uint8* key) {
   key[7] = DESSetKeyParity((raw[6] << 1));
 }
 
-#if defined(USE_OPENSSL)
-
-void DESEncrypt(const uint8* key, const uint8* src, uint8* hash) {
+void DESEncrypt(const uint8_t* key, const uint8_t* src, uint8_t* hash) {
   crypto::EnsureOpenSSLInit();
 
   DES_key_schedule ks;
@@ -92,18 +83,5 @@ void DESEncrypt(const uint8* key, const uint8* src, uint8* hash) {
   DES_ecb_encrypt(reinterpret_cast<const DES_cblock*>(src),
                   reinterpret_cast<DES_cblock*>(hash), &ks, DES_ENCRYPT);
 }
-
-#elif defined(OS_IOS)
-
-void DESEncrypt(const uint8* key, const uint8* src, uint8* hash) {
-  CCCryptorStatus status;
-  size_t data_out_moved = 0;
-  status = CCCrypt(kCCEncrypt, kCCAlgorithmDES, kCCOptionECBMode,
-                   key, 8, NULL, src, 8, hash, 8, &data_out_moved);
-  DCHECK(status == kCCSuccess);
-  DCHECK(data_out_moved == 8);
-}
-
-#endif
 
 }  // namespace net

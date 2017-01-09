@@ -6,6 +6,7 @@
 #define COMPONENTS_INVALIDATION_PUBLIC_OBJECT_ID_INVALIDATION_MAP_H_
 
 #include <map>
+#include <memory>
 #include <vector>
 
 #include "components/invalidation/public/invalidation.h"
@@ -24,6 +25,7 @@ class INVALIDATION_EXPORT ObjectIdInvalidationMap {
    static ObjectIdInvalidationMap InvalidateAll(const ObjectIdSet& ids);
 
    ObjectIdInvalidationMap();
+   ObjectIdInvalidationMap(const ObjectIdInvalidationMap& other);
    ~ObjectIdInvalidationMap();
 
    // Returns set of ObjectIds for which at least one invalidation is present.
@@ -53,7 +55,7 @@ class INVALIDATION_EXPORT ObjectIdInvalidationMap {
    void AcknowledgeAll() const;
 
    // Serialize this map to a value.
-   scoped_ptr<base::ListValue> ToValue() const;
+   std::unique_ptr<base::ListValue> ToValue() const;
 
    // Deserialize the value into a map and use it to re-initialize this object.
    bool ResetFromValue(const base::ListValue& value);

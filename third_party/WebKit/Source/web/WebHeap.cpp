@@ -28,32 +28,28 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "public/web/WebHeap.h"
 
 #include "platform/heap/Handle.h"
 
 namespace blink {
 
-WebHeap::SafePointScope::SafePointScope()
-{
-    RELEASE_ASSERT(!ThreadState::current()->isAtSafePoint());
-    ThreadState::current()->enterSafePoint(BlinkGC::HeapPointersOnStack, this);
+WebHeap::SafePointScope::SafePointScope() {
+  CHECK(!ThreadState::current()->isAtSafePoint());
+  ThreadState::current()->enterSafePoint(BlinkGC::HeapPointersOnStack, this);
 }
 
-WebHeap::SafePointScope::~SafePointScope()
-{
-    ThreadState::current()->leaveSafePoint();
+WebHeap::SafePointScope::~SafePointScope() {
+  ThreadState::current()->leaveSafePoint();
 }
 
-void WebHeap::collectGarbageForTesting()
-{
-    Heap::collectGarbage(BlinkGC::HeapPointersOnStack, BlinkGC::GCWithSweep, BlinkGC::ForcedGC);
+void WebHeap::collectGarbageForTesting() {
+  ThreadState::current()->collectGarbage(
+      BlinkGC::HeapPointersOnStack, BlinkGC::GCWithSweep, BlinkGC::ForcedGC);
 }
 
-void WebHeap::collectAllGarbageForTesting()
-{
-    Heap::collectAllGarbage();
+void WebHeap::collectAllGarbageForTesting() {
+  ThreadState::current()->collectAllGarbage();
 }
 
-} // namespace blink
+}  // namespace blink

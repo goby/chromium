@@ -4,15 +4,19 @@
 
 #include "chrome/browser/ui/webui/policy_material_design_ui.h"
 
+#include <stddef.h>
+#include <utility>
+
+#include "base/macros.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/webui/policy_ui_handler.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/grit/policy_resources.h"
+#include "chrome/grit/policy_resources_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "grit/components_strings.h"
-#include "grit/policy_resources.h"
-#include "grit/policy_resources_map.h"
-#include "policy/policy_constants.h"
-#include "policy/risk_tag.h"
+#include "components/policy/policy_constants.h"
+#include "components/policy/risk_tag.h"
+#include "components/strings/grit/components_strings.h"
 
 namespace {
 
@@ -68,13 +72,13 @@ PolicyMaterialDesignUIHandler::~PolicyMaterialDesignUIHandler() {
 
 void PolicyMaterialDesignUIHandler::AddPolicyName(
     const std::string& name, base::DictionaryValue* names) const {
-  scoped_ptr<base::ListValue> list(new base::ListValue());
+  std::unique_ptr<base::ListValue> list(new base::ListValue());
   const policy::RiskTag* tags = policy::GetChromePolicyDetails(name)->risk_tags;
   for (size_t i = 0; i < policy::kMaxRiskTagCount; ++i) {
     if (tags[i] != policy::RISK_TAG_NONE)
       list->AppendString(kPolicyRiskTags[tags[i]].key);
   }
-  names->Set(name, list.Pass());
+  names->Set(name, std::move(list));
 }
 
 void PolicyMaterialDesignUIHandler::SendPolicyNames() const {
@@ -82,7 +86,7 @@ void PolicyMaterialDesignUIHandler::SendPolicyNames() const {
   for (size_t tag = 0; tag < policy::RISK_TAG_COUNT; ++tag)
     tags.AppendString(kPolicyRiskTags[tag].key);
 
-  web_ui()->CallJavascriptFunction("policy.Page.setPolicyGroups", tags);
+  web_ui()->CallJavascriptFunctionUnsafe("policy.Page.setPolicyGroups", tags);
   PolicyUIHandler::SendPolicyNames();
 }
 

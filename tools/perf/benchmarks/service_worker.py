@@ -10,8 +10,7 @@ from core import perf_benchmark
 
 from telemetry import benchmark
 from telemetry.core import util
-from telemetry.page import action_runner
-from telemetry.page import page_test
+from telemetry.page import legacy_page_test
 from telemetry.timeline import async_slice as async_slice_module
 from telemetry.timeline import slice as slice_module
 from telemetry.value import scalar
@@ -21,6 +20,7 @@ from metrics import speedindex
 
 
 class _ServiceWorkerTimelineMetric(object):
+
   def AddResultsOfCounters(self, process, counter_regex_string, results):
     counter_filter = re.compile(counter_regex_string)
     for counter_name, counter in process.counters.iteritems():
@@ -86,7 +86,7 @@ class _ServiceWorkerTimelineMetric(object):
         results.current_page, full_name + '_avg', 'ms', total / len(times)))
 
 
-class _ServiceWorkerMeasurement(page_test.PageTest):
+class _ServiceWorkerMeasurement(legacy_page_test.LegacyPageTest):
   """Measure Speed Index and TRACE_EVENTs"""
 
   def __init__(self):
@@ -95,11 +95,9 @@ class _ServiceWorkerMeasurement(page_test.PageTest):
     self._speed_index = speedindex.SpeedIndexMetric()
     self._page_open_times = collections.defaultdict(int)
 
-  # TODO(falken): Remove when reference build rolls. crbug.com/458538
-  def CustomizeBrowserOptions(self, options):
-    options.AppendExtraBrowserArgs([
-        '--enable-experimental-web-platform-features'
-      ])
+  def DidRunPage(self, platform):
+    if platform.tracing_controller.is_tracing_running:
+      platform.tracing_controller.StopTracing()
 
   def WillNavigateToPage(self, page, tab):
     self._timeline_controller.SetUp(page, tab)
@@ -107,12 +105,11 @@ class _ServiceWorkerMeasurement(page_test.PageTest):
     self._speed_index.Start(page, tab)
 
   def ValidateAndMeasurePage(self, page, tab, results):
-    runner = action_runner.ActionRunner(tab)
     # timeline_controller requires creation of at least a single interaction
     # record. service_worker should be refactored to follow the
     # timeline_based_measurement or it should not re-use timeline_controller
     # logic for start & stop tracing.
-    with runner.CreateInteraction('_DummyInteraction'):
+    with tab.action_runner.CreateInteraction('_DummyInteraction'):
       pass
     tab.WaitForDocumentReadyStateToBeComplete(40)
     self._timeline_controller.Stop(tab, results)
@@ -126,7 +123,7 @@ class _ServiceWorkerMeasurement(page_test.PageTest):
                   'FindRegistrationForDocument|'\
                   'DispatchFetchEvent)'
     timeline_metric.AddResultsOfEvents(
-        browser_process, 'IOThread', filter_text , results)
+        browser_process, 'IOThread', filter_text, results)
 
     # Record Speed Index
     def SpeedIndexIsFinished():
@@ -146,13 +143,14 @@ class _ServiceWorkerMeasurement(page_test.PageTest):
     self._speed_index.AddResults(tab, results, chart_prefix)
 
 
-class _ServiceWorkerMicroBenchmarkMeasurement(page_test.PageTest):
+class _ServiceWorkerMicroBenchmarkMeasurement(legacy_page_test.LegacyPageTest):
   """Record results reported by the JS microbenchmark."""
 
   def __init__(self):
     super(_ServiceWorkerMicroBenchmarkMeasurement, self).__init__()
 
   def ValidateAndMeasurePage(self, page, tab, results):
+    del page  # unused
     tab.WaitForJavaScriptExpression('window.done', 40)
     json = tab.EvaluateJavaScript('window.results || {}')
     for key, value in json.iteritems():
@@ -176,9 +174,7 @@ class ServiceWorkerPerfTest(perf_benchmark.PerfBenchmark):
     return 'service_worker.service_worker'
 
 
-# The reference build is disabled. crbug.com/442752
-# TODO(horo): Enable after the reference build newer than M39 will be rolled.
-@benchmark.Disabled('reference')
+@benchmark.Disabled('android-webview')  # http://crbug.com/653924
 class ServiceWorkerMicroBenchmarkPerfTest(perf_benchmark.PerfBenchmark):
   """This test is a microbenchmark of service worker.
 
@@ -188,7 +184,12 @@ class ServiceWorkerMicroBenchmarkPerfTest(perf_benchmark.PerfBenchmark):
   """
   test = _ServiceWorkerMicroBenchmarkMeasurement
   page_set = page_sets.ServiceWorkerMicroBenchmarkPageSet
+
   @classmethod
   def Name(cls):
     return 'service_worker.service_worker_micro_benchmark'
 
+  @classmethod
+  def ShouldDisable(cls, possible_browser):  # http://crbug.com/597656
+      return (possible_browser.browser_type == 'reference' and
+              possible_browser.platform.GetDeviceTypeName() == 'Nexus 5X')

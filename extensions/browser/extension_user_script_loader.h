@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_BROWSER_EXTENSION_USER_SCRIPT_LOADER_H_
 #define EXTENSIONS_BROWSER_EXTENSION_USER_SCRIPT_LOADER_H_
 
+#include "base/macros.h"
 #include "extensions/browser/extension_registry_observer.h"
 #include "extensions/browser/user_script_loader.h"
 #include "extensions/common/extension.h"
@@ -39,7 +40,7 @@ class ExtensionUserScriptLoader : public UserScriptLoader,
 
  private:
   // UserScriptLoader:
-  void LoadScripts(scoped_ptr<UserScriptList> user_scripts,
+  void LoadScripts(std::unique_ptr<UserScriptList> user_scripts,
                    const std::set<HostID>& changed_hosts,
                    const std::set<int>& added_script_ids,
                    LoadScriptsCallback callback) override;

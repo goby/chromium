@@ -4,14 +4,21 @@
 
 #include "chromecast/base/metrics/cast_metrics_helper.h"
 
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/json/json_string_value_serializer.h"
 #include "base/location.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/user_metrics.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/time/time.h"
+#include "base/values.h"
 #include "chromecast/base/metrics/cast_histograms.h"
 #include "chromecast/base/metrics/grouped_histogram.h"
 
@@ -32,6 +39,24 @@ namespace {
 CastMetricsHelper* g_instance = NULL;
 
 const char kMetricsNameAppInfoDelimiter = '#';
+
+std::unique_ptr<std::string> SerializeToJson(const base::Value& value) {
+  std::unique_ptr<std::string> json_str(new std::string());
+  JSONStringValueSerializer serializer(json_str.get());
+  if (!serializer.Serialize(value))
+    json_str.reset(nullptr);
+  return json_str;
+}
+
+std::unique_ptr<base::DictionaryValue> CreateEventBase(
+    const std::string& name) {
+  std::unique_ptr<base::DictionaryValue> cast_event(
+      new base::DictionaryValue());
+  cast_event->SetString("name", name);
+  cast_event->SetDouble("time", base::TimeTicks::Now().ToInternalValue());
+
+  return cast_event;
+}
 
 }  // namespace
 
@@ -91,7 +116,6 @@ CastMetricsHelper* CastMetricsHelper::GetInstance() {
 CastMetricsHelper::CastMetricsHelper(
     scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : task_runner_(task_runner),
-      session_id_("00000000000000000000000000000000"),
       metrics_sink_(NULL),
       logged_first_audio_(false),
       record_action_callback_(base::Bind(&base::RecordComputedAction)) {
@@ -111,12 +135,19 @@ CastMetricsHelper::~CastMetricsHelper() {
   g_instance = NULL;
 }
 
-void CastMetricsHelper::UpdateCurrentAppInfo(const std::string& app_id,
-                                             const std::string& session_id) {
-  MAKE_SURE_THREAD(UpdateCurrentAppInfo, app_id, session_id);
+void CastMetricsHelper::DidStartLoad(const std::string& app_id) {
+  loading_app_id_ = app_id;
+  app_load_start_time_ = base::TimeTicks::Now();
+}
+
+void CastMetricsHelper::DidCompleteLoad(const std::string& app_id,
+                                        const std::string& session_id) {
+  MAKE_SURE_THREAD(DidCompleteLoad, app_id, session_id);
+  DCHECK_EQ(app_id, loading_app_id_);
+  loading_app_id_ = std::string();
   app_id_ = app_id;
+  app_start_time_ = app_load_start_time_;
   session_id_ = session_id;
-  app_start_time_ = base::TimeTicks::Now();
   logged_first_audio_ = false;
   TagAppStartForGroupedHistograms(app_id_);
   sdk_version_.clear();
@@ -227,6 +258,11 @@ void CastMetricsHelper::SetRecordActionCallback(
   record_action_callback_ = callback;
 }
 
+void CastMetricsHelper::SetDummySessionIdForTesting() {
+  DCHECK(task_runner_->BelongsToCurrentThread());
+  session_id_ = "00000000-0000-0000-0000-000000000000";
+}
+
 void CastMetricsHelper::RecordSimpleAction(const std::string& action) {
   MAKE_SURE_THREAD(RecordSimpleAction, action);
 
@@ -270,6 +306,35 @@ void CastMetricsHelper::LogMediumTimeHistogramEvent(
                         base::TimeDelta::FromMilliseconds(10),
                         base::TimeDelta::FromMinutes(3),
                         50);
+}
+
+void CastMetricsHelper::RecordEventWithValue(const std::string& event,
+                                             int value) {
+  std::unique_ptr<base::DictionaryValue> cast_event(CreateEventBase(event));
+  cast_event->SetInteger("value", value);
+  const std::string message = *SerializeToJson(*cast_event);
+  RecordSimpleAction(message);
+}
+
+void CastMetricsHelper::RecordApplicationEvent(const std::string& event) {
+  std::unique_ptr<base::DictionaryValue> cast_event(CreateEventBase(event));
+  cast_event->SetString("app_id", app_id_);
+  cast_event->SetString("session_id", session_id_);
+  cast_event->SetString("sdk_version", sdk_version_);
+  const std::string message = *SerializeToJson(*cast_event);
+  RecordSimpleAction(message);
+}
+
+void CastMetricsHelper::RecordApplicationEventWithValue(
+    const std::string& event,
+    int value) {
+  std::unique_ptr<base::DictionaryValue> cast_event(CreateEventBase(event));
+  cast_event->SetString("app_id", app_id_);
+  cast_event->SetString("session_id", session_id_);
+  cast_event->SetString("sdk_version", sdk_version_);
+  cast_event->SetInteger("value", value);
+  const std::string message = *SerializeToJson(*cast_event);
+  RecordSimpleAction(message);
 }
 
 }  // namespace metrics

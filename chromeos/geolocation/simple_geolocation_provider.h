@@ -5,9 +5,11 @@
 #ifndef CHROMEOS_GEOLOCATION_SIMPLE_GEOLOCATION_PROVIDER_H_
 #define CHROMEOS_GEOLOCATION_SIMPLE_GEOLOCATION_PROVIDER_H_
 
+#include <memory>
+#include <vector>
+
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_vector.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
 #include "chromeos/chromeos_export.h"
@@ -33,9 +35,11 @@ class CHROMEOS_EXPORT SimpleGeolocationProvider {
                             const GURL& url);
   virtual ~SimpleGeolocationProvider();
 
-  // Initiates new request (See SimpleGeolocationRequest for parameters
-  // description.)
+  // Initiates new request. If |send_wifi_access_points|, WiFi AP information
+  // will be added to the request. See SimpleGeolocationRequest for the
+  // description of the other parameters.
   void RequestGeolocation(base::TimeDelta timeout,
+                          bool send_wifi_access_points,
                           SimpleGeolocationRequest::ResponseCallback callback);
 
   // Returns default geolocation service URL.
@@ -60,7 +64,7 @@ class CHROMEOS_EXPORT SimpleGeolocationProvider {
   // Requests in progress.
   // SimpleGeolocationProvider owns all requests, so this vector is deleted on
   // destroy.
-  ScopedVector<SimpleGeolocationRequest> requests_;
+  std::vector<std::unique_ptr<SimpleGeolocationRequest>> requests_;
 
   // Creation and destruction should happen on the same thread.
   base::ThreadChecker thread_checker_;

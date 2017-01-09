@@ -2,14 +2,21 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "chrome/browser/notifications/login_state_notification_blocker_chromeos.h"
+
+#include <memory>
+
+#include "ash/common/system/system_notifier.h"
 #include "ash/shell.h"
-#include "ash/system/system_notifier.h"
 #include "ash/test/ash_test_base.h"
 #include "base/command_line.h"
-#include "chrome/browser/notifications/login_state_notification_blocker_chromeos.h"
+#include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chromeos/login/login_state.h"
 #include "ui/message_center/message_center.h"
 #include "ui/message_center/notification.h"
+
+using base::UTF8ToUTF16;
 
 class LoginStateNotificationBlockerChromeOSTest
     : public ash::test::AshTestBase,
@@ -50,12 +57,17 @@ class LoginStateNotificationBlockerChromeOSTest
 
   bool ShouldShowNotificationAsPopup(
       const message_center::NotifierId& notifier_id) {
-    return blocker_->ShouldShowNotificationAsPopup(notifier_id);
+    message_center::Notification notification(
+        message_center::NOTIFICATION_TYPE_SIMPLE, "chromeos-id",
+        UTF8ToUTF16("chromeos-title"), UTF8ToUTF16("chromeos-message"),
+        gfx::Image(), UTF8ToUTF16("chromeos-source"), GURL(),
+        notifier_id, message_center::RichNotificationData(), NULL);
+    return blocker_->ShouldShowNotificationAsPopup(notification);
   }
 
  private:
   int state_changed_count_;
-  scoped_ptr<message_center::NotificationBlocker> blocker_;
+  std::unique_ptr<message_center::NotificationBlocker> blocker_;
 
   DISALLOW_COPY_AND_ASSIGN(LoginStateNotificationBlockerChromeOSTest);
 };

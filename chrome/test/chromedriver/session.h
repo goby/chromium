@@ -6,11 +6,10 @@
 #define CHROME_TEST_CHROMEDRIVER_SESSION_H_
 
 #include <list>
+#include <memory>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/scoped_vector.h"
 #include "base/time/time.h"
 #include "chrome/test/chromedriver/basic_types.h"
@@ -18,6 +17,10 @@
 #include "chrome/test/chromedriver/chrome/geoposition.h"
 #include "chrome/test/chromedriver/chrome/network_conditions.h"
 #include "chrome/test/chromedriver/command_listener.h"
+
+static const char kAccept[] = "accept";
+static const char kDismiss[] = "dismiss";
+static const char kIgnore[] = "ignore";
 
 namespace base {
 class DictionaryValue;
@@ -42,7 +45,7 @@ struct Session {
   static const base::TimeDelta kDefaultPageLoadTimeout;
 
   explicit Session(const std::string& id);
-  Session(const std::string& id, scoped_ptr<Chrome> chrome);
+  Session(const std::string& id, std::unique_ptr<Chrome> chrome);
   ~Session();
 
   Status GetTargetWindow(WebView** web_view);
@@ -56,10 +59,11 @@ struct Session {
   std::string GetFirstBrowserError() const;
 
   const std::string id;
+  bool w3c_compliant;
   bool quit;
   bool detach;
   bool force_devtools_screenshot;
-  scoped_ptr<Chrome> chrome;
+  std::unique_ptr<Chrome> chrome;
   std::string window;
   int sticky_modifiers;
   // List of |FrameInfo|s for each frame to the current target frame from the
@@ -70,25 +74,27 @@ struct Session {
   base::TimeDelta implicit_wait;
   base::TimeDelta page_load_timeout;
   base::TimeDelta script_timeout;
-  scoped_ptr<std::string> prompt_text;
-  scoped_ptr<Geoposition> overridden_geoposition;
-  scoped_ptr<DeviceMetrics> overridden_device_metrics;
-  scoped_ptr<NetworkConditions> overridden_network_conditions;
+  std::unique_ptr<std::string> prompt_text;
+  std::unique_ptr<Geoposition> overridden_geoposition;
+  std::unique_ptr<DeviceMetrics> overridden_device_metrics;
+  std::unique_ptr<NetworkConditions> overridden_network_conditions;
+  std::string orientation_type;
   // Logs that populate from DevTools events.
   ScopedVector<WebDriverLog> devtools_logs;
-  scoped_ptr<WebDriverLog> driver_log;
+  std::unique_ptr<WebDriverLog> driver_log;
   base::ScopedTempDir temp_dir;
-  scoped_ptr<base::DictionaryValue> capabilities;
+  std::unique_ptr<base::DictionaryValue> capabilities;
   bool auto_reporting_enabled;
   // |command_listeners| should be declared after |chrome|. When the |Session|
   // is destroyed, |command_listeners| should be freed first, since some
   // |CommandListener|s might be |CommandListenerProxy|s that forward to
   // |DevToolsEventListener|s owned by |chrome|.
   ScopedVector<CommandListener> command_listeners;
+  std::string unexpected_alert_behaviour;
 };
 
 Session* GetThreadLocalSession();
 
-void SetThreadLocalSession(scoped_ptr<Session> session);
+void SetThreadLocalSession(std::unique_ptr<Session> session);
 
 #endif  // CHROME_TEST_CHROMEDRIVER_SESSION_H_

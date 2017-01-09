@@ -4,17 +4,17 @@
 
 #include "chrome/browser/android/offline_pages/offline_page_model_factory.h"
 
+#include <utility>
+
 #include "base/files/file_path.h"
 #include "base/memory/singleton.h"
-#include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
-#include "components/offline_pages/offline_page_metadata_store_impl.h"
-#include "components/offline_pages/offline_page_model.h"
-#include "components/offline_pages/proto/offline_pages.pb.h"
+#include "components/offline_pages/core/offline_page_metadata_store_sql.h"
+#include "components/offline_pages/core/offline_page_model_impl.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace offline_pages {
@@ -33,7 +33,7 @@ OfflinePageModelFactory* OfflinePageModelFactory::GetInstance() {
 // static
 OfflinePageModel* OfflinePageModelFactory::GetForBrowserContext(
     content::BrowserContext* context) {
-  return static_cast<OfflinePageModel*>(
+  return static_cast<OfflinePageModelImpl*>(
       GetInstance()->GetServiceForBrowserContext(context, true));
 }
 
@@ -46,20 +46,14 @@ KeyedService* OfflinePageModelFactory::BuildServiceInstanceFor(
 
   base::FilePath store_path =
       profile->GetPath().Append(chrome::kOfflinePageMetadataDirname);
-  scoped_ptr<OfflinePageMetadataStoreImpl> metadata_store(
-      new OfflinePageMetadataStoreImpl(background_task_runner, store_path));
+  std::unique_ptr<OfflinePageMetadataStore> metadata_store(
+      new OfflinePageMetadataStoreSQL(background_task_runner, store_path));
 
   base::FilePath archives_dir =
-      profile->GetPath().Append(chrome::kOfflinePageArchviesDirname);
+      profile->GetPath().Append(chrome::kOfflinePageArchivesDirname);
 
-  return new OfflinePageModel(metadata_store.Pass(), archives_dir,
-                              background_task_runner);
-}
-
-content::BrowserContext* OfflinePageModelFactory::GetBrowserContextToUse(
-    content::BrowserContext* context) const {
-  return chrome::GetBrowserContextRedirectedInIncognito(context);
+  return new OfflinePageModelImpl(std::move(metadata_store), archives_dir,
+                                  background_task_runner);
 }
 
 }  // namespace offline_pages
-

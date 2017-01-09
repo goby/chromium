@@ -10,101 +10,152 @@
  *    notice, this list of conditions and the following disclaimer in the
  *    documentation and/or other materials provided with the distribution.
  *
- * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS'' AND ANY
- * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS BE LIABLE FOR ANY
- * DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
- * ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS'' AND
+ * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS BE LIABLE
+ * FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+ * LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+ * OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+ * DAMAGE.
  */
-
-#include "config.h"
-#if ENABLE(WEB_AUDIO)
-#include "modules/webaudio/WaveShaperNode.h"
 
 #include "bindings/core/v8/ExceptionMessages.h"
 #include "bindings/core/v8/ExceptionState.h"
 #include "core/dom/ExceptionCode.h"
-#include "modules/webaudio/AbstractAudioContext.h"
 #include "modules/webaudio/AudioBasicProcessorHandler.h"
-#include "wtf/MainThread.h"
+#include "modules/webaudio/BaseAudioContext.h"
+#include "modules/webaudio/WaveShaperNode.h"
+#include "modules/webaudio/WaveShaperOptions.h"
+#include "wtf/PtrUtil.h"
 
 namespace blink {
 
-WaveShaperNode::WaveShaperNode(AbstractAudioContext& context)
-    : AudioNode(context)
-{
-    setHandler(AudioBasicProcessorHandler::create(AudioHandler::NodeTypeWaveShaper, *this, context.sampleRate(), adoptPtr(new WaveShaperProcessor(context.sampleRate(), 1))));
+WaveShaperNode::WaveShaperNode(BaseAudioContext& context) : AudioNode(context) {
+  setHandler(AudioBasicProcessorHandler::create(
+      AudioHandler::NodeTypeWaveShaper, *this, context.sampleRate(),
+      WTF::wrapUnique(new WaveShaperProcessor(context.sampleRate(), 1))));
 
-    handler().initialize();
+  handler().initialize();
 }
 
-WaveShaperProcessor* WaveShaperNode::waveShaperProcessor() const
-{
-    return static_cast<WaveShaperProcessor*>(static_cast<AudioBasicProcessorHandler&>(handler()).processor());
+WaveShaperNode* WaveShaperNode::create(BaseAudioContext& context,
+                                       ExceptionState& exceptionState) {
+  DCHECK(isMainThread());
+
+  if (context.isContextClosed()) {
+    context.throwExceptionForClosedState(exceptionState);
+    return nullptr;
+  }
+
+  return new WaveShaperNode(context);
 }
 
-void WaveShaperNode::setCurve(DOMFloat32Array* curve, ExceptionState& exceptionState)
-{
-    ASSERT(isMainThread());
+WaveShaperNode* WaveShaperNode::create(BaseAudioContext* context,
+                                       const WaveShaperOptions& options,
+                                       ExceptionState& exceptionState) {
+  WaveShaperNode* node = create(*context, exceptionState);
 
-    if (curve && curve->length() < 2) {
-        exceptionState.throwDOMException(
-            InvalidAccessError,
-            ExceptionMessages::indexExceedsMinimumBound<unsigned>(
-                "curve length",
-                curve->length(),
-                2));
-        return;
-    }
+  if (!node)
+    return nullptr;
 
-    waveShaperProcessor()->setCurve(curve);
+  node->handleChannelOptions(options, exceptionState);
+
+  if (options.hasCurve())
+    node->setCurve(options.curve(), exceptionState);
+  if (options.hasOversample())
+    node->setOversample(options.oversample());
+
+  return node;
+}
+WaveShaperProcessor* WaveShaperNode::getWaveShaperProcessor() const {
+  return static_cast<WaveShaperProcessor*>(
+      static_cast<AudioBasicProcessorHandler&>(handler()).processor());
 }
 
-DOMFloat32Array* WaveShaperNode::curve()
-{
-    return waveShaperProcessor()->curve();
+void WaveShaperNode::setCurveImpl(const float* curveData,
+                                  unsigned curveLength,
+                                  ExceptionState& exceptionState) {
+  DCHECK(isMainThread());
+
+  if (curveData && curveLength < 2) {
+    exceptionState.throwDOMException(
+        InvalidAccessError,
+        ExceptionMessages::indexExceedsMinimumBound<unsigned>("curve length",
+                                                              curveLength, 2));
+    return;
+  }
+
+  getWaveShaperProcessor()->setCurve(curveData, curveLength);
 }
 
-void WaveShaperNode::setOversample(const String& type)
-{
-    ASSERT(isMainThread());
+void WaveShaperNode::setCurve(DOMFloat32Array* curve,
+                              ExceptionState& exceptionState) {
+  DCHECK(isMainThread());
 
-    // This is to synchronize with the changes made in
-    // AudioBasicProcessorNode::checkNumberOfChannelsForInput() where we can
-    // initialize() and uninitialize().
-    AbstractAudioContext::AutoLocker contextLocker(context());
-
-    if (type == "none") {
-        waveShaperProcessor()->setOversample(WaveShaperProcessor::OverSampleNone);
-    } else if (type == "2x") {
-        waveShaperProcessor()->setOversample(WaveShaperProcessor::OverSample2x);
-    } else if (type == "4x") {
-        waveShaperProcessor()->setOversample(WaveShaperProcessor::OverSample4x);
-    } else {
-        ASSERT_NOT_REACHED();
-    }
+  if (curve)
+    setCurveImpl(curve->data(), curve->length(), exceptionState);
+  else
+    setCurveImpl(nullptr, 0, exceptionState);
 }
 
-String WaveShaperNode::oversample() const
-{
-    switch (const_cast<WaveShaperNode*>(this)->waveShaperProcessor()->oversample()) {
+void WaveShaperNode::setCurve(const Vector<float>& curve,
+                              ExceptionState& exceptionState) {
+  DCHECK(isMainThread());
+
+  setCurveImpl(curve.data(), curve.size(), exceptionState);
+}
+
+DOMFloat32Array* WaveShaperNode::curve() {
+  Vector<float>* curve = getWaveShaperProcessor()->curve();
+  if (!curve)
+    return nullptr;
+
+  unsigned size = curve->size();
+  RefPtr<WTF::Float32Array> newCurve = WTF::Float32Array::create(size);
+
+  memcpy(newCurve->data(), curve->data(), sizeof(float) * size);
+
+  return DOMFloat32Array::create(newCurve.release());
+}
+
+void WaveShaperNode::setOversample(const String& type) {
+  DCHECK(isMainThread());
+
+  // This is to synchronize with the changes made in
+  // AudioBasicProcessorNode::checkNumberOfChannelsForInput() where we can
+  // initialize() and uninitialize().
+  BaseAudioContext::AutoLocker contextLocker(context());
+
+  if (type == "none") {
+    getWaveShaperProcessor()->setOversample(
+        WaveShaperProcessor::OverSampleNone);
+  } else if (type == "2x") {
+    getWaveShaperProcessor()->setOversample(WaveShaperProcessor::OverSample2x);
+  } else if (type == "4x") {
+    getWaveShaperProcessor()->setOversample(WaveShaperProcessor::OverSample4x);
+  } else {
+    ASSERT_NOT_REACHED();
+  }
+}
+
+String WaveShaperNode::oversample() const {
+  switch (const_cast<WaveShaperNode*>(this)
+              ->getWaveShaperProcessor()
+              ->oversample()) {
     case WaveShaperProcessor::OverSampleNone:
-        return "none";
+      return "none";
     case WaveShaperProcessor::OverSample2x:
-        return "2x";
+      return "2x";
     case WaveShaperProcessor::OverSample4x:
-        return "4x";
+      return "4x";
     default:
-        ASSERT_NOT_REACHED();
-        return "none";
-    }
+      ASSERT_NOT_REACHED();
+      return "none";
+  }
 }
 
-} // namespace blink
-
-#endif // ENABLE(WEB_AUDIO)
+}  // namespace blink

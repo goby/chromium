@@ -17,11 +17,10 @@ namespace chromeos {
 namespace {
 
 // This function is a part of CallMethodAndBlock implementation.
-void CallMethodAndBlockInternal(
-    scoped_ptr<dbus::Response>* response,
-    base::ScopedClosureRunner* signaler,
-    dbus::ObjectProxy* proxy,
-    dbus::MethodCall* method_call) {
+void CallMethodAndBlockInternal(std::unique_ptr<dbus::Response>* response,
+                                base::ScopedClosureRunner* signaler,
+                                dbus::ObjectProxy* proxy,
+                                dbus::MethodCall* method_call) {
   *response = proxy->CallMethodAndBlock(
       method_call, dbus::ObjectProxy::TIMEOUT_USE_DEFAULT);
 }
@@ -32,14 +31,14 @@ BlockingMethodCaller::BlockingMethodCaller(dbus::Bus* bus,
                                            dbus::ObjectProxy* proxy)
     : bus_(bus),
       proxy_(proxy),
-      on_blocking_method_call_(false /* manual_reset */,
-                               false /* initially_signaled */) {
-}
+      on_blocking_method_call_(
+          base::WaitableEvent::ResetPolicy::AUTOMATIC,
+          base::WaitableEvent::InitialState::NOT_SIGNALED) {}
 
 BlockingMethodCaller::~BlockingMethodCaller() {
 }
 
-scoped_ptr<dbus::Response> BlockingMethodCaller::CallMethodAndBlock(
+std::unique_ptr<dbus::Response> BlockingMethodCaller::CallMethodAndBlock(
     dbus::MethodCall* method_call) {
   // on_blocking_method_call_->Signal() will be called when |signaler| is
   // destroyed.
@@ -49,7 +48,7 @@ scoped_ptr<dbus::Response> BlockingMethodCaller::CallMethodAndBlock(
   base::ScopedClosureRunner* signaler =
       new base::ScopedClosureRunner(signal_task);
 
-  scoped_ptr<dbus::Response> response;
+  std::unique_ptr<dbus::Response> response;
   bus_->GetDBusTaskRunner()->PostTask(
       FROM_HERE,
       base::Bind(&CallMethodAndBlockInternal,
@@ -60,7 +59,7 @@ scoped_ptr<dbus::Response> BlockingMethodCaller::CallMethodAndBlock(
   // http://crbug.com/125360
   base::ThreadRestrictions::ScopedAllowWait allow_wait;
   on_blocking_method_call_.Wait();
-  return response.Pass();
+  return response;
 }
 
 }  // namespace chromeos

@@ -4,17 +4,22 @@
 
 #include "net/base/keygen_handler.h"
 
+#include <stdint.h>
+
 #include <string>
+#include <utility>
 
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/threading/worker_pool.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/strings/string_piece.h"
 #include "base/synchronization/waitable_event.h"
+#include "base/threading/worker_pool.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "third_party/boringssl/src/include/openssl/bytestring.h"
+#include "third_party/boringssl/src/include/openssl/evp.h"
 
 #if defined(USE_NSS_CERTS)
 #include <private/pprthred.h>  // PR_DetachThread
@@ -30,7 +35,7 @@ namespace {
 class StubCryptoModuleDelegate : public crypto::NSSCryptoModuleDelegate {
   public:
    explicit StubCryptoModuleDelegate(crypto::ScopedPK11Slot slot)
-       : slot_(slot.Pass()) {}
+       : slot_(std::move(slot)) {}
 
    std::string RequestPassword(const std::string& slot_name,
                                bool retry,
@@ -47,21 +52,23 @@ class StubCryptoModuleDelegate : public crypto::NSSCryptoModuleDelegate {
 };
 #endif
 
+const char kChallenge[] = "some challenge";
+
 class KeygenHandlerTest : public ::testing::Test {
  public:
   KeygenHandlerTest() {}
   ~KeygenHandlerTest() override {}
 
-  scoped_ptr<KeygenHandler> CreateKeygenHandler() {
-    scoped_ptr<KeygenHandler> handler(new KeygenHandler(
-        768, "some challenge", GURL("http://www.example.com")));
+  std::unique_ptr<KeygenHandler> CreateKeygenHandler() {
+    std::unique_ptr<KeygenHandler> handler(
+        new KeygenHandler(768, kChallenge, GURL("http://www.example.com")));
 #if defined(USE_NSS_CERTS)
     handler->set_crypto_module_delegate(
-        scoped_ptr<crypto::NSSCryptoModuleDelegate>(
+        std::unique_ptr<crypto::NSSCryptoModuleDelegate>(
             new StubCryptoModuleDelegate(crypto::ScopedPK11Slot(
                 PK11_ReferenceSlot(test_nss_db_.slot())))));
 #endif
-    return handler.Pass();
+    return handler;
   }
 
  private:
@@ -70,57 +77,104 @@ class KeygenHandlerTest : public ::testing::Test {
 #endif
 };
 
+base::StringPiece StringPieceFromCBS(const CBS& cbs) {
+  return base::StringPiece(reinterpret_cast<const char*>(CBS_data(&cbs)),
+                           CBS_len(&cbs));
+}
+
 // Assert that |result| is a valid output for KeygenHandler given challenge
 // string of |challenge|.
 void AssertValidSignedPublicKeyAndChallenge(const std::string& result,
                                             const std::string& challenge) {
-  ASSERT_GT(result.length(), 0U);
-
   // Verify it's valid base64:
   std::string spkac;
   ASSERT_TRUE(base::Base64Decode(result, &spkac));
-  // In lieu of actually parsing and validating the DER data,
-  // just check that it exists and has a reasonable length.
-  // (It's almost always 590 bytes, but the DER encoding of the random key
-  // and signature could sometimes be a few bytes different.)
-  ASSERT_GE(spkac.length(), 200U);
-  ASSERT_LE(spkac.length(), 300U);
 
-  // NOTE:
-  // The value of |result| can be validated by prefixing 'SPKAC=' to it
-  // and piping it through
-  //   openssl spkac -verify
-  // whose output should look like:
-  //   Netscape SPKI:
-  //     Public Key Algorithm: rsaEncryption
-  //     RSA Public Key: (2048 bit)
-  //     Modulus (2048 bit):
-  //         00:b6:cc:14:c9:43:b5:2d:51:65:7e:11:8b:80:9e: .....
-  //     Exponent: 65537 (0x10001)
-  //     Challenge String: some challenge
-  //     Signature Algorithm: md5WithRSAEncryption
-  //         92:f3:cc:ff:0b:d3:d0:4a:3a:4c:ba:ff:d6:38:7f:a5:4b:b5: .....
-  //   Signature OK
+  // Parse the following structure:
   //
-  // The value of |spkac| can be ASN.1-parsed with:
-  //    openssl asn1parse -inform DER
+  //   PublicKeyAndChallenge ::= SEQUENCE {
+  //     spki SubjectPublicKeyInfo,
+  //     challenge IA5STRING
+  //   }
+  //   SignedPublicKeyAndChallenge ::= SEQUENCE {
+  //     publicKeyAndChallenge PublicKeyAndChallenge,
+  //     signatureAlgorithm AlgorithmIdentifier,
+  //     signature BIT STRING
+  //   }
+
+  CBS cbs;
+  CBS_init(&cbs, reinterpret_cast<const uint8_t*>(spkac.data()), spkac.size());
+
+  // The input should consist of a SEQUENCE.
+  CBS child;
+  ASSERT_TRUE(CBS_get_asn1(&cbs, &child, CBS_ASN1_SEQUENCE));
+  ASSERT_EQ(0u, CBS_len(&cbs));
+
+  // Extract the raw PublicKeyAndChallenge.
+  CBS public_key_and_challenge_raw;
+  ASSERT_TRUE(CBS_get_asn1_element(&child, &public_key_and_challenge_raw,
+                                   CBS_ASN1_SEQUENCE));
+
+  // Parse out the PublicKeyAndChallenge.
+  CBS copy = public_key_and_challenge_raw;
+  CBS public_key_and_challenge;
+  ASSERT_TRUE(
+      CBS_get_asn1(&copy, &public_key_and_challenge, CBS_ASN1_SEQUENCE));
+  ASSERT_EQ(0u, CBS_len(&copy));
+  bssl::UniquePtr<EVP_PKEY> key(
+      EVP_parse_public_key(&public_key_and_challenge));
+  ASSERT_TRUE(key);
+  CBS challenge_spkac;
+  ASSERT_TRUE(CBS_get_asn1(&public_key_and_challenge, &challenge_spkac,
+                           CBS_ASN1_IA5STRING));
+  ASSERT_EQ(0u, CBS_len(&public_key_and_challenge));
+
+  // The challenge must match.
+  ASSERT_EQ(challenge, StringPieceFromCBS(challenge_spkac));
+
+  // The next element must be the AlgorithmIdentifier for MD5 with RSA.
+  static const uint8_t kMd5WithRsaEncryption[] = {
+      0x30, 0x0d, 0x06, 0x09, 0x2a, 0x86, 0x48, 0x86,
+      0xf7, 0x0d, 0x01, 0x01, 0x04, 0x05, 0x00,
+  };
+  CBS algorithm;
+  ASSERT_TRUE(CBS_get_bytes(&child, &algorithm, sizeof(kMd5WithRsaEncryption)));
+  ASSERT_EQ(
+      base::StringPiece(reinterpret_cast<const char*>(kMd5WithRsaEncryption),
+                        sizeof(kMd5WithRsaEncryption)),
+      StringPieceFromCBS(algorithm));
+
+  // Finally, parse the signature.
+  CBS signature;
+  ASSERT_TRUE(CBS_get_asn1(&child, &signature, CBS_ASN1_BITSTRING));
+  ASSERT_EQ(0u, CBS_len(&child));
+  uint8_t pad;
+  ASSERT_TRUE(CBS_get_u8(&signature, &pad));
+  ASSERT_EQ(0u, pad);
+
+  // Check the signature.
+  bssl::ScopedEVP_MD_CTX ctx;
+  ASSERT_TRUE(
+      EVP_DigestVerifyInit(ctx.get(), nullptr, EVP_md5(), nullptr, key.get()));
+  ASSERT_TRUE(EVP_DigestVerifyUpdate(ctx.get(),
+                                     CBS_data(&public_key_and_challenge_raw),
+                                     CBS_len(&public_key_and_challenge_raw)));
+  ASSERT_TRUE(EVP_DigestVerifyFinal(ctx.get(), CBS_data(&signature),
+                                    CBS_len(&signature)));
 }
 
 TEST_F(KeygenHandlerTest, SmokeTest) {
-  scoped_ptr<KeygenHandler> handler(CreateKeygenHandler());
+  std::unique_ptr<KeygenHandler> handler(CreateKeygenHandler());
   handler->set_stores_key(false);  // Don't leave the key-pair behind
   std::string result = handler->GenKeyAndSignChallenge();
   VLOG(1) << "KeygenHandler produced: " << result;
-  AssertValidSignedPublicKeyAndChallenge(result, "some challenge");
+  AssertValidSignedPublicKeyAndChallenge(result, kChallenge);
 }
 
 void ConcurrencyTestCallback(const std::string& challenge,
                              base::WaitableEvent* event,
-                             scoped_ptr<KeygenHandler> handler,
+                             std::unique_ptr<KeygenHandler> handler,
                              std::string* result) {
-  // We allow Singleton use on the worker thread here since we use a
-  // WaitableEvent to synchronize, so it's safe.
-  base::ThreadRestrictions::ScopedAllowSingleton scoped_allow_singleton;
   handler->set_stores_key(false);  // Don't leave the key-pair behind.
   *result = handler->GenKeyAndSignChallenge();
   event->Signal();
@@ -143,8 +197,10 @@ TEST_F(KeygenHandlerTest, ConcurrencyTest) {
   base::WaitableEvent* events[NUM_HANDLERS] = { NULL };
   std::string results[NUM_HANDLERS];
   for (int i = 0; i < NUM_HANDLERS; i++) {
-    scoped_ptr<KeygenHandler> handler(CreateKeygenHandler());
-    events[i] = new base::WaitableEvent(false, false);
+    std::unique_ptr<KeygenHandler> handler(CreateKeygenHandler());
+    events[i] = new base::WaitableEvent(
+        base::WaitableEvent::ResetPolicy::AUTOMATIC,
+        base::WaitableEvent::InitialState::NOT_SIGNALED);
     base::WorkerPool::PostTask(FROM_HERE,
                                base::Bind(ConcurrencyTestCallback,
                                           "some challenge",

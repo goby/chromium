@@ -2,7 +2,6 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "config.h"
 #include "modules/presentation/PresentationAvailability.h"
 
 #include "bindings/core/v8/ScriptPromiseResolver.h"
@@ -18,129 +17,124 @@ namespace blink {
 
 namespace {
 
-WebPresentationClient* presentationClient(ExecutionContext* executionContext)
-{
-    ASSERT(executionContext && executionContext->isDocument());
-
-    Document* document = toDocument(executionContext);
-    if (!document->frame())
-        return nullptr;
-    PresentationController* controller = PresentationController::from(*document->frame());
-    return controller ? controller->client() : nullptr;
+WebPresentationClient* presentationClient(ExecutionContext* executionContext) {
+  if (!executionContext)
+    return nullptr;
+  DCHECK(executionContext->isDocument());
+  Document* document = toDocument(executionContext);
+  if (!document->frame())
+    return nullptr;
+  PresentationController* controller =
+      PresentationController::from(*document->frame());
+  return controller ? controller->client() : nullptr;
 }
 
-} // anonymous namespace
+}  // anonymous namespace
 
 // static
-PresentationAvailability* PresentationAvailability::take(ScriptPromiseResolver* resolver, const KURL& url, bool value)
-{
-    PresentationAvailability* presentationAvailability = new PresentationAvailability(resolver->executionContext(), url, value);
-    presentationAvailability->suspendIfNeeded();
-    presentationAvailability->updateListening();
-    return presentationAvailability;
+PresentationAvailability* PresentationAvailability::take(
+    ScriptPromiseResolver* resolver,
+    const KURL& url,
+    bool value) {
+  PresentationAvailability* presentationAvailability =
+      new PresentationAvailability(resolver->getExecutionContext(), url, value);
+  presentationAvailability->suspendIfNeeded();
+  presentationAvailability->updateListening();
+  return presentationAvailability;
 }
 
-PresentationAvailability::PresentationAvailability(ExecutionContext* executionContext, const KURL& url, bool value)
-    : ActiveDOMObject(executionContext)
-    , PageLifecycleObserver(toDocument(executionContext)->page())
-    , m_url(url)
-    , m_value(value)
-    , m_state(State::Active)
-{
-    ASSERT(executionContext->isDocument());
+PresentationAvailability::PresentationAvailability(
+    ExecutionContext* executionContext,
+    const KURL& url,
+    bool value)
+    : ActiveScriptWrappable(this),
+      SuspendableObject(executionContext),
+      PageVisibilityObserver(toDocument(executionContext)->page()),
+      m_url(url),
+      m_value(value),
+      m_state(State::Active) {
+  ASSERT(executionContext->isDocument());
 }
 
-PresentationAvailability::~PresentationAvailability()
-{
+PresentationAvailability::~PresentationAvailability() {}
+
+const AtomicString& PresentationAvailability::interfaceName() const {
+  return EventTargetNames::PresentationAvailability;
 }
 
-const AtomicString& PresentationAvailability::interfaceName() const
-{
-    return EventTargetNames::PresentationAvailability;
+ExecutionContext* PresentationAvailability::getExecutionContext() const {
+  return SuspendableObject::getExecutionContext();
 }
 
-ExecutionContext* PresentationAvailability::executionContext() const
-{
-    return ActiveDOMObject::executionContext();
+void PresentationAvailability::addedEventListener(
+    const AtomicString& eventType,
+    RegisteredEventListener& registeredListener) {
+  EventTargetWithInlineData::addedEventListener(eventType, registeredListener);
+  if (eventType == EventTypeNames::change)
+    UseCounter::count(getExecutionContext(),
+                      UseCounter::PresentationAvailabilityChangeEventListener);
 }
 
-bool PresentationAvailability::addEventListenerInternal(const AtomicString& eventType, PassRefPtrWillBeRawPtr<EventListener> listener, const EventListenerOptions& options)
-{
-    if (eventType == EventTypeNames::change)
-        UseCounter::count(executionContext(), UseCounter::PresentationAvailabilityChangeEventListener);
+void PresentationAvailability::availabilityChanged(bool value) {
+  if (m_value == value)
+    return;
 
-    return EventTarget::addEventListenerInternal(eventType, listener, options);
+  m_value = value;
+  dispatchEvent(Event::create(EventTypeNames::change));
 }
 
-void PresentationAvailability::availabilityChanged(bool value)
-{
-    if (m_value == value)
-        return;
-
-    m_value = value;
-    dispatchEvent(Event::create(EventTypeNames::change));
+bool PresentationAvailability::hasPendingActivity() const {
+  return m_state != State::Inactive;
 }
 
-bool PresentationAvailability::hasPendingActivity() const
-{
-    return m_state != State::Inactive;
+void PresentationAvailability::resume() {
+  setState(State::Active);
 }
 
-void PresentationAvailability::resume()
-{
-    setState(State::Active);
+void PresentationAvailability::suspend() {
+  setState(State::Suspended);
 }
 
-void PresentationAvailability::suspend()
-{
-    setState(State::Suspended);
+void PresentationAvailability::contextDestroyed() {
+  setState(State::Inactive);
 }
 
-void PresentationAvailability::stop()
-{
-    setState(State::Inactive);
+void PresentationAvailability::pageVisibilityChanged() {
+  if (m_state == State::Inactive)
+    return;
+  updateListening();
 }
 
-void PresentationAvailability::pageVisibilityChanged()
-{
-    if (m_state == State::Inactive)
-        return;
-    updateListening();
+void PresentationAvailability::setState(State state) {
+  m_state = state;
+  updateListening();
 }
 
-void PresentationAvailability::setState(State state)
-{
-    m_state = state;
-    updateListening();
+void PresentationAvailability::updateListening() {
+  WebPresentationClient* client = presentationClient(getExecutionContext());
+  if (!client)
+    return;
+
+  if (m_state == State::Active &&
+      (toDocument(getExecutionContext())->pageVisibilityState() ==
+       PageVisibilityStateVisible))
+    client->startListening(this);
+  else
+    client->stopListening(this);
 }
 
-void PresentationAvailability::updateListening()
-{
-    WebPresentationClient* client = presentationClient(executionContext());
-    if (!client)
-        return;
-
-    if (m_state == State::Active && (toDocument(executionContext())->pageVisibilityState() == PageVisibilityStateVisible))
-        client->startListening(this);
-    else
-        client->stopListening(this);
+const WebURL PresentationAvailability::url() const {
+  return WebURL(m_url);
 }
 
-const WebURL PresentationAvailability::url() const
-{
-    return WebURL(m_url);
+bool PresentationAvailability::value() const {
+  return m_value;
 }
 
-bool PresentationAvailability::value() const
-{
-    return m_value;
+DEFINE_TRACE(PresentationAvailability) {
+  EventTargetWithInlineData::trace(visitor);
+  PageVisibilityObserver::trace(visitor);
+  SuspendableObject::trace(visitor);
 }
 
-DEFINE_TRACE(PresentationAvailability)
-{
-    RefCountedGarbageCollectedEventTargetWithInlineData<PresentationAvailability>::trace(visitor);
-    PageLifecycleObserver::trace(visitor);
-    ActiveDOMObject::trace(visitor);
-}
-
-} // blink namespace
+}  // namespace blink

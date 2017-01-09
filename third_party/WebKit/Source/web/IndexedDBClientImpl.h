@@ -35,16 +35,21 @@ namespace blink {
 
 class ExecutionContext;
 
+// This class is used to bypass the disallowed dependency from modules/ to web/
+// to call allowIndexedDB() from modules/. ChromeClient is a mechanism to bypass
+// the dependency but we cannot use ChromeClient here because
+// IndexedDBClientImpl is used by worker threads but ChromeClient works only
+// for the main thread.
 class IndexedDBClientImpl final : public IndexedDBClient {
-public:
-    static IndexedDBClient* create();
+ public:
+  static IndexedDBClient* create();
 
-    bool allowIndexedDB(ExecutionContext*, const String& name) override;
+  bool allowIndexedDB(ExecutionContext*, const String& name) override;
 
-private:
-    IndexedDBClientImpl() { }
+ private:
+  IndexedDBClientImpl() {}
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // IndexedDBClientImpl_h
+#endif  // IndexedDBClientImpl_h

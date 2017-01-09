@@ -23,38 +23,40 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/speech/SpeechSynthesisEvent.h"
 
 namespace blink {
 
-PassRefPtrWillBeRawPtr<SpeechSynthesisEvent> SpeechSynthesisEvent::create()
-{
-    return adoptRefWillBeNoop(new SpeechSynthesisEvent);
+SpeechSynthesisEvent* SpeechSynthesisEvent::create() {
+  return new SpeechSynthesisEvent;
 }
 
-PassRefPtrWillBeRawPtr<SpeechSynthesisEvent> SpeechSynthesisEvent::create(const AtomicString& type, SpeechSynthesisUtterance* utterance, unsigned charIndex, float elapsedTime, const String& name)
-{
-    return adoptRefWillBeNoop(new SpeechSynthesisEvent(type, utterance, charIndex, elapsedTime, name));
+SpeechSynthesisEvent* SpeechSynthesisEvent::create(
+    const AtomicString& type,
+    SpeechSynthesisUtterance* utterance,
+    unsigned charIndex,
+    float elapsedTime,
+    const String& name) {
+  return new SpeechSynthesisEvent(type, utterance, charIndex, elapsedTime,
+                                  name);
 }
 
-SpeechSynthesisEvent::SpeechSynthesisEvent()
-{
+SpeechSynthesisEvent::SpeechSynthesisEvent() {}
+
+SpeechSynthesisEvent::SpeechSynthesisEvent(const AtomicString& type,
+                                           SpeechSynthesisUtterance* utterance,
+                                           unsigned charIndex,
+                                           float elapsedTime,
+                                           const String& name)
+    : Event(type, false, false),
+      m_utterance(utterance),
+      m_charIndex(charIndex),
+      m_elapsedTime(elapsedTime),
+      m_name(name) {}
+
+DEFINE_TRACE(SpeechSynthesisEvent) {
+  visitor->trace(m_utterance);
+  Event::trace(visitor);
 }
 
-SpeechSynthesisEvent::SpeechSynthesisEvent(const AtomicString& type, SpeechSynthesisUtterance* utterance, unsigned charIndex, float elapsedTime, const String& name)
-    : Event(type, false, false)
-    , m_utterance(utterance)
-    , m_charIndex(charIndex)
-    , m_elapsedTime(elapsedTime)
-    , m_name(name)
-{
-}
-
-DEFINE_TRACE(SpeechSynthesisEvent)
-{
-    visitor->trace(m_utterance);
-    Event::trace(visitor);
-}
-
-} // namespace blink
+}  // namespace blink

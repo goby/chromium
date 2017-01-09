@@ -4,8 +4,11 @@
 
 #include "ui/base/ime/win/tsf_input_scope.h"
 
+#include <stddef.h>
+
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "base/win/windows_version.h"
@@ -21,7 +24,7 @@ void AppendNonTrivialInputScope(std::vector<InputScope>* input_scopes,
   if (input_scope == IS_DEFAULT)
     return;
 
-  if (ContainsValue(*input_scopes, input_scope))
+  if (base::ContainsValue(*input_scopes, input_scope))
     return;
 
   input_scopes->push_back(input_scope);

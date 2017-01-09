@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 
 #include <vector>
 
-#include "ash/desktop_background/desktop_background_controller.h"
-#include "ash/shell.h"
+#include "ash/common/wallpaper/wallpaper_controller.h"
+#include "ash/common/wm_shell.h"
 #include "base/command_line.h"
 #include "base/files/scoped_temp_dir.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/customization/customization_document.h"
@@ -67,7 +69,7 @@ class TestWallpaperObserver : public WallpaperManager::Observer {
     wallpaper_manager_->RemoveObserver(this);
   }
 
-  void OnWallpaperAnimationFinished(const std::string&) override {
+  void OnWallpaperAnimationFinished(const AccountId&) override {
     finished_ = true;
     base::MessageLoop::current()->QuitWhenIdle();
   }
@@ -93,14 +95,12 @@ class TestWallpaperImageURLFetcherCallback {
       const GURL& url,
       const size_t require_retries,
       const std::vector<unsigned char>& jpeg_data_raw)
-      : url_(url),
-        require_retries_(require_retries),
-        factory_(NULL) {
+      : url_(url), require_retries_(require_retries), factory_(nullptr) {
     jpeg_data_.resize(jpeg_data_raw.size());
     std::copy(jpeg_data_raw.begin(), jpeg_data_raw.end(), jpeg_data_.begin());
   }
 
-  scoped_ptr<net::FakeURLFetcher> CreateURLFetcher(
+  std::unique_ptr<net::FakeURLFetcher> CreateURLFetcher(
       const GURL& url,
       net::URLFetcherDelegate* delegate,
       const std::string& response_data,
@@ -132,13 +132,13 @@ class TestWallpaperImageURLFetcherCallback {
       status = net::URLRequestStatus::SUCCESS;
       factory_->SetFakeResponse(url, response_data, response_code, status);
     }
-    scoped_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
+    std::unique_ptr<net::FakeURLFetcher> fetcher(new net::FakeURLFetcher(
         url, delegate, response_data, response_code, status));
     scoped_refptr<net::HttpResponseHeaders> download_headers =
         new net::HttpResponseHeaders(std::string());
     download_headers->AddHeader("Content-Type: image/jpeg");
     fetcher->set_response_headers(download_headers);
-    return fetcher.Pass();
+    return fetcher;
   }
 
   void Initialize(net::FakeURLFetcherFactory* factory) {
@@ -197,7 +197,7 @@ class WallpaperImageFetcherFactory {
     url_callback_.reset(new TestWallpaperImageURLFetcherCallback(
         url, require_retries, oem_wallpaper_));
     fallback_fetcher_factory_.reset(new net::TestURLFetcherFactory);
-    net::URLFetcherImpl::set_factory(NULL);
+    net::URLFetcherImpl::set_factory(nullptr);
     fetcher_factory_.reset(new net::FakeURLFetcherFactory(
         fallback_fetcher_factory_.get(),
         base::Bind(&TestWallpaperImageURLFetcherCallback::CreateURLFetcher,
@@ -205,12 +205,12 @@ class WallpaperImageFetcherFactory {
     url_callback_->Initialize(fetcher_factory_.get());
   }
 
-  scoped_ptr<TestWallpaperImageURLFetcherCallback> url_callback_;
+  std::unique_ptr<TestWallpaperImageURLFetcherCallback> url_callback_;
 
   // Use a test factory as a fallback so we don't have to deal with other
   // requests.
-  scoped_ptr<net::TestURLFetcherFactory> fallback_fetcher_factory_;
-  scoped_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
+  std::unique_ptr<net::TestURLFetcherFactory> fallback_fetcher_factory_;
+  std::unique_ptr<net::FakeURLFetcherFactory> fetcher_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(WallpaperImageFetcherFactory);
 };
@@ -218,24 +218,13 @@ class WallpaperImageFetcherFactory {
 class CustomizationWallpaperDownloaderBrowserTest
     : public InProcessBrowserTest {
  public:
-  CustomizationWallpaperDownloaderBrowserTest()
-      : controller_(NULL),
-        local_state_(NULL) {
-  }
-
+  CustomizationWallpaperDownloaderBrowserTest() {}
   ~CustomizationWallpaperDownloaderBrowserTest() override {}
-
-  void SetUpOnMainThread() override {
-    controller_ = ash::Shell::GetInstance()->desktop_background_controller();
-    local_state_ = g_browser_process->local_state();
-  }
 
   void SetUpCommandLine(base::CommandLine* command_line) override {
     command_line->AppendSwitch(chromeos::switches::kLoginManager);
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile, "user");
   }
-
-  void TearDownOnMainThread() override { controller_ = NULL; }
 
  protected:
   void CreateCmdlineWallpapers() {
@@ -245,13 +234,11 @@ class CustomizationWallpaperDownloaderBrowserTest
         *cmdline_wallpaper_dir_, &wallpaper_manager_command_line_);
   }
 
-  ash::DesktopBackgroundController* controller_;
-  PrefService* local_state_;
-  scoped_ptr<base::CommandLine> wallpaper_manager_command_line_;
+  std::unique_ptr<base::CommandLine> wallpaper_manager_command_line_;
 
   // Directory created by CreateCmdlineWallpapersAndSetFlags() to store default
   // wallpaper images.
-  scoped_ptr<base::ScopedTempDir> cmdline_wallpaper_dir_;
+  std::unique_ptr<base::ScopedTempDir> cmdline_wallpaper_dir_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(CustomizationWallpaperDownloaderBrowserTest);
@@ -260,10 +247,10 @@ class CustomizationWallpaperDownloaderBrowserTest
 IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
                        OEMWallpaperIsPresent) {
   CreateCmdlineWallpapers();
-  WallpaperManager::Get()->SetDefaultWallpaperNow(std::string());
+  WallpaperManager::Get()->SetDefaultWallpaperNow(EmptyAccountId());
   wallpaper_manager_test_utils::WaitAsyncWallpaperLoadFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
-      controller_->GetWallpaper(),
+      ash::WmShell::Get()->wallpaper_controller()->GetWallpaper(),
       wallpaper_manager_test_utils::kSmallDefaultWallpaperColor));
 
   WallpaperImageFetcherFactory url_factory(
@@ -281,7 +268,7 @@ IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
 
   observer.WaitForWallpaperAnimationFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
-      controller_->GetWallpaper(),
+      ash::WmShell::Get()->wallpaper_controller()->GetWallpaper(),
       wallpaper_manager_test_utils::kCustomWallpaperColor));
   EXPECT_EQ(1U, url_factory.num_attempts());
 }
@@ -289,10 +276,10 @@ IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
 IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
                        OEMWallpaperRetryFetch) {
   CreateCmdlineWallpapers();
-  WallpaperManager::Get()->SetDefaultWallpaperNow(std::string());
+  WallpaperManager::Get()->SetDefaultWallpaperNow(EmptyAccountId());
   wallpaper_manager_test_utils::WaitAsyncWallpaperLoadFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
-      controller_->GetWallpaper(),
+      ash::WmShell::Get()->wallpaper_controller()->GetWallpaper(),
       wallpaper_manager_test_utils::kSmallDefaultWallpaperColor));
 
   WallpaperImageFetcherFactory url_factory(
@@ -310,7 +297,7 @@ IN_PROC_BROWSER_TEST_F(CustomizationWallpaperDownloaderBrowserTest,
 
   observer.WaitForWallpaperAnimationFinished();
   EXPECT_TRUE(wallpaper_manager_test_utils::ImageIsNearColor(
-      controller_->GetWallpaper(),
+      ash::WmShell::Get()->wallpaper_controller()->GetWallpaper(),
       wallpaper_manager_test_utils::kCustomWallpaperColor));
 
   EXPECT_EQ(2U, url_factory.num_attempts());

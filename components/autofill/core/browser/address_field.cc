@@ -6,8 +6,10 @@
 
 #include <stddef.h>
 
+#include <memory>
+#include <utility>
+
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string16.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -40,11 +42,11 @@ const int AddressField::kCityMatchType = MATCH_DEFAULT | MATCH_SELECT;
 
 const int AddressField::kStateMatchType = MATCH_DEFAULT | MATCH_SELECT;
 
-scoped_ptr<FormField> AddressField::Parse(AutofillScanner* scanner) {
+std::unique_ptr<FormField> AddressField::Parse(AutofillScanner* scanner) {
   if (scanner->IsEnd())
     return NULL;
 
-  scoped_ptr<AddressField> address_field(new AddressField);
+  std::unique_ptr<AddressField> address_field(new AddressField);
   const AutofillField* const initial_field = scanner->Cursor();
   size_t saved_cursor = scanner->SaveCursor();
 
@@ -56,7 +58,11 @@ scoped_ptr<FormField> AddressField::Parse(AutofillScanner* scanner) {
   bool has_trailing_non_labeled_fields = false;
   while (!scanner->IsEnd()) {
     const size_t cursor = scanner->SaveCursor();
-    if (address_field->ParseAddressLines(scanner) ||
+    // Ignore "Address Lookup" field. http://crbug.com/427622
+    if (ParseField(scanner, base::UTF8ToUTF16(kAddressLookupRe), NULL) ||
+        ParseField(scanner, base::UTF8ToUTF16(kAddressNameIgnoredRe), NULL)) {
+      continue;
+    } else if (address_field->ParseAddressLines(scanner) ||
         address_field->ParseCityStateZipCode(scanner) ||
         address_field->ParseCountry(scanner) ||
         address_field->ParseCompany(scanner)) {
@@ -105,7 +111,7 @@ scoped_ptr<FormField> AddressField::Parse(AutofillScanner* scanner) {
     if (has_trailing_non_labeled_fields)
       scanner->RewindTo(begin_trailing_non_labeled_fields);
 
-    return address_field.Pass();
+    return std::move(address_field);
   }
 
   scanner->RewindTo(saved_cursor);
@@ -125,7 +131,8 @@ AddressField::AddressField()
       country_(NULL) {
 }
 
-bool AddressField::ClassifyField(ServerFieldTypeMap* map) const {
+void AddressField::AddClassifications(
+    FieldCandidatesMap* field_candidates) const {
   // The page can request the address lines as a single textarea input or as
   // multiple text fields (or not at all), but it shouldn't be possible to
   // request both.
@@ -133,15 +140,24 @@ bool AddressField::ClassifyField(ServerFieldTypeMap* map) const {
   DCHECK(!(address2_ && street_address_));
   DCHECK(!(address3_ && street_address_));
 
-  return AddClassification(company_, COMPANY_NAME, map) &&
-         AddClassification(address1_, ADDRESS_HOME_LINE1, map) &&
-         AddClassification(address2_, ADDRESS_HOME_LINE2, map) &&
-         AddClassification(address3_, ADDRESS_HOME_LINE3, map) &&
-         AddClassification(street_address_, ADDRESS_HOME_STREET_ADDRESS, map) &&
-         AddClassification(city_, ADDRESS_HOME_CITY, map) &&
-         AddClassification(state_, ADDRESS_HOME_STATE, map) &&
-         AddClassification(zip_, ADDRESS_HOME_ZIP, map) &&
-         AddClassification(country_, ADDRESS_HOME_COUNTRY, map);
+  AddClassification(company_, COMPANY_NAME, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(address1_, ADDRESS_HOME_LINE1, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(address2_, ADDRESS_HOME_LINE2, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(address3_, ADDRESS_HOME_LINE3, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(street_address_, ADDRESS_HOME_STREET_ADDRESS,
+                    kBaseAddressParserScore, field_candidates);
+  AddClassification(city_, ADDRESS_HOME_CITY, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(state_, ADDRESS_HOME_STATE, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(zip_, ADDRESS_HOME_ZIP, kBaseAddressParserScore,
+                    field_candidates);
+  AddClassification(country_, ADDRESS_HOME_COUNTRY, kBaseAddressParserScore,
+                    field_candidates);
 }
 
 bool AddressField::ParseCompany(AutofillScanner* scanner) {
@@ -161,10 +177,6 @@ bool AddressField::ParseAddressLines(AutofillScanner* scanner) {
   // AmericanGirl-Registration.html, BloomingdalesBilling.html,
   // EBay Registration Enter Information.html).
   if (address1_ || street_address_)
-    return false;
-
-  // Ignore "Address Lookup" field. http://crbug.com/427622
-  if (ParseField(scanner, base::UTF8ToUTF16(kAddressLookupRe), NULL))
     return false;
 
   base::string16 pattern = UTF8ToUTF16(kAddressLine1Re);
@@ -268,6 +280,39 @@ bool AddressField::ParseState(AutofillScanner* scanner) {
                              UTF8ToUTF16(kStateRe),
                              kStateMatchType,
                              &state_);
+}
+
+AddressField::ParseNameLabelResult AddressField::ParseNameAndLabelSeparately(
+    AutofillScanner* scanner,
+    const base::string16& pattern,
+    int match_type,
+    AutofillField** match) {
+  if (scanner->IsEnd())
+    return RESULT_MATCH_NONE;
+
+  AutofillField* cur_match = nullptr;
+  size_t saved_cursor = scanner->SaveCursor();
+  bool parsed_name = ParseFieldSpecifics(scanner,
+                                         pattern,
+                                         match_type & ~MATCH_LABEL,
+                                         &cur_match);
+  scanner->RewindTo(saved_cursor);
+  bool parsed_label = ParseFieldSpecifics(scanner,
+                                          pattern,
+                                          match_type & ~MATCH_NAME,
+                                          &cur_match);
+  if (parsed_name && parsed_label) {
+    if (match)
+      *match = cur_match;
+    return RESULT_MATCH_NAME_LABEL;
+  }
+
+  scanner->RewindTo(saved_cursor);
+  if (parsed_name)
+    return RESULT_MATCH_NAME;
+  if (parsed_label)
+    return RESULT_MATCH_LABEL;
+  return RESULT_MATCH_NONE;
 }
 
 bool AddressField::ParseCityStateZipCode(AutofillScanner* scanner) {

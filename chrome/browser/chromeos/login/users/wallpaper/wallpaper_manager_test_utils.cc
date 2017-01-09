@@ -4,12 +4,14 @@
 
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager_test_utils.h"
 
-#include "ash/ash_switches.h"
+#include <stddef.h>
+
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/time/time.h"
 #include "chrome/browser/chromeos/login/users/wallpaper/wallpaper_manager.h"
@@ -37,7 +39,7 @@ class TestWallpaperObserverPendingListEmpty
     wallpaper_manager_->RemoveObserver(this);
   }
 
-  void OnWallpaperAnimationFinished(const std::string& user_id) override {}
+  void OnWallpaperAnimationFinished(const AccountId& account_id) override {}
 
   void OnPendingListEmptyForTesting() override {
     empty_ = true;
@@ -163,38 +165,38 @@ void WaitAsyncWallpaperLoadFinished() {
 }
 
 void CreateCmdlineWallpapers(const base::ScopedTempDir& dir,
-                             scoped_ptr<base::CommandLine>* command_line) {
+                             std::unique_ptr<base::CommandLine>* command_line) {
   std::vector<std::string> options;
   options.push_back(std::string("WM_Test_cmdline"));
   const base::FilePath small_file =
-      dir.path().Append(FILE_PATH_LITERAL("small.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("small.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kDefaultWallpaperSmall + "=" +
                     small_file.value());
   const base::FilePath large_file =
-      dir.path().Append(FILE_PATH_LITERAL("large.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("large.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kDefaultWallpaperLarge + "=" +
                     large_file.value());
 
   const base::FilePath guest_small_file =
-      dir.path().Append(FILE_PATH_LITERAL("guest_small.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("guest_small.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kGuestWallpaperSmall + "=" +
                     guest_small_file.value());
   const base::FilePath guest_large_file =
-      dir.path().Append(FILE_PATH_LITERAL("guest_large.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("guest_large.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kGuestWallpaperLarge + "=" +
                     guest_large_file.value());
 
   const base::FilePath child_small_file =
-      dir.path().Append(FILE_PATH_LITERAL("child_small.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("child_small.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kChildWallpaperSmall + "=" +
                     child_small_file.value());
   const base::FilePath child_large_file =
-      dir.path().Append(FILE_PATH_LITERAL("child_large.jpg"));
+      dir.GetPath().Append(FILE_PATH_LITERAL("child_large.jpg"));
   options.push_back(std::string("--") +
                     chromeos::switches::kChildWallpaperLarge + "=" +
                     child_large_file.value());

@@ -5,9 +5,9 @@
 #ifndef CHROME_BROWSER_UI_ASH_IME_CONTROLLER_CHROMEOS_H_
 #define CHROME_BROWSER_UI_ASH_IME_CONTROLLER_CHROMEOS_H_
 
-#include "ash/ime_control_delegate.h"
-#include "base/basictypes.h"
+#include "ash/common/ime_control_delegate.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 
 // A class which controls ime when an IME shortcut key such as Control+space is
 // pressed.
@@ -22,11 +22,8 @@ class ImeController : public ash::ImeControlDelegate {
   void HandlePreviousIme() override;
   bool CanSwitchIme(const ui::Accelerator& accelerator) override;
   void HandleSwitchIme(const ui::Accelerator& accelerator) override;
-  ui::Accelerator RemapAccelerator(const ui::Accelerator& accelerator) override;
 
  private:
-  bool UsingFrenchInputMethod() const;
-
   DISALLOW_COPY_AND_ASSIGN(ImeController);
 };
 

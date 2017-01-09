@@ -2,13 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stddef.h>
 #include <cstdio>
 #include <iostream>
+#include <utility>
 
-#include "base/basictypes.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
+#include "base/json/json_reader.h"
 #include "base/logging.h"
 #include "base/values.h"
 #include "chromeos/network/onc/onc_signature.h"
@@ -85,21 +87,23 @@ void PrintHelp() {
           kStatusArgumentError);
 }
 
-scoped_ptr<base::DictionaryValue> ReadDictionary(const std::string& filename) {
+std::unique_ptr<base::DictionaryValue> ReadDictionary(
+    const std::string& filename) {
   base::FilePath path(filename);
-  JSONFileValueDeserializer deserializer(path);
-  deserializer.set_allow_trailing_comma(true);
+  JSONFileValueDeserializer deserializer(path,
+                                         base::JSON_ALLOW_TRAILING_COMMAS);
 
   std::string json_error;
-  scoped_ptr<base::Value> value = deserializer.Deserialize(NULL, &json_error);
+  std::unique_ptr<base::Value> value =
+      deserializer.Deserialize(NULL, &json_error);
   if (!value) {
     LOG(ERROR) << "Couldn't json-deserialize file '" << filename
                << "': " << json_error;
     return nullptr;
   }
 
-  scoped_ptr<base::DictionaryValue> dict =
-      base::DictionaryValue::From(value.Pass());
+  std::unique_ptr<base::DictionaryValue> dict =
+      base::DictionaryValue::From(std::move(value));
   if (!dict) {
     LOG(ERROR) << "File '" << filename
                << "' does not contain a dictionary as expected, but type "
@@ -120,7 +124,7 @@ int main(int argc, const char* argv[]) {
     return kStatusArgumentError;
   }
 
-  scoped_ptr<base::DictionaryValue> onc_object = ReadDictionary(args[1]);
+  std::unique_ptr<base::DictionaryValue> onc_object = ReadDictionary(args[1]);
 
   if (!onc_object)
     return kStatusJsonError;

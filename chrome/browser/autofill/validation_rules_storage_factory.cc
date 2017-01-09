@@ -6,10 +6,10 @@
 
 #include "base/files/file_path.h"
 #include "base/path_service.h"
-#include "base/prefs/json_pref_store.h"
-#include "base/prefs/pref_filter.h"
 #include "base/threading/sequenced_worker_pool.h"
 #include "chrome/common/chrome_paths.h"
+#include "components/prefs/json_pref_store.h"
+#include "components/prefs/pref_filter.h"
 #include "content/public/browser/browser_thread.h"
 #include "third_party/libaddressinput/chromium/chrome_storage_impl.h"
 
@@ -18,10 +18,10 @@ namespace autofill {
 using ::i18n::addressinput::Storage;
 
 // static
-scoped_ptr<Storage> ValidationRulesStorageFactory::CreateStorage() {
+std::unique_ptr<Storage> ValidationRulesStorageFactory::CreateStorage() {
   static base::LazyInstance<ValidationRulesStorageFactory> instance =
       LAZY_INSTANCE_INITIALIZER;
-  return scoped_ptr<Storage>(
+  return std::unique_ptr<Storage>(
       new ChromeStorageImpl(instance.Get().json_pref_store_.get()));
 }
 
@@ -37,8 +37,8 @@ ValidationRulesStorageFactory::ValidationRulesStorageFactory() {
       JsonPrefStore::GetTaskRunnerForFile(
           cache, content::BrowserThread::GetBlockingPool());
 
-  json_pref_store_ =
-      new JsonPrefStore(cache, task_runner.get(), scoped_ptr<PrefFilter>());
+  json_pref_store_ = new JsonPrefStore(cache, task_runner.get(),
+                                       std::unique_ptr<PrefFilter>());
   json_pref_store_->ReadPrefsAsync(NULL);
 }
 

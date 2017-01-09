@@ -29,7 +29,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/html/forms/HiddenInputType.h"
 
 #include "core/HTMLNames.h"
@@ -37,78 +36,77 @@
 #include "core/html/FormData.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/forms/FormController.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
 using namespace HTMLNames;
 
-PassRefPtrWillBeRawPtr<InputType> HiddenInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new HiddenInputType(element));
+InputType* HiddenInputType::create(HTMLInputElement& element) {
+  return new HiddenInputType(element);
 }
 
-const AtomicString& HiddenInputType::formControlType() const
-{
-    return InputTypeNames::hidden;
+DEFINE_TRACE(HiddenInputType) {
+  InputTypeView::trace(visitor);
+  InputType::trace(visitor);
 }
 
-FormControlState HiddenInputType::saveFormControlState() const
-{
-    // valueAttributeWasUpdatedAfterParsing() never be true for form
-    // controls create by createElement() or cloneNode(). It's ok for
-    // now because we restore values only to form controls created by
-    // parsing.
-    return element().valueAttributeWasUpdatedAfterParsing() ? FormControlState(element().value()) : FormControlState();
+InputTypeView* HiddenInputType::createView() {
+  return this;
 }
 
-void HiddenInputType::restoreFormControlState(const FormControlState& state)
-{
-    element().setAttribute(valueAttr, AtomicString(state[0]));
+const AtomicString& HiddenInputType::formControlType() const {
+  return InputTypeNames::hidden;
 }
 
-bool HiddenInputType::supportsValidation() const
-{
-    return false;
+FormControlState HiddenInputType::saveFormControlState() const {
+  // valueAttributeWasUpdatedAfterParsing() never be true for form
+  // controls create by createElement() or cloneNode(). It's ok for
+  // now because we restore values only to form controls created by
+  // parsing.
+  return element().valueAttributeWasUpdatedAfterParsing()
+             ? FormControlState(element().value())
+             : FormControlState();
 }
 
-LayoutObject* HiddenInputType::createLayoutObject(const ComputedStyle&) const
-{
-    ASSERT_NOT_REACHED();
-    return nullptr;
+void HiddenInputType::restoreFormControlState(const FormControlState& state) {
+  element().setAttribute(valueAttr, AtomicString(state[0]));
 }
 
-void HiddenInputType::accessKeyAction(bool)
-{
+bool HiddenInputType::supportsValidation() const {
+  return false;
 }
 
-bool HiddenInputType::layoutObjectIsNeeded()
-{
-    return false;
+LayoutObject* HiddenInputType::createLayoutObject(const ComputedStyle&) const {
+  NOTREACHED();
+  return nullptr;
 }
 
-bool HiddenInputType::storesValueSeparateFromAttribute()
-{
-    return false;
+void HiddenInputType::accessKeyAction(bool) {}
+
+bool HiddenInputType::layoutObjectIsNeeded() {
+  return false;
 }
 
-void HiddenInputType::setValue(const String& sanitizedValue, bool, TextFieldEventBehavior)
-{
-    element().setAttribute(valueAttr, AtomicString(sanitizedValue));
+InputType::ValueMode HiddenInputType::valueMode() const {
+  return ValueMode::kDefault;
 }
 
-void HiddenInputType::appendToFormData(FormData& formData) const
-{
-    if (equalIgnoringCase(element().name(), "_charset_")) {
-        formData.append(element().name(), String(formData.encoding().name()));
-        return;
-    }
-    InputType::appendToFormData(formData);
+void HiddenInputType::setValue(const String& sanitizedValue,
+                               bool,
+                               TextFieldEventBehavior) {
+  element().setAttribute(valueAttr, AtomicString(sanitizedValue));
 }
 
-bool HiddenInputType::shouldRespectHeightAndWidthAttributes()
-{
-    return true;
+void HiddenInputType::appendToFormData(FormData& formData) const {
+  if (equalIgnoringCase(element().name(), "_charset_")) {
+    formData.append(element().name(), String(formData.encoding().name()));
+    return;
+  }
+  InputType::appendToFormData(formData);
 }
 
-} // namespace blink
+bool HiddenInputType::shouldRespectHeightAndWidthAttributes() {
+  return true;
+}
+
+}  // namespace blink

@@ -7,9 +7,11 @@
 #include "base/android/build_info.h"
 #include "base/feature_list.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/metrics/histogram_macros.h"
+#include "sandbox/sandbox_features.h"
 
-#ifdef USE_SECCOMP_BPF
+#if BUILDFLAG(USE_SECCOMP_BPF)
 #include "content/common/sandbox_linux/android/sandbox_bpf_base_policy_android.h"
 #include "content/public/common/content_features.h"
 #include "sandbox/linux/seccomp-bpf/sandbox_bpf.h"
@@ -46,11 +48,11 @@ class RecordSeccompStatus {
   DISALLOW_COPY_AND_ASSIGN(RecordSeccompStatus);
 };
 
-#ifdef USE_SECCOMP_BPF
+#if BUILDFLAG(USE_SECCOMP_BPF)
 // Determines if the running device should support Seccomp, based on the Android
 // SDK version.
 bool IsSeccompBPFSupportedBySDK() {
-  const auto info = base::android::BuildInfo::GetInstance();
+  auto* info = base::android::BuildInfo::GetInstance();
   if (info->sdk_int() < 22) {
     // Seccomp was never available pre-Lollipop.
     return false;
@@ -61,7 +63,7 @@ bool IsSeccompBPFSupportedBySDK() {
         "manta", "shamu", "sprout",     "volantis",
     };
 
-    for (const auto& device : kDevices) {
+    for (auto* device : kDevices) {
       if (strcmp(device, info->device()) == 0) {
         return true;
       }
@@ -77,9 +79,7 @@ bool IsSeccompBPFSupportedBySDK() {
 }  // namespace
 
 RendererMainPlatformDelegate::RendererMainPlatformDelegate(
-    const MainFunctionParams& parameters)
-    : parameters_(parameters) {
-}
+    const MainFunctionParams& parameters) {}
 
 RendererMainPlatformDelegate::~RendererMainPlatformDelegate() {
 }
@@ -93,7 +93,7 @@ void RendererMainPlatformDelegate::PlatformUninitialize() {
 bool RendererMainPlatformDelegate::EnableSandbox() {
   RecordSeccompStatus status_uma;
 
-#ifdef USE_SECCOMP_BPF
+#if BUILDFLAG(USE_SECCOMP_BPF)
   // Determine if Seccomp is available via the Android SDK version.
   if (!IsSeccompBPFSupportedBySDK())
     return true;
@@ -108,7 +108,7 @@ bool RendererMainPlatformDelegate::EnableSandbox() {
   }
 
   // Seccomp has been detected, check if the field trial experiment should run.
-  if (base::FeatureList::IsEnabled(kSeccompSandboxAndroidFeature)) {
+  if (base::FeatureList::IsEnabled(features::kSeccompSandboxAndroid)) {
     status_uma.set_status(RecordSeccompStatus::FEATURE_ENABLED);
 
     sandbox::SandboxBPF sandbox(new SandboxBPFBasePolicyAndroid());

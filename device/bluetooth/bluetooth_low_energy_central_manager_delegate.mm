@@ -19,18 +19,34 @@ class BluetoothLowEnergyCentralManagerBridge {
       BluetoothAdapterMac* adapter)
       : discovery_manager_(discovery_manager), adapter_(adapter) {}
 
-  virtual ~BluetoothLowEnergyCentralManagerBridge() {}
+  ~BluetoothLowEnergyCentralManagerBridge() {}
 
-  virtual void DiscoveredPeripheral(CBPeripheral* peripheral,
-                                    NSDictionary* advertisementData,
-                                    int rssi) {
+  void DiscoveredPeripheral(CBPeripheral* peripheral,
+                            NSDictionary* advertisementData,
+                            int rssi) {
     discovery_manager_->DiscoveredPeripheral(peripheral, advertisementData,
                                              rssi);
   }
 
-  virtual void UpdatedState() {
+  void UpdatedState() {
     discovery_manager_->TryStartDiscovery();
     adapter_->LowEnergyCentralManagerUpdatedState();
+  }
+
+  void DidConnectPeripheral(CBPeripheral* peripheral) {
+    adapter_->DidConnectPeripheral(peripheral);
+  }
+
+  void DidFailToConnectPeripheral(CBPeripheral* peripheral, NSError* error) {
+    adapter_->DidFailToConnectPeripheral(peripheral, error);
+  }
+
+  void DidDisconnectPeripheral(CBPeripheral* peripheral, NSError* error) {
+    adapter_->DidDisconnectPeripheral(peripheral, error);
+  }
+
+  CBCentralManager* GetCentralManager() {
+    return adapter_->low_energy_central_manager_;
   }
 
  private:
@@ -52,6 +68,11 @@ class BluetoothLowEnergyCentralManagerBridge {
   return self;
 }
 
+- (void)dealloc {
+  [bridge_->GetCentralManager() setDelegate:nil];
+  [super dealloc];
+}
+
 - (void)centralManager:(CBCentralManager*)central
  didDiscoverPeripheral:(CBPeripheral*)peripheral
      advertisementData:(NSDictionary*)advertisementData
@@ -63,6 +84,23 @@ class BluetoothLowEnergyCentralManagerBridge {
 - (void)centralManagerDidUpdateState:(CBCentralManager*)central {
   // Notifies when the powered state of the central manager changed.
   bridge_->UpdatedState();
+}
+
+- (void)centralManager:(CBCentralManager*)central
+    didConnectPeripheral:(CBPeripheral*)peripheral {
+  bridge_->DidConnectPeripheral(peripheral);
+}
+
+- (void)centralManager:(CBCentralManager*)central
+    didFailToConnectPeripheral:(CBPeripheral*)peripheral
+                         error:(nullable NSError*)error {
+  bridge_->DidFailToConnectPeripheral(peripheral, error);
+}
+
+- (void)centralManager:(CBCentralManager*)central
+    didDisconnectPeripheral:(CBPeripheral*)peripheral
+                      error:(nullable NSError*)error {
+  bridge_->DidDisconnectPeripheral(peripheral, error);
 }
 
 @end

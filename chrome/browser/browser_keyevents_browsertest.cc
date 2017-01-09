@@ -4,8 +4,10 @@
 
 #include "build/build_config.h"
 
-#include "base/basictypes.h"
+#include <stddef.h>
+
 #include "base/logging.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -731,8 +733,7 @@ IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, MAYBE_ReservedAccelerators) {
 #if defined(OS_MACOSX)
 IN_PROC_BROWSER_TEST_F(BrowserKeyEventsTest, EditorKeyBindings) {
   // TODO(kbr): re-enable: http://crbug.com/222296
-  if (base::mac::IsOSMountainLionOrLater())
-    return;
+  return;
 
   static const KeyEventTestData kTestCtrlA = {
     ui::VKEY_A, true, false, false, false,

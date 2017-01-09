@@ -4,7 +4,9 @@
 
 #include "ash/test/tray_cast_test_api.h"
 
-#include "ash/system/tray/system_tray.h"
+#include "ash/common/system/tray/system_tray.h"
+#include "ash/common/system/tray/system_tray_delegate.h"
+#include "ash/common/wm_shell.h"
 #include "ui/views/view.h"
 
 namespace ash {
@@ -43,10 +45,6 @@ void TrayCastTestAPI::StopCast() {
 
 void TrayCastTestAPI::OnCastingSessionStartedOrStopped(bool is_casting) {
   tray_cast_->OnCastingSessionStartedOrStopped(is_casting);
-}
-
-void TrayCastTestAPI::ReleaseConfigCallbacks() {
-  tray_cast_->device_update_subscription_.reset();
 }
 
 bool TrayCastTestAPI::IsViewDrawn(TrayCast::ChildViewId id) const {

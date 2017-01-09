@@ -11,49 +11,48 @@
 #include <sys/types.h>
 #include <set>
 
-#include "net/quic/quic_connection.h"
-#include "net/quic/quic_packet_writer.h"
-#include "net/quic/quic_protocol.h"
-#include "net/quic/quic_time.h"
+#include "base/macros.h"
+#include "net/quic/core/quic_connection.h"
+#include "net/quic/core/quic_packet_writer.h"
+#include "net/quic/core/quic_packets.h"
+#include "net/quic/core/quic_simple_buffer_allocator.h"
+#include "net/quic/core/quic_time.h"
+#include "net/tools/quic/platform/impl/quic_epoll_clock.h"
 #include "net/tools/quic/quic_default_packet_writer.h"
-#include "net/tools/quic/quic_epoll_clock.h"
 
 namespace net {
 
 class EpollServer;
 class QuicRandom;
 
-namespace tools {
+using QuicStreamBufferAllocator = SimpleBufferAllocator;
 
-class AckAlarm;
-class RetransmissionAlarm;
-class SendAlarm;
-class TimeoutAlarm;
+enum class QuicAllocator { SIMPLE, BUFFER_POOL };
 
 class QuicEpollConnectionHelper : public QuicConnectionHelperInterface {
  public:
-  explicit QuicEpollConnectionHelper(EpollServer* eps);
+  QuicEpollConnectionHelper(EpollServer* eps, QuicAllocator allocator);
   ~QuicEpollConnectionHelper() override;
 
   // QuicEpollConnectionHelperInterface
   const QuicClock* GetClock() const override;
   QuicRandom* GetRandomGenerator() override;
-  QuicAlarm* CreateAlarm(QuicAlarm::Delegate* delegate) override;
 
-  EpollServer* epoll_server() { return epoll_server_; }
+  QuicBufferAllocator* GetBufferAllocator() override;
 
  private:
   friend class QuicConnectionPeer;
 
-  EpollServer* epoll_server_;  // Not owned.
-
   const QuicEpollClock clock_;
   QuicRandom* random_generator_;
+  // Set up both allocators.  They take up minimal memory before use.
+  QuicStreamBufferAllocator buffer_allocator_;
+  SimpleBufferAllocator simple_buffer_allocator_;
+  QuicAllocator allocator_type_;
 
   DISALLOW_COPY_AND_ASSIGN(QuicEpollConnectionHelper);
 };
 
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_QUIC_EPOLL_CONNECTION_HELPER_H_

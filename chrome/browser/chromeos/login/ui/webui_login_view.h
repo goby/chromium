@@ -8,6 +8,7 @@
 #include <map>
 #include <string>
 
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "chrome/browser/ui/chrome_web_modal_dialog_manager_delegate.h"
 #include "components/web_modal/web_contents_modal_dialog_host.h"
@@ -31,6 +32,8 @@ class Widget;
 }
 
 namespace chromeos {
+
+class OobeUI;
 
 // View used to render a WebUI supporting Widget. This widget is used for the
 // WebUI based start up and lock screens. It contains a WebView.
@@ -77,6 +80,9 @@ class WebUILoginView : public views::View,
   // Returns current WebContents.
   content::WebContents* GetWebContents();
 
+  // Returns instance of the OOBE WebUI.
+  OobeUI* GetOobeUI();
+
   // Opens proxy settings dialog.
   void OpenProxySettings();
 
@@ -111,7 +117,7 @@ class WebUILoginView : public views::View,
                const content::NotificationDetails& details) override;
 
   // WebView for rendering a webpage as a webui login.
-  views::WebView* webui_login_;
+  views::WebView* webui_login_ = nullptr;
 
  private:
   // Map type for the accelerator-to-identifier map.
@@ -149,17 +155,28 @@ class WebUILoginView : public views::View,
   AccelMap accel_map_;
 
   // True when WebUI is being initialized hidden.
-  bool is_hidden_;
+  bool is_hidden_ = false;
 
   // True when the WebUI has finished initializing and is visible.
-  bool webui_visible_;
+  bool webui_visible_ = false;
 
   // Should we emit the login-prompt-visible signal when the login page is
   // displayed?
-  bool should_emit_login_prompt_visible_;
+  bool should_emit_login_prompt_visible_ = true;
 
   // True to forward keyboard event.
-  bool forward_keyboard_event_;
+  bool forward_keyboard_event_ = true;
+
+  // A FocusTraversable for StatusAreaWidget that uses
+  // |status_area_widget_host_| as placeholder in WebUiLoginView's focus chain.
+  class StatusAreaFocusTraversable;
+  std::unique_ptr<StatusAreaFocusTraversable> status_area_focus_traversable_;
+  views::View* status_area_widget_host_ = nullptr;
+
+  // A FocusTraversable for WebUILoginView that loops back at the end of its
+  // focus chain.
+  class CycleFocusTraversable;
+  std::unique_ptr<CycleFocusTraversable> cycle_focus_traversable_;
 
   base::ObserverList<web_modal::ModalDialogHostObserver> observer_list_;
 

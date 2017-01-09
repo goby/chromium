@@ -11,42 +11,67 @@
 #include "wtf/Alignment.h"
 #include "wtf/Assertions.h"
 
-#ifndef NDEBUG
-#include "wtf/text/WTFString.h"
-#endif
-
 namespace blink {
+
+struct PaintChunk;
 
 // kDisplayItemAlignment must be a multiple of alignof(derived display item) for
 // each derived display item; the ideal value is the least common multiple.
 // Currently the limiting factor is TransformationMatrix (in
 // BeginTransform3DDisplayItem), which requests 16-byte alignment.
-static const size_t kDisplayItemAlignment = WTF_ALIGN_OF(BeginTransform3DDisplayItem);
-static const size_t kMaximumDisplayItemSize = sizeof(BeginTransform3DDisplayItem);
+static const size_t kDisplayItemAlignment =
+    WTF_ALIGN_OF(BeginTransform3DDisplayItem);
+static const size_t kMaximumDisplayItemSize =
+    sizeof(BeginTransform3DDisplayItem);
 
 // A container for a list of display items.
-class DisplayItemList : public ContiguousContainer<DisplayItem, kDisplayItemAlignment> {
-public:
-    DisplayItemList(size_t initialSizeBytes)
-        : ContiguousContainer(kMaximumDisplayItemSize, initialSizeBytes) {}
+class PLATFORM_EXPORT DisplayItemList
+    : public ContiguousContainer<DisplayItem, kDisplayItemAlignment> {
+ public:
+  DisplayItemList(size_t initialSizeBytes)
+      : ContiguousContainer(kMaximumDisplayItemSize, initialSizeBytes) {}
+  DisplayItemList(DisplayItemList&& source)
+      : ContiguousContainer(std::move(source)),
+        m_visualRects(std::move(source.m_visualRects)) {}
 
-    DisplayItem& appendByMoving(DisplayItem& item)
-    {
-#ifndef NDEBUG
-        WTF::String originalDebugString = item.asDebugString();
-#endif
-        ASSERT(item.isValid());
-        DisplayItem& result = ContiguousContainer::appendByMoving(item, item.derivedSize());
-        // ContiguousContainer::appendByMoving() called in-place constructor on item, which invalidated it.
-        ASSERT(!item.isValid());
-#ifndef NDEBUG
-        // Save original debug string in the old item to help debugging.
-        item.setClientDebugString(originalDebugString);
-#endif
-        return result;
-    }
+  DisplayItemList& operator=(DisplayItemList&& source) {
+    ContiguousContainer::operator=(std::move(source));
+    m_visualRects = std::move(source.m_visualRects);
+    return *this;
+  }
+
+  DisplayItem& appendByMoving(DisplayItem&);
+
+  bool hasVisualRect(size_t index) const {
+    return index < m_visualRects.size();
+  }
+  IntRect visualRect(size_t index) const {
+    DCHECK(hasVisualRect(index));
+    return m_visualRects[index];
+  }
+
+  void appendVisualRect(const IntRect& visualRect);
+
+  // Useful for iterating with a range-based for loop.
+  template <typename Iterator>
+  class Range {
+   public:
+    Range(const Iterator& begin, const Iterator& end)
+        : m_begin(begin), m_end(end) {}
+    Iterator begin() const { return m_begin; }
+    Iterator end() const { return m_end; }
+
+   private:
+    Iterator m_begin;
+    Iterator m_end;
+  };
+  Range<iterator> itemsInPaintChunk(const PaintChunk&);
+  Range<const_iterator> itemsInPaintChunk(const PaintChunk&) const;
+
+ private:
+  Vector<IntRect> m_visualRects;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // DisplayItemList_h
+#endif  // DisplayItemList_h

@@ -5,12 +5,16 @@
 #include "storage/browser/fileapi/sandbox_directory_database.h"
 
 #include <math.h>
+#include <stddef.h>
+#include <stdint.h>
+
 #include <limits>
+#include <memory>
 
 #include "base/files/file.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "content/browser/fileapi/sandbox_database_test_helper.h"
@@ -109,9 +113,7 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
         FilePathToString(path().Append(kDirectoryDatabaseName)));
   }
 
-  const base::FilePath& path() {
-    return base_.path();
-  }
+  const base::FilePath& path() { return base_.GetPath(); }
 
   // Makes link from |parent_id| to |child_id| with |name|.
   void MakeHierarchyLink(FileId parent_id,
@@ -137,7 +139,7 @@ class SandboxDirectoryDatabaseTest : public testing::Test {
  protected:
   // Common temp base for nondestructive uses.
   base::ScopedTempDir base_;
-  scoped_ptr<SandboxDirectoryDatabase> db_;
+  std::unique_ptr<SandboxDirectoryDatabase> db_;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(SandboxDirectoryDatabaseTest);
@@ -496,7 +498,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestOverwritingMoveFileSuccess) {
 }
 
 TEST_F(SandboxDirectoryDatabaseTest, TestGetNextInteger) {
-  int64 next = -1;
+  int64_t next = -1;
   EXPECT_TRUE(db()->GetNextInteger(&next));
   EXPECT_EQ(0, next);
   EXPECT_TRUE(db()->GetNextInteger(&next));
@@ -514,7 +516,7 @@ TEST_F(SandboxDirectoryDatabaseTest, TestGetNextInteger) {
 TEST_F(SandboxDirectoryDatabaseTest, TestConsistencyCheck_Empty) {
   EXPECT_TRUE(db()->IsFileSystemConsistent());
 
-  int64 next = -1;
+  int64_t next = -1;
   EXPECT_TRUE(db()->GetNextInteger(&next));
   EXPECT_EQ(0, next);
   EXPECT_TRUE(db()->IsFileSystemConsistent());

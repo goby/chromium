@@ -3,6 +3,7 @@
 // found in the LICENSE file.
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "content/browser/message_port_service.h"
@@ -25,8 +26,8 @@ class MockMessagePortDelegate : public MessagePortDelegate {
   // A container to hold received messages
   struct Message {
     int route_id;  // the routing id of the target port
-    MessagePortMessage data;  // the message data
-    std::vector<TransferredMessagePort> sent_ports;  // any transferred ports
+    base::string16 data;  // the message data
+    std::vector<int> sent_ports;  // any transferred ports
   };
 
   typedef std::vector<Message> Messages;
@@ -37,8 +38,8 @@ class MockMessagePortDelegate : public MessagePortDelegate {
   // MessagePortDelegate implementation
   void SendMessage(
       int route_id,
-      const MessagePortMessage& message,
-      const std::vector<TransferredMessagePort>& sent_message_ports) override {
+      const base::string16& message,
+      const std::vector<int>& sent_message_ports) override {
     Message m;
     m.route_id = route_id;
     m.data = message;
@@ -76,7 +77,7 @@ IN_PROC_BROWSER_TEST_F(MessagePortProviderBrowserTest, PostMessage) {
   content::LoadDataWithBaseURL(shell(), history_url, data, base_url);
   const base::string16 source_origin(base::UTF8ToUTF16("source"));
   const base::string16 message(base::UTF8ToUTF16("success"));
-  const std::vector<TransferredMessagePort> ports;
+  const std::vector<int> ports;
   content::TitleWatcher title_watcher(shell()->web_contents(), message);
   MessagePortProvider::PostMessageToFrame(shell()->web_contents(),
                                           source_origin,
@@ -84,62 +85,6 @@ IN_PROC_BROWSER_TEST_F(MessagePortProviderBrowserTest, PostMessage) {
                                           message,
                                           ports);
   EXPECT_EQ(message, title_watcher.WaitAndGetTitle());
-}
-
-namespace {
-
-void VerifyCreateChannelOnIOThread(base::WaitableEvent* event) {
-
-  const base::char16 MESSAGE1[] = { 0x1000, 0 };
-  const base::char16 MESSAGE2[] = { 0x1001, 0 };
-
-  MockMessagePortDelegate delegate;
-  int port1;
-  int port2;
-
-  MessagePortProvider::CreateMessageChannel(&delegate, &port1, &port2);
-  MessagePortService* service = MessagePortService::GetInstance();
-  // Send a message to port1 transferring no ports.
-  std::vector<TransferredMessagePort> sent_ports;
-  service->PostMessage(port1, MessagePortMessage(base::string16(MESSAGE1)),
-                       sent_ports);
-  // Verify that message is received
-  const MockMessagePortDelegate::Messages& received =
-      delegate.getReceivedMessages();
-  EXPECT_EQ(received.size(), 1u);
-  // Verify that message sent to port1 is received by entangled port, which is
-  // port2.
-  EXPECT_EQ(received[0].route_id, port2);
-  EXPECT_EQ(received[0].data.message_as_string, MESSAGE1);
-  EXPECT_EQ(received[0].sent_ports.size(), 0u);
-
-  // Create a new channel, and transfer one of its ports to port2, making sure
-  // the transferred port is received.
-  TransferredMessagePort port3;
-  TransferredMessagePort port4;
-  MessagePortProvider::CreateMessageChannel(&delegate, &port3.id, &port4.id);
-  sent_ports.push_back(port3);
-  service->PostMessage(port1, MessagePortMessage(base::string16(MESSAGE2)),
-                       sent_ports);
-  EXPECT_EQ(received.size(), 2u);
-  EXPECT_EQ(received[1].route_id, port2);
-  EXPECT_EQ(received[1].data.message_as_string, MESSAGE2);
-  EXPECT_EQ(received[1].sent_ports.size(), 1u);
-  EXPECT_EQ(received[1].sent_ports[0].id, port3.id);
-
-  event->Signal();
-}
-
-}  // namespace
-
-// Verify that a message channel can be created and used for exchanging
-// messages.
-IN_PROC_BROWSER_TEST_F(MessagePortProviderBrowserTest, CreateChannel) {
-  base::WaitableEvent event(true, false);
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
-      base::Bind(&VerifyCreateChannelOnIOThread, &event));
-  event.Wait();
 }
 
 }  // namespace content

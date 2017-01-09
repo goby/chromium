@@ -6,6 +6,7 @@
 #define COMPONENTS_GUEST_VIEW_BROWSER_GUEST_VIEW_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <set>
 #include <vector>
 
@@ -18,6 +19,10 @@
 #include "content/public/browser/web_contents.h"
 
 class GURL;
+
+namespace base {
+class DictionaryValue;
+}
 
 namespace content {
 class BrowserContext;
@@ -34,14 +39,14 @@ class GuestViewManager : public content::BrowserPluginGuestManager,
                          public base::SupportsUserData::Data {
  public:
   GuestViewManager(content::BrowserContext* context,
-                   scoped_ptr<GuestViewManagerDelegate> delegate);
+                   std::unique_ptr<GuestViewManagerDelegate> delegate);
   ~GuestViewManager() override;
 
   // Returns the GuestViewManager associated with |context|. If one isn't
   // available, then it is created and returned.
   static GuestViewManager* CreateWithDelegate(
       content::BrowserContext* context,
-      scoped_ptr<GuestViewManagerDelegate> delegate);
+      std::unique_ptr<GuestViewManagerDelegate> delegate);
 
   // Returns the GuestViewManager associated with |context|. If one isn't
   // available, then nullptr is returned.
@@ -177,7 +182,7 @@ class GuestViewManager : public content::BrowserPluginGuestManager,
   // Dispatches the event with |name| with the provided |args| to the embedder
   // of the given |guest| with |instance_id| for routing.
   void DispatchEvent(const std::string& event_name,
-                     scoped_ptr<base::DictionaryValue> args,
+                     std::unique_ptr<base::DictionaryValue> args,
                      GuestViewBase* guest,
                      int instance_id);
 
@@ -232,6 +237,7 @@ class GuestViewManager : public content::BrowserPluginGuestManager,
   struct GuestViewData {
     GuestViewData(const GuestViewCreateFunction& create_function,
                   const GuestViewCleanUpFunction& cleanup_function);
+    GuestViewData(const GuestViewData& other);
     ~GuestViewData();
     const GuestViewCreateFunction create_function;
     const GuestViewCleanUpFunction cleanup_function;
@@ -252,7 +258,7 @@ class GuestViewManager : public content::BrowserPluginGuestManager,
 
   content::BrowserContext* context_;
 
-  scoped_ptr<GuestViewManagerDelegate> delegate_;
+  std::unique_ptr<GuestViewManagerDelegate> delegate_;
 
   // This tracks which GuestView embedders are currently being observed.
   std::set<int> embedders_observed_;

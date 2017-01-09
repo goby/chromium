@@ -4,6 +4,10 @@
 
 #include "storage/browser/fileapi/local_file_stream_reader.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 
 #include "base/files/file.h"
@@ -11,7 +15,7 @@
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread.h"
@@ -86,7 +90,7 @@ class LocalFileStreamReaderTest : public testing::Test {
  protected:
   LocalFileStreamReader* CreateFileReader(
       const base::FilePath& path,
-      int64 initial_offset,
+      int64_t initial_offset,
       const base::Time& expected_modification_time) {
     return new LocalFileStreamReader(
             file_task_runner(),
@@ -106,8 +110,10 @@ class LocalFileStreamReaderTest : public testing::Test {
     return file_thread_.task_runner().get();
   }
 
-  base::FilePath test_dir() const { return dir_.path(); }
-  base::FilePath test_path() const { return dir_.path().AppendASCII("test"); }
+  base::FilePath test_dir() const { return dir_.GetPath(); }
+  base::FilePath test_path() const {
+    return dir_.GetPath().AppendASCII("test");
+  }
   base::Time test_file_modification_time() const {
     return test_file_modification_time_;
   }
@@ -115,7 +121,7 @@ class LocalFileStreamReaderTest : public testing::Test {
   void EnsureFileTaskFinished() {
     file_task_runner()->PostTaskAndReply(
         FROM_HERE, base::Bind(&EmptyCallback), base::Bind(&QuitLoop));
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
   }
 
  private:
@@ -127,7 +133,7 @@ class LocalFileStreamReaderTest : public testing::Test {
 
 TEST_F(LocalFileStreamReaderTest, NonExistent) {
   base::FilePath nonexistent_path = test_dir().AppendASCII("nonexistent");
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(nonexistent_path, 0, base::Time()));
   int result = 0;
   std::string data;
@@ -142,7 +148,7 @@ TEST_F(LocalFileStreamReaderTest, Empty) {
   ASSERT_TRUE(file.IsValid());
   file.Close();
 
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(empty_path, 0, base::Time()));
   int result = 0;
   std::string data;
@@ -151,17 +157,17 @@ TEST_F(LocalFileStreamReaderTest, Empty) {
   ASSERT_EQ(0U, data.size());
 
   net::TestInt64CompletionCallback callback;
-  int64 length_result = reader->GetLength(callback.callback());
+  int64_t length_result = reader->GetLength(callback.callback());
   if (length_result == net::ERR_IO_PENDING)
     length_result = callback.WaitForResult();
   ASSERT_EQ(0, result);
 }
 
 TEST_F(LocalFileStreamReaderTest, GetLengthNormal) {
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 0, test_file_modification_time()));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   ASSERT_EQ(kTestDataSize, result);
@@ -172,10 +178,10 @@ TEST_F(LocalFileStreamReaderTest, GetLengthAfterModified) {
   // from what we expect.
   TouchTestFile(base::TimeDelta::FromSeconds(-1));
 
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 0, test_file_modification_time()));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   ASSERT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
@@ -189,10 +195,10 @@ TEST_F(LocalFileStreamReaderTest, GetLengthAfterModified) {
 }
 
 TEST_F(LocalFileStreamReaderTest, GetLengthWithOffset) {
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 3, base::Time()));
   net::TestInt64CompletionCallback callback;
-  int64 result = reader->GetLength(callback.callback());
+  int64_t result = reader->GetLength(callback.callback());
   if (result == net::ERR_IO_PENDING)
     result = callback.WaitForResult();
   // Initial offset does not affect the result of GetLength.
@@ -200,7 +206,7 @@ TEST_F(LocalFileStreamReaderTest, GetLengthWithOffset) {
 }
 
 TEST_F(LocalFileStreamReaderTest, ReadNormal) {
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 0, test_file_modification_time()));
   int result = 0;
   std::string data;
@@ -214,7 +220,7 @@ TEST_F(LocalFileStreamReaderTest, ReadAfterModified) {
   // from what we expect. Note that the resolution on some filesystems
   // is 1s so we can't test with deltas less than that.
   TouchTestFile(base::TimeDelta::FromSeconds(-1));
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 0, test_file_modification_time()));
   int result = 0;
   std::string data;
@@ -222,7 +228,7 @@ TEST_F(LocalFileStreamReaderTest, ReadAfterModified) {
   EXPECT_EQ(net::ERR_UPLOAD_FILE_CHANGED, result);
   EXPECT_EQ(0U, data.size());
 
-  // Due to precision loss converting int64->double->int64 (e.g. through
+  // Due to precision loss converting int64_t->double->int64_t (e.g. through
   // Blink) the expected/actual time may vary by microseconds. With
   // modification time delta < 10us this should work.
   TouchTestFile(base::TimeDelta::FromMicroseconds(1));
@@ -249,7 +255,7 @@ TEST_F(LocalFileStreamReaderTest, ReadAfterModified) {
 }
 
 TEST_F(LocalFileStreamReaderTest, ReadWithOffset) {
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 3, base::Time()));
   int result = 0;
   std::string data;
@@ -259,7 +265,7 @@ TEST_F(LocalFileStreamReaderTest, ReadWithOffset) {
 }
 
 TEST_F(LocalFileStreamReaderTest, DeleteWithUnfinishedRead) {
-  scoped_ptr<LocalFileStreamReader> reader(
+  std::unique_ptr<LocalFileStreamReader> reader(
       CreateFileReader(test_path(), 0, base::Time()));
 
   net::TestCompletionCallback callback;

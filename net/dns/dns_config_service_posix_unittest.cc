@@ -4,11 +4,16 @@
 
 #include <resolv.h>
 
+#include <memory>
+
 #include "base/cancelable_callback.h"
 #include "base/files/file_util.h"
+#include "base/memory/ptr_util.h"
+#include "base/run_loop.h"
 #include "base/sys_byteorder.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
+#include "net/base/ip_address.h"
 #include "net/dns/dns_config_service_posix.h"
 #include "net/dns/dns_protocol.h"
 
@@ -117,8 +122,8 @@ void InitializeExpectedConfig(DnsConfig* config) {
 
   config->nameservers.clear();
   for (unsigned i = 0; i < arraysize(kNameserversIPv4) && i < MAXNS; ++i) {
-    IPAddressNumber ip;
-    ParseIPLiteralToNumber(kNameserversIPv4[i], &ip);
+    IPAddress ip;
+    EXPECT_TRUE(ip.AssignFromIPLiteral(kNameserversIPv4[i]));
     config->nameservers.push_back(IPEndPoint(ip, NS_DEFAULTPORT + i));
   }
 
@@ -126,8 +131,8 @@ void InitializeExpectedConfig(DnsConfig* config) {
   for (unsigned i = 0; i < arraysize(kNameserversIPv6) && i < MAXNS; ++i) {
     if (!kNameserversIPv6[i])
       continue;
-    IPAddressNumber ip;
-    ParseIPLiteralToNumber(kNameserversIPv6[i], &ip);
+    IPAddress ip;
+    EXPECT_TRUE(ip.AssignFromIPLiteral(kNameserversIPv6[i]));
     config->nameservers[i] = IPEndPoint(ip, NS_DEFAULTPORT - i);
   }
 #endif
@@ -178,7 +183,7 @@ TEST(DnsConfigServicePosixTest, RejectEmptyNameserver) {
 TEST(DnsConfigServicePosixTest, DestroyWhileJobsWorking) {
   // Regression test to verify crash does not occur if DnsConfigServicePosix
   // instance is destroyed while SerialWorker jobs have posted to worker pool.
-  scoped_ptr<internal::DnsConfigServicePosix> service(
+  std::unique_ptr<internal::DnsConfigServicePosix> service(
       new internal::DnsConfigServicePosix());
   service->ReadConfig(base::Bind(&DummyConfigCallback));
   service.reset();
@@ -192,7 +197,11 @@ TEST(DnsConfigServicePosixTest, DestroyWhileJobsWorking) {
 namespace internal {
 
 const char kTempHosts1[] = "127.0.0.1 localhost";
+// kTempHosts2 is only used by SeenChangeSinceHostsChange, which doesn't run
+// on Android.
+#if !defined(OS_ANDROID)
 const char kTempHosts2[] = "127.0.0.2 localhost";
+#endif  // !defined(OS_ANDROID)
 
 class DnsConfigServicePosixTest : public testing::Test {
  public:
@@ -202,7 +211,7 @@ class DnsConfigServicePosixTest : public testing::Test {
   void OnConfigChanged(const DnsConfig& config) {
     EXPECT_TRUE(config.IsValid());
     seen_config_ = true;
-    base::MessageLoop::current()->QuitWhenIdle();
+    run_loop_->QuitWhenIdle();
   }
 
   void WriteMockHostsFile(const char* hosts_string) {
@@ -211,11 +220,11 @@ class DnsConfigServicePosixTest : public testing::Test {
   }
 
   void MockDNSConfig(const char* dns_server) {
-    IPAddressNumber dns_number;
-    ASSERT_TRUE(ParseIPLiteralToNumber(dns_server, &dns_number));
+    IPAddress dns_address;
+    ASSERT_TRUE(dns_address.AssignFromIPLiteral(dns_server));
     test_config_.nameservers.clear();
     test_config_.nameservers.push_back(
-        IPEndPoint(dns_number, dns_protocol::kDefaultPort));
+        IPEndPoint(dns_address, dns_protocol::kDefaultPort));
     service_->SetDnsConfigForTesting(&test_config_);
   }
 
@@ -261,7 +270,8 @@ class DnsConfigServicePosixTest : public testing::Test {
 
   void ExpectChange() {
     EXPECT_FALSE(seen_config_);
-    base::MessageLoop::current()->Run();
+    run_loop_ = base::MakeUnique<base::RunLoop>();
+    run_loop_->Run();
     EXPECT_TRUE(seen_config_);
     seen_config_ = false;
   }
@@ -269,23 +279,18 @@ class DnsConfigServicePosixTest : public testing::Test {
   bool seen_config_;
   base::Time creation_time_;
   base::FilePath temp_file_;
-  scoped_ptr<DnsConfigServicePosix> service_;
+  std::unique_ptr<DnsConfigServicePosix> service_;
   DnsConfig test_config_;
+  std::unique_ptr<base::RunLoop> run_loop_;
 };
 
-TEST_F(DnsConfigServicePosixTest, SeenChangeSince) {
+TEST_F(DnsConfigServicePosixTest, SeenChangeSinceNetworkChange) {
   // Verify SeenChangeSince() returns false if no changes
   StartWatching();
   EXPECT_FALSE(service_->SeenChangeSince(creation_time_));
   // Verify SeenChangeSince() returns true if network change
   MockDNSConfig("8.8.4.4");
   service_->OnNetworkChanged(NetworkChangeNotifier::CONNECTION_WIFI);
-  EXPECT_TRUE(service_->SeenChangeSince(creation_time_));
-  ExpectChange();
-  // Verify SeenChangeSince() returns true if hosts file changes
-  StartWatching();
-  EXPECT_FALSE(service_->SeenChangeSince(creation_time_));
-  WriteMockHostsFile(kTempHosts2);
   EXPECT_TRUE(service_->SeenChangeSince(creation_time_));
   ExpectChange();
 }

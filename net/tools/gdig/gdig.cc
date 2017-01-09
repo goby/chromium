@@ -3,35 +3,41 @@
 // found in the LICENSE file.
 
 #include <stdio.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/at_exit.h"
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/cancelable_callback.h"
 #include "base/command_line.h"
 #include "base/files/file_util.h"
 #include "base/location.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
+#include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "net/base/address_list.h"
+#include "net/base/ip_address.h"
 #include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
-#include "net/base/net_util.h"
+#include "net/base/url_util.h"
 #include "net/dns/dns_client.h"
 #include "net/dns/dns_config_service.h"
 #include "net/dns/dns_protocol.h"
 #include "net/dns/host_cache.h"
 #include "net/dns/host_resolver_impl.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_capture_mode.h"
+#include "net/log/net_log_source_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/tools/gdig/file_net_log.h"
 
 #if defined(OS_MACOSX)
@@ -53,11 +59,11 @@ bool StringToIPEndPoint(const std::string& ip_address_and_port,
   if (port == -1)
     port = dns_protocol::kDefaultPort;
 
-  net::IPAddressNumber ip_number;
-  if (!net::ParseIPLiteralToNumber(ip, &ip_number))
+  net::IPAddress ip_address;
+  if (!ip_address.AssignFromIPLiteral(ip))
     return false;
 
-  *ip_end_point = net::IPEndPoint(ip_number, static_cast<uint16>(port));
+  *ip_end_point = net::IPEndPoint(ip_address, static_cast<uint16_t>(port));
   return true;
 }
 
@@ -152,7 +158,7 @@ bool LoadReplayLog(const base::FilePath& file_path, ReplayLog* replay_log) {
       continue;
     }
 
-    int64 delta_in_milliseconds;
+    int64_t delta_in_milliseconds;
     if (!base::StringToInt64(time_and_name[0], &delta_in_milliseconds)) {
       fprintf(
           stderr,
@@ -224,10 +230,11 @@ class GDig {
   Result result_;
 
   base::CancelableClosure timeout_closure_;
-  scoped_ptr<DnsConfigService> dns_config_service_;
-  scoped_ptr<FileNetLogObserver> log_observer_;
-  scoped_ptr<NetLog> log_;
-  scoped_ptr<HostResolver> resolver_;
+  std::unique_ptr<DnsConfigService> dns_config_service_;
+  std::unique_ptr<FileNetLogObserver> log_observer_;
+  std::unique_ptr<NetLog> log_;
+  std::unique_ptr<HostResolver> resolver_;
+  std::unique_ptr<HostResolver::Request> request_;
 
 #if defined(OS_MACOSX)
   // Without this there will be a mem leak on osx.
@@ -272,7 +279,7 @@ GDig::Result GDig::Main(int argc, const char* argv[]) {
   result_ = RESULT_PENDING;
   Start();
   if (result_ == RESULT_PENDING)
-    base::MessageLoop::current()->Run();
+    base::RunLoop().Run();
 
   // Destroy it while MessageLoopForIO is alive.
   dns_config_service_.reset();
@@ -328,7 +335,7 @@ bool GDig::ParseCommandLine(int argc, const char* argv[]) {
       parsed_command_line.GetSwitchValueASCII("nameserver");
     if (!StringToIPEndPoint(nameserver, &nameserver_)) {
       fprintf(stderr,
-              "Cannot parse the namerserver string into an IPEndPoint\n");
+              "Cannot parse the nameserver string into an IPEndPoint\n");
       return false;
     }
   }
@@ -425,15 +432,15 @@ void GDig::OnDnsConfig(const DnsConfig& dns_config_const) {
     return;
   }
 
-  scoped_ptr<DnsClient> dns_client(DnsClient::CreateClient(NULL));
+  std::unique_ptr<DnsClient> dns_client(DnsClient::CreateClient(NULL));
   dns_client->SetConfig(dns_config);
   HostResolver::Options options;
   options.max_concurrent_resolves = parallellism_;
   options.max_retry_attempts = 1u;
-  scoped_ptr<HostResolverImpl> resolver(
+  std::unique_ptr<HostResolverImpl> resolver(
       new HostResolverImpl(options, log_.get()));
-  resolver->SetDnsClient(dns_client.Pass());
-  resolver_ = resolver.Pass();
+  resolver->SetDnsClient(std::move(dns_client));
+  resolver_ = std::move(resolver);
 
   start_time_ = base::Time::Now();
 
@@ -465,12 +472,8 @@ void GDig::ReplayNextEntry() {
     ++active_resolves_;
     ++replay_log_index_;
     int ret = resolver_->Resolve(
-        info,
-        DEFAULT_PRIORITY,
-        addrlist,
-        callback,
-        NULL,
-        BoundNetLog::Make(log_.get(), net::NetLog::SOURCE_NONE));
+        info, DEFAULT_PRIORITY, addrlist, callback, &request_,
+        NetLogWithSource::Make(log_.get(), net::NetLogSourceType::NONE));
     if (ret != ERR_IO_PENDING)
       callback.Run(ret);
   }

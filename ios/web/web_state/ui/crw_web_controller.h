@@ -7,8 +7,8 @@
 
 #import <UIKit/UIKit.h>
 
-#include "base/memory/scoped_ptr.h"
 #import "ios/web/net/crw_request_tracker_delegate.h"
+#import "ios/web/public/navigation_manager.h"
 #import "ios/web/public/web_state/crw_web_user_interface_delegate.h"
 #import "ios/web/public/web_state/js/crw_js_injection_evaluator.h"
 #import "ios/web/public/web_state/ui/crw_web_delegate.h"
@@ -30,18 +30,6 @@ enum LoadPhase {
   PAGE_LOADED = 2
 };
 
-// Policy for web page dialog handling.
-enum PageDialogOpenPolicy {
-  // Default policy. Dialogs are allowed, clients are not notified on display.
-  DIALOG_POLICY_ALLOW = 0,
-  // Dialogs are allowed, clients are notified when dialog will display with
-  // -[WebDelegate webControllerWillShowDialog:] delegate method call.
-  DIALOG_POLICY_NOTIFY_FIRST,
-  // Dialogs are not allowed, client are notified when dialog did block with
-  // -[WebDelegate webControllerDidSuppressDialog:] delegate method call.
-  DIALOG_POLICY_SUPPRESS
-};
-
 // The accessibility identifier of the top-level container view.
 extern NSString* const kContainerViewID;
 
@@ -56,15 +44,8 @@ extern NSString* const kContainerViewID;
 @protocol CRWWebViewProxy;
 class GURL;
 
-namespace base {
-class Value;
-}
-
 namespace web {
-class BrowserState;
-struct Referrer;
 class WebState;
-class WebInterstitialImpl;
 class WebStateImpl;
 }
 
@@ -73,14 +54,11 @@ class WebStateImpl;
 // CRWWebController also transparently evicts and restores the internal web
 // view based on memory pressure, and manages access to interact with the
 // web view.
-// This is an abstract class which must not be instantiated directly. A factory
-// function from web_controller_factory.h should be used instead.
+// This is an abstract class which must not be instantiated directly.
 // TODO(stuartmorgan): Move all of the navigation APIs out of this class.
 @interface CRWWebController : NSObject<CRWJSInjectionEvaluator,
                                        CRWRequestTrackerDelegate,
                                        CRWTouchTrackingDelegate,
-                                       CRWWebControllerScripting,
-                                       UIActionSheetDelegate,
                                        UIGestureRecognizerDelegate>
 
 // Whether or not a UIWebView is allowed to exist in this CRWWebController.
@@ -113,9 +91,9 @@ class WebStateImpl;
 // Returns the current page loading phase.
 @property(nonatomic, readonly) web::LoadPhase loadPhase;
 
-// Returns whether the page can navigate backwards or forwards.
-@property(nonatomic, readonly) BOOL canGoBack;
-@property(nonatomic, readonly) BOOL canGoForward;
+// The fraction of the page load that has completed as a number between 0.0
+// (nothing loaded) and 1.0 (fully loaded).
+@property(nonatomic, readonly) double loadingProgress;
 
 // Returns the x, y offset the content has been scrolled.
 @property(nonatomic, readonly) CGPoint scrollPosition;
@@ -123,8 +101,14 @@ class WebStateImpl;
 // Returns whether the top of the content is visible.
 @property(nonatomic, readonly) BOOL atTop;
 
-// Whether or not content can programmatically display the keyboard.
-@property(nonatomic, assign) BOOL keyboardDisplayRequiresUserAction;
+// YES if JavaScript dialogs, HTTP authentication dialogs and window.open
+// calls should be suppressed. Default is NO. When dialog is suppressed
+// |CRWWebDelegate webControllerDidSuppressDialog:| will be called.
+@property(nonatomic, assign) BOOL shouldSuppressDialogs;
+
+// Designated initializer. Initializes web controller with |webState|. The
+// calling code must retain the ownership of |webState|.
+- (instancetype)initWithWebState:(web::WebStateImpl*)webState;
 
 // Return an image to use as replacement of a missing snapshot.
 + (UIImage*)defaultSnapshotImage;
@@ -136,10 +120,6 @@ class WebStateImpl;
 // Clear the transient content view, if one is shown.
 - (void)clearTransientContentView;
 
-// Give the unload listeners a chance to fire. Returns YES if they complete
-// and the CRWWebController is in a state it may be closed.
-- (BOOL)runUnloadListenerBeforeClosing;
-
 // Call to stop the CRWWebController from doing stuff, in particular to
 // stop all network requests. Called as part of the close sequence if it hasn't
 // already been halted; also called from [Tab halt] as part of the shutdown
@@ -149,9 +129,8 @@ class WebStateImpl;
 // Dismisses all modals owned by the web view or native view.
 - (void)dismissModals;
 
-// Call when the CRWWebController needs go away. Do not call until first calling
-// |-runUnloadListenerBeforeClosing|. Caller must reset the delegate before
-// calling.
+// Call when the CRWWebController needs go away. Caller must reset the delegate
+// before calling.
 - (void)close;
 
 // Call when there is a need to free up memory.
@@ -181,15 +160,22 @@ class WebStateImpl;
 
 // Start loading the URL specified in |originalParams|, with the specified
 // settings.  Always resets the openedByScript property to NO.
-- (void)loadWithParams:(const web::WebLoadParams&)originalParams;
+- (void)loadWithParams:(const web::NavigationManager::WebLoadParams&)params;
 
 // Loads the URL indicated by current session state.
 - (void)loadCurrentURL;
-// Loads the HTML into the page.
-- (void)loadHTML:(NSString*)html;
+
 // Loads HTML in the page and presents it as if it was originating from an
 // application specific URL.
 - (void)loadHTML:(NSString*)HTML forAppSpecificURL:(const GURL&)URL;
+
+// Loads HTML in the page and presents it as if it was originating from the
+// URL itself. Should be used only in specific cases, where the injected html
+// is guaranteed to be some derived representation of the original content.
+- (void)loadHTMLForCurrentURL:(NSString*)HTML;
+
+// Stops loading the page.
+- (void)stopLoading;
 
 // Causes the page to start loading immediately if there is a pending load;
 // normally if the web view has been paged out for memory reasons, loads are
@@ -198,17 +184,12 @@ class WebStateImpl;
 // used when deliberately pre-triggering a load without displaying.
 - (void)triggerPendingLoad;
 
-// Navigate forwards or backwards by one page.
-- (void)goBack;
-- (void)goForward;
-// Navigate forwards or backwards by |delta| pages.
-- (void)goDelta:(int)delta;
-// Perform necessary setup in order to navigate backwards.
-// TODO(rohitrao): Remove this from the public API.
-- (void)prepareForGoBack;
+// Navigates to the item at the given |index|.
+- (void)goToItemAtIndex:(int)index;
 
-// Evaluates the user-entered |script| in the web view.
-- (void)evaluateUserJavaScript:(NSString*)script;
+// Executes |script| in the web view, registering user interaction.
+- (void)executeUserJavaScript:(NSString*)script
+            completionHandler:(web::JavaScriptResultBlock)completion;
 
 // Dismisses the soft keyboard.
 - (void)dismissKeyboard;
@@ -229,16 +210,9 @@ class WebStateImpl;
 // TODO(stuartmorgan): When revisiting the methods above, revisit this as well.
 - (void)requirePageReload;
 
-// Sets the closed property to true for the child window with the given name.
-- (void)childWindowClosed:(NSString*)windowName;
-
 // Show overlay, don't reload web page. Used when the view will be
 // visible only briefly (e.g., tablet side swipe).
 - (void)setOverlayPreviewMode:(BOOL)overlayPreviewMode;
-
-// Sets policy for web page dialog handling. Controls dialog suppression and
-// notifying the WebDelegate.
-- (void)setPageDialogOpenPolicy:(web::PageDialogOpenPolicy)policy;
 
 // Records the state (scroll position, form values, whatever can be harvested)
 // from the current page into the current session entry.
@@ -247,11 +221,6 @@ class WebStateImpl;
 // TODO(stuartmorgan): This is public only temporarily; once refactoring is
 // complete it will be handled internally.
 - (void)restoreStateFromHistory;
-
-// Asynchronously checks whether the element at the location of
-// |gestureRecognizer| is a link.
-- (void)checkLinkPresenceUnderGesture:(UIGestureRecognizer*)gestureRecognizer
-                    completionHandler:(void (^)(BOOL))completionHandler;
 
 // Notifies the CRWWebController that it has been shown.
 - (void)wasShown;
@@ -293,20 +262,6 @@ class WebStateImpl;
 // native controller.
 - (void)loadErrorInNativeView:(NSError*)error;
 
-// Resets the state of a page where a load was rejected. This method must
-// be called if an embedder rejected the page load (e.g. by returning NO from
-// |-[WebDelegate shouldOpenURL:linkClicked:]|) but wants to continue working
-// with CRWWebController.
-- (void)restoreStateAfterURLRejection;
-
-// Helper method called at the end of history navigation methods goBack,
-// goForward, and goDelta.  Loads a new URL if the current entry is not from a
-// pushState() navigation from |fromEntry|. |fromEntry| is the
-// CRWSessionEntry that was the current entry prior to the navigation.
-// TODO(rohitrao): This is only exposed so Tab can call it temporarily.  Remove
-// as soon as all the Tab calls have moved into CRWWebController.
-- (void)finishHistoryNavigationFromEntry:(CRWSessionEntry*)fromEntry;
-
 // Returns the native controller (if any) current mananging the content.
 - (id<CRWNativeContent>)nativeController;
 @end
@@ -315,14 +270,18 @@ class WebStateImpl;
 
 @interface CRWWebController (UsedOnlyForTesting)  // Testing or internal API.
 
+// YES if a user interaction has been registered at any time since the page has
+// loaded.
+@property(nonatomic, readwrite) BOOL userInteractionRegistered;
+// Returns whether the user is interacting with the page.
+@property(nonatomic, readonly) BOOL userIsInteracting;
+
 // Injects a CRWWebViewContentView for testing.  Takes ownership of
 // |webViewContentView|.
 - (void)injectWebViewContentView:(CRWWebViewContentView*)webViewContentView;
 - (void)resetInjectedWebViewContentView;
 // Returns the number of observers registered for this CRWWebController.
 - (NSUInteger)observerCount;
-- (NSString*)windowId;
-- (void)setWindowId:(NSString*)windowId;
 - (void)setURLOnStartLoading:(const GURL&)url;
 - (void)simulateLoadRequestWithURL:(const GURL&)URL;
 - (NSString*)externalRequestWindowName;
@@ -330,9 +289,18 @@ class WebStateImpl;
 // Returns the header height.
 - (CGFloat)headerHeight;
 
+// Loads the HTML into the page at the given URL.
+- (void)loadHTML:(NSString*)HTML forURL:(const GURL&)URL;
+
 // Caches request POST data in the given session entry.  Exposed for testing.
 - (void)cachePOSTDataForRequest:(NSURLRequest*)request
                  inSessionEntry:(CRWSessionEntry*)currentSessionEntry;
+
+// Acts on a single message from the JS object, parsed from JSON into a
+// DictionaryValue. Returns NO if the format for the message was invalid.
+- (BOOL)respondToMessage:(base::DictionaryValue*)crwMessage
+       userIsInteracting:(BOOL)userIsInteracting
+               originURL:(const GURL&)originURL;
 
 @end
 

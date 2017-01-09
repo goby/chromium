@@ -8,21 +8,24 @@ import android.test.suitebuilder.annotation.LargeTest;
 import android.util.Pair;
 
 import org.chromium.base.test.util.Feature;
+import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.test.util.browser.sync.SyncTestUtil;
+import org.chromium.components.sync.ModelType;
+import org.chromium.components.sync.protocol.AutofillProfileSpecifics;
+import org.chromium.components.sync.protocol.EntitySpecifics;
 import org.chromium.content.browser.test.util.Criteria;
 import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.sync.ModelType;
-import org.chromium.sync.protocol.AutofillProfileSpecifics;
-import org.chromium.sync.protocol.EntitySpecifics;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
 
 /**
  * Test suite for the autofill profile sync data type.
  */
+@RetryOnFailure  // crbug.com/637448
 public class AutofillTest extends SyncTestBase {
     private static final String TAG = "AutofillTest";
 
@@ -54,10 +57,17 @@ public class AutofillTest extends SyncTestBase {
         }
     }
 
+    private abstract class ClientAutofillCriteria extends DataCriteria<Autofill> {
+        @Override
+        public List<Autofill> getData() throws Exception {
+            return getClientAutofillProfiles();
+        }
+    }
+
     @Override
     protected void setUp() throws Exception {
         super.setUp();
-        setUpTestAccountAndSignInToSync();
+        setUpTestAccountAndSignIn();
         // Make sure the initial state is clean.
         assertClientAutofillProfileCount(0);
         assertServerAutofillProfileCountWithName(0, STREET);
@@ -68,8 +78,8 @@ public class AutofillTest extends SyncTestBase {
     @Feature({"Sync"})
     public void testDownloadAutofill() throws Exception {
         addServerAutofillProfile(STREET, CITY, STATE, ZIP);
-        assertServerAutofillProfileCountWithName(1, STREET);
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
+        SyncTestUtil.triggerSync();
+        waitForClientAutofillProfileCount(1);
 
         // Verify data synced to client.
         List<Autofill> autofills = getClientAutofillProfiles();
@@ -88,17 +98,21 @@ public class AutofillTest extends SyncTestBase {
     public void testDownloadAutofillModification() throws Exception {
         // Add the entity to test modifying.
         EntitySpecifics specifics = addServerAutofillProfile(STREET, CITY, STATE, ZIP);
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
-        assertServerAutofillProfileCountWithName(1, STREET);
-        assertClientAutofillProfileCount(1);
+        SyncTestUtil.triggerSync();
+        waitForClientAutofillProfileCount(1);
 
         // Modify on server, sync, and verify modification locally.
         Autofill autofill = getClientAutofillProfiles().get(0);
         specifics.autofillProfile.addressHomeCity = MODIFIED_CITY;
         mFakeServerHelper.modifyEntitySpecifics(autofill.id, specifics);
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
-        Autofill modifiedAutofill = getClientAutofillProfiles().get(0);
-        assertEquals("The city was not modified.", MODIFIED_CITY, modifiedAutofill.city);
+        SyncTestUtil.triggerSync();
+        pollInstrumentationThread(new ClientAutofillCriteria() {
+            @Override
+            public boolean isSatisfied(List<Autofill> autofills) {
+                Autofill modifiedAutofill = autofills.get(0);
+                return modifiedAutofill.city.equals(MODIFIED_CITY);
+            }
+        });
     }
 
     // Test syncing an autofill profile deletion from server to client.
@@ -107,15 +121,13 @@ public class AutofillTest extends SyncTestBase {
     public void testDownloadDeletedAutofill() throws Exception {
         // Add the entity to test deleting.
         addServerAutofillProfile(STREET, CITY, STATE, ZIP);
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
-        assertServerAutofillProfileCountWithName(1, STREET);
-        assertClientAutofillProfileCount(1);
+        SyncTestUtil.triggerSync();
+        waitForClientAutofillProfileCount(1);
 
         // Delete on server, sync, and verify deleted locally.
         Autofill autofill = getClientAutofillProfiles().get(0);
         mFakeServerHelper.deleteEntity(autofill.id);
-        waitForServerAutofillProfileCountWithName(0, STREET);
-        SyncTestUtil.triggerSyncAndWaitForCompletion();
+        SyncTestUtil.triggerSync();
         waitForClientAutofillProfileCount(0);
     }
 
@@ -126,7 +138,6 @@ public class AutofillTest extends SyncTestBase {
         // The AUTOFILL type here controls both AUTOFILL and AUTOFILL_PROFILE.
         disableDataType(ModelType.AUTOFILL);
         addServerAutofillProfile(STREET, CITY, STATE, ZIP);
-        assertServerAutofillProfileCountWithName(1, STREET);
         SyncTestUtil.triggerSyncAndWaitForCompletion();
         assertClientAutofillProfileCount(0);
     }
@@ -173,23 +184,18 @@ public class AutofillTest extends SyncTestBase {
                         count, ModelType.AUTOFILL_PROFILE, name));
     }
 
-    private void waitForClientAutofillProfileCount(final int count) throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria(
-                "Expected " + count + " local autofill profiles.") {
+    private void waitForClientAutofillProfileCount(int count) throws InterruptedException {
+        CriteriaHelper.pollInstrumentationThread(Criteria.equals(count, new Callable<Integer>() {
             @Override
-            public boolean isSatisfied() {
-                try {
-                    return SyncTestUtil.getLocalData(mContext, AUTOFILL_TYPE).size() == count;
-                } catch (Exception e) {
-                    throw new RuntimeException(e);
-                }
+            public Integer call() throws Exception {
+                return SyncTestUtil.getLocalData(mContext, AUTOFILL_TYPE).size();
             }
-        }, SyncTestUtil.TIMEOUT_MS, SyncTestUtil.INTERVAL_MS);
+        }), SyncTestUtil.TIMEOUT_MS, SyncTestUtil.INTERVAL_MS);
     }
 
     private void waitForServerAutofillProfileCountWithName(final int count, final String name)
             throws InterruptedException {
-        CriteriaHelper.pollForCriteria(new Criteria(
+        CriteriaHelper.pollInstrumentationThread(new Criteria(
                 "Expected " + count + " server autofill profiles with name " + name + ".") {
             @Override
             public boolean isSatisfied() {
@@ -201,5 +207,9 @@ public class AutofillTest extends SyncTestBase {
                 }
             }
         }, SyncTestUtil.TIMEOUT_MS, SyncTestUtil.INTERVAL_MS);
+    }
+
+    private interface AutofillCriteria {
+        boolean isSatisfied(List<Autofill> autofills);
     }
 }

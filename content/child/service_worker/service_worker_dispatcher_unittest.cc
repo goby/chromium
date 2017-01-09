@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/macros.h"
 #include "content/child/service_worker/service_worker_dispatcher.h"
 #include "content/child/service_worker/service_worker_handle_reference.h"
 #include "content/child/service_worker/service_worker_provider_context.h"
@@ -16,6 +17,8 @@
 #include "third_party/WebKit/public/platform/modules/serviceworker/WebServiceWorkerProviderClient.h"
 
 namespace content {
+
+namespace {
 
 class ServiceWorkerTestSender : public ThreadSafeSender {
  public:
@@ -34,6 +37,8 @@ class ServiceWorkerTestSender : public ThreadSafeSender {
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerTestSender);
 };
+
+}  // namespace
 
 class ServiceWorkerDispatcherTest : public testing::Test {
  public:
@@ -89,7 +94,7 @@ class ServiceWorkerDispatcherTest : public testing::Test {
     dispatcher_->OnPostMessage(params);
   }
 
-  scoped_ptr<ServiceWorkerHandleReference> Adopt(
+  std::unique_ptr<ServiceWorkerHandleReference> Adopt(
       const ServiceWorkerObjectInfo& info) {
     return dispatcher_->Adopt(info);
   }
@@ -101,7 +106,7 @@ class ServiceWorkerDispatcherTest : public testing::Test {
  private:
   base::MessageLoop message_loop_;
   IPC::TestSink ipc_sink_;
-  scoped_ptr<ServiceWorkerDispatcher> dispatcher_;
+  std::unique_ptr<ServiceWorkerDispatcher> dispatcher_;
   scoped_refptr<ServiceWorkerTestSender> sender_;
 
   DISALLOW_COPY_AND_ASSIGN(ServiceWorkerDispatcherTest);
@@ -116,20 +121,19 @@ class MockWebServiceWorkerProviderClientImpl
     dispatcher_->AddProviderClient(provider_id, this);
   }
 
-  ~MockWebServiceWorkerProviderClientImpl() {
+  ~MockWebServiceWorkerProviderClientImpl() override {
     dispatcher_->RemoveProviderClient(provider_id_);
   }
 
-  void setController(
-      blink::WebPassOwnPtr<blink::WebServiceWorker::Handle> handle,
-      bool shouldNotifyControllerChange) {
+  void setController(std::unique_ptr<blink::WebServiceWorker::Handle> handle,
+                     bool shouldNotifyControllerChange) override {
     // WebPassOwnPtr cannot be owned in Chromium, so drop the handle here.
     // The destruction releases ServiceWorkerHandleReference.
     is_set_controlled_called_ = true;
   }
 
   void dispatchMessageEvent(
-      blink::WebPassOwnPtr<blink::WebServiceWorker::Handle> handle,
+      std::unique_ptr<blink::WebServiceWorker::Handle> handle,
       const blink::WebString& message,
       const blink::WebMessagePortChannelArray& channels) override {
     // WebPassOwnPtr cannot be owned in Chromium, so drop the handle here.
@@ -149,9 +153,6 @@ class MockWebServiceWorkerProviderClientImpl
   bool is_dispatch_message_event_called_ = false;
   ServiceWorkerDispatcher* dispatcher_;
 };
-
-// TODO(nhiroki): Add tests for message handlers especially to receive reference
-// counts.
 
 TEST_F(ServiceWorkerDispatcherTest, OnAssociateRegistration_NoProviderContext) {
   // Assume that these objects are passed from the browser process and own
@@ -292,7 +293,7 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker) {
   // mock provider client. See the comment on setController() of the mock).
   // In addition, the passed reference should be adopted but immediately
   // released because there is no provider context to own it.
-  scoped_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
+  std::unique_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
       new MockWebServiceWorkerProviderClientImpl(kProviderId, dispatcher()));
   ASSERT_FALSE(provider_client->is_set_controlled_called());
   OnSetControllerServiceWorker(kDocumentMainThreadId, kProviderId, attrs.active,
@@ -340,7 +341,7 @@ TEST_F(ServiceWorkerDispatcherTest, OnSetControllerServiceWorker_Null) {
   ServiceWorkerVersionAttributes attrs;
   CreateObjectInfoAndVersionAttributes(&info, &attrs);
 
-  scoped_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
+  std::unique_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
       new MockWebServiceWorkerProviderClientImpl(kProviderId, dispatcher()));
   scoped_refptr<ServiceWorkerProviderContext> provider_context(
       new ServiceWorkerProviderContext(kProviderId,
@@ -381,7 +382,7 @@ TEST_F(ServiceWorkerDispatcherTest, OnPostMessage) {
             ipc_sink()->GetMessageAt(0)->type());
   ipc_sink()->ClearMessages();
 
-  scoped_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
+  std::unique_ptr<MockWebServiceWorkerProviderClientImpl> provider_client(
       new MockWebServiceWorkerProviderClientImpl(kProviderId, dispatcher()));
   ASSERT_FALSE(provider_client->is_dispatch_message_event_called());
 
@@ -434,7 +435,7 @@ TEST_F(ServiceWorkerDispatcherTest, GetOrCreateRegistration) {
       dispatcher()->GetOrCreateRegistration(info, attrs));
   EXPECT_TRUE(registration1);
   EXPECT_TRUE(ContainsRegistration(info.handle_id));
-  EXPECT_EQ(info.registration_id, registration1->registration_id());
+  EXPECT_EQ(info.registration_id, registration1->registrationId());
   ASSERT_EQ(4UL, ipc_sink()->message_count());
   EXPECT_EQ(ServiceWorkerHostMsg_IncrementRegistrationRefCount::ID,
             ipc_sink()->GetMessageAt(0)->type());
@@ -482,7 +483,7 @@ TEST_F(ServiceWorkerDispatcherTest, GetOrAdoptRegistration) {
       dispatcher()->GetOrAdoptRegistration(info, attrs));
   EXPECT_TRUE(registration1);
   EXPECT_TRUE(ContainsRegistration(info.handle_id));
-  EXPECT_EQ(info.registration_id, registration1->registration_id());
+  EXPECT_EQ(info.registration_id, registration1->registrationId());
   EXPECT_EQ(0UL, ipc_sink()->message_count());
 
   ipc_sink()->ClearMessages();

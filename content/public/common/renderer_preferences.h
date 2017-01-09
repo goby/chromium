@@ -12,10 +12,13 @@
 #ifndef CONTENT_PUBLIC_COMMON_RENDERER_PREFERENCES_H_
 #define CONTENT_PUBLIC_COMMON_RENDERER_PREFERENCES_H_
 
+#include <stdint.h>
+
 #include <string>
 #include <vector>
 
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/gfx/font_render_params.h"
@@ -32,6 +35,7 @@ enum TapMultipleTargetsStrategy {
 
 struct CONTENT_EXPORT RendererPreferences {
   RendererPreferences();
+  RendererPreferences(const RendererPreferences& other);
   ~RendererPreferences();
 
   // Whether the renderer's current browser context accept drops from the OS
@@ -98,8 +102,10 @@ struct CONTENT_EXPORT RendererPreferences {
   // in webrtc_ip_handling_policy.h.
   std::string webrtc_ip_handling_policy;
 
-  // Default page zoom level.
-  double default_zoom_level;
+  // This is the range of UDP ports allowed to be used by WebRTC. A value of
+  // zero in both fields means all ports are allowed.
+  uint16_t webrtc_udp_min_port;
+  uint16_t webrtc_udp_max_port;
 
   // The user agent given to WebKit when it requests one and the user agent is
   // being overridden for the current navigation.
@@ -130,42 +136,42 @@ struct CONTENT_EXPORT RendererPreferences {
   // encrypted video.  Currently only used by Android.
   bool use_video_overlay_for_embedded_encrypted_video;
 
-  // Use video-overlay (hole-punching) should be used for all video, not just
-  // encrypted video.  Currently only used by Android.
-  bool use_view_overlay_for_all_video;
-
   // Country iso of the mobile network for content detection purpose.
   std::string network_contry_iso;
+
+#if defined(OS_LINUX)
+  std::string system_font_family_name;
+#endif
 
 #if defined(OS_WIN)
   // The default system font settings for caption, small caption, menu and
   // status messages. Used only by Windows.
   base::string16 caption_font_family_name;
-  int32 caption_font_height;
+  int32_t caption_font_height;
 
   base::string16 small_caption_font_family_name;
-  int32 small_caption_font_height;
+  int32_t small_caption_font_height;
 
   base::string16 menu_font_family_name;
-  int32 menu_font_height;
+  int32_t menu_font_height;
 
   base::string16 status_font_family_name;
-  int32 status_font_height;
+  int32_t status_font_height;
 
   base::string16 message_font_family_name;
-  int32 message_font_height;
+  int32_t message_font_height;
 
   // The width of a vertical scroll bar in dips.
-  int32 vertical_scroll_bar_width_in_dips;
+  int32_t vertical_scroll_bar_width_in_dips;
 
   // The height of a horizontal scroll bar in dips.
-  int32 horizontal_scroll_bar_height_in_dips;
+  int32_t horizontal_scroll_bar_height_in_dips;
 
   // The height of the arrow bitmap on a vertical scroll bar in dips.
-  int32 arrow_bitmap_height_vertical_scroll_bar_in_dips;
+  int32_t arrow_bitmap_height_vertical_scroll_bar_in_dips;
 
   // The width of the arrow bitmap on a horizontal scroll bar in dips.
-  int32 arrow_bitmap_width_horizontal_scroll_bar_in_dips;
+  int32_t arrow_bitmap_width_horizontal_scroll_bar_in_dips;
 #endif
 
   // The default font size used for rendering on Linux.

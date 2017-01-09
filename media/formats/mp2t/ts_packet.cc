@@ -4,17 +4,18 @@
 
 #include "media/formats/mp2t/ts_packet.h"
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
 #include "media/base/bit_reader.h"
 #include "media/formats/mp2t/mp2t_common.h"
 
 namespace media {
 namespace mp2t {
 
-static const uint8 kTsHeaderSyncword = 0x47;
+static const uint8_t kTsHeaderSyncword = 0x47;
 
 // static
-int TsPacket::Sync(const uint8* buf, int size) {
+int TsPacket::Sync(const uint8_t* buf, int size) {
   int k = 0;
   for (; k < size; k++) {
     // Verify that we have 4 syncwords in a row when possible,
@@ -43,7 +44,7 @@ int TsPacket::Sync(const uint8* buf, int size) {
 }
 
 // static
-TsPacket* TsPacket::Parse(const uint8* buf, int size) {
+TsPacket* TsPacket::Parse(const uint8_t* buf, int size) {
   if (size < kPacketSize) {
     DVLOG(1) << "Buffer does not hold one full TS packet:"
              << " buffer_size=" << size;
@@ -58,7 +59,7 @@ TsPacket* TsPacket::Parse(const uint8* buf, int size) {
     return NULL;
   }
 
-  scoped_ptr<TsPacket> ts_packet(new TsPacket());
+  std::unique_ptr<TsPacket> ts_packet(new TsPacket());
   bool status = ts_packet->ParseHeader(buf);
   if (!status) {
     DVLOG(1) << "Parsing header failed";
@@ -73,7 +74,7 @@ TsPacket::TsPacket() {
 TsPacket::~TsPacket() {
 }
 
-bool TsPacket::ParseHeader(const uint8* buf) {
+bool TsPacket::ParseHeader(const uint8_t* buf) {
   BitReader bit_reader(buf, kPacketSize);
   payload_ = buf;
   payload_size_ = kPacketSize;
@@ -161,7 +162,7 @@ bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
   random_access_indicator_ = (random_access_indicator != 0);
 
   if (pcr_flag) {
-    int64 program_clock_reference_base;
+    int64_t program_clock_reference_base;
     int reserved;
     int program_clock_reference_extension;
     RCHECK(bit_reader->ReadBits(33, &program_clock_reference_base));
@@ -170,7 +171,7 @@ bool TsPacket::ParseAdaptationField(BitReader* bit_reader,
   }
 
   if (opcr_flag) {
-    int64 original_program_clock_reference_base;
+    int64_t original_program_clock_reference_base;
     int reserved;
     int original_program_clock_reference_extension;
     RCHECK(bit_reader->ReadBits(33, &original_program_clock_reference_base));

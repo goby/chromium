@@ -5,24 +5,19 @@
 #ifndef MEDIA_AUDIO_MOCK_AUDIO_MANAGER_H_
 #define MEDIA_AUDIO_MOCK_AUDIO_MANAGER_H_
 
+#include "base/macros.h"
 #include "media/audio/audio_manager.h"
 
 namespace media {
 
 // This class is a simple mock around AudioManager, used exclusively for tests,
-// which has the following purposes:
-// 1) Avoids to use the actual (system and platform dependent) AudioManager.
-//    Some bots does not have input devices, thus using the actual AudioManager
-//    would causing failures on classes which expect that.
-// 2) Allows the mock audio events to be dispatched on an arbitrary thread,
-//    rather than forcing them on the audio thread, easing their handling in
-//    browser tests (Note: sharing a thread can cause deadlocks on production
-//    classes if WaitableEvents or any other form of lock is used for
-//    synchronization purposes).
+// which avoids to use the actual (system and platform dependent) AudioManager.
+// Some bots does not have input devices, thus using the actual AudioManager
+// would causing failures on classes which expect that.
 class MockAudioManager : public media::AudioManager {
  public:
   explicit MockAudioManager(
-      const scoped_refptr<base::SingleThreadTaskRunner>& task_runner);
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner);
 
   bool HasAudioOutputDevices() override;
 
@@ -39,7 +34,8 @@ class MockAudioManager : public media::AudioManager {
 
   media::AudioOutputStream* MakeAudioOutputStream(
       const media::AudioParameters& params,
-      const std::string& device_id) override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
 
   media::AudioOutputStream* MakeAudioOutputStreamProxy(
       const media::AudioParameters& params,
@@ -47,10 +43,8 @@ class MockAudioManager : public media::AudioManager {
 
   media::AudioInputStream* MakeAudioInputStream(
       const media::AudioParameters& params,
-      const std::string& device_id) override;
-
-  scoped_refptr<base::SingleThreadTaskRunner> GetTaskRunner() override;
-  scoped_refptr<base::SingleThreadTaskRunner> GetWorkerTaskRunner() override;
+      const std::string& device_id,
+      const LogCallback& log_callback) override;
 
   void AddOutputDeviceChangeListener(AudioDeviceListener* listener) override;
   void RemoveOutputDeviceChangeListener(AudioDeviceListener* listener) override;
@@ -62,18 +56,18 @@ class MockAudioManager : public media::AudioManager {
       const std::string& device_id) override;
   std::string GetAssociatedOutputDeviceID(
       const std::string& input_device_id) override;
+  std::string GetGroupIDOutput(const std::string& output_id) override;
+  std::string GetGroupIDInput(const std::string& input_id) override;
 
-  scoped_ptr<AudioLog> CreateAudioLog(
+  std::unique_ptr<AudioLog> CreateAudioLog(
       AudioLogFactory::AudioComponent component) override;
 
-  void SetHasKeyboardMic() override;
+  const char* GetName() override;
 
  protected:
   ~MockAudioManager() override;
 
  private:
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
-
   DISALLOW_COPY_AND_ASSIGN(MockAudioManager);
 };
 

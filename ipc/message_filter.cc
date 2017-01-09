@@ -4,6 +4,8 @@
 
 #include "ipc/message_filter.h"
 
+#include <stdint.h>
+
 #include "base/memory/ref_counted.h"
 #include "ipc/ipc_channel.h"
 
@@ -11,7 +13,7 @@ namespace IPC {
 
 MessageFilter::MessageFilter() {}
 
-void MessageFilter::OnFilterAdded(Sender* sender) {}
+void MessageFilter::OnFilterAdded(Channel* channel) {}
 
 void MessageFilter::OnFilterRemoved() {}
 

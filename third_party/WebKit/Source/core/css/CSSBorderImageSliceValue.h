@@ -33,31 +33,34 @@
 namespace blink {
 
 class CSSBorderImageSliceValue : public CSSValue {
-public:
-    static PassRefPtrWillBeRawPtr<CSSBorderImageSliceValue> create(PassRefPtrWillBeRawPtr<CSSQuadValue> slices, bool fill)
-    {
-        return adoptRefWillBeNoop(new CSSBorderImageSliceValue(slices, fill));
-    }
+ public:
+  static CSSBorderImageSliceValue* create(CSSQuadValue* slices, bool fill) {
+    return new CSSBorderImageSliceValue(slices, fill);
+  }
 
-    String customCSSText() const;
+  String customCSSText() const;
 
-    CSSQuadValue* slices() const { return m_slices.get(); }
+  // TODO(sashab): Change this to a quad of CSSPrimitiveValues, or add separate
+  // methods for topSlice(), leftSlice(), etc.
+  const CSSQuadValue& slices() const { return *m_slices; }
+  bool fill() const { return m_fill; }
 
-    bool equals(const CSSBorderImageSliceValue&) const;
+  bool equals(const CSSBorderImageSliceValue&) const;
 
-    DECLARE_TRACE_AFTER_DISPATCH();
+  DECLARE_TRACE_AFTER_DISPATCH();
 
-    // These four values are used to make "cuts" in the border image. They can be numbers
-    // or percentages.
-    RefPtrWillBeMember<CSSQuadValue> m_slices;
-    bool m_fill;
+ private:
+  CSSBorderImageSliceValue(CSSQuadValue* slices, bool fill);
 
-private:
-    CSSBorderImageSliceValue(PassRefPtrWillBeRawPtr<CSSQuadValue> slices, bool fill);
+  // These four values are used to make "cuts" in the border image. They can be
+  // numbers or percentages.
+  Member<CSSQuadValue> m_slices;
+  bool m_fill;
 };
 
-DEFINE_CSS_VALUE_TYPE_CASTS(CSSBorderImageSliceValue, isBorderImageSliceValue());
+DEFINE_CSS_VALUE_TYPE_CASTS(CSSBorderImageSliceValue,
+                            isBorderImageSliceValue());
 
-} // namespace blink
+}  // namespace blink
 
-#endif // CSSBorderImageSliceValue_h
+#endif  // CSSBorderImageSliceValue_h

@@ -5,9 +5,10 @@
 #ifndef CONTENT_SHELL_BROWSER_SHELL_NET_LOG_H_
 #define CONTENT_SHELL_BROWSER_SHELL_NET_LOG_H_
 
+#include <memory>
 #include <string>
 
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "net/log/write_to_file_net_log_observer.h"
 
 namespace content {
@@ -18,7 +19,7 @@ class ShellNetLog : public net::NetLog {
   ~ShellNetLog() override;
 
  private:
-  scoped_ptr<net::WriteToFileNetLogObserver> write_to_file_observer_;
+  std::unique_ptr<net::WriteToFileNetLogObserver> write_to_file_observer_;
 
   DISALLOW_COPY_AND_ASSIGN(ShellNetLog);
 };

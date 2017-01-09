@@ -6,6 +6,7 @@
 #define CHROME_BROWSER_EXTENSIONS_EXTENSION_ACTION_MANAGER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 
 #include "base/scoped_observer.h"
@@ -51,8 +52,9 @@ class ExtensionActionManager : public KeyedService,
   // Gets the best fit ExtensionAction for the given |extension|. This takes
   // into account |extension|'s browser or page actions, if any, along with its
   // name and any declared icons.
-  scoped_ptr<ExtensionAction> GetBestFitAction(
-      const Extension& extension, ActionInfo::Type type) const;
+  std::unique_ptr<ExtensionAction> GetBestFitAction(
+      const Extension& extension,
+      ActionInfo::Type type) const;
 
  private:
   // Implement ExtensionRegistryObserver.
@@ -70,7 +72,8 @@ class ExtensionActionManager : public KeyedService,
   // ExtensionAction is first requested, and the entries are removed when the
   // extension is unloaded.  Not every extension has a page action or browser
   // action.
-  typedef std::map<std::string, linked_ptr<ExtensionAction> > ExtIdToActionMap;
+  using ExtIdToActionMap =
+      std::map<std::string, std::unique_ptr<ExtensionAction>>;
   mutable ExtIdToActionMap page_actions_;
   mutable ExtIdToActionMap browser_actions_;
   mutable ExtIdToActionMap system_indicators_;

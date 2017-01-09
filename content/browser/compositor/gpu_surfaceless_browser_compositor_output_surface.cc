@@ -4,14 +4,15 @@
 
 #include "content/browser/compositor/gpu_surfaceless_browser_compositor_output_surface.h"
 
-#include "cc/output/compositor_frame.h"
+#include <utility>
+
 #include "cc/output/output_surface_client.h"
-#include "content/browser/compositor/browser_compositor_overlay_candidate_validator.h"
-#include "content/browser/compositor/buffer_queue.h"
+#include "cc/output/output_surface_frame.h"
+#include "components/display_compositor/buffer_queue.h"
+#include "components/display_compositor/compositor_overlay_candidate_validator.h"
+#include "components/display_compositor/gl_helper.h"
 #include "content/browser/compositor/reflector_impl.h"
-#include "content/browser/gpu/gpu_surface_tracker.h"
 #include "content/common/gpu/client/context_provider_command_buffer.h"
-#include "content/common/gpu/client/gl_helper.h"
 #include "gpu/GLES2/gl2extchromium.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
 
@@ -19,20 +20,18 @@ namespace content {
 
 GpuSurfacelessBrowserCompositorOutputSurface::
     GpuSurfacelessBrowserCompositorOutputSurface(
-        const scoped_refptr<ContextProviderCommandBuffer>& context,
-        const scoped_refptr<ContextProviderCommandBuffer>& worker_context,
-        int surface_id,
-        const scoped_refptr<ui::CompositorVSyncManager>& vsync_manager,
-        scoped_ptr<BrowserCompositorOverlayCandidateValidator>
+        scoped_refptr<ContextProviderCommandBuffer> context,
+        gpu::SurfaceHandle surface_handle,
+        const UpdateVSyncParametersCallback& update_vsync_parameters_callback,
+        std::unique_ptr<display_compositor::CompositorOverlayCandidateValidator>
             overlay_candidate_validator,
         unsigned int target,
         unsigned int internalformat,
-        BrowserGpuMemoryBufferManager* gpu_memory_buffer_manager)
-    : GpuBrowserCompositorOutputSurface(context,
-                                        worker_context,
-                                        vsync_manager,
-                                        overlay_candidate_validator.Pass()),
-      internalformat_(internalformat),
+        gfx::BufferFormat format,
+        gpu::GpuMemoryBufferManager* gpu_memory_buffer_manager)
+    : GpuBrowserCompositorOutputSurface(std::move(context),
+                                        update_vsync_parameters_callback,
+                                        std::move(overlay_candidate_validator)),
       gpu_memory_buffer_manager_(gpu_memory_buffer_manager) {
   capabilities_.uses_default_gl_framebuffer = false;
   capabilities_.flipped_output_surface = true;
@@ -45,12 +44,12 @@ GpuSurfacelessBrowserCompositorOutputSurface::
   // implementation.
   capabilities_.max_frames_pending = 2;
 
-  gl_helper_.reset(new GLHelper(context_provider_->ContextGL(),
-                                context_provider_->ContextSupport()));
-  output_surface_.reset(new BufferQueue(
-      context_provider_, target, internalformat_, gl_helper_.get(),
-      gpu_memory_buffer_manager_, surface_id));
-  output_surface_->Initialize();
+  gl_helper_.reset(new display_compositor::GLHelper(
+      context_provider_->ContextGL(), context_provider_->ContextSupport()));
+  buffer_queue_.reset(new display_compositor::BufferQueue(
+      context_provider_->ContextGL(), target, internalformat, format,
+      gl_helper_.get(), gpu_memory_buffer_manager_, surface_handle));
+  buffer_queue_->Initialize();
 }
 
 GpuSurfacelessBrowserCompositorOutputSurface::
@@ -64,50 +63,59 @@ bool GpuSurfacelessBrowserCompositorOutputSurface::IsDisplayedAsOverlayPlane()
 
 unsigned GpuSurfacelessBrowserCompositorOutputSurface::GetOverlayTextureId()
     const {
-  return output_surface_->current_texture_id();
+  return buffer_queue_->current_texture_id();
 }
 
 void GpuSurfacelessBrowserCompositorOutputSurface::SwapBuffers(
-    cc::CompositorFrame* frame) {
-  DCHECK(output_surface_);
-  output_surface_->SwapBuffers(frame->gl_frame_data->sub_buffer_rect);
-  GpuBrowserCompositorOutputSurface::SwapBuffers(frame);
-}
-
-void GpuSurfacelessBrowserCompositorOutputSurface::OnSwapBuffersComplete() {
-  DCHECK(output_surface_);
-  output_surface_->PageFlipComplete();
-  GpuBrowserCompositorOutputSurface::OnSwapBuffersComplete();
+    cc::OutputSurfaceFrame frame) {
+  DCHECK(buffer_queue_);
+  DCHECK(reshape_size_ == frame.size);
+  // TODO(ccameron): What if a swap comes again before OnGpuSwapBuffersCompleted
+  // happens, we'd see the wrong swap size there?
+  swap_size_ = reshape_size_;
+  buffer_queue_->SwapBuffers(frame.sub_buffer_rect);
+  GpuBrowserCompositorOutputSurface::SwapBuffers(std::move(frame));
 }
 
 void GpuSurfacelessBrowserCompositorOutputSurface::BindFramebuffer() {
-  DCHECK(output_surface_);
-  output_surface_->BindFramebuffer();
+  DCHECK(buffer_queue_);
+  buffer_queue_->BindFramebuffer();
+}
+
+GLenum GpuSurfacelessBrowserCompositorOutputSurface::
+    GetFramebufferCopyTextureFormat() {
+  return buffer_queue_->internal_format();
 }
 
 void GpuSurfacelessBrowserCompositorOutputSurface::Reshape(
     const gfx::Size& size,
-    float scale_factor) {
-  GpuBrowserCompositorOutputSurface::Reshape(size, scale_factor);
-  DCHECK(output_surface_);
-  output_surface_->Reshape(SurfaceSize(), scale_factor);
+    float device_scale_factor,
+    const gfx::ColorSpace& color_space,
+    bool has_alpha) {
+  reshape_size_ = size;
+  GpuBrowserCompositorOutputSurface::Reshape(size, device_scale_factor,
+                                             color_space, has_alpha);
+  DCHECK(buffer_queue_);
+  buffer_queue_->Reshape(size, device_scale_factor, color_space);
 }
 
 void GpuSurfacelessBrowserCompositorOutputSurface::OnGpuSwapBuffersCompleted(
     const std::vector<ui::LatencyInfo>& latency_info,
-    gfx::SwapResult result) {
+    gfx::SwapResult result,
+    const gpu::GpuProcessHostedCALayerTreeParamsMac* params_mac) {
   bool force_swap = false;
   if (result == gfx::SwapResult::SWAP_NAK_RECREATE_BUFFERS) {
     // Even through the swap failed, this is a fixable error so we can pretend
     // it succeeded to the rest of the system.
     result = gfx::SwapResult::SWAP_ACK;
-    output_surface_->RecreateBuffers();
+    buffer_queue_->RecreateBuffers();
     force_swap = true;
   }
-  GpuBrowserCompositorOutputSurface::OnGpuSwapBuffersCompleted(latency_info,
-                                                               result);
+  buffer_queue_->PageFlipComplete();
+  GpuBrowserCompositorOutputSurface::OnGpuSwapBuffersCompleted(
+      latency_info, result, params_mac);
   if (force_swap)
-    client_->SetNeedsRedrawRect(gfx::Rect(SurfaceSize()));
+    client_->SetNeedsRedrawRect(gfx::Rect(swap_size_));
 }
 
 }  // namespace content

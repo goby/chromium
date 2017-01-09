@@ -5,8 +5,11 @@
 #ifndef COMPONENTS_UNDO_UNDO_MANAGER_H_
 #define COMPONENTS_UNDO_UNDO_MANAGER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/observer_list.h"
 #include "base/strings/string16.h"
@@ -23,7 +26,7 @@ class UndoGroup {
   UndoGroup();
   ~UndoGroup();
 
-  void AddOperation(scoped_ptr<UndoOperation> operation);
+  void AddOperation(std::unique_ptr<UndoOperation> operation);
   const std::vector<UndoOperation*>& undo_operations() {
     return operations_.get();
   }
@@ -65,7 +68,7 @@ class UndoManager {
   base::string16 GetUndoLabel() const;
   base::string16 GetRedoLabel() const;
 
-  void AddUndoOperation(scoped_ptr<UndoOperation> operation);
+  void AddUndoOperation(std::unique_ptr<UndoOperation> operation);
 
   // Group multiple operations into one undoable action.
   void StartGroupingActions();
@@ -115,7 +118,7 @@ class UndoManager {
   int group_actions_count_;
 
   // The container that is used when actions are grouped.
-  scoped_ptr<UndoGroup> pending_grouped_action_;
+  std::unique_ptr<UndoGroup> pending_grouped_action_;
 
   // The action that is in the process of being undone.
   UndoGroup* undo_in_progress_action_;

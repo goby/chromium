@@ -5,8 +5,9 @@
 #ifndef IOS_WEB_WEBUI_WEB_UI_IOS_CONTROLLER_FACTORY_REGISTRY_H_
 #define IOS_WEB_WEBUI_WEB_UI_IOS_CONTROLLER_FACTORY_REGISTRY_H_
 
+#include "base/macros.h"
 #include "base/memory/singleton.h"
-#include "ios/public/provider/web/web_ui_ios_controller_factory.h"
+#include "ios/web/public/webui/web_ui_ios_controller_factory.h"
 
 namespace web {
 

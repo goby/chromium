@@ -130,3 +130,38 @@ function selectRange(id, start, end, expectedText) {
         document.getElementById("container").appendChild(textElement);
     }
 }
+
+function selectTextFromCharToPoint(selectionInfo, mouse, expected) {
+  var element = document.getElementById(selectionInfo.id);
+  var startPos = element.getStartPositionOfChar(selectionInfo.offset);
+  var absStartPos = toAbsoluteCoordinates(startPos, element);
+  if (window.eventSender) {
+    eventSender.mouseMoveTo(absStartPos.x, absStartPos.y);
+    eventSender.mouseDown();
+    eventSender.mouseMoveTo(mouse.x, mouse.y);
+    eventSender.mouseUp();
+  }
+
+  selection = window.getSelection();
+  startElementId = selection.anchorNode.parentElement.id;
+  endElementId = selection.focusNode.parentElement.id;
+  // TODO(shanmuga.m): It'd be preferable to have the assertions in the actual test-files.
+  assert_equals(startElementId, expected.startElementId);
+  assert_equals(selection.anchorOffset, expected.start);
+  assert_equals(endElementId, expected.endElementId);
+  assert_equals(selection.focusOffset, expected.end);
+  if (window.eventSender) {
+    eventSender.mouseMoveTo(0,0);
+    eventSender.mouseDown();
+    eventSender.mouseUp();
+  }
+}
+
+function getEndPosition(id, offset, gap) {
+  var element = document.getElementById(id);
+  var endPos = element.getEndPositionOfChar(offset);
+  endPos.x += gap.x;
+  endPos.y += gap.y;
+  var absEndPos = toAbsoluteCoordinates(endPos, element);
+  return absEndPos;
+}

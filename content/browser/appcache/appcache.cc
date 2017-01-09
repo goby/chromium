@@ -4,6 +4,8 @@
 
 #include "content/browser/appcache/appcache.h"
 
+#include <stddef.h>
+
 #include <algorithm>
 
 #include "base/logging.h"
@@ -16,9 +18,9 @@
 
 namespace content {
 
-AppCache::AppCache(AppCacheStorage* storage, int64 cache_id)
+AppCache::AppCache(AppCacheStorage* storage, int64_t cache_id)
     : cache_id_(cache_id),
-      owning_group_(NULL),
+      owning_group_(nullptr),
       online_whitelist_all_(false),
       is_complete_(false),
       cache_size_(0),
@@ -34,8 +36,6 @@ AppCache::~AppCache() {
   }
   DCHECK(!owning_group_.get());
   storage_->working_set()->RemoveCache(this);
-  STLDeleteContainerPairSecondPointers(
-      executable_handlers_.begin(), executable_handlers_.end());
 }
 
 void AppCache::UnassociateHost(AppCacheHost* host) {
@@ -69,11 +69,12 @@ void AppCache::RemoveEntry(const GURL& url) {
 
 AppCacheEntry* AppCache::GetEntry(const GURL& url) {
   EntryMap::iterator it = entries_.find(url);
-  return (it != entries_.end()) ? &(it->second) : NULL;
+  return (it != entries_.end()) ? &(it->second) : nullptr;
 }
 
 const AppCacheEntry* AppCache::GetEntryAndUrlWithResponseId(
-    int64 response_id, GURL* optional_url_out) {
+    int64_t response_id,
+    GURL* optional_url_out) {
   for (EntryMap::const_iterator iter = entries_.begin();
        iter !=  entries_.end(); ++iter) {
     if (iter->second.response_id() == response_id) {
@@ -82,18 +83,19 @@ const AppCacheEntry* AppCache::GetEntryAndUrlWithResponseId(
       return &iter->second;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
-AppCacheExecutableHandler* AppCache::GetExecutableHandler(int64 response_id) {
+AppCacheExecutableHandler* AppCache::GetExecutableHandler(int64_t response_id) {
   HandlerMap::const_iterator found = executable_handlers_.find(response_id);
   if (found != executable_handlers_.end())
-    return found->second;
-  return NULL;
+    return found->second.get();
+  return nullptr;
 }
 
 AppCacheExecutableHandler* AppCache::GetOrCreateExecutableHandler(
-    int64 response_id, net::IOBuffer* handler_source) {
+    int64_t response_id,
+    net::IOBuffer* handler_source) {
   AppCacheExecutableHandler* handler = GetExecutableHandler(response_id);
   if (handler)
     return handler;
@@ -102,16 +104,16 @@ AppCacheExecutableHandler* AppCache::GetOrCreateExecutableHandler(
   const AppCacheEntry* entry = GetEntryAndUrlWithResponseId(
       response_id, &handler_url);
   if (!entry || !entry->IsExecutable())
-    return NULL;
+    return nullptr;
 
   DCHECK(storage_->service()->handler_factory());
-  scoped_ptr<AppCacheExecutableHandler> own_ptr =
-      storage_->service()->handler_factory()->
-          CreateHandler(handler_url, handler_source);
-  handler = own_ptr.release();
+  std::unique_ptr<AppCacheExecutableHandler> own_ptr =
+      storage_->service()->handler_factory()->CreateHandler(handler_url,
+                                                            handler_source);
+  handler = own_ptr.get();
   if (!handler)
-    return NULL;
-  executable_handlers_[response_id] = handler;
+    return nullptr;
+  executable_handlers_[response_id] = std::move(own_ptr);
   return handler;
 }
 
@@ -321,7 +323,7 @@ const AppCacheNamespace* AppCache::FindNamespace(
     if (namespaces[i].IsMatch(url))
       return &namespaces[i];
   }
-  return NULL;
+  return nullptr;
 }
 
 }  // namespace content

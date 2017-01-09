@@ -13,6 +13,7 @@
 #include "cc/proto/size.pb.h"
 #include "cc/proto/sizef.pb.h"
 #include "cc/proto/transform.pb.h"
+#include "cc/proto/vector2d.pb.h"
 #include "cc/proto/vector2df.pb.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/point.h"
@@ -191,6 +192,13 @@ TEST(GfxProtoConversionsTest, SerializeDeserializeTransform) {
 
   // Test ProtoToTransform
   EXPECT_EQ(transform, ProtoToTransform(proto));
+
+  // Test for identity transforms.
+  gfx::Transform transform2;
+  EXPECT_TRUE(transform2.IsIdentity());
+  proto::Transform proto2;
+  TransformToProto(transform2, &proto2);
+  EXPECT_EQ(transform2, ProtoToTransform(proto2));
 }
 
 TEST(GfxProtoConversionsTest, SerializeDeserializeVector2dF) {
@@ -267,6 +275,19 @@ TEST(GfxProtoConversionsTest, SerializeDeserializeScrollOffset) {
 
   // Test ProtoToScrollOffset
   EXPECT_EQ(scroll_offset3, ProtoToScrollOffset(proto3));
+}
+
+TEST(GfxProtoConversionsTest, SerializeDeserializeVector2d) {
+  const gfx::Vector2d vector(5, 10);
+
+  // Test Vector2dToProto
+  proto::Vector2d proto;
+  Vector2dToProto(vector, &proto);
+  EXPECT_EQ(vector.x(), proto.x());
+  EXPECT_EQ(vector.y(), proto.y());
+
+  // Test ProtoToVector2d
+  EXPECT_EQ(vector, ProtoToVector2d(proto));
 }
 
 }  // namespace

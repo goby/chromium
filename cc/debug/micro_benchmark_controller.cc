@@ -8,7 +8,8 @@
 #include <string>
 
 #include "base/callback.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/memory/ptr_util.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "cc/debug/invalidation_benchmark.h"
 #include "cc/debug/rasterize_and_record_benchmark.h"
@@ -22,19 +23,17 @@ int MicroBenchmarkController::next_id_ = 1;
 
 namespace {
 
-scoped_ptr<MicroBenchmark> CreateBenchmark(
+std::unique_ptr<MicroBenchmark> CreateBenchmark(
     const std::string& name,
-    scoped_ptr<base::Value> value,
+    std::unique_ptr<base::Value> value,
     const MicroBenchmark::DoneCallback& callback) {
   if (name == "invalidation_benchmark") {
-    return make_scoped_ptr(
-        new InvalidationBenchmark(std::move(value), callback));
+    return base::MakeUnique<InvalidationBenchmark>(std::move(value), callback);
   } else if (name == "rasterize_and_record_benchmark") {
-    return make_scoped_ptr(
-        new RasterizeAndRecordBenchmark(std::move(value), callback));
+    return base::MakeUnique<RasterizeAndRecordBenchmark>(std::move(value),
+                                                         callback);
   } else if (name == "unittest_only_benchmark") {
-    return make_scoped_ptr(
-        new UnittestOnlyBenchmark(std::move(value), callback));
+    return base::MakeUnique<UnittestOnlyBenchmark>(std::move(value), callback);
   }
   return nullptr;
 }
@@ -53,9 +52,9 @@ MicroBenchmarkController::~MicroBenchmarkController() {}
 
 int MicroBenchmarkController::ScheduleRun(
     const std::string& micro_benchmark_name,
-    scoped_ptr<base::Value> value,
+    std::unique_ptr<base::Value> value,
     const MicroBenchmark::DoneCallback& callback) {
-  scoped_ptr<MicroBenchmark> benchmark =
+  std::unique_ptr<MicroBenchmark> benchmark =
       CreateBenchmark(micro_benchmark_name, std::move(value), callback);
   if (benchmark.get()) {
     int id = GetNextIdAndIncrement();
@@ -76,11 +75,12 @@ int MicroBenchmarkController::GetNextIdAndIncrement() {
 }
 
 bool MicroBenchmarkController::SendMessage(int id,
-                                           scoped_ptr<base::Value> value) {
-  auto it = std::find_if(benchmarks_.begin(), benchmarks_.end(),
-                         [id](const scoped_ptr<MicroBenchmark>& benchmark) {
-                           return benchmark->id() == id;
-                         });
+                                           std::unique_ptr<base::Value> value) {
+  auto it =
+      std::find_if(benchmarks_.begin(), benchmarks_.end(),
+                   [id](const std::unique_ptr<MicroBenchmark>& benchmark) {
+                     return benchmark->id() == id;
+                   });
   if (it == benchmarks_.end())
     return false;
   return (*it)->ProcessMessage(std::move(value));
@@ -89,7 +89,7 @@ bool MicroBenchmarkController::SendMessage(int id,
 void MicroBenchmarkController::ScheduleImplBenchmarks(
     LayerTreeHostImpl* host_impl) {
   for (const auto& benchmark : benchmarks_) {
-    scoped_ptr<MicroBenchmarkImpl> benchmark_impl;
+    std::unique_ptr<MicroBenchmarkImpl> benchmark_impl;
     if (!benchmark->ProcessedForBenchmarkImpl()) {
       benchmark_impl =
           benchmark->GetBenchmarkImpl(main_controller_task_runner_);
@@ -103,7 +103,7 @@ void MicroBenchmarkController::ScheduleImplBenchmarks(
 void MicroBenchmarkController::DidUpdateLayers() {
   for (const auto& benchmark : benchmarks_) {
     if (!benchmark->IsDone())
-      benchmark->DidUpdateLayers(host_);
+      benchmark->DidUpdateLayers(host_->GetLayerTree());
   }
 
   CleanUpFinishedBenchmarks();
@@ -112,7 +112,7 @@ void MicroBenchmarkController::DidUpdateLayers() {
 void MicroBenchmarkController::CleanUpFinishedBenchmarks() {
   benchmarks_.erase(
       std::remove_if(benchmarks_.begin(), benchmarks_.end(),
-                     [](const scoped_ptr<MicroBenchmark>& benchmark) {
+                     [](const std::unique_ptr<MicroBenchmark>& benchmark) {
                        return benchmark->IsDone();
                      }),
       benchmarks_.end());

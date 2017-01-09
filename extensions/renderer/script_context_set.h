@@ -5,6 +5,8 @@
 #ifndef EXTENSIONS_RENDERER_SCRIPT_CONTEXT_SET_H_
 #define EXTENSIONS_RENDERER_SCRIPT_CONTEXT_SET_H_
 
+#include <stddef.h>
+
 #include <set>
 #include <string>
 
@@ -17,10 +19,6 @@
 #include "v8/include/v8.h"
 
 class GURL;
-
-namespace base {
-class ListValue;
-}
 
 namespace blink {
 class WebLocalFrame;
@@ -76,6 +74,10 @@ class ScriptContextSet {
   static ScriptContext* GetContextByV8Context(
       const v8::Local<v8::Context>& context);
 
+  // Returns the ScriptContext corresponding to the V8 context that created the
+  // given |object|.
+  static ScriptContext* GetContextByObject(const v8::Local<v8::Object>& object);
+
   // Synchronously runs |callback| with each ScriptContext that belongs to
   // |extension_id| in |render_frame|.
   //
@@ -102,6 +104,9 @@ class ScriptContextSet {
   // are safe to interact with until the end of the current event loop, since
   // they're deleted asynchronously.
   std::set<ScriptContext*> OnExtensionUnloaded(const std::string& extension_id);
+
+  // Adds the given |context| for testing purposes.
+  void AddForTesting(std::unique_ptr<ScriptContext> context);
 
  private:
   // Finds the extension for the JavaScript context associated with the

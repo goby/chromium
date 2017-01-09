@@ -2,10 +2,15 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
+
 #include <string>
+#include <utility>
 
 #include "base/callback_forward.h"
+#include "base/run_loop.h"
 #include "base/threading/sequenced_worker_pool.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/app_data_migrator.h"
 #include "chrome/browser/extensions/extension_special_storage_policy.h"
 #include "chrome/test/base/testing_profile.h"
@@ -24,7 +29,7 @@
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
-scoped_ptr<TestingProfile> GetTestingProfile() {
+std::unique_ptr<TestingProfile> GetTestingProfile() {
   TestingProfile::Builder profile_builder;
   return profile_builder.Build();
 }
@@ -40,7 +45,7 @@ class AppDataMigratorTest : public testing::Test {
   void SetUp() override {
     profile_ = GetTestingProfile();
     registry_ = ExtensionRegistry::Get(profile_.get());
-    migrator_ = scoped_ptr<AppDataMigrator>(
+    migrator_ = std::unique_ptr<AppDataMigrator>(
         new AppDataMigrator(profile_.get(), registry_));
 
     default_partition_ =
@@ -48,11 +53,11 @@ class AppDataMigratorTest : public testing::Test {
 
     idb_context_ = default_partition_->GetIndexedDBContext();
     idb_context_->SetTaskRunnerForTesting(
-        base::MessageLoop::current()->task_runner().get());
+        base::ThreadTaskRunnerHandle::Get().get());
 
     default_fs_context_ = default_partition_->GetFileSystemContext();
 
-    url_request_context_ = scoped_ptr<content::MockBlobURLRequestContext>(
+    url_request_context_ = std::unique_ptr<content::MockBlobURLRequestContext>(
         new content::MockBlobURLRequestContext(default_fs_context_));
   }
 
@@ -60,13 +65,13 @@ class AppDataMigratorTest : public testing::Test {
 
  protected:
   content::TestBrowserThreadBundle thread_bundle_;
-  scoped_ptr<TestingProfile> profile_;
-  scoped_ptr<AppDataMigrator> migrator_;
+  std::unique_ptr<TestingProfile> profile_;
+  std::unique_ptr<AppDataMigrator> migrator_;
   content::StoragePartition* default_partition_;
   ExtensionRegistry* registry_;
   storage::FileSystemContext* default_fs_context_;
   content::IndexedDBContext* idb_context_;
-  scoped_ptr<content::MockBlobURLRequestContext> url_request_context_;
+  std::unique_ptr<content::MockBlobURLRequestContext> url_request_context_;
 };
 
 scoped_refptr<const Extension> GetTestExtension(bool platform_app) {
@@ -74,28 +79,37 @@ scoped_refptr<const Extension> GetTestExtension(bool platform_app) {
   if (platform_app) {
     app = ExtensionBuilder()
               .SetManifest(
-                   DictionaryBuilder()
-                       .Set("name", "test app")
-                       .Set("version", "1")
-                       .Set("app", DictionaryBuilder().Set(
-                                       "background",
-                                       DictionaryBuilder().Set(
-                                           "scripts", ListBuilder().Append(
-                                                          "background.js"))))
-                       .Set("permissions",
-                            ListBuilder().Append("unlimitedStorage")))
+                  DictionaryBuilder()
+                      .Set("name", "test app")
+                      .Set("version", "1")
+                      .Set("app", DictionaryBuilder()
+                                      .Set("background",
+                                           DictionaryBuilder()
+                                               .Set("scripts",
+                                                    ListBuilder()
+                                                        .Append("background.js")
+                                                        .Build())
+                                               .Build())
+                                      .Build())
+                      .Set("permissions",
+                           ListBuilder().Append("unlimitedStorage").Build())
+                      .Build())
               .Build();
   } else {
     app = ExtensionBuilder()
-              .SetManifest(DictionaryBuilder()
-                               .Set("name", "test app")
-                               .Set("version", "1")
-                               .Set("app", DictionaryBuilder().Set(
-                                               "launch",
-                                               DictionaryBuilder().Set(
-                                                   "local_path", "index.html")))
-                               .Set("permissions",
-                                    ListBuilder().Append("unlimitedStorage")))
+              .SetManifest(
+                  DictionaryBuilder()
+                      .Set("name", "test app")
+                      .Set("version", "1")
+                      .Set("app", DictionaryBuilder()
+                                      .Set("launch",
+                                           DictionaryBuilder()
+                                               .Set("local_path", "index.html")
+                                               .Build())
+                                      .Build())
+                      .Set("permissions",
+                           ListBuilder().Append("unlimitedStorage").Build())
+                      .Build())
               .Build();
   }
   return app;
@@ -104,7 +118,7 @@ scoped_refptr<const Extension> GetTestExtension(bool platform_app) {
 void MigrationCallback() {
 }
 
-void DidWrite(base::File::Error status, int64 bytes, bool complete) {
+void DidWrite(base::File::Error status, int64_t bytes, bool complete) {
   base::MessageLoop::current()->QuitWhenIdle();
 }
 
@@ -125,7 +139,7 @@ void OpenFileSystems(storage::FileSystemContext* fs_context,
   fs_context->OpenFileSystem(extension_url, storage::kFileSystemTypePersistent,
                              storage::OPEN_FILE_SYSTEM_CREATE_IF_NONEXISTENT,
                              base::Bind(&DidOpenFileSystem));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 }
 
 void GenerateTestFiles(content::MockBlobURLRequestContext* url_request_context,
@@ -156,22 +170,22 @@ void GenerateTestFiles(content::MockBlobURLRequestContext* url_request_context,
 
   fs_context->operation_runner()->CreateFile(fs_persistent_url, false,
                                              base::Bind(&DidCreate));
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   fs_context->operation_runner()->Write(url_request_context, fs_temp_url,
                                         blob1.GetBlobDataHandle(), 0,
                                         base::Bind(&DidWrite));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   fs_context->operation_runner()->Write(url_request_context, fs_persistent_url,
                                         blob1.GetBlobDataHandle(), 0,
                                         base::Bind(&DidWrite));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 void VerifyFileContents(base::File file,
                         const base::Closure& on_close_callback) {
   ASSERT_EQ(14, file.GetLength());
-  scoped_ptr<char[]> buffer(new char[15]);
+  std::unique_ptr<char[]> buffer(new char[15]);
 
   file.Read(0, buffer.get(), 14);
   buffer.get()[14] = 0;
@@ -207,11 +221,11 @@ void VerifyTestFilesMigrated(content::StoragePartition* new_partition,
   new_fs_context->operation_runner()->OpenFile(
       fs_temp_url, base::File::FLAG_READ | base::File::FLAG_OPEN,
       base::Bind(&VerifyFileContents));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
   new_fs_context->operation_runner()->OpenFile(
       fs_persistent_url, base::File::FLAG_READ | base::File::FLAG_OPEN,
       base::Bind(&VerifyFileContents));
-  base::MessageLoop::current()->Run();
+  base::RunLoop().Run();
 }
 
 TEST_F(AppDataMigratorTest, ShouldMigrate) {
@@ -254,7 +268,7 @@ TEST_F(AppDataMigratorTest, FileSystemMigration) {
   migrator_->DoMigrationAndReply(old_ext.get(), new_ext.get(),
                                  base::Bind(&MigrationCallback));
 
-  base::MessageLoop::current()->RunUntilIdle();
+  base::RunLoop().RunUntilIdle();
 
   registry_->AddEnabled(new_ext);
   GURL extension_url =

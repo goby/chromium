@@ -12,7 +12,9 @@
   },
   "file_handlers": {
     "textAction": {
-      "extensions": ["txt"]
+      "extensions": ["txt"],
+      "verb": "add_to",
+      "include_directories": true
     }
   },
   "permissions": [

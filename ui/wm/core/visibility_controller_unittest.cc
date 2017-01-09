@@ -32,7 +32,7 @@ TEST_F(VisibilityControllerTest, AnimateTransparencyToZeroAndHideHides) {
   SetChildWindowVisibilityChangesAnimated(root_window());
 
   aura::test::TestWindowDelegate d;
-  scoped_ptr<aura::Window> window(aura::test::CreateTestWindowWithDelegate(
+  std::unique_ptr<aura::Window> window(aura::test::CreateTestWindowWithDelegate(
       &d, -2, gfx::Rect(0, 0, 50, 50), root_window()));
   ui::ScopedLayerAnimationSettings settings(window->layer()->GetAnimator());
   settings.SetTransitionDuration(base::TimeDelta::FromMilliseconds(5));
@@ -54,6 +54,32 @@ TEST_F(VisibilityControllerTest, AnimateTransparencyToZeroAndHideHides) {
   EXPECT_FALSE(window->IsVisible());
 }
 
+// Check that a hiding animation would not change a window's bounds in screen.
+TEST_F(VisibilityControllerTest, HideAnimationWindowBoundsTest) {
+  // We cannot disable animations for this test.
+  ui::ScopedAnimationDurationScaleMode test_duration_mode(
+      ui::ScopedAnimationDurationScaleMode::NON_ZERO_DURATION);
+
+  VisibilityController controller;
+  aura::client::SetVisibilityClient(root_window(), &controller);
+
+  // Set bound expectation.
+  gfx::Rect expected_bounds(4, 5, 123, 245);
+  aura::test::TestWindowDelegate d;
+  std::unique_ptr<aura::Window> window(aura::test::CreateTestWindowWithDelegate(
+      &d, -2, expected_bounds, root_window()));
+  window->Show();
+  SetWindowVisibilityChangesAnimated(window.get());
+  SetWindowVisibilityAnimationDuration(window.get(),
+                                       base::TimeDelta::FromMilliseconds(5));
+  SetWindowVisibilityAnimationType(window.get(),
+                                   WINDOW_VISIBILITY_ANIMATION_TYPE_DROP);
+  // Check that the bound is correct after the hide animation has finished.
+  window->Hide();
+  window->layer()->GetAnimator()->StopAnimating();
+  EXPECT_EQ(expected_bounds, window->GetBoundsInScreen());
+}
+
 // Test if SetWindowVisibilityChagngesAnimated will animate the specified
 // window.
 TEST_F(VisibilityControllerTest, SetWindowVisibilityChagnesAnimated) {
@@ -65,7 +91,7 @@ TEST_F(VisibilityControllerTest, SetWindowVisibilityChagnesAnimated) {
   aura::client::SetVisibilityClient(root_window(), &controller);
 
   aura::test::TestWindowDelegate d;
-  scoped_ptr<aura::Window> window(aura::test::CreateTestWindowWithDelegate(
+  std::unique_ptr<aura::Window> window(aura::test::CreateTestWindowWithDelegate(
       &d, -2, gfx::Rect(0, 0, 50, 50), root_window()));
   // Test using Show animation because Hide animation detaches the window's
   // layer.

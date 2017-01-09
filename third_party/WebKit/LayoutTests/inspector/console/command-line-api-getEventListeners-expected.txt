@@ -6,91 +6,131 @@ Tests getEventListeners() method of console command line API.
 [page] keydown: {
 [page]     0: {
 [page]         listener: function listener1() { }
-[page]         useCapture: false
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "keydown"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: false
 [page]     }
 [page]     1: {
 [page]         listener: function listener2() { }
-[page]         useCapture: true
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "keydown"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: true
+[page]     }
+[page] }
+[page] wheel: {
+[page]     0: {
+[page]         listener: function listener2() { }
+[page]         once: false
+[page]         passive: true
+[page]         remove: function remove() { [Command Line API] }
+[page]         type: "wheel"
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] - inner after a removal -
 [page] keydown: {
 [page]     0: {
 [page]         listener: function listener2() { }
-[page]         useCapture: true
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "keydown"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: true
 [page]     }
 [page] }
 [page] - outer -
-[page] mousemove: {
+[page] keydown: {
 [page]     0: {
-[page]         listener: function listener1() { }
+[page]         listener: function listener2() { }
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
+[page]         type: "keydown"
+[page]         useCapture: true
+[page]     }
+[page] }
+[page] keyup: {
+[page]     0: {
+[page]         listener: function listener2() { }
+[page]         once: true
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
+[page]         type: "keyup"
 [page]         useCapture: false
-[page]         type: "mousemove"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
 [page]     }
 [page] }
 [page] mousedown: {
 [page]     0: {
 [page]         listener: function listener2() { }
-[page]         useCapture: true
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "mousedown"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: true
 [page]     }
 [page] }
-[page] keydown: {
+[page] mousemove: {
 [page]     0: {
-[page]         listener: function listener2() { }
-[page]         useCapture: true
-[page]         type: "keydown"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         listener: function listener1() { }
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
+[page]         type: "mousemove"
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] - attribute event listeners -
 [page] click: {
 [page]     0: {
 [page]         listener: function onclick(event) { alert(1) }
-[page]         useCapture: false
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "click"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] mouseover: {
 [page]     0: {
 [page]         listener: function onmouseover(event) { listener2() }
-[page]         useCapture: false
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "mouseover"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] - window -
 [page] load: {
 [page]     0: {
 [page]         listener: function onload(event) { runTest() }
-[page]         useCapture: false
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "load"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] popstate: {
 [page]     0: {
 [page]         listener: function listener1() { }
-[page]         useCapture: false
+[page]         once: false
+[page]         passive: false
+[page]         remove: function remove() { [Command Line API] }
 [page]         type: "popstate"
-[page]         remove: function () { node.removeEventListener(this.type, this.listener, this.useCapture) }
+[page]         useCapture: false
 [page]     }
 [page] }
 [page] - empty -
 [page] - invalid -
 [page] - object -
-[page] undefined
+[page] object
 [page] - null -
-[page] undefined
+[page] object
 [page] - undefined -
-[page] undefined
+[page] object
 

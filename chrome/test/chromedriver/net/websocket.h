@@ -7,8 +7,8 @@
 
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "net/base/completion_callback.h"
@@ -65,7 +65,7 @@ class WebSocket {
   GURL url_;
   WebSocketListener* listener_;
   State state_;
-  scoped_ptr<net::TCPClientSocket> socket_;
+  std::unique_ptr<net::TCPClientSocket> socket_;
 
   net::CompletionCallback connect_callback_;
   std::string sec_key_;

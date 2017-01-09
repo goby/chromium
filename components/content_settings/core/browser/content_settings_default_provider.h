@@ -6,14 +6,14 @@
 #define COMPONENTS_CONTENT_SETTINGS_CORE_BROWSER_CONTENT_SETTINGS_DEFAULT_PROVIDER_H_
 
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/prefs/pref_change_registrar.h"
+#include "base/macros.h"
 #include "base/synchronization/lock.h"
 #include "components/content_settings/core/browser/content_settings_observable_provider.h"
+#include "components/prefs/pref_change_registrar.h"
 
 class PrefService;
 
@@ -35,7 +35,7 @@ class DefaultProvider : public ObservableProvider {
   ~DefaultProvider() override;
 
   // ProviderInterface implementations.
-  scoped_ptr<RuleIterator> GetRuleIterator(
+  std::unique_ptr<RuleIterator> GetRuleIterator(
       ContentSettingsType content_type,
       const ResourceIdentifier& resource_identifier,
       bool incognito) const override;
@@ -62,7 +62,7 @@ class DefaultProvider : public ObservableProvider {
                              base::Value* value);
 
   // Reads the preference corresponding to |content_type|.
-  scoped_ptr<base::Value> ReadFromPref(ContentSettingsType content_type);
+  std::unique_ptr<base::Value> ReadFromPref(ContentSettingsType content_type);
 
   // Writes the value |value| to the preference corresponding to |content_type|.
   // It's the responsibility of caller to obtain a lock and notify observers.
@@ -76,12 +76,12 @@ class DefaultProvider : public ObservableProvider {
   void DiscardObsoletePreferences();
 
   // Copies of the pref data, so that we can read it on the IO thread.
-  std::map<ContentSettingsType, scoped_ptr<base::Value>> default_settings_;
+  std::map<ContentSettingsType, std::unique_ptr<base::Value>> default_settings_;
 
   PrefService* prefs_;
 
   // Whether this settings map is for an Incognito session.
-  bool is_incognito_;
+  const bool is_incognito_;
 
   // Used around accesses to the |default_settings_| object to guarantee
   // thread safety.

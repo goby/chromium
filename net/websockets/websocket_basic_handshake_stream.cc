@@ -9,12 +9,13 @@
 #include <iterator>
 #include <set>
 #include <string>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "base/base64.h"
 #include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/sparse_histogram.h"
@@ -83,7 +84,8 @@ std::string MultipleHeaderValuesMessage(const std::string& header_name) {
 
 std::string GenerateHandshakeChallenge() {
   std::string raw_challenge(websockets::kRawChallengeLength, '\0');
-  crypto::RandBytes(string_as_array(&raw_challenge), raw_challenge.length());
+  crypto::RandBytes(base::string_as_array(&raw_challenge),
+                    raw_challenge.length());
   std::string encoded_challenge;
   base::Base64Encode(raw_challenge, &encoded_challenge);
   return encoded_challenge;
@@ -100,10 +102,10 @@ void AddVectorHeaderIfNonEmpty(const char* name,
 GetHeaderResult GetSingleHeaderValue(const HttpResponseHeaders* headers,
                                      const base::StringPiece& name,
                                      std::string* value) {
-  void* state = nullptr;
+  size_t iter = 0;
   size_t num_values = 0;
   std::string temp_value;
-  while (headers->EnumerateHeader(&state, name, &temp_value)) {
+  while (headers->EnumerateHeader(&iter, name, &temp_value)) {
     if (++num_values > 1)
       return GET_HEADER_MULTIPLE;
     *value = temp_value;
@@ -184,18 +186,18 @@ bool ValidateSubProtocol(
     const std::vector<std::string>& requested_sub_protocols,
     std::string* sub_protocol,
     std::string* failure_message) {
-  void* state = nullptr;
+  size_t iter = 0;
   std::string value;
-  base::hash_set<std::string> requested_set(requested_sub_protocols.begin(),
-                                            requested_sub_protocols.end());
+  std::unordered_set<std::string> requested_set(requested_sub_protocols.begin(),
+                                                requested_sub_protocols.end());
   int count = 0;
   bool has_multiple_protocols = false;
   bool has_invalid_protocol = false;
 
   while (!has_invalid_protocol || !has_multiple_protocols) {
     std::string temp_value;
-    if (!headers->EnumerateHeader(
-            &state, websockets::kSecWebSocketProtocol, &temp_value))
+    if (!headers->EnumerateHeader(&iter, websockets::kSecWebSocketProtocol,
+                                  &temp_value))
       break;
     value = temp_value;
     if (requested_set.count(value) == 0)
@@ -234,13 +236,13 @@ bool ValidateExtensions(const HttpResponseHeaders* headers,
                         std::string* accepted_extensions_descriptor,
                         std::string* failure_message,
                         WebSocketExtensionParams* params) {
-  void* state = nullptr;
+  size_t iter = 0;
   std::string header_value;
   std::vector<std::string> header_values;
   // TODO(ricea): If adding support for additional extensions, generalise this
   // code.
   bool seen_permessage_deflate = false;
-  while (headers->EnumerateHeader(&state, websockets::kSecWebSocketExtensions,
+  while (headers->EnumerateHeader(&iter, websockets::kSecWebSocketExtensions,
                                   &header_value)) {
     WebSocketExtensionParser parser;
     if (!parser.Parse(header_value)) {
@@ -287,20 +289,22 @@ bool ValidateExtensions(const HttpResponseHeaders* headers,
 }  // namespace
 
 WebSocketBasicHandshakeStream::WebSocketBasicHandshakeStream(
-    scoped_ptr<ClientSocketHandle> connection,
+    std::unique_ptr<ClientSocketHandle> connection,
     WebSocketStream::ConnectDelegate* connect_delegate,
     bool using_proxy,
     std::vector<std::string> requested_sub_protocols,
     std::vector<std::string> requested_extensions,
-    std::string* failure_message)
-    : state_(connection.release(), using_proxy),
+    WebSocketStreamRequest* request)
+    : state_(std::move(connection),
+             using_proxy,
+             false /* http_09_on_non_default_ports_enabled */),
       connect_delegate_(connect_delegate),
       http_response_info_(nullptr),
       requested_sub_protocols_(requested_sub_protocols),
       requested_extensions_(requested_extensions),
-      failure_message_(failure_message) {
+      stream_request_(request) {
   DCHECK(connect_delegate);
-  DCHECK(failure_message);
+  DCHECK(request);
 }
 
 WebSocketBasicHandshakeStream::~WebSocketBasicHandshakeStream() {}
@@ -308,7 +312,7 @@ WebSocketBasicHandshakeStream::~WebSocketBasicHandshakeStream() {}
 int WebSocketBasicHandshakeStream::InitializeStream(
     const HttpRequestInfo* request_info,
     RequestPriority priority,
-    const BoundNetLog& net_log,
+    const NetLogWithSource& net_log,
     const CompletionCallback& callback) {
   url_ = request_info->url;
   state_.Initialize(request_info, priority, net_log, callback);
@@ -354,10 +358,10 @@ int WebSocketBasicHandshakeStream::SendRequest(
       ComputeSecWebSocketAccept(handshake_challenge);
 
   DCHECK(connect_delegate_);
-  scoped_ptr<WebSocketHandshakeRequestInfo> request(
+  std::unique_ptr<WebSocketHandshakeRequestInfo> request(
       new WebSocketHandshakeRequestInfo(url_, base::Time::Now()));
   request->headers.CopyFrom(enriched_headers);
-  connect_delegate_->OnStartOpeningHandshake(request.Pass());
+  connect_delegate_->OnStartOpeningHandshake(std::move(request));
 
   return parser()->SendRequest(
       state_.GenerateRequestLine(), enriched_headers, response, callback);
@@ -438,6 +442,19 @@ bool WebSocketBasicHandshakeStream::GetRemoteEndpoint(IPEndPoint* endpoint) {
   return state_.connection()->socket()->GetPeerAddress(endpoint) == OK;
 }
 
+void WebSocketBasicHandshakeStream::PopulateNetErrorDetails(
+    NetErrorDetails* /*details*/) {
+  return;
+}
+
+Error WebSocketBasicHandshakeStream::GetTokenBindingSignature(
+    crypto::ECPrivateKey* key,
+    TokenBindingType tb_type,
+    std::vector<uint8_t>* out) {
+  NOTREACHED();
+  return ERR_NOT_IMPLEMENTED;
+}
+
 void WebSocketBasicHandshakeStream::Drain(HttpNetworkSession* session) {
   HttpResponseBodyDrainer* drainer = new HttpResponseBodyDrainer(this);
   drainer->Start(session);
@@ -449,25 +466,19 @@ void WebSocketBasicHandshakeStream::SetPriority(RequestPriority priority) {
   // gone, then copy whatever has happened there over here.
 }
 
-UploadProgress WebSocketBasicHandshakeStream::GetUploadProgress() const {
-  return UploadProgress();
-}
-
 HttpStream* WebSocketBasicHandshakeStream::RenewStreamForAuth() {
   // Return null because we don't support renewing the stream.
   return nullptr;
 }
 
-scoped_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
+std::unique_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
   // The HttpStreamParser object has a pointer to our ClientSocketHandle. Make
   // sure it does not touch it again before it is destroyed.
   state_.DeleteParser();
   WebSocketTransportClientSocketPool::UnlockEndpoint(state_.connection());
-  scoped_ptr<WebSocketStream> basic_stream(
-      new WebSocketBasicStream(state_.ReleaseConnection(),
-                               state_.read_buf(),
-                               sub_protocol_,
-                               extensions_));
+  std::unique_ptr<WebSocketStream> basic_stream(
+      new WebSocketBasicStream(state_.ReleaseConnection(), state_.read_buf(),
+                               sub_protocol_, extensions_));
   DCHECK(extension_params_.get());
   if (extension_params_->deflate_enabled) {
     UMA_HISTOGRAM_ENUMERATION(
@@ -475,12 +486,12 @@ scoped_ptr<WebSocketStream> WebSocketBasicHandshakeStream::Upgrade() {
         extension_params_->deflate_parameters.client_context_take_over_mode(),
         WebSocketDeflater::NUM_CONTEXT_TAKEOVER_MODE_TYPES);
 
-    return scoped_ptr<WebSocketStream>(new WebSocketDeflateStream(
-        basic_stream.Pass(), extension_params_->deflate_parameters,
-        scoped_ptr<WebSocketDeflatePredictor>(
+    return std::unique_ptr<WebSocketStream>(new WebSocketDeflateStream(
+        std::move(basic_stream), extension_params_->deflate_parameters,
+        std::unique_ptr<WebSocketDeflatePredictor>(
             new WebSocketDeflatePredictorImpl)));
   } else {
-    return basic_stream.Pass();
+    return basic_stream;
   }
 }
 
@@ -530,10 +541,9 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
         // Reporting "Unexpected response code: 200" in this case is not
         // helpful, so use a different error message.
         if (headers->GetHttpVersion() == HttpVersion(0, 9)) {
-          set_failure_message(
-              "Error during WebSocket handshake: Invalid status line");
+          OnFailure("Error during WebSocket handshake: Invalid status line");
         } else {
-          set_failure_message(base::StringPrintf(
+          OnFailure(base::StringPrintf(
               "Error during WebSocket handshake: Unexpected response code: %d",
               headers->response_code()));
         }
@@ -542,12 +552,11 @@ int WebSocketBasicHandshakeStream::ValidateResponse(int rv) {
     }
   } else {
     if (rv == ERR_EMPTY_RESPONSE) {
-      set_failure_message(
-          "Connection closed before receiving a handshake response");
+      OnFailure("Connection closed before receiving a handshake response");
       return rv;
     }
-    set_failure_message(std::string("Error during WebSocket handshake: ") +
-                        ErrorToString(rv));
+    OnFailure(std::string("Error during WebSocket handshake: ") +
+              ErrorToString(rv));
     OnFinishOpeningHandshake();
     // Some error codes (for example ERR_CONNECTION_CLOSED) get changed to OK at
     // higher levels. To prevent an unvalidated connection getting erroneously
@@ -581,13 +590,12 @@ int WebSocketBasicHandshakeStream::ValidateUpgradeResponse(
                          extension_params_.get())) {
     return OK;
   }
-  set_failure_message("Error during WebSocket handshake: " + failure_message);
+  OnFailure("Error during WebSocket handshake: " + failure_message);
   return ERR_INVALID_RESPONSE;
 }
 
-void WebSocketBasicHandshakeStream::set_failure_message(
-    const std::string& failure_message) {
-  *failure_message_ = failure_message;
+void WebSocketBasicHandshakeStream::OnFailure(const std::string& message) {
+  stream_request_->OnFailure(message);
 }
 
 }  // namespace net

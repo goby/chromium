@@ -6,6 +6,7 @@
 #define CONTENT_RENDERER_PEPPER_CONTENT_RENDERER_PEPPER_HOST_FACTORY_H_
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "ppapi/host/host_factory.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
 
@@ -14,16 +15,14 @@ class PpapiPermissions;
 }
 
 namespace content {
-class PepperInstanceStateAccessor;
 class RendererPpapiHostImpl;
-class RenderViewImpl;
 
 class ContentRendererPepperHostFactory : public ppapi::host::HostFactory {
  public:
   explicit ContentRendererPepperHostFactory(RendererPpapiHostImpl* host);
   ~ContentRendererPepperHostFactory() override;
 
-  scoped_ptr<ppapi::host::ResourceHost> CreateResourceHost(
+  std::unique_ptr<ppapi::host::ResourceHost> CreateResourceHost(
       ppapi::host::PpapiHost* host,
       PP_Resource resource,
       PP_Instance instance,

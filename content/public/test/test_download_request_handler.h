@@ -6,12 +6,13 @@
 #define CONTENT_PUBLIC_TEST_TEST_DOWNLOAD_REQUEST_HANDLER_H_
 
 #include <stdint.h>
+
+#include <memory>
 #include <queue>
 
 #include "base/callback_forward.h"
 #include "base/files/file.h"
 #include "base/macros.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/non_thread_safe.h"
 #include "net/base/completion_callback.h"
@@ -196,15 +197,32 @@ class TestDownloadRequestHandler : public base::NonThreadSafe {
 
   // Details about completed requests returned by GetCompletedRequestInfo().
   struct CompletedRequest {
+    CompletedRequest();
+    CompletedRequest(CompletedRequest&&);
+    ~CompletedRequest();
+
     // Count of bytes read by the client of the URLRequestJob. This counts the
     // number of bytes of the entity that was transferred *after* content
     // decoding is complete.
     int64_t transferred_byte_count = -1;
 
     net::HttpRequestHeaders request_headers;
+
+    std::string referrer;
+    net::URLRequest::ReferrerPolicy referrer_policy =
+        net::URLRequest::NEVER_CLEAR_REFERRER;
+
+    GURL first_party_for_cookies;
+    net::URLRequest::FirstPartyURLPolicy first_party_url_policy =
+        net::URLRequest::NEVER_CHANGE_FIRST_PARTY_URL;
+
+    url::Origin initiator;
+
+   private:
+    DISALLOW_COPY_AND_ASSIGN(CompletedRequest);
   };
 
-  using CompletedRequests = std::vector<CompletedRequest>;
+  using CompletedRequests = std::vector<std::unique_ptr<CompletedRequest>>;
 
   // Registers a request handler at the default URL. Call url() to determine the
   // URL.
@@ -290,7 +308,7 @@ class TestDownloadRequestHandler : public base::NonThreadSafe {
   //
   // Note: Don't use this function to generate a cryptographically secure
   // pseudo-random sequence.
-  static void GetPatternBytes(int seed, int64 offset, int length, char* data);
+  static void GetPatternBytes(int seed, int64_t offset, int length, char* data);
 
  private:
   class Interceptor;

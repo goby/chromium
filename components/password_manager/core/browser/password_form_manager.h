@@ -6,38 +6,51 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_FORM_MANAGER_H_
 
 #include <stdint.h>
+
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
-#include "build/build_config.h"
-
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/memory/scoped_vector.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
+#include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/form_structure.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/form_fetcher.h"
+#include "components/password_manager/core/browser/form_fetcher_impl.h"
 #include "components/password_manager/core/browser/password_manager_driver.h"
 #include "components/password_manager/core/browser/password_store.h"
-#include "components/password_manager/core/browser/password_store_consumer.h"
 
 namespace password_manager {
 
+class FormSaver;
 class PasswordManager;
 class PasswordManagerClient;
 
-// Per-password-form-{on-page, dialog} class responsible for interactions
-// between a given form, the per-tab PasswordManager, and the PasswordStore.
-class PasswordFormManager : public PasswordStoreConsumer {
+// This class helps with filling the observed form (both HTML and from HTTP
+// auth) and with saving/updating the stored information about it.
+class PasswordFormManager : public FormFetcher::Consumer {
  public:
-  // |password_manager| owns this object
-  // |form_on_page| is the form that may be submitted and could need login data.
-  // |ssl_valid| represents the security of the page containing observed_form,
-  //           used to filter login results from database.
+  // |password_manager| owns |this|, |client| and |driver| serve to
+  // communicate with embedder, |observed_form| is the associated form |this|
+  // is managing, |form_saver| is used to save/update the form and
+  // |form_fetcher| to get saved data about the form.
+  //
+  // TODO(crbug.com/621355): So far, |form_fetcher| can be null. In that case
+  // |this| creates an instance of it itself (meant for production code). Once
+  // the fetcher is shared between PasswordFormManager instances, it will be
+  // required that |form_fetcher| is not null.
   PasswordFormManager(PasswordManager* password_manager,
                       PasswordManagerClient* client,
                       const base::WeakPtr<PasswordManagerDriver>& driver,
                       const autofill::PasswordForm& observed_form,
-                      bool ssl_valid);
+                      std::unique_ptr<FormSaver> form_saver,
+                      FormFetcher* form_fetcher);
   ~PasswordFormManager() override;
 
   // Flags describing the result of comparing two forms as performed by
@@ -74,28 +87,6 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // they match. The return value is a MatchResultMask bitmask.
   MatchResultMask DoesManage(const autofill::PasswordForm& form) const;
 
-  // Retrieves potential matching logins from the database. In addition the
-  // statistics is retrived on platforms with the password bubble.
-  // |prompt_policy| indicates whether it's permissible to prompt the user to
-  // authorize access to locked passwords. This argument is only used on
-  // platforms that support prompting the user for access (such as Mac OS).
-  void FetchDataFromPasswordStore(
-      PasswordStore::AuthorizationPromptPolicy prompt_policy);
-
-  // Simple state-check to verify whether this object as received a callback
-  // from the PasswordStore and completed its matching phase. Note that the
-  // callback in question occurs on the same (and only) main thread from which
-  // instances of this class are ever used, but it is required since it is
-  // conceivable that a user (or ui test) could attempt to submit a login
-  // prompt before the callback has occured, which would InvokeLater a call to
-  // PasswordManager::ProvisionallySave, which would interact with this object
-  // before the db has had time to answer with matching password entries.
-  // This is intended to be a one-time check; if the return value is false the
-  // expectation is caller will give up. This clearly won't work if you put it
-  // in a loop and wait for matching to complete; you're (supposed to be) on
-  // the same thread!
-  bool HasCompletedMatching() const;
-
   // Update |this| with the |form| that was actually submitted. Used to
   // determine what type the submitted form is for
   // IsIgnorableChangePasswordForm() and UMA stats.
@@ -119,12 +110,6 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // before |this| has data from the PasswordStore, the execution will be
   // delayed until the data arrives.
   void ProcessFrame(const base::WeakPtr<PasswordManagerDriver>& driver);
-
-  // PasswordStoreConsumer:
-  void OnGetPasswordStoreResults(
-      ScopedVector<autofill::PasswordForm> results) override;
-  void OnGetSiteStatistics(
-      scoped_ptr<std::vector<scoped_ptr<InteractionsStats>>> stats) override;
 
   // A user opted to 'never remember' passwords for this form.
   // Blacklist it so that from now on when it is seen we ignore it.
@@ -157,27 +142,28 @@ class PasswordFormManager : public PasswordStoreConsumer {
   void LogSubmitPassed();
   void LogSubmitFailed();
 
-  // When attempting to provisionally save |form|, call this to check if it is
-  // actually a change-password form which should be ignored, i.e., whether:
-  // * the username was not explicitly marked with "autocomplete=username", and
-  // * both the current and new password fields are non-empty, and
-  // * the username and password do not match any credentials already stored.
-  // In these cases the username field is detection is unreliable (there might
-  // even be none), and the user should not be bothered with saving a
-  // potentially malformed credential. Once we handle change password forms
-  // correctly, this method should be replaced accordingly.
-  //
-  // Must be called after SetSubmittedForm().
-  bool is_ignorable_change_password_form() const {
-    DCHECK(form_type_ != kFormTypeUnspecified);
-    return is_ignorable_change_password_form_;
-  }
-
   // These functions are used to determine if this form has had it's password
   // auto generated by the browser.
   bool has_generated_password() const { return has_generated_password_; }
   void set_has_generated_password(bool generated_password) {
     has_generated_password_ = generated_password;
+  }
+
+  bool is_manual_generation() { return is_manual_generation_; }
+  void set_is_manual_generation(bool is_manual_generation) {
+    is_manual_generation_ = is_manual_generation;
+  }
+
+  const base::string16& generation_element() { return generation_element_; }
+  void set_generation_element(const base::string16& generation_element) {
+    generation_element_ = generation_element;
+  }
+
+  bool get_generation_popup_was_shown() const {
+    return generation_popup_was_shown_;
+  }
+  void set_generation_popup_was_shown(bool generation_popup_was_shown) {
+    generation_popup_was_shown_ = generation_popup_was_shown;
   }
 
   bool password_overridden() const { return password_overridden_; }
@@ -195,7 +181,8 @@ class PasswordFormManager : public PasswordStoreConsumer {
   }
 
   // Returns the best matches.
-  const autofill::PasswordFormMap& best_matches() const {
+  const std::map<base::string16, const autofill::PasswordForm*>& best_matches()
+      const {
     return best_matches_;
   }
 
@@ -203,19 +190,9 @@ class PasswordFormManager : public PasswordStoreConsumer {
     return preferred_match_;
   }
 
-  const ScopedVector<autofill::PasswordForm>& blacklisted_matches() const {
+  const std::vector<const autofill::PasswordForm*>& blacklisted_matches()
+      const {
     return blacklisted_matches_;
-  }
-
-#if defined(UNIT_TEST)
-  void SimulateFetchMatchingLoginsFromPasswordStore() {
-    // Just need to update the internal states.
-    state_ = MATCHING_PHASE;
-  }
-#endif
-
-  const std::vector<scoped_ptr<InteractionsStats>>& interactions_stats() const {
-    return interactions_stats_;
   }
 
   const autofill::PasswordForm& observed_form() const { return observed_form_; }
@@ -223,6 +200,8 @@ class PasswordFormManager : public PasswordStoreConsumer {
   bool is_possible_change_password_form_without_username() const {
     return is_possible_change_password_form_without_username_;
   }
+
+  FormFetcher* form_fetcher() { return form_fetcher_; }
 
   // Use this to wipe copies of |pending_credentials_| from the password store
   // (and |best_matches_| as well. It will only wipe if:
@@ -240,29 +219,39 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // Called when the user didn't interact with Update UI.
   void OnNoInteractionOnUpdate();
 
+  // Saves the outcome of HTML parsing based form classifier to upload proto.
+  void SaveGenerationFieldDetectedByClassifier(
+      const base::string16& generation_field);
+
+  FormSaver* form_saver() { return form_saver_.get(); }
+
+ protected:
+  // FormFetcher::Consumer:
+  void ProcessMatches(
+      const std::vector<const autofill::PasswordForm*>& non_federated,
+      size_t filtered_count) override;
+
  private:
   // ManagerAction - What does the manager do with this form? Either it
   // fills it, or it doesn't. If it doesn't fill it, that's either
-  // because it has no match, or it is blacklisted, or it is disabled
-  // via the AUTOCOMPLETE=off attribute. Note that if we don't have
-  // an exact match, we still provide candidates that the user may
-  // end up choosing.
+  // because it has no match or it is disabled via the AUTOCOMPLETE=off
+  // attribute. Note that if we don't have an exact match, we still provide
+  // candidates that the user may end up choosing.
   enum ManagerAction {
     kManagerActionNone = 0,
     kManagerActionAutofilled,
-    kManagerActionBlacklisted,
+    kManagerActionBlacklisted_Obsolete,
     kManagerActionMax
   };
 
-  // UserAction - What does the user do with this form? If he or she
-  // does nothing (either by accepting what the password manager did, or
-  // by simply (not typing anything at all), you get None. If there were
-  // multiple choices and the user selects one other than the default,
-  // you get Choose, if user selects an entry from matching against the Public
-  // Suffix List you get ChoosePslMatch, if the user types in a new value
-  // for just the password you get OverridePassword, and if the user types in a
-  // new value for the username and password you get
-  // OverrideUsernameAndPassword.
+  // UserAction - What does the user do with this form? If they do nothing
+  // (either by accepting what the password manager did, or by simply (not
+  // typing anything at all), you get None. If there were multiple choices and
+  // the user selects one other than the default, you get Choose, if user
+  // selects an entry from matching against the Public Suffix List you get
+  // ChoosePslMatch, if the user types in a new value for just the password you
+  // get OverridePassword, and if the user types in a new value for the
+  // username and password you get OverrideUsernameAndPassword.
   enum UserAction {
     kUserActionNone = 0,
     kUserActionChoose,
@@ -295,6 +284,13 @@ class PasswordFormManager : public PasswordStoreConsumer {
     kFormTypeMax
   };
 
+  // The outcome of the form classifier.
+  enum FormClassifierOutcome {
+    kNoOutcome,
+    kNoGenerationElement,
+    kFoundGenerationElement
+  };
+
   // The maximum number of combinations of the three preceding enums.
   // This is used when recording the actions taken by the form in UMA.
   static const int kMaxNumActionsTaken =
@@ -307,9 +303,9 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // Trigger filling of HTTP auth dialog and update |manager_action_|.
   void ProcessLoginPrompt();
 
-  // Determines if we need to autofill given the results of the query.
-  // Takes ownership of the elements in |result|.
-  void OnRequestDone(ScopedVector<autofill::PasswordForm> result);
+  // Given all non-blacklisted |matches|, computes their score and populates
+  // |best_matches_|, |preferred_match_| and |non_best_matches_| accordingly.
+  void ScoreMatches(const std::vector<const autofill::PasswordForm*>& matches);
 
   // Helper for Save in the case that best_matches.size() == 0, meaning
   // we have no prior record of this form/username/password and the user
@@ -321,15 +317,16 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // against the observed_form_.
   uint32_t ScoreResult(const autofill::PasswordForm& candidate) const;
 
-  // For the blacklisted |form| returns true iff it blacklists |observed_form_|.
+  // Returns true iff |form| is a non-blacklisted match for |observed_form_|.
+  bool IsMatch(const autofill::PasswordForm& form) const;
+
+  // Returns true iff |form| blacklists |observed_form_|.
   bool IsBlacklistMatch(const autofill::PasswordForm& form) const;
 
-  // Helper for Save in the case that best_matches.size() > 0, meaning
-  // we have at least one match for this form/username/password. This
-  // Updates the form managed by this object, as well as any matching forms
-  // that now need to have preferred bit changed, since updated_credentials
-  // is now implicitly 'preferred'.
-  void UpdateLogin();
+  // Helper for Save in the case there is at least one match for the pending
+  // credentials. This sends needed signals to the autofill server, and also
+  // triggers some UMA reporting.
+  void ProcessUpdate();
 
   // Check to see if |pending| corresponds to an account creation form. If we
   // think that it does, we label it as such and upload this state to the
@@ -356,17 +353,9 @@ class PasswordFormManager : public PasswordStoreConsumer {
   bool UpdatePendingCredentialsIfUsernameChanged(
       const autofill::PasswordForm& form);
 
-  // Update state to reflect that |credential| was used. This is broken out from
-  // UpdateLogin() so that PSL matches can also be properly updated.
-  void UpdateMetadataForUsage(const autofill::PasswordForm& credential);
-
   // Converts the "ActionsTaken" fields into an int so they can be logged to
   // UMA.
   int GetActionsTaken() const;
-
-  // Remove possible_usernames that may contains sensitive information and
-  // duplicates.
-  void SanitizePossibleUsernames(autofill::PasswordForm* form);
 
   // Try to label password fields and upload |form_data|. This differs from
   // AutofillManager::OnFormSubmitted() in a few ways.
@@ -398,53 +387,84 @@ class PasswordFormManager : public PasswordStoreConsumer {
   bool UploadChangePasswordForm(const autofill::ServerFieldType& password_type,
                                 const std::string& login_form_signature);
 
+  // Adds a vote on password generation usage to |form_structure|.
+  void AddGeneratedVote(autofill::FormStructure* form_structure);
+
+  // Adds a vote from HTML parsing based form classifier to |form_structure|.
+  void AddFormClassifierVote(autofill::FormStructure* form_structure);
+
   // Create pending credentials from provisionally saved form and forms received
   // from password store.
   void CreatePendingCredentials();
 
-  // If |pending_credentials_.username_value| is not empty, iterates over all
-  // forms from |best_matches_| and deletes from the password store all which
-  // are not PSL-matched, have an empty username, and a password equal to
-  // |pending_credentials_.password_value|.
-  void DeleteEmptyUsernameCredentials();
+  // Create pending credentials from provisionally saved form when this form
+  // represents credentials that were not previosly saved.
+  void CreatePendingCredentialsForNewCredentials();
 
   // If |best_matches| contains only one entry then return this entry. Otherwise
   // for empty |password| return nullptr and for non-empty |password| returns
   // the unique entry in |best_matches_| with the same password, if it exists,
   // and nullptr otherwise.
-  autofill::PasswordForm* FindBestMatchForUpdatePassword(
+  const autofill::PasswordForm* FindBestMatchForUpdatePassword(
       const base::string16& password) const;
 
   // Try to find best matched to |form| from |best_matches_| by the rules:
   // 1. If there is an element in |best_matches_| with the same username then
   // return it;
-  // 2. If |form| has no username and there is an element from |best_matches_|
-  // with the same password as in |form| then return it;
-  // 3. Otherwise return nullptr.
-  autofill::PasswordForm* FindBestSavedMatch(
+  // 2. If |form| is created with Credential API return nullptr, i.e. we match
+  // Credentials API forms only by username;
+  // 3. If |form| has no |username_element| and no |new_password_element| (i.e.
+  // a form contains only one field which is a password) and there is an element
+  // from |best_matches_| with the same password as in |form| then return it;
+  // 4. Otherwise return nullptr.
+  const autofill::PasswordForm* FindBestSavedMatch(
       const autofill::PasswordForm* form) const;
 
+  // Send appropriate votes based on what is currently being saved.
+  void SendVotesOnSave();
+
+  // Sets |user_action_| and records some metrics.
+  void SetUserAction(UserAction user_action);
+
+  // Edits some fields in |pending_credentials_| before it can be used to
+  // update the password store. It also goes through |not_best_matches|,
+  // updates the password of those which share the old password and username
+  // with |pending_credentials_| to the new password of |pending_credentials_|,
+  // and adds copies of all such modified credentials to
+  // |credentials_to_update|. If needed, this also returns a PasswordForm to be
+  // used as the old primary key during the store update.
+  base::Optional<autofill::PasswordForm> UpdatePendingAndGetOldKey(
+      std::vector<autofill::PasswordForm>* credentials_to_update);
+
   // Set of nonblacklisted PasswordForms from the DB that best match the form
-  // being managed by this. Use a map instead of vector, because we most
-  // frequently require lookups by username value in IsNewLogin.
-  autofill::PasswordFormMap best_matches_;
+  // being managed by |this|, indexed by username. They are owned by
+  // |form_fetcher_|.
+  std::map<base::string16, const autofill::PasswordForm*> best_matches_;
 
   // Set of forms from PasswordStore that correspond to the current site and
-  // that are not in |best_matches_|.
-  ScopedVector<autofill::PasswordForm> not_best_matches_;
+  // that are not in |best_matches_|. They are owned by |form_fetcher_|.
+  std::vector<const autofill::PasswordForm*> not_best_matches_;
 
   // Set of blacklisted forms from the PasswordStore that best match the current
-  // form.
-  ScopedVector<autofill::PasswordForm> blacklisted_matches_;
+  // form. They are owned by |form_fetcher_|, with the exception that if
+  // |new_blacklisted_| is not null, the address of that form is also inside
+  // |blacklisted_matches_|..
+  std::vector<const autofill::PasswordForm*> blacklisted_matches_;
+
+  // If the observed form gets blacklisted through |this|, the blacklist entry
+  // gets stored in |new_blacklisted_| until data is potentially refreshed by
+  // reading from PasswordStore again. |blacklisted_matches_| will contain
+  // |new_blacklisted_.get()| in that case. The PasswordForm will usually get
+  // accessed via |blacklisted_matches_|, this unique_ptr is only used to store
+  // it (unlike the rest of forms being pointed to in |blacklisted_matches_|,
+  // which are owned by |form_fetcher_|.
+  std::unique_ptr<autofill::PasswordForm> new_blacklisted_;
 
   // The PasswordForm from the page or dialog managed by |this|.
   const autofill::PasswordForm observed_form_;
 
-  // Statistics for the current domain.
-  std::vector<scoped_ptr<InteractionsStats>> interactions_stats_;
-
   // Stores a submitted form.
-  scoped_ptr<const autofill::PasswordForm> provisionally_saved_form_;
+  std::unique_ptr<const autofill::PasswordForm> provisionally_saved_form_;
 
   // Stores if for creating |pending_credentials_| other possible usernames
   // option should apply.
@@ -460,6 +480,10 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // |provisionally_saved_form_| and |best_matches_|.
   autofill::PasswordForm pending_credentials_;
 
+  // Stores the form with generated password till the user makes successful
+  // login or removes the generated password.
+  std::unique_ptr<autofill::PasswordForm> presaved_form_;
+
   // Whether pending_credentials_ stores a new login or is an update
   // to an existing one.
   bool is_new_login_;
@@ -467,14 +491,30 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // Whether this form has an auto generated password.
   bool has_generated_password_;
 
+  // Whether password generation was manually triggered.
+  bool is_manual_generation_;
+
+  // A password field name that is used for generation.
+  base::string16 generation_element_;
+
+  // Whether generation popup was shown at least once.
+  bool generation_popup_was_shown_;
+
+  // The outcome of HTML parsing based form classifier.
+  FormClassifierOutcome form_classifier_outcome_;
+
+  // If |form_classifier_outcome_| == kFoundGenerationElement, the field
+  // contains the name of the detected generation element.
+  base::string16 generation_element_detected_by_classifier_;
+
   // Whether the saved password was overridden.
   bool password_overridden_;
 
   // A form is considered to be "retry" password if it has only one field which
   // is a current password field.
   // This variable is true if the password passed through ProvisionallySave() is
-  // a password that is not equal to any password from stored for this origin
-  // credentials and it was entered on a retry password form.
+  // a password that is not part of any password form stored for this origin
+  // and it was entered on a retry password form.
   bool retry_password_form_password_update_;
 
   // Whether the user can choose to generate a password for this form.
@@ -493,29 +533,15 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // multiple matches (when first saved, a login is marked preferred).
   const autofill::PasswordForm* preferred_match_;
 
-  // If the submitted form is for a change password form and the username
-  // doesn't match saved credentials.
-  bool is_ignorable_change_password_form_;
-
   // True if we consider this form to be a change password form without username
   // field. We use only client heuristics, so it could include signup forms.
   // The value of this variable is calculated based not only on information from
   // |observed_form_| but also on the credentials that the user submitted.
   bool is_possible_change_password_form_without_username_;
 
-  typedef enum {
-    PRE_MATCHING_PHASE,  // Have not yet invoked a GetLogins query to find
-                         // matching login information from password store.
-    MATCHING_PHASE,      // We've made a GetLogins request, but
-                         // haven't received or finished processing result.
-    POST_MATCHING_PHASE  // We've queried the DB and processed matching
-                         // login results.
-  } PasswordFormManagerState;
-
-  // State of matching process, used to verify that we don't call methods
-  // assuming we've already processed the request for matching logins,
-  // when we actually haven't.
-  PasswordFormManagerState state_;
+  // True if |provisionally_saved_form_| looks like SignUp form according to
+  // local heuristics.
+  bool does_look_like_signup_form_ = false;
 
   // The client which implements embedder-specific PasswordManager operations.
   PasswordManagerClient* client_;
@@ -539,10 +565,17 @@ class PasswordFormManager : public PasswordStoreConsumer {
   // user has entered.
   FormType form_type_;
 
-  // Null unless FetchMatchingLoginsFromPasswordStore has been called again
-  // without the password store returning results in the meantime. In that case
-  // this stores the prompt policy for the refresh call.
-  scoped_ptr<PasswordStore::AuthorizationPromptPolicy> next_prompt_policy_;
+  // FormSaver instance used by |this| to all tasks related to storing
+  // credentials.
+  std::unique_ptr<FormSaver> form_saver_;
+
+  // TODO(crbug.com/621355) Remove this, ultimately the form fetcher will not be
+  // owned by PasswordFormManager. Temporarily, this is the object which
+  // |form_fetcher_| points to, unless set otherwise in the constructor.
+  std::unique_ptr<FormFetcherImpl> form_fetcher_impl_;
+
+  // FormFetcher instance which owns the login data from PasswordStore.
+  FormFetcher* const form_fetcher_;
 
   DISALLOW_COPY_AND_ASSIGN(PasswordFormManager);
 };

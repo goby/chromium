@@ -5,24 +5,26 @@
 #ifndef NET_WEBSOCKETS_WEBSOCKET_STREAM_CREATE_TEST_BASE_H_
 #define NET_WEBSOCKETS_WEBSOCKET_STREAM_CREATE_TEST_BASE_H_
 
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
-#include "base/memory/scoped_vector.h"
+#include "base/macros.h"
 #include "base/run_loop.h"
 #include "base/timer/timer.h"
-#include "net/base/net_export.h"
 #include "net/socket/socket_test_util.h"
 #include "net/ssl/ssl_info.h"
 #include "net/websockets/websocket_event_interface.h"
 #include "net/websockets/websocket_test_util.h"
 
+class GURL;
+
 namespace net {
 
 class HttpRequestHeaders;
 class HttpResponseHeaders;
+class URLRequest;
 class WebSocketStream;
 class WebSocketStreamRequest;
 struct WebSocketHandshakeRequestInfo;
@@ -37,10 +39,12 @@ class WebSocketStreamCreateTestBase {
 
   // A wrapper for CreateAndConnectStreamForTesting that knows about our default
   // parameters.
-  void CreateAndConnectStream(const std::string& socket_url,
+  void CreateAndConnectStream(const GURL& socket_url,
                               const std::vector<std::string>& sub_protocols,
                               const url::Origin& origin,
-                              scoped_ptr<base::Timer> timer);
+                              const GURL& first_party_for_cookies,
+                              const std::string& additional_headers,
+                              std::unique_ptr<base::Timer> timer);
 
   static std::vector<HeaderKeyValuePair> RequestHeadersToVector(
       const HttpRequestHeaders& headers);
@@ -59,18 +63,20 @@ class WebSocketStreamCreateTestBase {
 
  protected:
   WebSocketTestURLRequestContextHost url_request_context_host_;
-  scoped_ptr<WebSocketStreamRequest> stream_request_;
+  std::unique_ptr<WebSocketStreamRequest> stream_request_;
   // Only set if the connection succeeded.
-  scoped_ptr<WebSocketStream> stream_;
+  std::unique_ptr<WebSocketStream> stream_;
   // Only set if the connection failed.
   std::string failure_message_;
   bool has_failed_;
-  scoped_ptr<WebSocketHandshakeRequestInfo> request_info_;
-  scoped_ptr<WebSocketHandshakeResponseInfo> response_info_;
-  scoped_ptr<WebSocketEventInterface::SSLErrorCallbacks> ssl_error_callbacks_;
+  std::unique_ptr<WebSocketHandshakeRequestInfo> request_info_;
+  std::unique_ptr<WebSocketHandshakeResponseInfo> response_info_;
+  std::unique_ptr<WebSocketEventInterface::SSLErrorCallbacks>
+      ssl_error_callbacks_;
   SSLInfo ssl_info_;
   bool ssl_fatal_;
-  ScopedVector<SSLSocketDataProvider> ssl_data_;
+  std::vector<std::unique_ptr<SSLSocketDataProvider>> ssl_data_;
+  URLRequest* url_request_;
 
   // This temporarily sets WebSocketEndpointLockManager unlock delay to zero
   // during tests.

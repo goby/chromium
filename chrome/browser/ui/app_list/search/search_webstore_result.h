@@ -7,7 +7,7 @@
 
 #include <string>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "ui/app_list/search_result.h"
 #include "url/gurl.h"
 
@@ -26,7 +26,7 @@ class SearchWebstoreResult : public SearchResult {
 
   // SearchResult overrides:
   void Open(int event_flags) override;
-  scoped_ptr<SearchResult> Duplicate() const override;
+  std::unique_ptr<SearchResult> Duplicate() const override;
 
  private:
   Profile* profile_;

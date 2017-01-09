@@ -5,11 +5,15 @@
 #ifndef CC_PLAYBACK_CLIP_PATH_DISPLAY_ITEM_H_
 #define CC_PLAYBACK_CLIP_PATH_DISPLAY_ITEM_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <stddef.h>
+
+#include <memory>
+
+#include "base/memory/ptr_util.h"
 #include "cc/base/cc_export.h"
 #include "cc/playback/display_item.h"
+#include "third_party/skia/include/core/SkClipOp.h"
 #include "third_party/skia/include/core/SkPath.h"
-#include "third_party/skia/include/core/SkRegion.h"
 
 class SkCanvas;
 
@@ -17,41 +21,48 @@ namespace cc {
 
 class CC_EXPORT ClipPathDisplayItem : public DisplayItem {
  public:
-  ClipPathDisplayItem();
+  ClipPathDisplayItem(const SkPath& path, SkClipOp clip_op, bool antialias);
+  explicit ClipPathDisplayItem(const proto::DisplayItem& proto);
   ~ClipPathDisplayItem() override;
 
-  void SetNew(const SkPath& path, SkRegion::Op clip_op, bool antialias);
-
   void ToProtobuf(proto::DisplayItem* proto) const override;
-  void FromProtobuf(const proto::DisplayItem& proto) override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
 
+  size_t ExternalMemoryUsage() const {
+    // The size of SkPath's external storage is not currently accounted for (and
+    // may well be shared anyway).
+    return 0;
+  }
+  int ApproximateOpCount() const { return 1; }
+
  private:
+  void SetNew(const SkPath& path, SkClipOp clip_op, bool antialias);
+
   SkPath clip_path_;
-  SkRegion::Op clip_op_;
+  SkClipOp clip_op_;
   bool antialias_;
 };
 
 class CC_EXPORT EndClipPathDisplayItem : public DisplayItem {
  public:
   EndClipPathDisplayItem();
+  explicit EndClipPathDisplayItem(const proto::DisplayItem& proto);
   ~EndClipPathDisplayItem() override;
 
-  static scoped_ptr<EndClipPathDisplayItem> Create() {
-    return make_scoped_ptr(new EndClipPathDisplayItem());
+  static std::unique_ptr<EndClipPathDisplayItem> Create() {
+    return base::MakeUnique<EndClipPathDisplayItem>();
   }
 
   void ToProtobuf(proto::DisplayItem* proto) const override;
-  void FromProtobuf(const proto::DisplayItem& proto) override;
   void Raster(SkCanvas* canvas,
-              const gfx::Rect& canvas_target_playback_rect,
               SkPicture::AbortCallback* callback) const override;
   void AsValueInto(const gfx::Rect& visual_rect,
                    base::trace_event::TracedValue* array) const override;
+
+  int ApproximateOpCount() const { return 0; }
 };
 
 }  // namespace cc

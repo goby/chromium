@@ -5,15 +5,15 @@
 #ifndef CHROME_BROWSER_UI_WINDOW_SIZER_WINDOW_SIZER_H_
 #define CHROME_BROWSER_UI_WINDOW_SIZER_WINDOW_SIZER_H_
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
-#include "chrome/browser/ui/host_desktop.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "ui/base/ui_base_types.h"
 #include "ui/gfx/geometry/rect.h"
 
 class Browser;
 
-namespace gfx {
+namespace display {
 class Display;
 class Screen;
 }
@@ -35,16 +35,16 @@ class WindowSizer {
   class TargetDisplayProvider;
 
   // WindowSizer owns |state_provider| and |target_display_provider|,
-  // and will use the platforms's gfx::Screen.
-  WindowSizer(scoped_ptr<StateProvider> state_provider,
-              scoped_ptr<TargetDisplayProvider> target_display_provider,
+  // and will use the platforms's display::Screen.
+  WindowSizer(std::unique_ptr<StateProvider> state_provider,
+              std::unique_ptr<TargetDisplayProvider> target_display_provider,
               const Browser* browser);
 
   // WindowSizer owns |state_provider| and |target_display_provider|,
   // and will use the supplied |screen|. Used only for testing.
-  WindowSizer(scoped_ptr<StateProvider> state_provider,
-              scoped_ptr<TargetDisplayProvider> target_display_provider,
-              gfx::Screen* screen,
+  WindowSizer(std::unique_ptr<StateProvider> state_provider,
+              std::unique_ptr<TargetDisplayProvider> target_display_provider,
+              display::Screen* screen,
               const Browser* browser);
 
   virtual ~WindowSizer();
@@ -78,8 +78,9 @@ class WindowSizer {
   class TargetDisplayProvider {
     public:
       virtual ~TargetDisplayProvider() {}
-      virtual gfx::Display GetTargetDisplay(const gfx::Screen* screen,
-                                            const gfx::Rect& bounds) const = 0;
+      virtual display::Display GetTargetDisplay(
+          const display::Screen* screen,
+          const gfx::Rect& bounds) const = 0;
   };
 
   // Determines the position and size for a window as it is created as well
@@ -108,8 +109,7 @@ class WindowSizer {
       ui::WindowShowState* show_state);
 
   // Returns the default origin for popups of the given size.
-  static gfx::Point GetDefaultPopupOrigin(const gfx::Size& size,
-                                          chrome::HostDesktopType type);
+  static gfx::Point GetDefaultPopupOrigin(const gfx::Size& size);
 
   // How much horizontal and vertical offset there is between newly
   // opened windows.  This value may be different on each platform.
@@ -138,7 +138,7 @@ class WindowSizer {
   // |display| if there is no last window and no saved window
   // placement in prefs. This function determines the default size
   // based on monitor size, etc.
-  void GetDefaultWindowBounds(const gfx::Display& display,
+  void GetDefaultWindowBounds(const display::Display& display,
                               gfx::Rect* default_bounds) const;
 
   // Adjusts |bounds| to be visible on-screen, biased toward the work area of
@@ -149,15 +149,14 @@ class WindowSizer {
   // monitor configuration has changed. If it has, bounds are repositioned and
   // resized if necessary to make them completely contained in the current work
   // area.
-  void AdjustBoundsToBeVisibleOnDisplay(
-      const gfx::Display& display,
-      const gfx::Rect& saved_work_area,
-      gfx::Rect* bounds) const;
+  void AdjustBoundsToBeVisibleOnDisplay(const display::Display& display,
+                                        const gfx::Rect& saved_work_area,
+                                        gfx::Rect* bounds) const;
 
   // Determine the target display for a new window based on
   // |bounds|. On ash environment, this returns the display containing
   // ash's the target root window.
-  gfx::Display GetTargetDisplay(const gfx::Rect& bounds) const;
+  display::Display GetTargetDisplay(const gfx::Rect& bounds) const;
 
 #if defined(USE_ASH)
   // Ash specific logic for window placement. Returns true if |bounds| and
@@ -182,9 +181,9 @@ class WindowSizer {
   ui::WindowShowState GetWindowDefaultShowState() const;
 
   // Providers for persistent storage and monitor metrics.
-  scoped_ptr<StateProvider> state_provider_;
-  scoped_ptr<TargetDisplayProvider> target_display_provider_;
-  gfx::Screen* screen_;  // not owned.
+  std::unique_ptr<StateProvider> state_provider_;
+  std::unique_ptr<TargetDisplayProvider> target_display_provider_;
+  display::Screen* screen_;  // not owned.
 
   // Note that this browser handle might be NULL.
   const Browser* browser_;

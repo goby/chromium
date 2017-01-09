@@ -4,13 +4,15 @@
 
 #include "extensions/renderer/script_context.h"
 
+#include "base/command_line.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/values.h"
 #include "content/public/child/v8_value_converter.h"
+#include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/renderer/render_frame.h"
 #include "extensions/common/constants.h"
@@ -23,12 +25,12 @@
 #include "extensions/renderer/renderer_extension_registry.h"
 #include "extensions/renderer/v8_helpers.h"
 #include "gin/per_context_data.h"
+#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
+#include "third_party/WebKit/public/platform/WebURLRequest.h"
 #include "third_party/WebKit/public/web/WebDataSource.h"
 #include "third_party/WebKit/public/web/WebDocument.h"
 #include "third_party/WebKit/public/web/WebFrame.h"
 #include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebScopedMicrotaskSuppression.h"
-#include "third_party/WebKit/public/web/WebSecurityOrigin.h"
 #include "third_party/WebKit/public/web/WebView.h"
 #include "v8/include/v8.h"
 
@@ -105,12 +107,13 @@ ScriptContext::ScriptContext(const v8::Local<v8::Context>& v8_context,
       effective_context_type_(effective_context_type),
       safe_builtins_(this),
       isolate_(v8_context->GetIsolate()),
-      url_(web_frame_ ? GetDataSourceURLForFrame(web_frame_) : GURL()),
       runner_(new Runner(this)) {
   VLOG(1) << "Created context:\n" << GetDebugString();
   gin::PerContextData* gin_data = gin::PerContextData::From(v8_context);
   CHECK(gin_data);
   gin_data->set_runner(runner_.get());
+  if (web_frame_)
+    url_ = GetAccessCheckedFrameURL(web_frame_);
 }
 
 ScriptContext::~ScriptContext() {
@@ -184,7 +187,8 @@ v8::Local<v8::Value> ScriptContext::CallFunction(
   v8::EscapableHandleScope handle_scope(isolate());
   v8::Context::Scope scope(v8_context());
 
-  blink::WebScopedMicrotaskSuppression suppression;
+  v8::MicrotasksScope microtasks(
+      isolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
   if (!is_valid_) {
     return handle_scope.Escape(
         v8::Local<v8::Primitive>(v8::Undefined(isolate())));
@@ -198,15 +202,59 @@ v8::Local<v8::Value> ScriptContext::CallFunction(
           function, global, argc, argv)));
 }
 
-v8::Local<v8::Value> ScriptContext::CallFunction(
-    const v8::Local<v8::Function>& function) const {
+void ScriptContext::SafeCallFunction(const v8::Local<v8::Function>& function,
+                                     int argc,
+                                     v8::Local<v8::Value> argv[]) {
+  SafeCallFunction(function, argc, argv,
+                   ScriptInjectionCallback::CompleteCallback());
+}
+
+void ScriptContext::SafeCallFunction(
+    const v8::Local<v8::Function>& function,
+    int argc,
+    v8::Local<v8::Value> argv[],
+    const ScriptInjectionCallback::CompleteCallback& callback) {
   DCHECK(thread_checker_.CalledOnValidThread());
-  return CallFunction(function, 0, nullptr);
+  v8::HandleScope handle_scope(isolate());
+  v8::Context::Scope scope(v8_context());
+  v8::MicrotasksScope microtasks(isolate(),
+                                 v8::MicrotasksScope::kDoNotRunMicrotasks);
+  v8::Local<v8::Object> global = v8_context()->Global();
+  if (web_frame_) {
+    ScriptInjectionCallback* wrapper_callback = nullptr;
+    if (!callback.is_null()) {
+      // ScriptInjectionCallback manages its own lifetime.
+      wrapper_callback = new ScriptInjectionCallback(callback);
+    }
+    web_frame_->requestExecuteV8Function(v8_context(), function, global, argc,
+                                         argv, wrapper_callback);
+  } else {
+    // TODO(devlin): This probably isn't safe.
+    v8::Local<v8::Value> result = function->Call(global, argc, argv);
+    if (!callback.is_null()) {
+      std::vector<v8::Local<v8::Value>> results(1, result);
+      callback.Run(results);
+    }
+  }
 }
 
 Feature::Availability ScriptContext::GetAvailability(
     const std::string& api_name) {
+  return GetAvailability(api_name, CheckAliasStatus::ALLOWED);
+}
+
+Feature::Availability ScriptContext::GetAvailability(
+    const std::string& api_name,
+    CheckAliasStatus check_alias) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  if (base::StartsWith(api_name, "test", base::CompareCase::SENSITIVE)) {
+    bool allowed = base::CommandLine::ForCurrentProcess()->
+                       HasSwitch(::switches::kTestType);
+    Feature::AvailabilityResult result =
+        allowed ? Feature::IS_AVAILABLE : Feature::MISSING_COMMAND_LINE_SWITCH;
+    return Feature::Availability(result,
+                                 allowed ? "" : "Only allowed in tests");
+  }
   // Hack: Hosted apps should have the availability of messaging APIs based on
   // the URL of the page (which might have access depending on some extension
   // with externally_connectable), not whether the app has access to messaging
@@ -216,8 +264,8 @@ Feature::Availability ScriptContext::GetAvailability(
       (api_name == "runtime.connect" || api_name == "runtime.sendMessage")) {
     extension = NULL;
   }
-  return ExtensionAPI::GetSharedInstance()->IsAvailable(api_name, extension,
-                                                        context_type_, url());
+  return ExtensionAPI::GetSharedInstance()->IsAvailable(
+      api_name, extension, context_type_, url(), check_alias);
 }
 
 void ScriptContext::DispatchEvent(const char* event_name,
@@ -228,8 +276,8 @@ void ScriptContext::DispatchEvent(const char* event_name,
 
   v8::Local<v8::Value> argv[] = {v8::String::NewFromUtf8(isolate(), event_name),
                                  args};
-  module_system_->CallModuleMethod(
-      kEventBindings, "dispatchEvent", arraysize(argv), argv);
+  module_system_->CallModuleMethodSafe(kEventBindings, "dispatchEvent",
+                                       arraysize(argv), argv);
 }
 
 std::string ScriptContext::GetContextTypeDescription() const {
@@ -242,10 +290,15 @@ std::string ScriptContext::GetEffectiveContextTypeDescription() const {
   return GetContextTypeDescriptionString(effective_context_type_);
 }
 
-bool ScriptContext::IsAnyFeatureAvailableToContext(const Feature& api) {
+bool ScriptContext::IsAnyFeatureAvailableToContext(
+    const Feature& api,
+    CheckAliasStatus check_alias) {
   DCHECK(thread_checker_.CalledOnValidThread());
+  // TODO(lazyboy): Decide what we should do for SERVICE_WORKER_CONTEXT, where
+  // web_frame() is null.
+  GURL url = web_frame() ? GetDataSourceURLForFrame(web_frame()) : url_;
   return ExtensionAPI::GetSharedInstance()->IsAnyFeatureAvailableToContext(
-      api, extension(), context_type(), GetDataSourceURLForFrame(web_frame()));
+      api, extension(), context_type(), url, check_alias);
 }
 
 // static
@@ -265,6 +318,22 @@ GURL ScriptContext::GetDataSourceURLForFrame(const blink::WebFrame* frame) {
 }
 
 // static
+GURL ScriptContext::GetAccessCheckedFrameURL(const blink::WebFrame* frame) {
+  const blink::WebURL& weburl = frame->document().url();
+  if (weburl.isEmpty()) {
+    blink::WebDataSource* data_source = frame->provisionalDataSource()
+                                            ? frame->provisionalDataSource()
+                                            : frame->dataSource();
+    if (data_source &&
+        frame->getSecurityOrigin().canAccess(
+            blink::WebSecurityOrigin::create(data_source->request().url()))) {
+      return GURL(data_source->request().url());
+    }
+  }
+  return GURL(weburl);
+}
+
+// static
 GURL ScriptContext::GetEffectiveDocumentURL(const blink::WebFrame* frame,
                                             const GURL& document_url,
                                             bool match_about_blank) {
@@ -279,16 +348,22 @@ GURL ScriptContext::GetEffectiveDocumentURL(const blink::WebFrame* frame,
   // hierarchy to find the closest non-about:-page and return its URL.
   const blink::WebFrame* parent = frame;
   do {
-    parent = parent->parent() ? parent->parent() : parent->opener();
-  } while (parent != NULL && !parent->document().isNull() &&
+    if (parent->parent())
+      parent = parent->parent();
+    else if (parent->opener() != parent)
+      parent = parent->opener();
+    else
+      parent = nullptr;
+  } while (parent && !parent->document().isNull() &&
            GURL(parent->document().url()).SchemeIs(url::kAboutScheme));
 
   if (parent && !parent->document().isNull()) {
     // Only return the parent URL if the frame can access it.
     const blink::WebDocument& parent_document = parent->document();
-    if (frame->document().securityOrigin().canAccess(
-            parent_document.securityOrigin()))
+    if (frame->document().getSecurityOrigin().canAccess(
+            parent_document.getSecurityOrigin())) {
       return parent_document.url();
+    }
   }
   return document_url;
 }
@@ -306,7 +381,7 @@ void ScriptContext::OnResponseReceived(const std::string& name,
   DCHECK(thread_checker_.CalledOnValidThread());
   v8::HandleScope handle_scope(isolate());
 
-  scoped_ptr<V8ValueConverter> converter(V8ValueConverter::create());
+  std::unique_ptr<V8ValueConverter> converter(V8ValueConverter::create());
   v8::Local<v8::Value> argv[] = {
       v8::Integer::New(isolate(), request_id),
       v8::String::NewFromUtf8(isolate(), name.c_str()),
@@ -427,7 +502,8 @@ v8::Local<v8::Value> ScriptContext::RunScript(
     return v8::Undefined(isolate());
   }
 
-  blink::WebScopedMicrotaskSuppression suppression;
+  v8::MicrotasksScope microtasks(
+      isolate(), v8::MicrotasksScope::kDoNotRunMicrotasks);
   v8::TryCatch try_catch(isolate());
   try_catch.SetCaptureMessage(true);
   v8::ScriptOrigin origin(

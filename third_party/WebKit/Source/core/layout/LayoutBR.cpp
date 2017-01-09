@@ -19,65 +19,45 @@
  *
  */
 
-#include "config.h"
 #include "core/layout/LayoutBR.h"
 
 #include "core/dom/Document.h"
 #include "core/dom/StyleEngine.h"
 #include "core/editing/PositionWithAffinity.h"
-#include "core/layout/LayoutView.h"
+#include "core/layout/LayoutObjectInlines.h"
 
 namespace blink {
 
-static PassRefPtr<StringImpl> newlineString()
-{
-    DEFINE_STATIC_LOCAL(const String, string, ("\n"));
-    return string.impl();
+static PassRefPtr<StringImpl> newlineString() {
+  DEFINE_STATIC_LOCAL(const String, string, ("\n"));
+  return string.impl();
 }
 
-LayoutBR::LayoutBR(Node* node)
-    : LayoutText(node, newlineString())
-{
+LayoutBR::LayoutBR(Node* node) : LayoutText(node, newlineString()) {}
+
+LayoutBR::~LayoutBR() {}
+
+int LayoutBR::lineHeight(bool firstLine) const {
+  const ComputedStyle& style =
+      styleRef(firstLine && document().styleEngine().usesFirstLineRules());
+  return style.computedLineHeight();
 }
 
-LayoutBR::~LayoutBR()
-{
+void LayoutBR::styleDidChange(StyleDifference diff,
+                              const ComputedStyle* oldStyle) {
+  LayoutText::styleDidChange(diff, oldStyle);
 }
 
-LayoutRect LayoutBR::selectionRectForPaintInvalidation(const LayoutBoxModelObject* paintInvalidationContainer) const
-{
-    if (!RuntimeEnabledFeatures::selectionPaintingWithoutSelectionGapsEnabled())
-        return LayoutRect();
-
-    // Although line breaks contain no actual text, if we're selected we need
-    // to return a rect that includes space to illustrate a newline.
-    return LayoutText::selectionRectForPaintInvalidation(paintInvalidationContainer);
+int LayoutBR::caretMinOffset() const {
+  return 0;
 }
 
-int LayoutBR::lineHeight(bool firstLine) const
-{
-    const ComputedStyle& style = styleRef(firstLine && document().styleEngine().usesFirstLineRules());
-    return style.computedLineHeight();
+int LayoutBR::caretMaxOffset() const {
+  return 1;
 }
 
-void LayoutBR::styleDidChange(StyleDifference diff, const ComputedStyle* oldStyle)
-{
-    LayoutText::styleDidChange(diff, oldStyle);
+PositionWithAffinity LayoutBR::positionForPoint(const LayoutPoint&) {
+  return createPositionWithAffinity(0);
 }
 
-int LayoutBR::caretMinOffset() const
-{
-    return 0;
-}
-
-int LayoutBR::caretMaxOffset() const
-{
-    return 1;
-}
-
-PositionWithAffinity LayoutBR::positionForPoint(const LayoutPoint&)
-{
-    return createPositionWithAffinity(0);
-}
-
-} // namespace blink
+}  // namespace blink

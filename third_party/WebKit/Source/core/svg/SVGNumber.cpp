@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "core/svg/SVGNumber.h"
 
 #include "core/svg/SVGAnimationElement.h"
@@ -36,100 +35,115 @@
 
 namespace blink {
 
-SVGNumber::SVGNumber(float value)
-    : m_value(value)
-{
+SVGNumber::SVGNumber(float value) : m_value(value) {}
+
+SVGNumber* SVGNumber::clone() const {
+  return create(m_value);
 }
 
-PassRefPtrWillBeRawPtr<SVGNumber> SVGNumber::clone() const
-{
-    return create(m_value);
+String SVGNumber::valueAsString() const {
+  return String::number(m_value);
 }
 
-String SVGNumber::valueAsString() const
-{
-    return String::number(m_value);
+template <typename CharType>
+SVGParsingError SVGNumber::parse(const CharType*& ptr, const CharType* end) {
+  float value = 0;
+  const CharType* start = ptr;
+  if (!parseNumber(ptr, end, value, AllowLeadingAndTrailingWhitespace))
+    return SVGParsingError(SVGParseStatus::ExpectedNumber, ptr - start);
+  if (ptr != end)
+    return SVGParsingError(SVGParseStatus::TrailingGarbage, ptr - start);
+  m_value = value;
+  return SVGParseStatus::NoError;
 }
 
-template<typename CharType>
-bool SVGNumber::parse(const CharType*& ptr, const CharType* end)
-{
-    if (!parseNumber(ptr, end, m_value, AllowLeadingAndTrailingWhitespace)) {
-        m_value = 0;
-        return false;
-    }
+SVGParsingError SVGNumber::setValueAsString(const String& string) {
+  m_value = 0;
 
-    if (ptr != end) {
-        m_value = 0;
-        return false;
-    }
+  if (string.isEmpty())
+    return SVGParseStatus::NoError;
 
-    return true;
+  if (string.is8Bit()) {
+    const LChar* ptr = string.characters8();
+    const LChar* end = ptr + string.length();
+    return parse(ptr, end);
+  }
+  const UChar* ptr = string.characters16();
+  const UChar* end = ptr + string.length();
+  return parse(ptr, end);
 }
 
-void SVGNumber::setValueAsString(const String& string, ExceptionState& exceptionState)
-{
-    if (string.isEmpty()) {
-        m_value = 0;
-        return;
-    }
-
-    bool valid = false;
-    if (string.is8Bit()) {
-        const LChar* ptr = string.characters8();
-        const LChar* end = ptr + string.length();
-        valid = parse(ptr, end);
-    } else {
-        const UChar* ptr = string.characters16();
-        const UChar* end = ptr + string.length();
-        valid = parse(ptr, end);
-    }
-
-    if (!valid) {
-        exceptionState.throwDOMException(SyntaxError, "The value provided ('" + string + "') is invalid.");
-        m_value = 0;
-    }
+void SVGNumber::add(SVGPropertyBase* other, SVGElement*) {
+  setValue(m_value + toSVGNumber(other)->value());
 }
 
-void SVGNumber::add(PassRefPtrWillBeRawPtr<SVGPropertyBase> other, SVGElement*)
-{
-    setValue(m_value + toSVGNumber(other)->value());
+void SVGNumber::calculateAnimatedValue(SVGAnimationElement* animationElement,
+                                       float percentage,
+                                       unsigned repeatCount,
+                                       SVGPropertyBase* from,
+                                       SVGPropertyBase* to,
+                                       SVGPropertyBase* toAtEndOfDuration,
+                                       SVGElement*) {
+  ASSERT(animationElement);
+
+  SVGNumber* fromNumber = toSVGNumber(from);
+  SVGNumber* toNumber = toSVGNumber(to);
+  SVGNumber* toAtEndOfDurationNumber = toSVGNumber(toAtEndOfDuration);
+
+  animationElement->animateAdditiveNumber(
+      percentage, repeatCount, fromNumber->value(), toNumber->value(),
+      toAtEndOfDurationNumber->value(), m_value);
 }
 
-void SVGNumber::calculateAnimatedValue(SVGAnimationElement* animationElement, float percentage, unsigned repeatCount, PassRefPtrWillBeRawPtr<SVGPropertyBase> from, PassRefPtrWillBeRawPtr<SVGPropertyBase> to, PassRefPtrWillBeRawPtr<SVGPropertyBase> toAtEndOfDuration, SVGElement*)
-{
-    ASSERT(animationElement);
-
-    RefPtrWillBeRawPtr<SVGNumber> fromNumber = toSVGNumber(from);
-    RefPtrWillBeRawPtr<SVGNumber> toNumber = toSVGNumber(to);
-    RefPtrWillBeRawPtr<SVGNumber> toAtEndOfDurationNumber = toSVGNumber(toAtEndOfDuration);
-
-    animationElement->animateAdditiveNumber(percentage, repeatCount, fromNumber->value(), toNumber->value(), toAtEndOfDurationNumber->value(), m_value);
+float SVGNumber::calculateDistance(SVGPropertyBase* other, SVGElement*) {
+  return fabsf(m_value - toSVGNumber(other)->value());
 }
 
-float SVGNumber::calculateDistance(PassRefPtrWillBeRawPtr<SVGPropertyBase> other, SVGElement*)
-{
-    return fabsf(m_value - toSVGNumber(other)->value());
+SVGNumber* SVGNumberAcceptPercentage::clone() const {
+  return create(m_value);
 }
 
-PassRefPtrWillBeRawPtr<SVGNumber> SVGNumberAcceptPercentage::clone() const
-{
-    return create(m_value);
+template <typename CharType>
+static SVGParsingError parseNumberOrPercentage(const CharType*& ptr,
+                                               const CharType* end,
+                                               float& number) {
+  const CharType* start = ptr;
+  if (!parseNumber(ptr, end, number, AllowLeadingWhitespace))
+    return SVGParsingError(SVGParseStatus::ExpectedNumberOrPercentage,
+                           ptr - start);
+  if (ptr < end && *ptr == '%') {
+    number /= 100;
+    ptr++;
+  }
+  if (skipOptionalSVGSpaces(ptr, end))
+    return SVGParsingError(SVGParseStatus::TrailingGarbage, ptr - start);
+  return SVGParseStatus::NoError;
 }
 
-void SVGNumberAcceptPercentage::setValueAsString(const String& string, ExceptionState& exceptionState)
-{
-    bool valid = parseNumberOrPercentage(string, m_value);
+SVGParsingError SVGNumberAcceptPercentage::setValueAsString(
+    const String& string) {
+  m_value = 0;
 
-    if (!valid) {
-        exceptionState.throwDOMException(SyntaxError, "The value provided ('" + string + "') is invalid.");
-        m_value = 0;
-    }
+  if (string.isEmpty())
+    return SVGParseStatus::ExpectedNumberOrPercentage;
+
+  float number = 0;
+  SVGParsingError error;
+  if (string.is8Bit()) {
+    const LChar* ptr = string.characters8();
+    const LChar* end = ptr + string.length();
+    error = parseNumberOrPercentage(ptr, end, number);
+  } else {
+    const UChar* ptr = string.characters16();
+    const UChar* end = ptr + string.length();
+    error = parseNumberOrPercentage(ptr, end, number);
+  }
+  if (error == SVGParseStatus::NoError)
+    m_value = number;
+  return error;
 }
 
 SVGNumberAcceptPercentage::SVGNumberAcceptPercentage(float value)
-    : SVGNumber(value)
-{
-}
+    : SVGNumber(value) {}
 
-}
+}  // namespace blink

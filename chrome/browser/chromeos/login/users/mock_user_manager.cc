@@ -29,7 +29,7 @@ class FakeTaskRunner : public base::TaskRunner {
 namespace chromeos {
 
 MockUserManager::MockUserManager()
-    : ChromeUserManager(new FakeTaskRunner(), new FakeTaskRunner()),
+    : ChromeUserManager(new FakeTaskRunner()),
       user_flow_(new DefaultUserFlow()),
       supervised_user_manager_(new FakeSupervisedUserManager()) {
   ProfileHelper::SetProfileToUserForTestingEnabled(true);
@@ -44,46 +44,37 @@ const user_manager::UserList& MockUserManager::GetUsers() const {
   return user_list_;
 }
 
-const user_manager::User* MockUserManager::GetLoggedInUser() const {
-  return user_list_.empty() ? NULL : user_list_.front();
-}
-
-user_manager::User* MockUserManager::GetLoggedInUser() {
-  return user_list_.empty() ? NULL : user_list_.front();
-}
-
 user_manager::UserList MockUserManager::GetUnlockUsers() const {
   return user_list_;
 }
 
 const AccountId& MockUserManager::GetOwnerAccountId() const {
-  temporary_owner_account_id_ = GetLoggedInUser()->GetAccountId();
-  return temporary_owner_account_id_;
+  return GetActiveUser()->GetAccountId();
 }
 
 const user_manager::User* MockUserManager::GetActiveUser() const {
-  return GetLoggedInUser();
+  return user_list_.empty() ? nullptr : user_list_.front();
 }
 
 user_manager::User* MockUserManager::GetActiveUser() {
-  return GetLoggedInUser();
+  return user_list_.empty() ? nullptr : user_list_.front();
 }
 
 const user_manager::User* MockUserManager::GetPrimaryUser() const {
-  return GetLoggedInUser();
+  return GetActiveUser();
 }
 
 BootstrapManager* MockUserManager::GetBootstrapManager() {
-  return NULL;
+  return nullptr;
 }
 
 MultiProfileUserController* MockUserManager::GetMultiProfileUserController() {
-  return NULL;
+  return nullptr;
 }
 
 UserImageManager* MockUserManager::GetUserImageManager(
     const AccountId& account_id) {
-  return NULL;
+  return nullptr;
 }
 
 SupervisedUserManager* MockUserManager::GetSupervisedUserManager() {
@@ -129,7 +120,7 @@ void MockUserManager::AddUser(const AccountId& account_id) {
 void MockUserManager::AddUserWithAffiliation(const AccountId& account_id,
                                              bool is_affiliated) {
   user_manager::User* user = user_manager::User::CreateRegularUser(account_id);
-  user->set_affiliation(is_affiliated);
+  user->SetAffiliation(is_affiliated);
   user_list_.push_back(user);
   ProfileHelper::Get()->SetProfileToUserMappingForTesting(user);
 }
@@ -143,9 +134,9 @@ void MockUserManager::ClearUserList() {
 }
 
 bool MockUserManager::ShouldReportUser(const std::string& user_id) const {
-  for (const auto& user : user_list_) {
-    if (user->email() == user_id)
-      return user->is_affiliated();
+  for (auto* user : user_list_) {
+    if (user->GetAccountId().GetUserEmail() == user_id)
+      return user->IsAffiliated();
   }
   NOTREACHED();
   return false;

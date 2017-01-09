@@ -9,67 +9,19 @@
 
 #include "base/logging.h"
 #include "base/stl_util.h"
-#include "net/base/ip_endpoint.h"
-#include "net/quic/crypto/quic_random.h"
+#include "net/quic/core/crypto/quic_random.h"
 #include "net/tools/epoll_server/epoll_server.h"
-#include "net/tools/quic/quic_socket_utils.h"
+#include "net/tools/quic/platform/impl/quic_socket_utils.h"
 
 namespace net {
-namespace tools {
 
-namespace {
+QuicEpollConnectionHelper::QuicEpollConnectionHelper(EpollServer* epoll_server,
+                                                     QuicAllocator type)
+    : clock_(epoll_server),
+      random_generator_(QuicRandom::GetInstance()),
+      allocator_type_(type) {}
 
-class QuicEpollAlarm : public QuicAlarm {
- public:
-  QuicEpollAlarm(EpollServer* epoll_server,
-                 QuicAlarm::Delegate* delegate)
-      : QuicAlarm(delegate),
-        epoll_server_(epoll_server),
-        epoll_alarm_impl_(this) {}
-
- protected:
-  void SetImpl() override {
-    DCHECK(deadline().IsInitialized());
-    epoll_server_->RegisterAlarm(
-        deadline().Subtract(QuicTime::Zero()).ToMicroseconds(),
-        &epoll_alarm_impl_);
-  }
-
-  void CancelImpl() override {
-    DCHECK(!deadline().IsInitialized());
-    epoll_alarm_impl_.UnregisterIfRegistered();
-  }
-
- private:
-  class EpollAlarmImpl : public EpollAlarm {
-   public:
-    explicit EpollAlarmImpl(QuicEpollAlarm* alarm) : alarm_(alarm) {}
-
-    int64 OnAlarm() override {
-      EpollAlarm::OnAlarm();
-      alarm_->Fire();
-      // Fire will take care of registering the alarm, if needed.
-      return 0;
-    }
-
-   private:
-    QuicEpollAlarm* alarm_;
-  };
-
-  EpollServer* epoll_server_;
-  EpollAlarmImpl epoll_alarm_impl_;
-};
-
-}  // namespace
-
-QuicEpollConnectionHelper::QuicEpollConnectionHelper(EpollServer* epoll_server)
-    : epoll_server_(epoll_server),
-      clock_(epoll_server),
-      random_generator_(QuicRandom::GetInstance()) {
-}
-
-QuicEpollConnectionHelper::~QuicEpollConnectionHelper() {
-}
+QuicEpollConnectionHelper::~QuicEpollConnectionHelper() {}
 
 const QuicClock* QuicEpollConnectionHelper::GetClock() const {
   return &clock_;
@@ -79,10 +31,13 @@ QuicRandom* QuicEpollConnectionHelper::GetRandomGenerator() {
   return random_generator_;
 }
 
-QuicAlarm* QuicEpollConnectionHelper::CreateAlarm(
-    QuicAlarm::Delegate* delegate) {
-  return new QuicEpollAlarm(epoll_server_, delegate);
+QuicBufferAllocator* QuicEpollConnectionHelper::GetBufferAllocator() {
+  if (allocator_type_ == QuicAllocator::BUFFER_POOL) {
+    return &buffer_allocator_;
+  } else {
+    DCHECK(allocator_type_ == QuicAllocator::SIMPLE);
+    return &simple_buffer_allocator_;
+  }
 }
 
-}  // namespace tools
 }  // namespace net

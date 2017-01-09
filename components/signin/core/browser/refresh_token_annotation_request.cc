@@ -6,12 +6,12 @@
 
 #include "base/location.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/prefs/pref_service.h"
 #include "base/rand_util.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
+#include "components/prefs/pref_service.h"
 #include "components/signin/core/browser/signin_client.h"
 #include "components/signin/core/common/signin_pref_names.h"
 #include "google_apis/gaia/gaia_constants.h"
@@ -45,7 +45,7 @@ RefreshTokenAnnotationRequest::~RefreshTokenAnnotationRequest() {
 }
 
 // static
-scoped_ptr<RefreshTokenAnnotationRequest>
+std::unique_ptr<RefreshTokenAnnotationRequest>
 RefreshTokenAnnotationRequest::SendIfNeeded(
     PrefService* pref_service,
     OAuth2TokenService* token_service,
@@ -53,21 +53,21 @@ RefreshTokenAnnotationRequest::SendIfNeeded(
     const scoped_refptr<net::URLRequestContextGetter>& request_context_getter,
     const std::string& account_id,
     const base::Closure& request_callback) {
-  scoped_ptr<RefreshTokenAnnotationRequest> request;
+  std::unique_ptr<RefreshTokenAnnotationRequest> request;
 
   if (!ShouldSendNow(pref_service))
-    return request.Pass();
+    return request;
 
   // Don't send request if device_id is disabled.
   std::string device_id = signin_client->GetSigninScopedDeviceId();
   if (device_id.empty())
-    return request.Pass();
+    return request;
 
   request.reset(new RefreshTokenAnnotationRequest(
       request_context_getter, signin_client->GetProductVersion(), device_id,
       GaiaUrls::GetInstance()->oauth2_chrome_client_id(), request_callback));
   request->RequestAccessToken(token_service, account_id);
-  return request.Pass();
+  return request;
 }
 
 // static

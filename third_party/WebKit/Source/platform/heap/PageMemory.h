@@ -5,9 +5,11 @@
 #ifndef PageMemory_h
 #define PageMemory_h
 
-#include "platform/heap/Heap.h"
+#include "platform/heap/HeapPage.h"
+#include "wtf/Allocator.h"
 #include "wtf/Assertions.h"
-#include "wtf/PageAllocator.h"
+#include "wtf/Compiler.h"
+#include "wtf/allocator/PageAllocator.h"
 
 #if OS(POSIX)
 #include <sys/mman.h>
@@ -16,62 +18,36 @@
 
 namespace blink {
 
-static size_t roundToOsPageSize(size_t size)
-{
-    return (size + WTF::kSystemPageSize - 1) & ~(WTF::kSystemPageSize - 1);
-}
+class RegionTree;
+class RegionTreeNode;
 
 class MemoryRegion {
-public:
-    MemoryRegion(Address base, size_t size)
-        : m_base(base)
-        , m_size(size)
-    {
-        ASSERT(size > 0);
-    }
+  USING_FAST_MALLOC(MemoryRegion);
 
-    bool contains(Address addr) const
-    {
-        return m_base <= addr && addr < (m_base + m_size);
-    }
+ public:
+  MemoryRegion(Address base, size_t size) : m_base(base), m_size(size) {
+    ASSERT(size > 0);
+  }
 
-    bool contains(const MemoryRegion& other) const
-    {
-        return contains(other.m_base) && contains(other.m_base + other.m_size - 1);
-    }
+  bool contains(Address addr) const {
+    return m_base <= addr && addr < (m_base + m_size);
+  }
 
-    void release()
-    {
-        WTF::freePages(m_base, m_size);
-    }
+  bool contains(const MemoryRegion& other) const {
+    return contains(other.m_base) && contains(other.m_base + other.m_size - 1);
+  }
 
-    WARN_UNUSED_RETURN bool commit()
-    {
-        WTF::recommitSystemPages(m_base, m_size);
-        return WTF::setSystemPagesAccessible(m_base, m_size);
-    }
+  void release();
+  WARN_UNUSED_RESULT bool commit();
+  void decommit();
 
-    void decommit()
-    {
-        WTF::decommitSystemPages(m_base, m_size);
-        WTF::setSystemPagesInaccessible(m_base, m_size);
-    }
+  Address base() const { return m_base; }
+  size_t size() const { return m_size; }
 
-    Address base() const { return m_base; }
-    size_t size() const { return m_size; }
-
-private:
-    Address m_base;
-    size_t m_size;
+ private:
+  Address m_base;
+  size_t m_size;
 };
-
-// TODO(haraken): Like partitionOutOfMemoryWithLotsOfUncommitedPages(),
-// we should probably have a way to distinguish physical memory OOM from
-// virtual address space OOM.
-static NEVER_INLINE void blinkGCOutOfMemory()
-{
-    IMMEDIATE_CRASH();
-}
 
 // A PageMemoryRegion represents a chunk of reserved virtual address
 // space containing a number of blink heap pages. On Windows, reserved
@@ -80,85 +56,96 @@ static NEVER_INLINE void blinkGCOutOfMemory()
 // of the number of pages using it in order to be able to release all
 // of the virtual address space when there are no more pages using it.
 class PageMemoryRegion : public MemoryRegion {
-public:
-    ~PageMemoryRegion()
-    {
-        Heap::removePageMemoryRegion(this);
-        release();
-    }
+ public:
+  ~PageMemoryRegion();
 
-    void pageDeleted(Address page)
-    {
-        markPageUnused(page);
-        if (!--m_numPages)
-            delete this;
-    }
+  void pageDeleted(Address);
 
-    void markPageUsed(Address page)
-    {
-        ASSERT(!m_inUse[index(page)]);
-        m_inUse[index(page)] = true;
-    }
+  void markPageUsed(Address page) {
+    ASSERT(!m_inUse[index(page)]);
+    m_inUse[index(page)] = true;
+  }
 
-    void markPageUnused(Address page)
-    {
-        m_inUse[index(page)] = false;
-    }
+  void markPageUnused(Address page) { m_inUse[index(page)] = false; }
 
-    static PageMemoryRegion* allocateLargePage(size_t size)
-    {
-        return allocate(size, 1);
-    }
+  static PageMemoryRegion* allocateLargePage(size_t size,
+                                             RegionTree* regionTree) {
+    return allocate(size, 1, regionTree);
+  }
 
-    static PageMemoryRegion* allocateNormalPages()
-    {
-        return allocate(blinkPageSize * blinkPagesPerRegion, blinkPagesPerRegion);
-    }
+  static PageMemoryRegion* allocateNormalPages(RegionTree* regionTree) {
+    return allocate(blinkPageSize * blinkPagesPerRegion, blinkPagesPerRegion,
+                    regionTree);
+  }
 
-    BasePage* pageFromAddress(Address address)
-    {
-        ASSERT(contains(address));
-        if (!m_inUse[index(address)])
-            return nullptr;
-        if (m_isLargePage)
-            return pageFromObject(base());
-        return pageFromObject(address);
-    }
+  BasePage* pageFromAddress(Address address) {
+    ASSERT(contains(address));
+    if (!m_inUse[index(address)])
+      return nullptr;
+    if (m_isLargePage)
+      return pageFromObject(base());
+    return pageFromObject(address);
+  }
 
-private:
-    PageMemoryRegion(Address base, size_t size, unsigned numPages)
-        : MemoryRegion(base, size)
-        , m_isLargePage(numPages == 1)
-        , m_numPages(numPages)
-    {
-        Heap::addPageMemoryRegion(this);
-        for (size_t i = 0; i < blinkPagesPerRegion; ++i)
-            m_inUse[i] = false;
-    }
+ private:
+  PageMemoryRegion(Address base, size_t, unsigned numPages, RegionTree*);
 
-    unsigned index(Address address)
-    {
-        ASSERT(contains(address));
-        if (m_isLargePage)
-            return 0;
-        size_t offset = blinkPageAddress(address) - base();
-        ASSERT(offset % blinkPageSize == 0);
-        return offset / blinkPageSize;
-    }
+  unsigned index(Address address) const {
+    ASSERT(contains(address));
+    if (m_isLargePage)
+      return 0;
+    size_t offset = blinkPageAddress(address) - base();
+    ASSERT(offset % blinkPageSize == 0);
+    return offset / blinkPageSize;
+  }
 
-    static PageMemoryRegion* allocate(size_t size, unsigned numPages)
-    {
-        // Round size up to the allocation granularity.
-        size = (size + WTF::kPageAllocationGranularityOffsetMask) & WTF::kPageAllocationGranularityBaseMask;
-        Address base = static_cast<Address>(WTF::allocPages(nullptr, size, blinkPageSize, WTF::PageInaccessible));
-        if (!base)
-            blinkGCOutOfMemory();
-        return new PageMemoryRegion(base, size, numPages);
-    }
+  static PageMemoryRegion* allocate(size_t, unsigned numPages, RegionTree*);
 
-    bool m_isLargePage;
-    bool m_inUse[blinkPagesPerRegion];
-    unsigned m_numPages;
+  const bool m_isLargePage;
+  // A thread owns a page, but not a region. Represent the in-use
+  // bitmap such that thread non-interference comes for free.
+  bool m_inUse[blinkPagesPerRegion];
+  int m_numPages;
+  RegionTree* m_regionTree;
+};
+
+// A RegionTree is a simple binary search tree of PageMemoryRegions sorted
+// by base addresses.
+class RegionTree {
+  USING_FAST_MALLOC(RegionTree);
+
+ public:
+  RegionTree() : m_root(nullptr) {}
+
+  void add(PageMemoryRegion*);
+  void remove(PageMemoryRegion*);
+  PageMemoryRegion* lookup(Address);
+
+ private:
+  Mutex m_mutex;
+  RegionTreeNode* m_root;
+};
+
+class RegionTreeNode {
+  USING_FAST_MALLOC(RegionTreeNode);
+
+ public:
+  explicit RegionTreeNode(PageMemoryRegion* region)
+      : m_region(region), m_left(nullptr), m_right(nullptr) {}
+
+  ~RegionTreeNode() {
+    delete m_left;
+    delete m_right;
+  }
+
+  void addTo(RegionTreeNode** context);
+
+ private:
+  PageMemoryRegion* m_region;
+  RegionTreeNode* m_left;
+  RegionTreeNode* m_right;
+
+  friend RegionTree;
 };
 
 // Representation of the memory used for a Blink heap page.
@@ -177,82 +164,51 @@ private:
 //
 // Guard pages are created before and after the writable memory.
 class PageMemory {
-public:
-    ~PageMemory()
-    {
-        __lsan_unregister_root_region(m_writable.base(), m_writable.size());
-        m_reserved->pageDeleted(writableStart());
-    }
+  USING_FAST_MALLOC(PageMemory);
 
-    WARN_UNUSED_RETURN bool commit()
-    {
-        m_reserved->markPageUsed(writableStart());
-        return m_writable.commit();
-    }
+ public:
+  ~PageMemory() {
+    __lsan_unregister_root_region(m_writable.base(), m_writable.size());
+    m_reserved->pageDeleted(writableStart());
+  }
 
-    void decommit()
-    {
-        m_reserved->markPageUnused(writableStart());
-        m_writable.decommit();
-    }
+  WARN_UNUSED_RESULT bool commit() {
+    m_reserved->markPageUsed(writableStart());
+    return m_writable.commit();
+  }
 
-    void markUnused() { m_reserved->markPageUnused(writableStart()); }
+  void decommit() {
+    m_reserved->markPageUnused(writableStart());
+    m_writable.decommit();
+  }
 
-    PageMemoryRegion* region() { return m_reserved; }
+  void markUnused() { m_reserved->markPageUnused(writableStart()); }
 
-    Address writableStart() { return m_writable.base(); }
+  PageMemoryRegion* region() { return m_reserved; }
 
-    static PageMemory* setupPageMemoryInRegion(PageMemoryRegion* region, size_t pageOffset, size_t payloadSize)
-    {
-        // Setup the payload one guard page into the page memory.
-        Address payloadAddress = region->base() + pageOffset + blinkGuardPageSize;
-        return new PageMemory(region, MemoryRegion(payloadAddress, payloadSize));
-    }
+  Address writableStart() { return m_writable.base(); }
 
-    // Allocate a virtual address space for one blink page with the
-    // following layout:
-    //
-    //    [ guard os page | ... payload ... | guard os page ]
-    //    ^---{ aligned to blink page size }
-    //
-    // The returned page memory region will be zeroed.
-    //
-    static PageMemory* allocate(size_t payloadSize)
-    {
-        ASSERT(payloadSize > 0);
+  static PageMemory* setupPageMemoryInRegion(PageMemoryRegion*,
+                                             size_t pageOffset,
+                                             size_t payloadSize);
 
-        // Virtual memory allocation routines operate in OS page sizes.
-        // Round up the requested size to nearest os page size.
-        payloadSize = roundToOsPageSize(payloadSize);
+  // Allocate a virtual address space for one blink page with the
+  // following layout:
+  //
+  //    [ guard os page | ... payload ... | guard os page ]
+  //    ^---{ aligned to blink page size }
+  //
+  // The returned page memory region will be zeroed.
+  //
+  static PageMemory* allocate(size_t payloadSize, RegionTree*);
 
-        // Overallocate by 2 times OS page size to have space for a
-        // guard page at the beginning and end of blink heap page.
-        size_t allocationSize = payloadSize + 2 * blinkGuardPageSize;
-        PageMemoryRegion* pageMemoryRegion = PageMemoryRegion::allocateLargePage(allocationSize);
-        PageMemory* storage = setupPageMemoryInRegion(pageMemoryRegion, 0, payloadSize);
-        RELEASE_ASSERT(storage->commit());
-        return storage;
-    }
+ private:
+  PageMemory(PageMemoryRegion* reserved, const MemoryRegion& writable);
 
-private:
-    PageMemory(PageMemoryRegion* reserved, const MemoryRegion& writable)
-        : m_reserved(reserved)
-        , m_writable(writable)
-    {
-        ASSERT(reserved->contains(writable));
-
-        // Register the writable area of the memory as part of the LSan root set.
-        // Only the writable area is mapped and can contain C++ objects.  Those
-        // C++ objects can contain pointers to objects outside of the heap and
-        // should therefore be part of the LSan root set.
-        __lsan_register_root_region(m_writable.base(), m_writable.size());
-    }
-
-
-    PageMemoryRegion* m_reserved;
-    MemoryRegion m_writable;
+  PageMemoryRegion* m_reserved;
+  MemoryRegion m_writable;
 };
 
-} // namespace blink
+}  // namespace blink
 
 #endif

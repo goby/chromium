@@ -25,8 +25,8 @@ class VersionUpdaterWin : public VersionUpdater,
   ~VersionUpdaterWin() override;
 
   // VersionUpdater:
-  void CheckForUpdate(const StatusCallback& callback) override;
-  void RelaunchBrowser() const override;
+  void CheckForUpdate(const StatusCallback& callback,
+                      const PromoteCallback&) override;
 
   // UpdateCheckDelegate:
   void OnUpdateCheckComplete(const base::string16& new_version) override;

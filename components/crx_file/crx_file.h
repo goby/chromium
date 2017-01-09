@@ -5,12 +5,13 @@
 #ifndef COMPONENTS_CRX_FILE_CRX_FILE_H_
 #define COMPONENTS_CRX_FILE_CRX_FILE_H_
 
+#include <stddef.h>
+#include <stdint.h>
+#include <sys/types.h>
+
+#include <memory>
 #include <string>
 #include <vector>
-
-#include <sys/types.h>
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
 
 namespace base {
 class FilePath;
@@ -32,9 +33,9 @@ class CrxFile {
   // a struct without manual parsing.
   struct Header {
     char magic[kCrxFileHeaderMagicSize];
-    uint32 version;
-    uint32 key_size;  // The size of the public key, in bytes.
-    uint32 signature_size;  // The size of the signature, in bytes.
+    uint32_t version;
+    uint32_t key_size;        // The size of the public key, in bytes.
+    uint32_t signature_size;  // The size of the signature, in bytes.
     // An ASN.1-encoded PublicKeyInfo structure follows.
     // The signature follows.
   };
@@ -51,7 +52,7 @@ class CrxFile {
   // Construct a new CRX file header object with bytes of a header
   // read from a CRX file. If a null scoped_ptr is returned, |error|
   // contains an error code with additional information.
-  static scoped_ptr<CrxFile> Parse(const Header& header, Error* error);
+  static std::unique_ptr<CrxFile> Parse(const Header& header, Error* error);
 
   // Construct a new header for the given key and signature sizes.
   // Returns a null scoped_ptr if erroneous values of |key_size| and/or
@@ -59,9 +60,9 @@ class CrxFile {
   // additional information.
   // Use this constructor and then .header() to obtain the Header
   // for writing out to a CRX file.
-  static scoped_ptr<CrxFile> Create(const uint32 key_size,
-                                    const uint32 signature_size,
-                                    Error* error);
+  static std::unique_ptr<CrxFile> Create(const uint32_t key_size,
+                                         const uint32_t signature_size,
+                                         Error* error);
 
   // Returns the header structure for writing out to a CRX file.
   const Header& header() const { return header_; }

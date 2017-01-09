@@ -27,44 +27,45 @@
 #define MediaDevicesRequest_h
 
 #include "bindings/core/v8/ScriptPromise.h"
-#include "core/dom/ActiveDOMObject.h"
+#include "core/dom/SuspendableObject.h"
 #include "modules/ModulesExport.h"
 #include "modules/mediastream/MediaDeviceInfo.h"
 #include "platform/heap/Handle.h"
-#include "wtf/PassOwnPtr.h"
 
 namespace blink {
 
 class Document;
-class ExceptionState;
 class UserMediaController;
 class ScriptState;
 class ScriptPromiseResolver;
 
-class MODULES_EXPORT MediaDevicesRequest final : public GarbageCollectedFinalized<MediaDevicesRequest>, public ActiveDOMObject {
-    WILL_BE_USING_GARBAGE_COLLECTED_MIXIN(MediaDevicesRequest);
-public:
-    static MediaDevicesRequest* create(ScriptState*, UserMediaController*);
-    ~MediaDevicesRequest() override;
+class MODULES_EXPORT MediaDevicesRequest final
+    : public GarbageCollectedFinalized<MediaDevicesRequest>,
+      public SuspendableObject {
+  USING_GARBAGE_COLLECTED_MIXIN(MediaDevicesRequest);
 
-    Document* ownerDocument();
+ public:
+  static MediaDevicesRequest* create(ScriptState*, UserMediaController*);
+  ~MediaDevicesRequest() override;
 
-    ScriptPromise start();
+  Document* ownerDocument();
 
-    void succeed(const MediaDeviceInfoVector&);
+  ScriptPromise start();
 
-    // ActiveDOMObject
-    void stop() override;
+  void succeed(const MediaDeviceInfoVector&);
 
-    DECLARE_VIRTUAL_TRACE();
+  // SuspendableObject
+  void contextDestroyed() override;
 
-private:
-    MediaDevicesRequest(ScriptState*, UserMediaController*);
+  DECLARE_VIRTUAL_TRACE();
 
-    RawPtrWillBeMember<UserMediaController> m_controller;
-    Member<ScriptPromiseResolver> m_resolver;
+ private:
+  MediaDevicesRequest(ScriptState*, UserMediaController*);
+
+  Member<UserMediaController> m_controller;
+  Member<ScriptPromiseResolver> m_resolver;
 };
 
-} // namespace blink
+}  // namespace blink
 
-#endif // MediaDevicesRequest_h
+#endif  // MediaDevicesRequest_h

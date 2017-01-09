@@ -24,7 +24,6 @@
  *
  */
 
-#include "config.h"
 #include "core/layout/LayoutWordBreak.h"
 
 #include "core/html/HTMLElement.h"
@@ -32,13 +31,10 @@
 namespace blink {
 
 LayoutWordBreak::LayoutWordBreak(HTMLElement* element)
-    : LayoutText(element, StringImpl::empty())
-{
+    : LayoutText(element, StringImpl::empty()) {}
+
+bool LayoutWordBreak::isWordBreak() const {
+  return true;
 }
 
-bool LayoutWordBreak::isWordBreak() const
-{
-    return true;
-}
-
-}
+}  // namespace blink

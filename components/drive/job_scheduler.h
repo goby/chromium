@@ -5,11 +5,14 @@
 #ifndef COMPONENTS_DRIVE_JOB_SCHEDULER_H_
 #define COMPONENTS_DRIVE_JOB_SCHEDULER_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "base/id_map.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/observer_list.h"
 #include "base/threading/thread_checker.h"
 #include "components/drive/drive_uploader.h"
@@ -19,10 +22,6 @@
 #include "net/base/network_change_notifier.h"
 
 class PrefService;
-
-namespace base {
-class SeqencedTaskRunner;
-}
 
 namespace drive {
 
@@ -101,7 +100,7 @@ class JobScheduler
 
   // Adds a GetChangeList operation to the queue.
   // |callback| must not be null.
-  void GetChangeList(int64 start_changestamp,
+  void GetChangeList(int64_t start_changestamp,
                      const google_apis::ChangeListCallback& callback);
 
   // Adds GetRemainingChangeList operation to the queue.
@@ -172,7 +171,7 @@ class JobScheduler
   // detail. The actual operation never refers these values.
   JobID DownloadFile(
       const base::FilePath& virtual_path,
-      int64 expected_file_size,
+      int64_t expected_file_size,
       const base::FilePath& local_cache_path,
       const std::string& resource_id,
       const ClientContext& context,
@@ -181,7 +180,7 @@ class JobScheduler
 
   // Adds an UploadNewFile operation to the queue.
   void UploadNewFile(const std::string& parent_resource_id,
-                     int64 expected_file_size,
+                     int64_t expected_file_size,
                      const base::FilePath& drive_file_path,
                      const base::FilePath& local_file_path,
                      const std::string& title,
@@ -192,7 +191,7 @@ class JobScheduler
 
   // Adds an UploadExistingFile operation to the queue.
   void UploadExistingFile(const std::string& resource_id,
-                          int64 expected_file_size,
+                          int64_t expected_file_size,
                           const base::FilePath& drive_file_path,
                           const base::FilePath& local_file_path,
                           const std::string& content_type,
@@ -271,32 +270,31 @@ class JobScheduler
   bool OnJobDone(JobID job_id, google_apis::DriveApiErrorCode error);
 
   // Callback for job finishing with a FileListCallback.
-  void OnGetFileListJobDone(
-      JobID job_id,
-      const google_apis::FileListCallback& callback,
-      google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::FileList> file_list);
+  void OnGetFileListJobDone(JobID job_id,
+                            const google_apis::FileListCallback& callback,
+                            google_apis::DriveApiErrorCode error,
+                            std::unique_ptr<google_apis::FileList> file_list);
 
   // Callback for job finishing with a ChangeListCallback.
   void OnGetChangeListJobDone(
       JobID job_id,
       const google_apis::ChangeListCallback& callback,
       google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::ChangeList> change_list);
+      std::unique_ptr<google_apis::ChangeList> change_list);
 
   // Callback for job finishing with a FileResourceCallback.
   void OnGetFileResourceJobDone(
       JobID job_id,
       const google_apis::FileResourceCallback& callback,
       google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::FileResource> entry);
+      std::unique_ptr<google_apis::FileResource> entry);
 
   // Callback for job finishing with a AboutResourceCallback.
   void OnGetAboutResourceJobDone(
       JobID job_id,
       const google_apis::AboutResourceCallback& callback,
       google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::AboutResource> about_resource);
+      std::unique_ptr<google_apis::AboutResource> about_resource);
 
   // Callback for job finishing with a GetShareUrlCallback.
   void OnGetShareUrlJobDone(
@@ -306,11 +304,10 @@ class JobScheduler
       const GURL& share_url);
 
   // Callback for job finishing with a AppListCallback.
-  void OnGetAppListJobDone(
-      JobID job_id,
-      const google_apis::AppListCallback& callback,
-      google_apis::DriveApiErrorCode error,
-      scoped_ptr<google_apis::AppList> app_list);
+  void OnGetAppListJobDone(JobID job_id,
+                           const google_apis::AppListCallback& callback,
+                           google_apis::DriveApiErrorCode error,
+                           std::unique_ptr<google_apis::AppList> app_list);
 
   // Callback for job finishing with a EntryActionCallback.
   void OnEntryActionJobDone(JobID job_id,
@@ -331,7 +328,7 @@ class JobScheduler
       const google_apis::FileResourceCallback& callback,
       google_apis::DriveApiErrorCode error,
       const GURL& upload_location,
-      scoped_ptr<google_apis::FileResource> entry);
+      std::unique_ptr<google_apis::FileResource> entry);
 
   // Callback for DriveUploader::ResumeUploadFile().
   void OnResumeUploadFileDone(
@@ -340,10 +337,10 @@ class JobScheduler
       const google_apis::FileResourceCallback& callback,
       google_apis::DriveApiErrorCode error,
       const GURL& upload_location,
-      scoped_ptr<google_apis::FileResource> entry);
+      std::unique_ptr<google_apis::FileResource> entry);
 
   // Updates the progress status of the specified job.
-  void UpdateProgress(JobID job_id, int64 progress, int64 total);
+  void UpdateProgress(JobID job_id, int64_t progress, int64_t total);
 
   // net::NetworkChangeNotifier::ConnectionTypeObserver override.
   void OnConnectionTypeChanged(
@@ -382,10 +379,10 @@ class JobScheduler
   bool disable_throttling_;
 
   // The queues of jobs.
-  scoped_ptr<JobQueue> queue_[NUM_QUEUES];
+  std::unique_ptr<JobQueue> queue_[NUM_QUEUES];
 
   // The list of queued job info indexed by job IDs.
-  typedef IDMap<JobEntry, IDMapOwnPointer> JobIDMap;
+  using JobIDMap = IDMap<std::unique_ptr<JobEntry>>;
   JobIDMap job_map_;
 
   // The list of observers for the scheduler.
@@ -394,7 +391,7 @@ class JobScheduler
   EventLogger* logger_;
   DriveServiceInterface* drive_service_;
   base::SequencedTaskRunner* blocking_task_runner_;
-  scoped_ptr<DriveUploaderInterface> uploader_;
+  std::unique_ptr<DriveUploaderInterface> uploader_;
 
   PrefService* pref_service_;
 

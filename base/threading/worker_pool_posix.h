@@ -24,21 +24,19 @@
 #ifndef BASE_THREADING_WORKER_POOL_POSIX_H_
 #define BASE_THREADING_WORKER_POOL_POSIX_H_
 
+#include <memory>
 #include <queue>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/callback_forward.h"
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/pending_task.h"
 #include "base/synchronization/condition_variable.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/platform_thread.h"
 #include "base/tracked_objects.h"
-
-class Task;
 
 namespace base {
 
@@ -51,10 +49,6 @@ class BASE_EXPORT PosixDynamicThreadPool
   // |idle_seconds_before_exit|.
   PosixDynamicThreadPool(const std::string& name_prefix,
                          int idle_seconds_before_exit);
-
-  // Indicates that the thread pool is going away.  Stops handing out tasks to
-  // worker threads.  Wakes up all the idle threads to let them exit.
-  void Terminate();
 
   // Adds |task| to the thread pool.
   void PostTask(const tracked_objects::Location& from_here,
@@ -85,10 +79,9 @@ class BASE_EXPORT PosixDynamicThreadPool
   ConditionVariable pending_tasks_available_cv_;
   int num_idle_threads_;
   TaskQueue pending_tasks_;
-  bool terminated_;
   // Only used for tests to ensure correct thread ordering.  It will always be
   // NULL in non-test code.
-  scoped_ptr<ConditionVariable> num_idle_threads_cv_;
+  std::unique_ptr<ConditionVariable> num_idle_threads_cv_;
 
   DISALLOW_COPY_AND_ASSIGN(PosixDynamicThreadPool);
 };

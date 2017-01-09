@@ -12,9 +12,9 @@
 #include "base/android/scoped_java_ref.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
+#include "base/macros.h"
 #include "chrome/browser/ui/android/tab_model/tab_model.h"
 
-class Profile;
 class TabAndroid;
 
 namespace content {
@@ -26,7 +26,10 @@ class WebContents;
 // is what actually stores Tabs.
 class TabModelJniBridge : public TabModel {
  public:
-  TabModelJniBridge(JNIEnv* env, jobject obj, bool is_incognito);
+  TabModelJniBridge(JNIEnv* env,
+                    jobject obj,
+                    bool is_incognito,
+                    bool is_tabbed_activity);
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& obj);
   ~TabModelJniBridge() override;
 
@@ -50,7 +53,8 @@ class TabModelJniBridge : public TabModel {
   void SetActiveIndex(int index) override;
   void CloseTabAt(int index) override;
 
-  void CreateTab(content::WebContents* web_contents,
+  void CreateTab(TabAndroid* parent,
+                 content::WebContents* web_contents,
                  int parent_tab_id) override;
 
   content::WebContents* CreateNewTabForDevTools(const GURL& url) override;

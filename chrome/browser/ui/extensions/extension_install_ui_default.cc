@@ -5,7 +5,9 @@
 #include "chrome/browser/ui/extensions/extension_install_ui_default.h"
 
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/extensions/theme_installed_infobar_delegate.h"
 #include "chrome/browser/infobars/infobar_service.h"
@@ -13,8 +15,6 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/themes/theme_service.h"
 #include "chrome/browser/themes/theme_service_factory.h"
-#include "chrome/browser/ui/app_list/app_list_service.h"
-#include "chrome/browser/ui/app_list/app_list_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_navigator.h"
@@ -22,26 +22,29 @@
 #include "chrome/browser/ui/browser_tabstrip.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/extensions/extension_installed_bubble.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/scoped_tabbed_browser_displayer.h"
 #include "chrome/browser/ui/simple_message_box.h"
 #include "chrome/browser/ui/singleton_tabs.h"
 #include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/infobars/core/confirm_infobar_delegate.h"
 #include "components/infobars/core/infobar.h"
-#include "components/search/search.h"
+#include "components/strings/grit/components_strings.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/notification_service.h"
 #include "content/public/browser/web_contents.h"
 #include "extensions/browser/install/crx_install_error.h"
 #include "extensions/common/extension.h"
-#include "grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 
+#if defined(OS_CHROMEOS)
+#include "chrome/browser/ui/extensions/extension_installed_notification.h"
+#else
+#include "chrome/common/url_constants.h"
+#include "content/public/browser/notification_service.h"
+#endif
+
 #if defined(USE_ASH)
-#include "ash/shell.h"
+#include "ash/shell.h"  // nogncheck
 #endif
 
 using content::BrowserThread;
@@ -55,8 +58,7 @@ Browser* FindOrCreateVisibleBrowser(Profile* profile) {
   // after fixing http://crbug.com/38676.
   if (!IncognitoModePrefs::CanOpenBrowser(profile))
     return NULL;
-  chrome::ScopedTabbedBrowserDisplayer displayer(
-      profile, chrome::GetActiveDesktop());
+  chrome::ScopedTabbedBrowserDisplayer displayer(profile);
   Browser* browser = displayer.browser();
   if (browser->tab_strip_model()->count() == 0)
     chrome::AddTabAt(browser, GURL(), -1, true);
@@ -84,6 +86,7 @@ class ErrorInfoBarDelegate : public ConfirmInfoBarDelegate {
   ~ErrorInfoBarDelegate() override;
 
   // ConfirmInfoBarDelegate:
+  infobars::InfoBarDelegate::InfoBarIdentifier GetIdentifier() const override;
   base::string16 GetMessageText() const override;
   int GetButtons() const override;
   base::string16 GetLinkText() const override;
@@ -98,7 +101,8 @@ class ErrorInfoBarDelegate : public ConfirmInfoBarDelegate {
 void ErrorInfoBarDelegate::Create(InfoBarService* infobar_service,
                                   const extensions::CrxInstallError& error) {
   infobar_service->AddInfoBar(infobar_service->CreateConfirmInfoBar(
-      scoped_ptr<ConfirmInfoBarDelegate>(new ErrorInfoBarDelegate(error))));
+      std::unique_ptr<ConfirmInfoBarDelegate>(
+          new ErrorInfoBarDelegate(error))));
 }
 
 ErrorInfoBarDelegate::ErrorInfoBarDelegate(
@@ -107,6 +111,11 @@ ErrorInfoBarDelegate::ErrorInfoBarDelegate(
 }
 
 ErrorInfoBarDelegate::~ErrorInfoBarDelegate() {
+}
+
+infobars::InfoBarDelegate::InfoBarIdentifier
+ErrorInfoBarDelegate::GetIdentifier() const {
+  return INSTALLATION_ERROR_INFOBAR_DELEGATE;
 }
 
 base::string16 ErrorInfoBarDelegate::GetMessageText() const {
@@ -177,20 +186,16 @@ void ExtensionInstallUIDefault::OnInstallSuccess(const Extension* extension,
     use_bubble = use_app_installed_bubble_;
 #endif
 
-    if (IsAppLauncherEnabled()) {
-      // TODO(tapted): ExtensionInstallUI should retain the desktop type from
-      // the browser used to initiate the flow. http://crbug.com/308360.
-      AppListService::Get(chrome::GetActiveDesktop())
-          ->ShowForAppInstall(current_profile, extension->id(), false);
-      return;
-    }
-
     if (use_bubble) {
       ShowExtensionInstalledBubble(extension, current_profile, *icon);
       return;
     }
 
+#if defined(OS_CHROMEOS)
+    ExtensionInstalledNotification::Show(extension, current_profile);
+#else  // defined(OS_CHROMEOS)
     OpenAppInstalledUI(extension->id());
+#endif  // defined(OS_CHROMEOS)
     return;
   }
 
@@ -203,8 +208,7 @@ void ExtensionInstallUIDefault::OnInstallFailure(
   if (disable_failure_ui_for_tests() || skip_post_install_ui_)
     return;
 
-  Browser* browser =
-      chrome::FindLastActiveWithProfile(profile_, chrome::GetActiveDesktop());
+  Browser* browser = chrome::FindLastActiveWithProfile(profile_);
   if (!browser)  // Can be NULL in unittests.
     return;
   WebContents* web_contents =
@@ -217,18 +221,15 @@ void ExtensionInstallUIDefault::OnInstallFailure(
 
 void ExtensionInstallUIDefault::OpenAppInstalledUI(const std::string& app_id) {
 #if defined(OS_CHROMEOS)
-  // App Launcher always enabled on ChromeOS, so always handled in
+  // Notification always enabled on ChromeOS, so always handled in
   // OnInstallSuccess.
   NOTREACHED();
 #else
   Profile* current_profile = profile_->GetOriginalProfile();
   Browser* browser = FindOrCreateVisibleBrowser(current_profile);
   if (browser) {
-    GURL url(search::IsInstantExtendedAPIEnabled()
-                 ? chrome::kChromeUIAppsURL
-                 : chrome::kChromeUINewTabURL);
-    chrome::NavigateParams params(
-        chrome::GetSingletonTabNavigateParams(browser, url));
+    chrome::NavigateParams params(chrome::GetSingletonTabNavigateParams(
+        browser, GURL(chrome::kChromeUIAppsURL)));
     chrome::Navigate(&params);
 
     content::NotificationService::current()->Notify(
@@ -248,8 +249,7 @@ void ExtensionInstallUIDefault::SetSkipPostInstallUI(bool skip_ui) {
 }
 
 gfx::NativeWindow ExtensionInstallUIDefault::GetDefaultInstallDialogParent() {
-  Browser* browser =
-      chrome::FindLastActiveWithProfile(profile_, chrome::GetActiveDesktop());
+  Browser* browser = chrome::FindLastActiveWithProfile(profile_);
   if (browser) {
     content::WebContents* contents =
         browser->tab_strip_model()->GetActiveWebContents();

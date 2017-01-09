@@ -5,15 +5,17 @@
 #ifndef CONTENT_CHILD_SITE_ISOLATION_STATS_GATHERER_H_
 #define CONTENT_CHILD_SITE_ISOLATION_STATS_GATHERER_H_
 
+#include <memory>
 #include <string>
 
 #include "base/gtest_prod_util.h"
-#include "base/memory/linked_ptr.h"
+#include "base/macros.h"
 #include "base/strings/string_piece.h"
 #include "content/common/content_export.h"
 #include "content/common/cross_site_document_classifier.h"
 #include "content/public/common/resource_type.h"
 #include "url/gurl.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -30,13 +32,13 @@ struct ResourceResponseInfo;
 //   0:HTML, 1:XML, 2:JSON, 3:Plain, 4:Others
 // SiteIsolation.XSD.[%MIMETYPE].Blocked :
 //   blocked # of cross-site document responses grouped by sniffed MIME type.
-// SiteIsolation.XSD.[%MIMETYPE].Blocked.RenderableStatusCode :
+// SiteIsolation.XSD.[%MIMETYPE].Blocked.RenderableStatusCode2 :
 //   # of responses with renderable status code,
 //   out of SiteIsolation.XSD.[%MIMETYPE].Blocked.
 // SiteIsolation.XSD.[%MIMETYPE].Blocked.NonRenderableStatusCode :
 //   # of responses with non-renderable status code,
 //   out of SiteIsolation.XSD.[%MIMETYPE].Blocked.
-// SiteIsolation.XSD.[%MIMETYPE].NoSniffBlocked.RenderableStatusCode :
+// SiteIsolation.XSD.[%MIMETYPE].NoSniffBlocked.RenderableStatusCode2 :
 //   # of responses failed to be sniffed for its MIME type, but blocked by
 //   "X-Content-Type-Options: nosniff" header, and with renderable status code
 //   out of SiteIsolation.XSD.[%MIMETYPE].Blocked.
@@ -68,8 +70,8 @@ class CONTENT_EXPORT SiteIsolationStatsGatherer {
   // Returns any bookkeeping data about the HTTP header information for the
   // request identified by |request_id|. Any data returned should then be
   // passed to OnReceivedFirstChunk() with the first data chunk.
-  static linked_ptr<SiteIsolationResponseMetaData> OnReceivedResponse(
-      const GURL& frame_origin,
+  static std::unique_ptr<SiteIsolationResponseMetaData> OnReceivedResponse(
+      const url::Origin& frame_origin,
       const GURL& response_url,
       ResourceType resource_type,
       int origin_pid,
@@ -80,7 +82,7 @@ class CONTENT_EXPORT SiteIsolationStatsGatherer {
   // kinds of UMA data stats. This function is called only if the length of
   // received data is non-zero.
   static bool OnReceivedFirstChunk(
-      const linked_ptr<SiteIsolationResponseMetaData>& resp_data,
+      const std::unique_ptr<SiteIsolationResponseMetaData>& resp_data,
       const char* payload,
       int length);
 

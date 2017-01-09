@@ -6,24 +6,27 @@
 
 #import "base/ios/weak_nsobject.h"
 #include "base/logging.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
-#include "components/data_reduction_proxy/core/common/data_reduction_proxy_headers.h"
 #import "ios/chrome/browser/net/metrics_network_client_manager.h"
 #include "ios/web/public/url_util.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
 #include "net/url_request/url_request.h"
 
+#if !defined(__has_feature) || !__has_feature(objc_arc)
+#error "This file requires ARC support."
+#endif
+
 @interface MetricsNetworkClient () {
   BOOL _histogramUpdated;
   // Pointer to the load time record for this request. This will be created
   // and owned by |_manager|, and it will remain valid as long as |_manager| is.
-  PageLoadTimeRecord* _loadTimeRecord;
+  __unsafe_unretained PageLoadTimeRecord* _loadTimeRecord;
   // Pointer to the creating manager, which is owned by a tab. All network
   // requests for the tab are destroyed before the tab is, so this pointer
   // will always be valid as long as the owning client is alive.
-  MetricsNetworkClientManager* _manager;
+  __unsafe_unretained MetricsNetworkClientManager* _manager;
   // A pointer to the request, kept so it can be referred to later.
   scoped_refptr<net::HttpResponseHeaders> _nativeHeaders;
 }
@@ -81,15 +84,6 @@
 - (void)didFinishLoading {
   [super didFinishLoading];
   [self updateHistogram:net::OK];
-  if (!_nativeHeaders)
-    return;
-
-  if (!_loadTimeRecord)
-    return;
-
-  [_loadTimeRecord
-      setDataProxyUsed:data_reduction_proxy::HasDataReductionProxyViaHeader(
-                           _nativeHeaders.get(), NULL)];
 }
 
 @end

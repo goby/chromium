@@ -5,9 +5,12 @@
 #ifndef UI_EVENTS_GESTURE_DETECTION_UI_MOTION_EVENT_H_
 #define UI_EVENTS_GESTURE_DETECTION_UI_MOTION_EVENT_H_
 
-#include <map>
+#include <stddef.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <map>
+#include <memory>
+
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "ui/events/event.h"
 #include "ui/events/events_export.h"

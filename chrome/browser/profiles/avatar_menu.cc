@@ -9,6 +9,7 @@
 #include "base/metrics/field_trial.h"
 #include "base/profiler/scoped_tracker.h"
 #include "base/strings/utf_string_conversions.h"
+#include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/profiles/avatar_menu_actions.h"
@@ -20,45 +21,45 @@
 #include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/host_desktop.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "chrome/browser/ui/user_manager.h"
 #include "chrome/common/chrome_switches.h"
+#include "chrome/common/features.h"
 #include "chrome/grit/generated_resources.h"
+#include "chrome/grit/theme_resources.h"
 #include "components/signin/core/common/profile_management_switches.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
-#include "grit/theme_resources.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 #include "chrome/browser/supervised_user/supervised_user_service.h"
 #include "chrome/browser/supervised_user/supervised_user_service_factory.h"
 #endif
 
 using content::BrowserThread;
 
-AvatarMenu::AvatarMenu(ProfileInfoInterface* profile_cache,
+AvatarMenu::AvatarMenu(ProfileAttributesStorage* profile_storage,
                        AvatarMenuObserver* observer,
                        Browser* browser)
-    : profile_list_(ProfileList::Create(profile_cache)),
+    : profile_list_(ProfileList::Create(profile_storage)),
       menu_actions_(AvatarMenuActions::Create()),
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
       supervised_user_observer_(this),
 #endif
-      profile_info_(profile_cache),
+      profile_storage_(profile_storage),
       observer_(observer),
       browser_(browser) {
-  DCHECK(profile_info_);
+  DCHECK(profile_storage_);
   // Don't DCHECK(browser_) so that unit tests can reuse this ctor.
 
   ActiveBrowserChanged(browser_);
 
   // Register this as an observer of the info cache.
-  g_browser_process->profile_manager()->GetProfileInfoCache().AddObserver(this);
+  profile_storage_->AddObserver(this);
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
   // Register this as an observer of the SupervisedUserService to be notified
   // of changes to the custodian info.
   if (browser_) {
@@ -69,20 +70,20 @@ AvatarMenu::AvatarMenu(ProfileInfoInterface* profile_cache,
 }
 
 AvatarMenu::~AvatarMenu() {
-  g_browser_process->profile_manager()->
-      GetProfileInfoCache().RemoveObserver(this);
+  profile_storage_->RemoveObserver(this);
 }
 
-AvatarMenu::Item::Item(size_t menu_index,
-                       size_t profile_index,
+AvatarMenu::Item::Item(size_t menu_index, const base::FilePath& profile_path,
                        const gfx::Image& icon)
     : icon(icon),
       active(false),
       signed_in(false),
       signin_required(false),
       menu_index(menu_index),
-      profile_index(profile_index) {
+      profile_path(profile_path) {
 }
+
+AvatarMenu::Item::Item(const Item& other) = default;
 
 AvatarMenu::Item::~Item() {
 }
@@ -98,11 +99,6 @@ bool AvatarMenu::ShouldShowAvatarMenu() {
 #else
   return true;
 #endif
-}
-
-bool AvatarMenu::CompareItems(const Item* item1, const Item* item2) {
-  return base::i18n::ToLower(item1->name).compare(
-      base::i18n::ToLower(item2->name)) < 0;
 }
 
 void AvatarMenu::SwitchToProfile(size_t index,
@@ -123,16 +119,8 @@ void AvatarMenu::SwitchToProfile(size_t index,
   }
 #endif
 
-  base::FilePath path =
-      profile_info_->GetPathOfProfileAtIndex(item.profile_index);
-
-  chrome::HostDesktopType desktop_type = chrome::GetActiveDesktop();
-  if (browser_)
-    desktop_type = browser_->host_desktop_type();
-
-  profiles::SwitchToProfile(path, desktop_type, always_create,
-                            ProfileManager::CreateCallback(),
-                            metric);
+  profiles::SwitchToProfile(item.profile_path, always_create,
+                            ProfileManager::CreateCallback(), metric);
 }
 
 void AvatarMenu::AddNewProfile(ProfileMetrics::ProfileAdd type) {
@@ -140,13 +128,10 @@ void AvatarMenu::AddNewProfile(ProfileMetrics::ProfileAdd type) {
 }
 
 void AvatarMenu::EditProfile(size_t index) {
-  // Get the index in the profile cache from the menu index.
-  size_t profile_index = profile_list_->GetItemAt(index).profile_index;
-
   Profile* profile = g_browser_process->profile_manager()->GetProfileByPath(
-        profile_info_->GetPathOfProfileAtIndex(profile_index));
+      profile_list_->GetItemAt(index).profile_path);
 
-  menu_actions_->EditProfile(profile, profile_index);
+  menu_actions_->EditProfile(profile);
 }
 
 void AvatarMenu::RebuildMenu() {
@@ -160,23 +145,22 @@ size_t AvatarMenu::GetNumberOfItems() const {
 const AvatarMenu::Item& AvatarMenu::GetItemAt(size_t index) const {
   return profile_list_->GetItemAt(index);
 }
-size_t AvatarMenu::GetActiveProfileIndex() {
 
+size_t AvatarMenu::GetIndexOfItemWithProfilePath(const base::FilePath& path) {
+  return profile_list_->MenuIndexFromProfilePath(path);
+}
+
+size_t AvatarMenu::GetActiveProfileIndex() {
   // During singleton profile deletion, this function can be called with no
   // profiles in the model - crbug.com/102278 .
   if (profile_list_->GetNumberOfItems() == 0)
     return 0;
 
-  Profile* active_profile = NULL;
-  if (!browser_)
-    active_profile = ProfileManager::GetLastUsedProfile();
-  else
-    active_profile = browser_->profile();
+  Profile* active_profile = browser_ ? browser_->profile()
+                                     : ProfileManager::GetLastUsedProfile();
 
   size_t index =
-      profile_info_->GetIndexOfProfileWithPath(active_profile->GetPath());
-
-  index = profile_list_->MenuIndexFromProfileIndex(index);
+      profile_list_->MenuIndexFromProfilePath(active_profile->GetPath());
   DCHECK_LT(index, profile_list_->GetNumberOfItems());
   return index;
 }
@@ -184,7 +168,7 @@ size_t AvatarMenu::GetActiveProfileIndex() {
 base::string16 AvatarMenu::GetSupervisedUserInformation() const {
   // |browser_| can be NULL in unit_tests.
   if (browser_ && browser_->profile()->IsSupervised()) {
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
     SupervisedUserService* service =
         SupervisedUserServiceFactory::GetForProfile(browser_->profile());
     base::string16 custodian =
@@ -210,7 +194,8 @@ void AvatarMenu::ActiveBrowserChanged(Browser* browser) {
   browser_ = browser;
   menu_actions_->ActiveBrowserChanged(browser);
 
-  // If browser is not NULL, get the path of its active profile.
+  // Get the path of its active profile if |browser| is not NULL. Note that
+  // |browser| is NULL in unit tests.
   base::FilePath path;
   if (browser)
     path = browser->profile()->GetPath();
@@ -266,11 +251,9 @@ void AvatarMenu::OnProfileIsOmittedChanged(const base::FilePath& profile_path) {
   Update();
 }
 
-#if defined(ENABLE_SUPERVISED_USERS)
+#if BUILDFLAG(ENABLE_SUPERVISED_USERS)
 void AvatarMenu::OnCustodianInfoChanged() {
-  RebuildMenu();
-  if (observer_)
-    observer_->OnAvatarMenuChanged(this);
+  Update();
 }
 #endif
 

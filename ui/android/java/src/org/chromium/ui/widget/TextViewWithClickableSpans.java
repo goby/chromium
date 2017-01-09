@@ -4,6 +4,7 @@
 
 package org.chromium.ui.widget;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.os.Bundle;
 import android.text.Layout;
@@ -19,6 +20,8 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import android.widget.PopupMenu;
 import android.widget.TextView;
 
+import org.chromium.base.VisibleForTesting;
+
 /**
  * ClickableSpan isn't accessible by default, so we create a subclass
  * of TextView that tries to handle the case where a user clicks on a view
@@ -29,6 +32,7 @@ import android.widget.TextView;
  */
 public class TextViewWithClickableSpans extends TextView {
     private AccessibilityManager mAccessibilityManager;
+    private PopupMenu mDisambiguationMenu;
 
     public TextViewWithClickableSpans(Context context) {
         super(context);
@@ -76,6 +80,7 @@ public class TextViewWithClickableSpans extends TextView {
     }
 
     @Override
+    @SuppressLint("ClickableViewAccessibility")
     public boolean onTouchEvent(MotionEvent event) {
         boolean superResult = super.onTouchEvent(event);
 
@@ -118,7 +123,11 @@ public class TextViewWithClickableSpans extends TextView {
         return clickableSpans.length > 0;
     }
 
-    private ClickableSpan[] getClickableSpans() {
+    /**
+     * Returns the ClickableSpans in this TextView's text.
+     */
+    @VisibleForTesting
+    public ClickableSpan[] getClickableSpans() {
         CharSequence text = getText();
         if (!(text instanceof SpannableString)) return null;
 
@@ -139,11 +148,13 @@ public class TextViewWithClickableSpans extends TextView {
 
     private void openDisambiguationMenu() {
         ClickableSpan[] clickableSpans = getClickableSpans();
-        if (clickableSpans == null || clickableSpans.length == 0) return;
+        if (clickableSpans == null || clickableSpans.length == 0 || mDisambiguationMenu != null) {
+            return;
+        }
 
         SpannableString spannable = (SpannableString) getText();
-        PopupMenu popup = new PopupMenu(getContext(), this);
-        Menu menu = popup.getMenu();
+        mDisambiguationMenu = new PopupMenu(getContext(), this);
+        Menu menu = mDisambiguationMenu.getMenu();
         for (final ClickableSpan clickableSpan : clickableSpans) {
             CharSequence itemText = spannable.subSequence(
                     spannable.getSpanStart(clickableSpan),
@@ -158,6 +169,12 @@ public class TextViewWithClickableSpans extends TextView {
             });
         }
 
-        popup.show();
+        mDisambiguationMenu.setOnDismissListener(new PopupMenu.OnDismissListener() {
+            @Override
+            public void onDismiss(PopupMenu menu) {
+                mDisambiguationMenu = null;
+            }
+        });
+        mDisambiguationMenu.show();
     }
 }

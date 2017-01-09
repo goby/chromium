@@ -5,6 +5,7 @@
 #ifndef CONTENT_BROWSER_DEVTOOLS_PROTOCOL_EMULATION_HANDLER_H_
 #define CONTENT_BROWSER_DEVTOOLS_PROTOCOL_EMULATION_HANDLER_H_
 
+#include "base/macros.h"
 #include "content/browser/devtools/protocol/devtools_protocol_dispatcher.h"
 #include "third_party/WebKit/public/web/WebDeviceEmulationParams.h"
 
@@ -27,6 +28,7 @@ class EmulationHandler {
   ~EmulationHandler();
 
   void SetRenderFrameHost(RenderFrameHostImpl* host);
+  void SetClient(std::unique_ptr<Client> client) { }
   void Detached();
 
   Response SetGeolocationOverride(double* latitude,
@@ -38,19 +40,32 @@ class EmulationHandler {
                                     const std::string* configuration);
 
   Response CanEmulate(bool* result);
-  Response SetDeviceMetricsOverride(int width,
-                                    int height,
-                                    double device_scale_factor,
-                                    bool mobile,
-                                    bool fit_window,
-                                    const double* optional_scale,
-                                    const double* optional_offset_x,
-                                    const double* optional_offset_y,
-                                    const int* screen_widget,
-                                    const int* screen_height,
-                                    const int* position_x,
-                                    const int* position_y);
+  Response SetDeviceMetricsOverride(
+      int width,
+      int height,
+      double device_scale_factor,
+      bool mobile,
+      bool fit_window,
+      const double* optional_scale,
+      const double* optional_offset_x,
+      const double* optional_offset_y,
+      const int* screen_widget,
+      const int* screen_height,
+      const int* position_x,
+      const int* position_y,
+      const std::unique_ptr<base::DictionaryValue>& screen_orientation);
   Response ClearDeviceMetricsOverride();
+
+  Response SetVisibleSize(int width, int height);
+
+  Response ForceViewport(double x, double y, double scale);
+  Response ResetViewport();
+  Response ResetPageScaleFactor();
+  Response SetPageScaleFactor(double page_scale_factor);
+  Response SetScriptExecutionDisabled(bool disabled);
+  Response SetEmulatedMedia(const std::string& media);
+  Response SetCPUThrottlingRate(double rate);
+  Response SetVirtualTimePolicy(const std::string& policy, const int* budget);
 
  private:
   WebContentsImpl* GetWebContents();

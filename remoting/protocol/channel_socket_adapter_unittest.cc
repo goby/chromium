@@ -4,8 +4,12 @@
 
 #include "remoting/protocol/channel_socket_adapter.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
@@ -50,14 +54,22 @@ class MockTransportChannel : public cricket::TransportChannel {
   MOCK_METHOD1(GetSslCipher, bool(std::string* cipher));
   MOCK_CONST_METHOD0(GetLocalCertificate,
                      rtc::scoped_refptr<rtc::RTCCertificate>());
-  MOCK_CONST_METHOD1(GetRemoteSSLCertificate,
-                     bool(rtc::SSLCertificate** cert));
-  MOCK_METHOD6(ExportKeyingMaterial, bool(const std::string& label,
-                                          const uint8* context,
-                                          size_t context_len,
-                                          bool use_context,
-                                          uint8* result,
-                                          size_t result_len));
+
+  // This can't be a real mock method because gmock doesn't support move-only
+  // return values.
+  std::unique_ptr<rtc::SSLCertificate> GetRemoteSSLCertificate()
+      const override {
+    EXPECT_TRUE(false);  // Never called.
+    return nullptr;
+  }
+
+  MOCK_METHOD6(ExportKeyingMaterial,
+               bool(const std::string& label,
+                    const uint8_t* context,
+                    size_t context_len,
+                    bool use_context,
+                    uint8_t* result,
+                    size_t result_len));
 };
 
 class TransportChannelSocketAdapterTest : public testing::Test {
@@ -78,7 +90,7 @@ class TransportChannelSocketAdapterTest : public testing::Test {
   }
 
   MockTransportChannel channel_;
-  scoped_ptr<TransportChannelSocketAdapter> target_;
+  std::unique_ptr<TransportChannelSocketAdapter> target_;
   net::CompletionCallback callback_;
   int callback_result_;
   base::MessageLoopForIO message_loop_;

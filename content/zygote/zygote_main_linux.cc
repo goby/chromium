@@ -6,20 +6,24 @@
 
 #include <dlfcn.h>
 #include <fcntl.h>
-#include <openssl/rand.h>
 #include <pthread.h>
 #include <signal.h>
+#include <stddef.h>
+#include <stdint.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <memory>
+#include <set>
+#include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/compiler_specific.h"
+#include "base/lazy_instance.h"
 #include "base/memory/scoped_vector.h"
 #include "base/native_library.h"
 #include "base/pickle.h"
@@ -40,25 +44,31 @@
 #include "content/public/common/sandbox_linux.h"
 #include "content/public/common/zygote_fork_delegate_linux.h"
 #include "content/zygote/zygote_linux.h"
+#include "media/media_features.h"
+#include "ppapi/features/features.h"
 #include "sandbox/linux/services/credentials.h"
 #include "sandbox/linux/services/init_process_reaper.h"
 #include "sandbox/linux/services/namespace_sandbox.h"
 #include "sandbox/linux/services/thread_helpers.h"
 #include "sandbox/linux/suid/client/setuid_sandbox_client.h"
+#include "third_party/WebKit/public/web/linux/WebFontRendering.h"
+#include "third_party/boringssl/src/include/openssl/crypto.h"
+#include "third_party/boringssl/src/include/openssl/rand.h"
 #include "third_party/icu/source/i18n/unicode/timezone.h"
 #include "third_party/skia/include/ports/SkFontConfigInterface.h"
+#include "third_party/skia/include/ports/SkFontMgr_android.h"
 
 #if defined(OS_LINUX)
 #include <sys/prctl.h>
 #endif
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 #include "content/common/pepper_plugin_list.h"
 #include "content/public/common/pepper_plugin_info.h"
 #endif
 
-#if defined(ENABLE_WEBRTC)
-#include "third_party/libjingle/overrides/init_webrtc.h"
+#if BUILDFLAG(ENABLE_WEBRTC)
+#include "third_party/webrtc_overrides/init_webrtc.h"
 #endif
 
 #if defined(SANITIZER_COVERAGE)
@@ -69,6 +79,11 @@
 namespace content {
 
 namespace {
+
+base::LazyInstance<std::set<std::string>>::Leaky g_timezones =
+    LAZY_INSTANCE_INITIALIZER;
+base::LazyInstance<base::Lock>::Leaky g_timezones_lock =
+    LAZY_INSTANCE_INITIALIZER;
 
 void CloseFds(const std::vector<int>& fds) {
   for (const auto& it : fds) {
@@ -83,7 +98,7 @@ void RunTwoClosures(const base::Closure* first, const base::Closure* second) {
 
 }  // namespace
 
-// See http://code.google.com/p/chromium/wiki/LinuxZygote
+// See https://chromium.googlesource.com/chromium/src/+/master/docs/linux_zygote.md
 
 static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
                                         char* timezone_out,
@@ -103,7 +118,8 @@ static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
 
   base::Pickle reply(reinterpret_cast<char*>(reply_buf), r);
   base::PickleIterator iter(reply);
-  std::string result, timezone;
+  std::string result;
+  std::string timezone;
   if (!iter.ReadString(&result) ||
       !iter.ReadString(&timezone) ||
       result.size() != sizeof(struct tm)) {
@@ -118,7 +134,9 @@ static void ProxyLocaltimeCallToBrowser(time_t input, struct tm* output,
     timezone_out[copy_len] = 0;
     output->tm_zone = timezone_out;
   } else {
-    output->tm_zone = NULL;
+    base::AutoLock lock(g_timezones_lock.Get());
+    auto ret_pair = g_timezones.Get().insert(timezone);
+    output->tm_zone = ret_pair.first->c_str();
   }
 }
 
@@ -147,7 +165,7 @@ static bool g_am_zygote_or_renderer = false;
 //
 // Our replacement functions can check this global and either proxy
 // the call to the browser over the sandbox IPC
-// (http://code.google.com/p/chromium/wiki/LinuxSandboxIPC) or they can use
+// (https://chromium.googlesource.com/chromium/src/+/master/docs/linux_sandbox_ipc.md) or they can use
 // dlsym with RTLD_NEXT to resolve the symbol, ignoring any symbols in the
 // current module.
 //
@@ -217,16 +235,16 @@ struct tm* localtime_override(const time_t* timep) {
     ProxyLocaltimeCallToBrowser(*timep, &time_struct, timezone_string,
                                 sizeof(timezone_string));
     return &time_struct;
-  } else {
-    CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                             InitLibcLocaltimeFunctions));
-    struct tm* res = g_libc_localtime(timep);
-#if defined(MEMORY_SANITIZER)
-    if (res) __msan_unpoison(res, sizeof(*res));
-    if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
-#endif
-    return res;
   }
+
+  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
+                           InitLibcLocaltimeFunctions));
+  struct tm* res = g_libc_localtime(timep);
+#if defined(MEMORY_SANITIZER)
+  if (res) __msan_unpoison(res, sizeof(*res));
+  if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
+#endif
+  return res;
 }
 
 // Use same trick to override localtime64(), localtime_r() and localtime64_r().
@@ -241,16 +259,16 @@ struct tm* localtime64_override(const time_t* timep) {
     ProxyLocaltimeCallToBrowser(*timep, &time_struct, timezone_string,
                                 sizeof(timezone_string));
     return &time_struct;
-  } else {
-    CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                             InitLibcLocaltimeFunctions));
-    struct tm* res = g_libc_localtime64(timep);
-#if defined(MEMORY_SANITIZER)
-    if (res) __msan_unpoison(res, sizeof(*res));
-    if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
-#endif
-    return res;
   }
+
+  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
+                           InitLibcLocaltimeFunctions));
+  struct tm* res = g_libc_localtime64(timep);
+#if defined(MEMORY_SANITIZER)
+  if (res) __msan_unpoison(res, sizeof(*res));
+  if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
+#endif
+  return res;
 }
 
 __attribute__ ((__visibility__("default")))
@@ -262,16 +280,16 @@ struct tm* localtime_r_override(const time_t* timep, struct tm* result) {
   if (g_am_zygote_or_renderer) {
     ProxyLocaltimeCallToBrowser(*timep, result, NULL, 0);
     return result;
-  } else {
-    CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                             InitLibcLocaltimeFunctions));
-    struct tm* res = g_libc_localtime_r(timep, result);
-#if defined(MEMORY_SANITIZER)
-    if (res) __msan_unpoison(res, sizeof(*res));
-    if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
-#endif
-    return res;
   }
+
+  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
+                           InitLibcLocaltimeFunctions));
+  struct tm* res = g_libc_localtime_r(timep, result);
+#if defined(MEMORY_SANITIZER)
+  if (res) __msan_unpoison(res, sizeof(*res));
+  if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
+#endif
+  return res;
 }
 
 __attribute__ ((__visibility__("default")))
@@ -283,32 +301,32 @@ struct tm* localtime64_r_override(const time_t* timep, struct tm* result) {
   if (g_am_zygote_or_renderer) {
     ProxyLocaltimeCallToBrowser(*timep, result, NULL, 0);
     return result;
-  } else {
-    CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
-                             InitLibcLocaltimeFunctions));
-    struct tm* res = g_libc_localtime64_r(timep, result);
-#if defined(MEMORY_SANITIZER)
-    if (res) __msan_unpoison(res, sizeof(*res));
-    if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
-#endif
-    return res;
   }
+
+  CHECK_EQ(0, pthread_once(&g_libc_localtime_funcs_guard,
+                           InitLibcLocaltimeFunctions));
+  struct tm* res = g_libc_localtime64_r(timep, result);
+#if defined(MEMORY_SANITIZER)
+  if (res) __msan_unpoison(res, sizeof(*res));
+  if (res->tm_zone) __msan_unpoison_string(res->tm_zone);
+#endif
+  return res;
 }
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
 // Loads the (native) libraries but does not initialize them (i.e., does not
 // call PPP_InitializeModule). This is needed by the zygote on Linux to get
 // access to the plugins before entering the sandbox.
 void PreloadPepperPlugins() {
   std::vector<PepperPluginInfo> plugins;
   ComputePepperPluginList(&plugins);
-  for (size_t i = 0; i < plugins.size(); ++i) {
-    if (!plugins[i].is_internal) {
+  for (const auto& plugin : plugins) {
+    if (!plugin.is_internal) {
       base::NativeLibraryLoadError error;
-      base::NativeLibrary library = base::LoadNativeLibrary(plugins[i].path,
+      base::NativeLibrary library = base::LoadNativeLibrary(plugin.path,
                                                             &error);
       VLOG_IF(1, !library) << "Unable to load plugin "
-                           << plugins[i].path.value() << " "
+                           << plugin.path.value() << " "
                            << error.ToString();
 
       (void)library;  // Prevent release-mode warning.
@@ -323,28 +341,67 @@ static void ZygotePreSandboxInit() {
   base::RandUint64();
 
   base::SysInfo::AmountOfPhysicalMemory();
-  base::SysInfo::MaxSharedMemorySize();
   base::SysInfo::NumberOfProcessors();
 
   // ICU DateFormat class (used in base/time_format.cc) needs to get the
   // Olson timezone ID by accessing the zoneinfo files on disk. After
   // TimeZone::createDefault is called once here, the timezone ID is
   // cached and there's no more need to access the file system.
-  scoped_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
+  std::unique_ptr<icu::TimeZone> zone(icu::TimeZone::createDefault());
+
+#if defined(ARCH_CPU_ARM_FAMILY)
+  // On ARM, BoringSSL requires access to /proc/cpuinfo to determine processor
+  // features. Query this before entering the sandbox.
+  CRYPTO_library_init();
+#endif
 
   // Pass BoringSSL a copy of the /dev/urandom file descriptor so RAND_bytes
   // will work inside the sandbox.
   RAND_set_urandom_fd(base::GetUrandomFD());
 
-#if defined(ENABLE_PLUGINS)
+#if BUILDFLAG(ENABLE_PLUGINS)
   // Ensure access to the Pepper plugins before the sandbox is turned on.
   PreloadPepperPlugins();
 #endif
-#if defined(ENABLE_WEBRTC)
+#if BUILDFLAG(ENABLE_WEBRTC)
   InitializeWebRtcModule();
 #endif
+
   SkFontConfigInterface::SetGlobal(
       new FontConfigIPC(GetSandboxFD()))->unref();
+
+  // Set the android SkFontMgr for blink. We need to ensure this is done
+  // before the sandbox is initialized to allow the font manager to access
+  // font configuration files on disk.
+  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kAndroidFontsPath)) {
+    std::string android_fonts_dir =
+        base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
+            switches::kAndroidFontsPath);
+
+    if (android_fonts_dir.size() > 0 && android_fonts_dir.back() != '/')
+      android_fonts_dir += '/';
+
+    SkFontMgr_Android_CustomFonts custom;
+    custom.fSystemFontUse =
+        SkFontMgr_Android_CustomFonts::SystemFontUse::kOnlyCustom;
+    custom.fBasePath = android_fonts_dir.c_str();
+
+    std::string font_config;
+    std::string fallback_font_config;
+    if (android_fonts_dir.find("kitkat") != std::string::npos) {
+      font_config = android_fonts_dir + "system_fonts.xml";
+      fallback_font_config = android_fonts_dir + "fallback_fonts.xml";
+      custom.fFallbackFontsXml = fallback_font_config.c_str();
+    } else {
+      font_config = android_fonts_dir + "fonts.xml";
+      custom.fFallbackFontsXml = nullptr;
+    }
+    custom.fFontsXml = font_config.c_str();
+    custom.fIsolated = true;
+
+    blink::WebFontRendering::setSkiaFontManager(SkFontMgr_New_Android(&custom));
+  }
 }
 
 static bool CreateInitProcessReaper(base::Closure* post_fork_parent_callback) {
@@ -373,7 +430,7 @@ static bool EnterSuidSandbox(sandbox::SetuidSandboxClient* setuid_sandbox,
     LOG(WARNING) <<
         "You are using a wrong version of the setuid binary!\n"
         "Please read "
-        "https://code.google.com/p/chromium/wiki/LinuxSUIDSandboxDevelopment."
+        "https://chromium.googlesource.com/chromium/src/+/master/docs/linux_suid_sandbox_development.md."
         "\n\n";
   }
 
@@ -420,7 +477,7 @@ static int g_sanitizer_message_length = 1 * 1024 * 1024;
 // A helper process which collects code coverage data from the renderers over a
 // socket and dumps it to a file. See http://crbug.com/336212 for discussion.
 static void SanitizerCoverageHelper(int socket_fd, int file_fd) {
-  scoped_ptr<char[]> buffer(new char[g_sanitizer_message_length]);
+  std::unique_ptr<char[]> buffer(new char[g_sanitizer_message_length]);
   while (true) {
     ssize_t received_size = HANDLE_EINTR(
         recv(socket_fd, buffer.get(), g_sanitizer_message_length, 0));
@@ -587,7 +644,7 @@ bool ZygoteMain(const MainFunctionParams& params,
 
 #if defined(SANITIZER_COVERAGE)
   pid_t sancov_helper_pid = ForkSanitizerCoverageHelper(
-      sancov_socket_fds[0], sancov_socket_fds[1], sancov_file_fd.Pass(),
+      sancov_socket_fds[0], sancov_socket_fds[1], std::move(sancov_file_fd),
       sandbox_fds_to_close_post_fork);
   // It's important that the zygote reaps the helper before dying. Otherwise,
   // the destruction of the PID namespace could kill the helper before it
@@ -608,7 +665,7 @@ bool ZygoteMain(const MainFunctionParams& params,
   const bool namespace_sandbox_engaged = sandbox_flags & kSandboxLinuxUserNS;
   CHECK_EQ(using_namespace_sandbox, namespace_sandbox_engaged);
 
-  Zygote zygote(sandbox_flags, fork_delegates.Pass(), extra_children,
+  Zygote zygote(sandbox_flags, std::move(fork_delegates), extra_children,
                 extra_fds);
   // This function call can return multiple times, once per fork().
   return zygote.ProcessRequests();

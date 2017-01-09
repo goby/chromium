@@ -8,11 +8,20 @@
  */
 
 var startSessionPromise = null;
-var startedSession = null;
+var startedConnection = null;
 var reconnectedSession = null;
-var presentationUrl = "http://www.google.com/#__testprovider__=true";
+var presentationUrl = null;
+if (window.location.href.indexOf('__is_android__=true') >= 0) {
+  // For android, "google.com/cast" is required in presentation URL.
+  // TODO(zqzhang): this requirement may be removed in the future.
+  presentationUrl = "https://google.com/cast#__castAppId__=CCCCCCCC/";
+} else {
+  presentationUrl = "http://www.google.com/#__testprovider__=true";
+}
 var startSessionRequest = new PresentationRequest(presentationUrl);
 var defaultRequestSessionId = null;
+var lastExecutionResult = null;
+var useDomAutomationController = !!window.domAutomationController;
 
 window.navigator.presentation.defaultRequest = startSessionRequest;
 window.navigator.presentation.defaultRequest.onconnectionavailable = function(e)
@@ -58,16 +67,27 @@ function checkSession() {
   } else {
     startSessionPromise.then(function(session) {
       if(!session) {
-        sendResult(false, 'Failed to start session');
+        sendResult(false, 'Failed to start session: connection is null');
       } else {
         // set the new session
-        startedSession = session;
-        sendResult(true, '');
+        startedConnection = session;
+        console.log('connection state is "' + startedConnection.state + '"');
+        if (startedConnection.state == "connected") {
+          sendResult(true, '');
+        } else if (startedConnection.state == "connecting") {
+          startedConnection.onconnect = () => {
+            sendResult(true, '');
+          };
+        } else {
+          sendResult(false,
+            'Expect connection state to be "connecting" or "connected", ' +
+            'actual "' + startedConnection.state + '"');
+        }
       }
-    }).catch(function() {
+    }).catch(function(e) {
       // terminate old session if exists
-      startedSession && startedSession.terminate();
-      sendResult(false, 'Failed to start session');
+      startedConnection && startedConnection.terminate();
+      sendResult(false, 'Failed to start session: encountered exception ' + e);
     })
   }
 }
@@ -100,13 +120,58 @@ function checkStartFailed(expectedErrorName, expectedErrorMessageSubstring) {
 /**
  * Terminates current session.
  */
-function terminateSession() {
-  if (startedSession) {
-    startedSession.terminate();
+function terminateSessionAndWaitForStateChange() {
+  if (startedConnection) {
+    startedConnection.onterminate = function() {
+      sendResult(true, '');
+    };
+    startedConnection.terminate();
+  } else {
+    sendResult(false, 'startedConnection does not exist.');
   }
-  sendResult(true, '');
 }
 
+
+/**
+ * Sends a message, and expects the connection to close on error.
+ */
+function sendMessageAndExpectConnectionCloseOnError() {
+  if (!startedConnection) {
+    sendResult(false, 'startedConnection does not exist.');
+    return;
+  }
+  startedConnection.onclose = function(event) {
+    var reason = event.reason;
+    if (reason != 'error') {
+      sendResult(false, 'Unexpected close reason: ' + reason);
+      return;
+    }
+    sendResult(true, '');
+  };
+  startedConnection.send('foo');
+}
+
+/**
+ * Sends the given message, and expects response from the receiver.
+ * @param {!string} message
+ */
+function sendMessageAndExpectResponse(message) {
+  if (!startedConnection) {
+    sendResult(false, 'startedConnection does not exist.');
+    return;
+  }
+  startedConnection.onmessage = function(receivedMessage) {
+    var expectedResponse = 'Pong: ' + message;
+    var actualResponse = receivedMessage.data;
+    if (actualResponse != expectedResponse) {
+      sendResult(false, 'Expected message: ' + expectedResponse +
+          ', but got: ' + actualResponse);
+      return;
+    }
+    sendResult(true, '');
+  };
+  startedConnection.send(message);
+}
 
 /**
  * Reconnects to |sessionId| and verifies that it succeeds.
@@ -153,8 +218,15 @@ function reconnectSessionAndExpectFailure(sessionId, expectedErrorMessage) {
  *                      fails.
  */
 function sendResult(passed, errorMessage) {
-  window.domAutomationController.send(JSON.stringify({
-    passed: passed,
-    errorMessage: errorMessage
-  }));
+  if (useDomAutomationController) {
+    window.domAutomationController.send(JSON.stringify({
+      passed: passed,
+      errorMessage: errorMessage
+    }));
+  } else {
+    lastExecutionResult = JSON.stringify({
+      passed: passed,
+      errorMessage: errorMessage
+    });
+  }
 }

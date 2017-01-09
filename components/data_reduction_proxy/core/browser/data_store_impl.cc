@@ -4,6 +4,8 @@
 
 #include "components/data_reduction_proxy/core/browser/data_store_impl.h"
 
+#include <stdint.h>
+
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
@@ -45,11 +47,11 @@ DataStoreImpl::DataStoreImpl(const base::FilePath& profile_path)
 }
 
 DataStoreImpl::~DataStoreImpl() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 }
 
 void DataStoreImpl::InitializeOnDBThread() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
   DCHECK(!db_);
 
   DataStore::Status status = OpenDB();
@@ -57,16 +59,16 @@ void DataStoreImpl::InitializeOnDBThread() {
     RecreateDB();
 }
 
-DataStore::Status DataStoreImpl::Get(const std::string& key,
+DataStore::Status DataStoreImpl::Get(base::StringPiece key,
                                      std::string* value) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (!db_)
     return MISC_ERROR;
 
   leveldb::ReadOptions read_options;
   read_options.verify_checksums = true;
-  leveldb::Slice slice(key);
+  leveldb::Slice slice(key.data(), key.size());
   leveldb::Status status = db_->Get(read_options, slice, value);
   if (status.IsCorruption())
     RecreateDB();
@@ -76,7 +78,7 @@ DataStore::Status DataStoreImpl::Get(const std::string& key,
 
 DataStore::Status DataStoreImpl::Put(
     const std::map<std::string, std::string>& map) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (!db_)
     return MISC_ERROR;
@@ -94,13 +96,13 @@ DataStore::Status DataStoreImpl::Put(
   return LevelDbToDRPStoreStatus(status);
 }
 
-DataStore::Status DataStoreImpl::Delete(const std::string& key) {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+DataStore::Status DataStoreImpl::Delete(base::StringPiece key) {
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   if (!db_)
     return MISC_ERROR;
 
-  leveldb::Slice slice(key);
+  leveldb::Slice slice(key.data(), key.size());
   leveldb::WriteOptions write_options;
   leveldb::Status status = db_->Delete(write_options, slice);
   if (status.IsCorruption())
@@ -110,7 +112,7 @@ DataStore::Status DataStoreImpl::Delete(const std::string& key) {
 }
 
 DataStore::Status DataStoreImpl::OpenDB() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   leveldb::Options options;
   options.create_if_missing = true;
@@ -143,7 +145,7 @@ DataStore::Status DataStoreImpl::OpenDB() {
 }
 
 void DataStoreImpl::RecreateDB() {
-  DCHECK(sequence_checker_.CalledOnValidSequencedThread());
+  DCHECK(sequence_checker_.CalledOnValidSequence());
 
   LOG(WARNING) << "Deleting corrupt Data Reduction Proxy LevelDB";
   db_.reset(nullptr);

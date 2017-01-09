@@ -4,7 +4,11 @@
 
 #include "ui/snapshot/snapshot.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include "base/bind.h"
+#include "base/macros.h"
 #include "base/test/test_simple_task_runner.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/aura/test/aura_test_helper.h"
@@ -62,8 +66,8 @@ class TestPaintingWindowDelegate : public aura::test::TestWindowDelegate {
 size_t GetFailedPixelsCountWithScaleFactor(const gfx::Image& image,
                                            int scale_factor) {
   const SkBitmap* bitmap = image.ToSkBitmap();
-  uint32* bitmap_data = reinterpret_cast<uint32*>(
-      bitmap->pixelRef()->pixels());
+  uint32_t* bitmap_data =
+      reinterpret_cast<uint32_t*>(bitmap->pixelRef()->pixels());
   size_t result = 0;
   for (int y = 0; y < bitmap->height(); y += scale_factor) {
     for (int x = 0; x < bitmap->width(); x += scale_factor) {
@@ -182,9 +186,9 @@ class SnapshotAuraTest : public testing::Test {
     bool completed_;
   };
 
-  scoped_ptr<aura::test::AuraTestHelper> helper_;
-  scoped_ptr<aura::Window> test_window_;
-  scoped_ptr<TestPaintingWindowDelegate> delegate_;
+  std::unique_ptr<aura::test::AuraTestHelper> helper_;
+  std::unique_ptr<aura::Window> test_window_;
+  std::unique_ptr<TestPaintingWindowDelegate> delegate_;
   std::vector<unsigned char> png_representation_;
 
   DISALLOW_COPY_AND_ASSIGN(SnapshotAuraTest);
@@ -211,7 +215,7 @@ TEST_F(SnapshotAuraTest, PartialBounds) {
 }
 
 TEST_F(SnapshotAuraTest, Rotated) {
-  test_screen()->SetDisplayRotation(gfx::Display::ROTATE_90);
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_90);
 
   gfx::Rect test_bounds(100, 100, 300, 200);
   SetupTestWindow(test_bounds);
@@ -259,7 +263,7 @@ TEST_F(SnapshotAuraTest, DeviceScaleFactor) {
 TEST_F(SnapshotAuraTest, RotateAndUIScale) {
   const float kUIScale = 1.25f;
   test_screen()->SetUIScale(kUIScale);
-  test_screen()->SetDisplayRotation(gfx::Display::ROTATE_90);
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_90);
 
   gfx::Rect test_bounds(100, 100, 300, 200);
   SetupTestWindow(test_bounds);
@@ -278,7 +282,7 @@ TEST_F(SnapshotAuraTest, RotateAndUIScaleAndScaleFactor) {
   test_screen()->SetDeviceScaleFactor(2.0f);
   const float kUIScale = 1.25f;
   test_screen()->SetUIScale(kUIScale);
-  test_screen()->SetDisplayRotation(gfx::Display::ROTATE_90);
+  test_screen()->SetDisplayRotation(display::Display::ROTATE_90);
 
   gfx::Rect test_bounds(20, 30, 150, 100);
   SetupTestWindow(test_bounds);

@@ -2,25 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H
-#define CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H
+#ifndef CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H_
+#define CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H_
+
+#include <stddef.h>
 
 #include <map>
+#include <memory>
 #include <vector>
 
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/synchronization/lock.h"
 #include "base/threading/thread_checker.h"
 #include "cc/layers/video_frame_provider.h"
+#include "content/common/content_export.h"
 
 namespace base {
 class SingleThreadTaskRunner;
 }
 
 namespace blink {
-class WebURL;
+class WebMediaStream;
 }
 
 namespace gfx {
@@ -28,7 +31,6 @@ class Size;
 }
 
 namespace media {
-class SkCanvasVideoRenderer;
 class VideoRendererAlgorithm;
 }
 
@@ -37,23 +39,27 @@ class WebMediaPlayerMS;
 
 // This class is designed to handle the work load on compositor thread for
 // WebMediaPlayerMS. It will be instantiated on the main thread, but destroyed
-// on the compositor thread.
+// on the thread holding the last reference.
 //
 // WebMediaPlayerMSCompositor utilizes VideoRendererAlgorithm to store the
 // incoming frames and select the best frame for rendering to maximize the
 // smoothness, if REFERENCE_TIMEs are populated for incoming VideoFrames.
 // Otherwise, WebMediaPlayerMSCompositor will simply store the most recent
 // frame, and submit it whenever asked by the compositor.
-class WebMediaPlayerMSCompositor : public cc::VideoFrameProvider {
+class CONTENT_EXPORT WebMediaPlayerMSCompositor
+    : public NON_EXPORTED_BASE(cc::VideoFrameProvider),
+      public base::RefCountedThreadSafe<WebMediaPlayerMSCompositor> {
  public:
-  // This |url| represents the media stream we are rendering.
+  // This |url| represents the media stream we are rendering. |url| is used to
+  // find out what web stream this WebMediaPlayerMSCompositor is playing, and
+  // together with flag "--disable-rtc-smoothness-algorithm" determine whether
+  // we enable algorithm or not.
   WebMediaPlayerMSCompositor(
       const scoped_refptr<base::SingleThreadTaskRunner>& compositor_task_runner,
-      const blink::WebURL& url,
+      const blink::WebMediaStream& web_stream,
       const base::WeakPtr<WebMediaPlayerMS>& player);
-  ~WebMediaPlayerMSCompositor() override;
 
-  void EnqueueFrame(const scoped_refptr<media::VideoFrame>& frame);
+  void EnqueueFrame(scoped_refptr<media::VideoFrame> frame);
 
   // Statistical data
   gfx::Size GetCurrentSize();
@@ -70,26 +76,46 @@ class WebMediaPlayerMSCompositor : public cc::VideoFrameProvider {
   scoped_refptr<media::VideoFrame> GetCurrentFrame() override;
   void PutCurrentFrame() override;
 
+  // Return the current frame being rendered.
+  // Difference between GetCurrentFrame(): GetCurrentFrame() is designed for
+  // chrome compositor to pull frame from WebMediaPlayerMSCompositor, and thus
+  // calling GetCurrentFrame() will affect statistics like |dropped_frames_|
+  // etc. Calling this function has no side effect.
+  scoped_refptr<media::VideoFrame> GetCurrentFrameWithoutUpdatingStatistics();
+
   void StartRendering();
   void StopRendering();
   void ReplaceCurrentFrameWithACopy();
 
+  // Tell |video_frame_provider_client_| to stop using this instance in
+  // preparation for dtor.
+  void StopUsingProvider();
+
  private:
+  friend class base::RefCountedThreadSafe<WebMediaPlayerMSCompositor>;
+  friend class WebMediaPlayerMSTest;
+
+  ~WebMediaPlayerMSCompositor() override;
+
   bool MapTimestampsToRenderTimeTicks(
       const std::vector<base::TimeDelta>& timestamps,
       std::vector<base::TimeTicks>* wall_clock_times);
-
-  void SetCurrentFrame(const scoped_refptr<media::VideoFrame>& frame);
 
   // For algorithm enabled case only: given the render interval, update
   // current_frame_ and dropped_frame_count_.
   void Render(base::TimeTicks deadline_min, base::TimeTicks deadline_max);
 
+  void SetCurrentFrame(const scoped_refptr<media::VideoFrame>& frame);
+
   void StartRenderingInternal();
   void StopRenderingInternal();
+  void StopUsingProviderInternal();
+
+  void SetAlgorithmEnabledForTesting(bool algorithm_enabled);
 
   // Used for DCHECKs to ensure method calls executed in the correct thread.
   base::ThreadChecker thread_checker_;
+  base::ThreadChecker io_thread_checker_;
 
   scoped_refptr<base::SingleThreadTaskRunner> compositor_task_runner_;
   base::MessageLoop* main_message_loop_;
@@ -113,7 +139,7 @@ class WebMediaPlayerMSCompositor : public cc::VideoFrameProvider {
 
   // |rendering_frame_buffer_| stores the incoming frames, and provides a frame
   // selection method which returns the best frame for the render interval.
-  scoped_ptr<media::VideoRendererAlgorithm> rendering_frame_buffer_;
+  std::unique_ptr<media::VideoRendererAlgorithm> rendering_frame_buffer_;
 
   // |current_frame_used_by_compositor_| is updated on compositor thread only.
   // It's used to track whether |current_frame_| was painted for detecting
@@ -136,7 +162,9 @@ class WebMediaPlayerMSCompositor : public cc::VideoFrameProvider {
   // |current_frame_lock_| protects |current_frame_used_by_compositor_|,
   // |current_frame_|, and |rendering_frame_buffer_|.
   base::Lock current_frame_lock_;
-};
-}
 
-#endif  // CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H
+  DISALLOW_COPY_AND_ASSIGN(WebMediaPlayerMSCompositor);
+};
+}  // namespace content
+
+#endif  // CONTENT_RENDERER_MEDIA_WEBMEDIAPLAYER_MS_COMPOSITOR_H_

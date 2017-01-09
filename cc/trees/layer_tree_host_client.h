@@ -5,20 +5,16 @@
 #ifndef CC_TREES_LAYER_TREE_HOST_CLIENT_H_
 #define CC_TREES_LAYER_TREE_HOST_CLIENT_H_
 
+#include <memory>
+
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/time/time.h"
-#include "cc/debug/frame_timing_tracker.h"
 
 namespace gfx {
-class Vector2d;
 class Vector2dF;
 }
 
 namespace cc {
-class ContextProvider;
-class InputHandlerClient;
-class OutputSurface;
+class CompositorFrameSink;
 struct BeginFrameArgs;
 
 class LayerTreeHostClient {
@@ -47,27 +43,18 @@ class LayerTreeHostClient {
       const gfx::Vector2dF& elastic_overscroll_delta,
       float page_scale,
       float top_controls_delta) = 0;
-  // Request an OutputSurface from the client. When the client has one it should
-  // call LayerTreeHost::SetOutputSurface.  This will result in either
-  // DidFailToInitializeOutputSurface or DidInitializeOutputSurface being
-  // called.
-  virtual void RequestNewOutputSurface() = 0;
-  virtual void DidInitializeOutputSurface() = 0;
-  virtual void DidFailToInitializeOutputSurface() = 0;
+  // Request an CompositorFrameSink from the client. When the client has one it
+  // should call LayerTreeHost::SetCompositorFrameSink.  This will result in
+  // either DidFailToInitializeCompositorFrameSink or
+  // DidInitializeCompositorFrameSink being called.
+  virtual void RequestNewCompositorFrameSink() = 0;
+  virtual void DidInitializeCompositorFrameSink() = 0;
+  virtual void DidFailToInitializeCompositorFrameSink() = 0;
   virtual void WillCommit() = 0;
   virtual void DidCommit() = 0;
   virtual void DidCommitAndDrawFrame() = 0;
-  virtual void DidCompleteSwapBuffers() = 0;
-  virtual void RecordFrameTimingEvents(
-      scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events) = 0;
-
-  // Called when page scale animation has completed.
+  virtual void DidReceiveCompositorFrameAck() = 0;
   virtual void DidCompletePageScaleAnimation() = 0;
-
-  // TODO(simonhong): Makes this to pure virtual function when client
-  // implementation is ready.
-  virtual void SendBeginFramesToChildren(const BeginFrameArgs& args) {}
 
  protected:
   virtual ~LayerTreeHostClient() {}

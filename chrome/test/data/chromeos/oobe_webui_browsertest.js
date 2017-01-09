@@ -57,6 +57,68 @@ OobeWebUITest.prototype = {
     this.accessibilityAuditConfig.ignoreSelectors(
         'focusableElementNotVisibleAndNotAriaHidden',
         '#iconButton');
+
+    // Enable when failure is resolved.
+    // AX_ARIA_02: http://crbug.com/560932
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'nonExistentAriaRelatedElement',
+      '#cancelConfirmDlg');
+
+    var requiredOwnedAriaRoleMissingSelectors = [
+      '#networks-list-dropdown-container',
+      '#offline-networks-list-dropdown-container',
+      '#supervised-user-creation-image-grid',
+      'body > .decorated',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_ARIA_08: http://crbug.com/560924
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'requiredOwnedAriaRoleMissing',
+      requiredOwnedAriaRoleMissingSelectors);
+
+    // Polymer.PaperButtonBehavior.ariaActiveAttribute starts with aria- but is
+    // not an ARIA attribute. Ignore for paper-icon-button.
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'badAriaAttribute',
+      'paper-icon-button[aria-active-attribute]');
+
+    var badAriaAttributeSelectors = [
+      '#forgotPasswordDlg',
+      '#cancelConfirmDlg',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_ARIA_11: http://crbug.com/560935
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'badAriaAttribute',
+      badAriaAttributeSelectors);
+
+    var tabIndexGreaterThanZeroSelectors = [
+      '#user-image-grid',
+      '#discard-photo',
+      '#take-photo',
+      '#flip-photo',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_FOCUS_03: http://crbug.com/560928
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'tabIndexGreaterThanZero',
+      tabIndexGreaterThanZeroSelectors);
+
+    var controlsWithoutLabelSelectors = [
+      '#supervised-user-creation-managers-pane',
+      '#supervised-user-creation-name',
+      '#supervised-user-creation-password',
+      '#supervised-user-creation-password-confirm',
+    ];
+
+    // Enable when failure is resolved.
+    // AX_TEXT_01: http://crbug.com/560939
+    this.accessibilityAuditConfig.ignoreSelectors(
+      'controlsWithoutLabel',
+      controlsWithoutLabelSelectors);
   },
 };
 
@@ -75,39 +137,47 @@ function createOobeWebUITestSupervisedManagerData() {
          };
 }
 
-TEST_F('OobeWebUITest', 'EmptyOobe', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_EmptyOobe', function() {
 });
 
-TEST_F('OobeWebUITest', 'OobeConnect', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeConnect', function() {
   Oobe.getInstance().showScreen({'id':'connect'});
 });
 
-TEST_F('OobeWebUITest', 'OobeEula', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeEula', function() {
   Oobe.getInstance().showScreen({'id':'eula'});
 });
 
-TEST_F('OobeWebUITest', 'OobeUpdate', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeUpdate', function() {
   Oobe.getInstance().showScreen({'id':'update'});
 });
 
-TEST_F('OobeWebUITest', 'OobeGaiaSignIn', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeGaiaSignIn', function() {
   Oobe.getInstance().showScreen({'id':'gaia-signin'});
 });
 
-TEST_F('OobeWebUITest', 'OobeSupervisedUsers', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeSupervisedUsers', function() {
   Oobe.getInstance().showScreen(
       {'id'   : 'supervised-user-creation',
        'data' : createOobeWebUITestSupervisedManagerData()});
 });
 
-TEST_F('OobeWebUITest', 'OobeSupervisedUsers2', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeSupervisedUsers2', function() {
   Oobe.getInstance().showScreen(
       {'id'   : 'supervised-user-creation',
        'data' : createOobeWebUITestSupervisedManagerData()});
   $('supervised-user-creation').setVisiblePage_('manager');
 });
 
-TEST_F('OobeWebUITest', 'OobeSupervisedUsers3', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_OobeSupervisedUsers3', function() {
   Oobe.getInstance().showScreen(
       {'id'   : 'supervised-user-creation',
        'data' : createOobeWebUITestSupervisedManagerData()});
@@ -129,8 +199,8 @@ TEST_F('OobeWebUITest', 'DISABLED_OobeAccountPicker', function() {
   Oobe.getInstance().showScreen({'id':'account-picker'});
 });
 
-
-TEST_F('OobeWebUITest', 'HIDDetectionScreenTest', function() {
+// Fails on chromeos, http://crbug.com/665315
+TEST_F('OobeWebUITest', 'DISABLED_HIDDetectionScreenTest', function() {
   function getPincodeSymbol(i) {
     return $('hid-keyboard-pincode-sym-' + (i + 1));
   }

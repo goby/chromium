@@ -15,6 +15,7 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
+#include "build/build_config.h"
 #include "chrome/browser/extensions/api/identity/extension_token_key.h"
 #include "chrome/browser/extensions/api/identity/gaia_web_auth_flow.h"
 #include "chrome/browser/extensions/api/identity/identity_mint_queue.h"
@@ -59,6 +60,7 @@ class IdentityTokenCacheValue {
   explicit IdentityTokenCacheValue(const IssueAdviceInfo& issue_advice);
   IdentityTokenCacheValue(const std::string& token,
                           base::TimeDelta time_to_live);
+  IdentityTokenCacheValue(const IdentityTokenCacheValue& other);
   ~IdentityTokenCacheValue();
 
   // Order of these entries is used to determine whether or not new
@@ -226,7 +228,7 @@ class IdentityGetAuthTokenFunction : public ChromeAsyncExtensionFunction,
   // Exposed for testing.
   virtual OAuth2MintTokenFlow* CreateMintTokenFlow();
 
-  scoped_ptr<OAuth2TokenService::Request> login_token_request_;
+  std::unique_ptr<OAuth2TokenService::Request> login_token_request_;
 
  private:
   FRIEND_TEST_ALL_PREFIXES(GetAuthTokenFunctionTest,
@@ -288,17 +290,17 @@ class IdentityGetAuthTokenFunction : public ChromeAsyncExtensionFunction,
   bool interactive_;
   bool should_prompt_for_scopes_;
   IdentityMintRequestQueue::MintType mint_token_flow_type_;
-  scoped_ptr<OAuth2MintTokenFlow> mint_token_flow_;
+  std::unique_ptr<OAuth2MintTokenFlow> mint_token_flow_;
   OAuth2MintTokenFlow::Mode gaia_mint_token_mode_;
   bool should_prompt_for_signin_;
 
-  scoped_ptr<ExtensionTokenKey> token_key_;
+  std::unique_ptr<ExtensionTokenKey> token_key_;
   std::string oauth2_client_id_;
   // When launched in interactive mode, and if there is no existing grant,
   // a permissions prompt will be popped up to the user.
   IssueAdviceInfo issue_advice_;
-  scoped_ptr<GaiaWebAuthFlow> gaia_web_auth_flow_;
-  scoped_ptr<IdentitySigninFlow> signin_flow_;
+  std::unique_ptr<GaiaWebAuthFlow> gaia_web_auth_flow_;
+  std::unique_ptr<IdentitySigninFlow> signin_flow_;
 };
 
 class IdentityGetProfileUserInfoFunction
@@ -316,8 +318,7 @@ class IdentityGetProfileUserInfoFunction
   ExtensionFunction::ResponseAction Run() override;
 };
 
-class IdentityRemoveCachedAuthTokenFunction
-    : public ChromeSyncExtensionFunction {
+class IdentityRemoveCachedAuthTokenFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("identity.removeCachedAuthToken",
                              EXPERIMENTAL_IDENTITY_REMOVECACHEDAUTHTOKEN)
@@ -326,8 +327,8 @@ class IdentityRemoveCachedAuthTokenFunction
  protected:
   ~IdentityRemoveCachedAuthTokenFunction() override;
 
-  // SyncExtensionFunction implementation:
-  bool RunSync() override;
+  // ExtensionFunction:
+  ResponseAction Run() override;
 };
 
 class IdentityLaunchWebAuthFlowFunction : public ChromeAsyncExtensionFunction,
@@ -353,7 +354,7 @@ class IdentityLaunchWebAuthFlowFunction : public ChromeAsyncExtensionFunction,
   // Helper to initialize final URL prefix.
   void InitFinalRedirectURLPrefix(const std::string& extension_id);
 
-  scoped_ptr<WebAuthFlow> auth_flow_;
+  std::unique_ptr<WebAuthFlow> auth_flow_;
   GURL final_url_prefix_;
 };
 

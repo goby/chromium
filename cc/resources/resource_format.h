@@ -7,8 +7,7 @@
 
 #include "base/logging.h"
 #include "cc/base/cc_export.h"
-#include "third_party/skia/include/core/SkBitmap.h"
-#include "ui/gfx/gpu_memory_buffer.h"
+#include "ui/gfx/buffer_types.h"
 
 // TODO(prashant.n): Including third_party/khronos/GLES2/gl2.h causes
 // redefinition errors as macros/functions defined in it conflict with
@@ -27,16 +26,19 @@ enum ResourceFormat {
   RGB_565,
   ETC1,
   RED_8,
-  RESOURCE_FORMAT_MAX = RED_8,
+  LUMINANCE_F16,
+  RESOURCE_FORMAT_MAX = LUMINANCE_F16,
 };
-
-SkColorType ResourceFormatToSkColorType(ResourceFormat format);
 
 CC_EXPORT int BitsPerPixel(ResourceFormat format);
 CC_EXPORT GLenum GLDataType(ResourceFormat format);
 CC_EXPORT GLenum GLDataFormat(ResourceFormat format);
 CC_EXPORT GLenum GLInternalFormat(ResourceFormat format);
+CC_EXPORT GLenum GLCopyTextureInternalFormat(ResourceFormat format);
 CC_EXPORT gfx::BufferFormat BufferFormat(ResourceFormat format);
+
+bool IsResourceFormatCompressed(ResourceFormat format);
+bool DoesResourceFormatSupportAlpha(ResourceFormat format);
 
 }  // namespace cc
 

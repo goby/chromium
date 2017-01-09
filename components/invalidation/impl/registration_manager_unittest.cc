@@ -4,13 +4,16 @@
 
 #include "components/invalidation/impl/registration_manager.h"
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <deque>
 #include <vector>
 
-#include "base/basictypes.h"
+#include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/stl_util.h"
 #include "components/invalidation/public/invalidation_util.h"
@@ -52,7 +55,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   ~FakeInvalidationClient() override {}
 
   void LoseRegistration(const invalidation::ObjectId& oid) {
-    EXPECT_TRUE(ContainsKey(registered_ids_, oid));
+    EXPECT_TRUE(base::ContainsKey(registered_ids_, oid));
     registered_ids_.erase(oid);
   }
 
@@ -67,7 +70,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   void Acknowledge(const invalidation::AckHandle& handle) override {}
 
   void Register(const invalidation::ObjectId& oid) override {
-    EXPECT_FALSE(ContainsKey(registered_ids_, oid));
+    EXPECT_FALSE(base::ContainsKey(registered_ids_, oid));
     registered_ids_.insert(oid);
   }
 
@@ -76,7 +79,7 @@ class FakeInvalidationClient : public invalidation::InvalidationClient {
   }
 
   void Unregister(const invalidation::ObjectId& oid) override {
-    EXPECT_TRUE(ContainsKey(registered_ids_, oid));
+    EXPECT_TRUE(base::ContainsKey(registered_ids_, oid));
     registered_ids_.erase(oid);
   }
 
@@ -128,7 +131,8 @@ void ExpectPendingRegistrations(
         it->second.registration_attempt;
     base::TimeDelta expected_delay =
         base::TimeDelta::FromSeconds(
-            static_cast<int64>(expected_delay_seconds)) + offset;
+            static_cast<int64_t>(expected_delay_seconds)) +
+        offset;
     // TODO(akalin): Add base::PrintTo() for base::Time and
     // base::TimeDeltas.
     EXPECT_EQ(expected_delay, it->second.delay)

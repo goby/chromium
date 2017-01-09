@@ -8,27 +8,30 @@
 #include <map>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/gtest_prod_util.h"
+#include "base/macros.h"
+#include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/browser/ui/translate/language_combobox_model.h"
 #include "chrome/browser/ui/translate/translate_bubble_model.h"
 #include "chrome/browser/ui/translate/translate_bubble_test_utils.h"
+#include "chrome/browser/ui/translate/translate_bubble_view_state_transition.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_bubble_delegate_view.h"
 #include "components/translate/core/common/translate_errors.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "ui/base/models/simple_menu_model.h"
 #include "ui/views/controls/button/button.h"
+#include "ui/views/controls/button/menu_button_listener.h"
 #include "ui/views/controls/combobox/combobox_listener.h"
 #include "ui/views/controls/link_listener.h"
+#include "ui/views/controls/menu/menu_runner.h"
+#include "ui/views/controls/styled_label_listener.h"
 
 class Browser;
-class PrefService;
 
 namespace views {
 class Checkbox;
-class GridLayout;
 class LabelButton;
-class Link;
 class View;
 }
 
@@ -40,6 +43,9 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
                             public views::ButtonListener,
                             public views::ComboboxListener,
                             public views::LinkListener,
+                            public views::MenuButtonListener,
+                            public ui::SimpleMenuModel::Delegate,
+                            public views::StyledLabelListener,
                             public content::WebContentsObserver {
  public:
   // Commands shown in the action-style combobox. The value corresponds to the
@@ -51,48 +57,76 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
     MENU_SIZE = 4,
   };
 
+  // Item IDs for the denial button's menu.
+  enum DenialMenuItem { NEVER_TRANSLATE_LANGUAGE, NEVER_TRANSLATE_SITE };
+
   ~TranslateBubbleView() override;
 
-  // Shows the Translate bubble.
+  // Shows the Translate bubble. Returns the newly created bubble's Widget or
+  // nullptr in cases when the bubble already exists or when the bubble is not
+  // created.
   //
-  // |is_user_gesture| is true when the bubble is shown on the user's delibarate
+  // |is_user_gesture| is true when the bubble is shown on the user's deliberate
   // action.
-  static void ShowBubble(views::View* anchor_view,
-                         content::WebContents* web_contents,
-                         translate::TranslateStep step,
-                         translate::TranslateErrors::Type error_type,
-                         DisplayReason reason);
+  static views::Widget* ShowBubble(views::View* anchor_view,
+                                   content::WebContents* web_contents,
+                                   translate::TranslateStep step,
+                                   translate::TranslateErrors::Type error_type,
+                                   DisplayReason reason);
 
-  // Closes the current bubble if existing.
-  static void CloseBubble();
+  // Closes the current bubble if it exists.
+  static void CloseCurrentBubble();
 
   // Returns the bubble view currently shown. This may return NULL.
   static TranslateBubbleView* GetCurrentBubble();
 
   TranslateBubbleModel* model() { return model_.get(); }
 
-  // views::BubbleDelegateView methods.
+  // views::BubbleDialogDelegateView methods.
   void Init() override;
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
 
-  // views::WidgetDelegate method.
+  // views::WidgetDelegate methods.
+  bool ShouldShowCloseButton() const override;
   void WindowClosing() override;
 
   // views::View methods.
   bool AcceleratorPressed(const ui::Accelerator& accelerator) override;
   gfx::Size GetPreferredSize() const override;
 
-  // views::CombboxListener methods.
+  // views::ComboboxListener methods.
   void OnPerformAction(views::Combobox* combobox) override;
 
   // views::LinkListener method.
   void LinkClicked(views::Link* source, int event_flags) override;
 
+  // views::MenuButtonListener method.
+  void OnMenuButtonClicked(views::MenuButton* source,
+                           const gfx::Point& point,
+                           const ui::Event* event) override;
+
+  // ui::SimpleMenuModel::Delegate methods.
+  bool IsCommandIdChecked(int command_id) const override;
+  bool IsCommandIdEnabled(int command_id) const override;
+  void ExecuteCommand(int command_id, int event_flags) override;
+
+  // views::StyledLabelListener method.
+  void StyledLabelLinkClicked(views::StyledLabel* label,
+                              const gfx::Range& range,
+                              int event_flags) override;
+
   // content::WebContentsObserver method.
   void WebContentsDestroyed() override;
 
+  // Overridden from views::WidgetObserver:
+  void OnWidgetClosing(views::Widget* widget) override;
+
   // Returns the current view state.
   TranslateBubbleModel::ViewState GetViewState() const;
+
+ protected:
+  // LocationBarBubbleDelegateView:
+  void CloseBubble() override;
 
  private:
   enum LinkID {
@@ -118,7 +152,10 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   friend class TranslateBubbleViewTest;
   friend void ::translate::test_utils::PressTranslate(::Browser*);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, TranslateButton);
+  FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, TranslateButtonIn2016Q2UI);
+  FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, CloseButtonIn2016Q2UI);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, AdvancedLink);
+  FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, AdvancedLinkIn2016Q2UI);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, ShowOriginalButton);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, TryAgainButton);
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest,
@@ -135,7 +172,7 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   FRIEND_TEST_ALL_PREFIXES(TranslateBubbleViewTest, CancelButtonReturningError);
 
   TranslateBubbleView(views::View* anchor_view,
-                      scoped_ptr<TranslateBubbleModel> model,
+                      std::unique_ptr<TranslateBubbleModel> model,
                       translate::TranslateErrors::Type error_type,
                       content::WebContents* web_contents);
 
@@ -172,6 +209,9 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   // Creates the 'advanced' view. Caller takes ownership of the returned view.
   views::View* CreateViewAdvanced();
 
+  // Get the current always translate checkbox
+  views::Checkbox* GetAlwaysTranslateCheckbox();
+
   // Switches the view type.
   void SwitchView(TranslateBubbleModel::ViewState view_state);
 
@@ -189,31 +229,34 @@ class TranslateBubbleView : public LocationBarBubbleDelegateView,
   views::View* error_view_;
   views::View* advanced_view_;
 
-  scoped_ptr<ui::SimpleComboboxModel> denial_combobox_model_;
-  scoped_ptr<LanguageComboboxModel> source_language_combobox_model_;
-  scoped_ptr<LanguageComboboxModel> target_language_combobox_model_;
+  std::unique_ptr<ui::SimpleComboboxModel> denial_combobox_model_;
+  std::unique_ptr<LanguageComboboxModel> source_language_combobox_model_;
+  std::unique_ptr<LanguageComboboxModel> target_language_combobox_model_;
 
   views::Combobox* denial_combobox_;
   views::Combobox* source_language_combobox_;
   views::Combobox* target_language_combobox_;
 
-  views::Checkbox* always_translate_checkbox_;
+  views::Checkbox* before_always_translate_checkbox_;
+  views::Checkbox* advanced_always_translate_checkbox_;
 
   views::LabelButton* advanced_cancel_button_;
   views::LabelButton* advanced_done_button_;
 
-  scoped_ptr<TranslateBubbleModel> model_;
+  views::MenuButton* denial_menu_button_;
+  std::unique_ptr<ui::SimpleMenuModel> denial_menu_model_;
+  std::unique_ptr<views::MenuRunner> denial_menu_runner_;
+
+  std::unique_ptr<TranslateBubbleModel> model_;
 
   translate::TranslateErrors::Type error_type_;
 
   // Whether the window is an incognito window.
   const bool is_in_incognito_window_;
 
-  // Whether the translation is acutually executed.
-  bool translate_executed_;
+  bool should_always_translate_;
 
-  // Whether one of denial buttons is clicked.
-  bool denial_button_clicked_;
+  std::unique_ptr<WebContentMouseHandler> mouse_handler_;
 
   DISALLOW_COPY_AND_ASSIGN(TranslateBubbleView);
 };

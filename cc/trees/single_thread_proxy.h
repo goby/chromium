@@ -8,8 +8,8 @@
 #include <limits>
 
 #include "base/cancelable_callback.h"
+#include "base/macros.h"
 #include "base/time/time.h"
-#include "cc/animation/animation_events.h"
 #include "cc/output/begin_frame_args.h"
 #include "cc/scheduler/scheduler.h"
 #include "cc/trees/blocking_task_runner.h"
@@ -19,31 +19,28 @@
 
 namespace cc {
 
+class MutatorEvents;
 class BeginFrameSource;
-class ContextProvider;
-class LayerTreeHost;
+class LayerTreeHostInProcess;
 class LayerTreeHostSingleThreadClient;
 
 class CC_EXPORT SingleThreadProxy : public Proxy,
                                     NON_EXPORTED_BASE(LayerTreeHostImplClient),
-                                    SchedulerClient {
+                                    public SchedulerClient {
  public:
-  static scoped_ptr<Proxy> Create(
-      LayerTreeHost* layer_tree_host,
+  static std::unique_ptr<Proxy> Create(
+      LayerTreeHostInProcess* layer_tree_host,
       LayerTreeHostSingleThreadClient* client,
-      TaskRunnerProvider* task_runner_provider_,
-      scoped_ptr<BeginFrameSource> external_begin_frame_source);
+      TaskRunnerProvider* task_runner_provider_);
   ~SingleThreadProxy() override;
 
   // Proxy implementation
-  void FinishAllRendering() override;
   bool IsStarted() const override;
   bool CommitToActiveTree() const override;
-  void SetOutputSurface(OutputSurface* output_surface) override;
-  void ReleaseOutputSurface() override;
+  void SetCompositorFrameSink(
+      CompositorFrameSink* compositor_frame_sink) override;
+  void ReleaseCompositorFrameSink() override;
   void SetVisible(bool visible) override;
-  void SetThrottleFrameProduction(bool throttle) override;
-  const RendererCapabilities& GetRendererCapabilities() const override;
   void SetNeedsAnimate() override;
   void SetNeedsUpdateLayers() override;
   void SetNeedsCommit() override;
@@ -56,48 +53,40 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void MainThreadHasStoppedFlinging() override {}
   void Start() override;
   void Stop() override;
+  void SetMutator(std::unique_ptr<LayerTreeMutator> mutator) override;
   bool SupportsImplScrolling() const override;
   bool MainFrameWillHappenForTesting() override;
-  void SetChildrenNeedBeginFrames(bool children_need_begin_frames) override;
-  void SetAuthoritativeVSyncInterval(const base::TimeDelta& interval) override;
-  void UpdateTopControlsState(TopControlsState constraints,
-                              TopControlsState current,
-                              bool animate) override;
+  void UpdateBrowserControlsState(BrowserControlsState constraints,
+                                  BrowserControlsState current,
+                                  bool animate) override;
 
   // SchedulerClient implementation
   void WillBeginImplFrame(const BeginFrameArgs& args) override;
   void DidFinishImplFrame() override;
   void ScheduledActionSendBeginMainFrame(const BeginFrameArgs& args) override;
-  DrawResult ScheduledActionDrawAndSwapIfPossible() override;
-  DrawResult ScheduledActionDrawAndSwapForced() override;
+  DrawResult ScheduledActionDrawIfPossible() override;
+  DrawResult ScheduledActionDrawForced() override;
   void ScheduledActionCommit() override;
   void ScheduledActionActivateSyncTree() override;
-  void ScheduledActionBeginOutputSurfaceCreation() override;
+  void ScheduledActionBeginCompositorFrameSinkCreation() override;
   void ScheduledActionPrepareTiles() override;
-  void ScheduledActionInvalidateOutputSurface() override;
-  void SendBeginFramesToChildren(const BeginFrameArgs& args) override;
+  void ScheduledActionInvalidateCompositorFrameSink() override;
   void SendBeginMainFrameNotExpectedSoon() override;
 
   // LayerTreeHostImplClient implementation
-  void UpdateRendererCapabilitiesOnImplThread() override;
-  void DidLoseOutputSurfaceOnImplThread() override;
-  void CommitVSyncParameters(base::TimeTicks timebase,
-                             base::TimeDelta interval) override;
-  void SetEstimatedParentDrawTime(base::TimeDelta draw_time) override;
-  void DidSwapBuffersOnImplThread() override;
-  void DidSwapBuffersCompleteOnImplThread() override;
-  void OnResourcelessSoftareDrawStateChanged(bool resourceless_draw) override;
+  void DidLoseCompositorFrameSinkOnImplThread() override;
+  void SetBeginFrameSource(BeginFrameSource* source) override;
+  void DidReceiveCompositorFrameAckOnImplThread() override;
   void OnCanDrawStateChanged(bool can_draw) override;
   void NotifyReadyToActivate() override;
   void NotifyReadyToDraw() override;
   void SetNeedsRedrawOnImplThread() override;
-  void SetNeedsRedrawRectOnImplThread(const gfx::Rect& dirty_rect) override;
   void SetNeedsOneBeginImplFrameOnImplThread() override;
   void SetNeedsPrepareTilesOnImplThread() override;
   void SetNeedsCommitOnImplThread() override;
   void SetVideoNeedsBeginFrames(bool needs_begin_frames) override;
   void PostAnimationEventsToMainThreadOnImplThread(
-      scoped_ptr<AnimationEventsVector> events) override;
+      std::unique_ptr<MutatorEvents> events) override;
   bool IsInsideDraw() override;
   void RenewTreePriority() override {}
   void PostDelayedAnimationTaskOnImplThread(const base::Closure& task,
@@ -106,22 +95,17 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void WillPrepareTiles() override;
   void DidPrepareTiles() override;
   void DidCompletePageScaleAnimationOnImplThread() override;
-  void OnDrawForOutputSurface() override;
-  void PostFrameTimingEventsOnImplThread(
-      scoped_ptr<FrameTimingTracker::CompositeTimingSet> composite_events,
-      scoped_ptr<FrameTimingTracker::MainFrameTimingSet> main_frame_events)
-      override;
+  void OnDrawForCompositorFrameSink(bool resourceless_software_draw) override;
 
-  void RequestNewOutputSurface();
+  void RequestNewCompositorFrameSink();
 
   // Called by the legacy path where RenderWidget does the scheduling.
   void CompositeImmediately(base::TimeTicks frame_begin_time);
 
  protected:
-  SingleThreadProxy(LayerTreeHost* layer_tree_host,
+  SingleThreadProxy(LayerTreeHostInProcess* layer_tree_host,
                     LayerTreeHostSingleThreadClient* client,
-                    TaskRunnerProvider* task_runner_provider,
-                    scoped_ptr<BeginFrameSource> external_begin_frame_source);
+                    TaskRunnerProvider* task_runner_provider);
 
  private:
   void BeginMainFrame(const BeginFrameArgs& begin_frame_args);
@@ -134,24 +118,23 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
   void CommitComplete();
 
   bool ShouldComposite() const;
-  void ScheduleRequestNewOutputSurface();
+  void ScheduleRequestNewCompositorFrameSink();
 
   // Accessed on main thread only.
-  LayerTreeHost* layer_tree_host_;
-  LayerTreeHostSingleThreadClient* client_;
+  LayerTreeHostInProcess* layer_tree_host_;
+  LayerTreeHostSingleThreadClient* single_thread_client_;
 
   TaskRunnerProvider* task_runner_provider_;
 
   // Used on the Thread, but checked on main thread during
   // initialization/shutdown.
-  scoped_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
-  RendererCapabilities renderer_capabilities_for_main_thread_;
+  std::unique_ptr<LayerTreeHostImpl> layer_tree_host_impl_;
 
   // Accessed from both threads.
-  scoped_ptr<BeginFrameSource> external_begin_frame_source_;
-  scoped_ptr<Scheduler> scheduler_on_impl_thread_;
+  std::unique_ptr<Scheduler> scheduler_on_impl_thread_;
 
-  scoped_ptr<BlockingTaskRunner::CapturePostTasks> commit_blocking_task_runner_;
+  std::unique_ptr<BlockingTaskRunner::CapturePostTasks>
+      commit_blocking_task_runner_;
   bool next_frame_is_newly_committed_frame_;
 
 #if DCHECK_IS_ON()
@@ -165,10 +148,13 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
 
   // True if a request to the LayerTreeHostClient to create an output surface
   // is still outstanding.
-  bool output_surface_creation_requested_;
+  bool compositor_frame_sink_creation_requested_;
+  // When output surface is lost, is set to true until a new output surface is
+  // initialized.
+  bool compositor_frame_sink_lost_;
 
-  // This is the callback for the scheduled RequestNewOutputSurface.
-  base::CancelableClosure output_surface_creation_callback_;
+  // This is the callback for the scheduled RequestNewCompositorFrameSink.
+  base::CancelableClosure compositor_frame_sink_creation_callback_;
 
   base::WeakPtrFactory<SingleThreadProxy> weak_factory_;
 
@@ -179,13 +165,16 @@ class CC_EXPORT SingleThreadProxy : public Proxy,
 // code is running on the impl thread to satisfy assertion checks.
 class DebugScopedSetImplThread {
  public:
+#if DCHECK_IS_ON()
   explicit DebugScopedSetImplThread(TaskRunnerProvider* task_runner_provider)
       : task_runner_provider_(task_runner_provider) {
-#if DCHECK_IS_ON()
     previous_value_ = task_runner_provider_->impl_thread_is_overridden_;
     task_runner_provider_->SetCurrentThreadIsImplThread(true);
-#endif
   }
+#else
+  explicit DebugScopedSetImplThread(TaskRunnerProvider* task_runner_provider) {}
+#endif
+
   ~DebugScopedSetImplThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
@@ -193,8 +182,10 @@ class DebugScopedSetImplThread {
   }
 
  private:
+#if DCHECK_IS_ON()
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(DebugScopedSetImplThread);
 };
@@ -203,13 +194,16 @@ class DebugScopedSetImplThread {
 // code is running on the main thread to satisfy assertion checks.
 class DebugScopedSetMainThread {
  public:
+#if DCHECK_IS_ON()
   explicit DebugScopedSetMainThread(TaskRunnerProvider* task_runner_provider)
       : task_runner_provider_(task_runner_provider) {
-#if DCHECK_IS_ON()
     previous_value_ = task_runner_provider_->impl_thread_is_overridden_;
     task_runner_provider_->SetCurrentThreadIsImplThread(false);
-#endif
   }
+#else
+  explicit DebugScopedSetMainThread(TaskRunnerProvider* task_runner_provider) {}
+#endif
+
   ~DebugScopedSetMainThread() {
 #if DCHECK_IS_ON()
     task_runner_provider_->SetCurrentThreadIsImplThread(previous_value_);
@@ -217,8 +211,10 @@ class DebugScopedSetMainThread {
   }
 
  private:
+#if DCHECK_IS_ON()
   bool previous_value_;
   TaskRunnerProvider* task_runner_provider_;
+#endif
 
   DISALLOW_COPY_AND_ASSIGN(DebugScopedSetMainThread);
 };

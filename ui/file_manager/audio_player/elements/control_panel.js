@@ -51,6 +51,15 @@
       },
 
       /**
+       * Current seeking position on the time slider in millisecond.
+       */
+      seekingTime: {
+        type: Number,
+        value: 0,
+        readOnly: true
+      },
+
+      /**
        * Total length of the current music in millisecond.
        */
       duration: {
@@ -68,11 +77,12 @@
       },
 
       /**
-       * Whether the repeat button is ON.
+       * What mode the repeat button idicates.
+       * repeat-modes can be "no-repeat", "repeat-all", "repeat-one".
        */
-      repeat: {
-        type: Boolean,
-        value: false,
+      repeatMode: {
+        type: String,
+        value: "no-repeat",
         notify: true
       },
 
@@ -81,15 +91,16 @@
        */
       volume: {
         type: Number,
+        value: 50,
         notify: true,
         reflectToAttribute: true,
         observer: 'volumeChanged_'
       },
 
       /**
-       * Whether the expanded button is ON.
+       * Whether the playlist is expanded or not.
        */
-      expanded: {
+      playlistExpanded: {
         type: Boolean,
         value: false,
         notify: true
@@ -122,8 +133,10 @@
       timeSlider.addEventListener('change', function() {
         if (this.dragging)
           this.dragging = false;
+        this._setSeekingTime(0);
       }.bind(this));
       timeSlider.addEventListener('immediate-value-change', function() {
+        this._setSeekingTime(timeSlider.immediateValue);
         if (!this.dragging)
           this.dragging = true;
       }.bind(this));
@@ -174,6 +187,41 @@
     },
 
     /**
+     * Skips min(5 seconds, 10% of duration).
+     * @param {boolean} forward Whether to skip forward/backword.
+     */
+    smallSkip: function(forward) {
+      var millisecondsToSkip = Math.min(5000, this.duration / 10);
+      if (!forward) {
+        millisecondsToSkip *= -1;
+      }
+      this.skip_(millisecondsToSkip);
+    },
+
+    /**
+     * Skips min(10 seconds, 20% of duration).
+     * @param {boolean} forward Whether to skip forward/backword.
+     */
+    bigSkip: function(forward) {
+      var millisecondsToSkip = Math.min(10000, this.duration / 5);
+      if (!forward) {
+        millisecondsToSkip *= -1;
+      }
+      this.skip_(millisecondsToSkip);
+    },
+
+    /**
+     * Skips forward/backword.
+     * @param {number} millis Milliseconds to skip. Set negative value to skip
+     *     backword.
+     * @private
+     */
+    skip_: function(millis) {
+      if (this.duration > 0)
+        this.time = Math.max(Math.min(this.time + millis, this.duration), 0);
+    },
+
+    /**
      * Converts the time into human friendly string.
      * @param {number} time Time to be converted.
      * @return {string} String representation of the given time
@@ -190,6 +238,23 @@
      */
     computeTimeString_: function(time, duration) {
       return this.time2string_(time) + ' / ' + this.time2string_(duration);
+    },
+
+    /**
+     * Computes string representation of displayed time. If a user is dragging
+     * the knob of seek bar, seeking position should be shown. Otherwise,
+     * playing position should be shown.
+     * @param {boolean} dragging Whether the know of seek bar is being dragged.
+     * @param {number} time Time corresponding to the playing position.
+     * @param {number} seekingTime Time corresponding to the seeking position.
+     * @param {number} duration Duration of the audio file.
+     * @return {string} String representation to be displayed as current time.
+     */
+    computeDisplayTimeString_: function(dragging, time, seekingTime, duration) {
+      if (dragging)
+        return this.computeTimeString_(seekingTime, duration);
+      else
+        return this.computeTimeString_(time, duration);
     },
 
     /**
@@ -240,6 +305,6 @@
       this.$.volumeButton.setAttribute('aria-label',
           this.volume !== 0 ? ariaLabels.mute : ariaLabels.unmute);
       this.$.volumeSlider.setAttribute('aria-label', ariaLabels.volumeSlider);
-    }
+    },
   });
 })();  // Anonymous closure

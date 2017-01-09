@@ -5,11 +5,11 @@
 #ifndef COMPONENTS_NAVIGATION_INTERCEPTION_INTERCEPT_NAVIGATION_DELEGATE_H_
 #define COMPONENTS_NAVIGATION_INTERCEPTION_INTERCEPT_NAVIGATION_DELEGATE_H_
 
-#include "base/android/jni_weak_ref.h"
-#include "base/memory/scoped_ptr.h"
-#include "base/supports_user_data.h"
+#include <memory>
 
-class GURL;
+#include "base/android/jni_weak_ref.h"
+#include "base/macros.h"
+#include "base/supports_user_data.h"
 
 namespace content {
 class NavigationHandle;
@@ -45,14 +45,14 @@ class InterceptNavigationDelegate : public base::SupportsUserData::Data {
   // As implied by the use of scoped_ptr, the WebContents will assume ownership
   // of |delegate|.
   static void Associate(content::WebContents* web_contents,
-                        scoped_ptr<InterceptNavigationDelegate> delegate);
+                        std::unique_ptr<InterceptNavigationDelegate> delegate);
   // Gets the InterceptNavigationDelegate associated with the WebContents,
   // can be null.
   static InterceptNavigationDelegate* Get(content::WebContents* web_contents);
 
   // Creates a InterceptNavigationThrottle that will direct all callbacks to
   // the InterceptNavigationDelegate.
-  static scoped_ptr<content::NavigationThrottle> CreateThrottleFor(
+  static std::unique_ptr<content::NavigationThrottle> CreateThrottleFor(
       content::NavigationHandle* handle);
 
   // Updates information to determine whether to have user gesture carryover or
@@ -72,8 +72,6 @@ class InterceptNavigationDelegate : public base::SupportsUserData::Data {
 
   DISALLOW_COPY_AND_ASSIGN(InterceptNavigationDelegate);
 };
-
-bool RegisterInterceptNavigationDelegate(JNIEnv* env);
 
 }  // namespace navigation_interception
 

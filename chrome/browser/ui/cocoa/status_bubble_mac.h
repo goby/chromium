@@ -9,8 +9,10 @@
 
 #import <Cocoa/Cocoa.h>
 #import <QuartzCore/QuartzCore.h>
+#include <stdint.h>
 
 #include "base/compiler_specific.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/strings/string16.h"
 #include "chrome/browser/ui/status_bubble.h"
@@ -37,7 +39,7 @@ class StatusBubbleMac : public StatusBubble {
 
   // StatusBubble implementation.
   void SetStatus(const base::string16& status) override;
-  void SetURL(const GURL& url, const std::string& languages) override;
+  void SetURL(const GURL& url) override;
   void Hide() override;
   void MouseMoved(const gfx::Point& location, bool left_content) override;
   void UpdateDownloadShelfVisibility(bool visible) override;
@@ -105,7 +107,7 @@ class StatusBubbleMac : public StatusBubble {
   // TimerFired must be called from one of these states.  StartTimer may be
   // called while the timer is still running; in that case, the timer will be
   // reset. CancelTimer may be called from any state.
-  void StartTimer(int64 time_ms);
+  void StartTimer(int64_t time_ms);
   void CancelTimer();
   void TimerFired();
 
@@ -168,10 +170,6 @@ class StatusBubbleMac : public StatusBubble {
 
   // The original, non-elided URL.
   GURL url_;
-
-  // Needs to be passed to ElideURL if the original URL string is wider than
-  // the standard bubble width.
-  std::string languages_;
 
   // The factory used to generate weak pointers for the show and hide delay
   // timers.

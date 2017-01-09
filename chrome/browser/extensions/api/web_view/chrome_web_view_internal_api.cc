@@ -19,7 +19,7 @@ namespace extensions {
 // TODO(lazyboy): Add checks similar to
 // WebViewInternalExtensionFunction::RunAsyncSafe(WebViewGuest*).
 bool ChromeWebViewInternalContextMenusCreateFunction::RunAsync() {
-  scoped_ptr<webview::ContextMenusCreate::Params> params(
+  std::unique_ptr<webview::ContextMenusCreate::Params> params(
       webview::ContextMenusCreate::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -52,7 +52,7 @@ bool ChromeWebViewInternalContextMenusCreateFunction::RunAsync() {
 }
 
 bool ChromeWebViewInternalContextMenusUpdateFunction::RunAsync() {
-  scoped_ptr<webview::ContextMenusUpdate::Params> params(
+  std::unique_ptr<webview::ContextMenusUpdate::Params> params(
       webview::ContextMenusUpdate::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -78,7 +78,7 @@ bool ChromeWebViewInternalContextMenusUpdateFunction::RunAsync() {
 }
 
 bool ChromeWebViewInternalContextMenusRemoveFunction::RunAsync() {
-  scoped_ptr<webview::ContextMenusRemove::Params> params(
+  std::unique_ptr<webview::ContextMenusRemove::Params> params(
       webview::ContextMenusRemove::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -117,7 +117,7 @@ bool ChromeWebViewInternalContextMenusRemoveFunction::RunAsync() {
 }
 
 bool ChromeWebViewInternalContextMenusRemoveAllFunction::RunAsync() {
-  scoped_ptr<webview::ContextMenusRemoveAll::Params> params(
+  std::unique_ptr<webview::ContextMenusRemoveAll::Params> params(
       webview::ContextMenusRemoveAll::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
@@ -140,18 +140,15 @@ ChromeWebViewInternalShowContextMenuFunction::
     ~ChromeWebViewInternalShowContextMenuFunction() {
 }
 
-bool ChromeWebViewInternalShowContextMenuFunction::RunAsyncSafe(
-    WebViewGuest* guest) {
-  scoped_ptr<webview::ShowContextMenu::Params> params(
+ExtensionFunction::ResponseAction
+ChromeWebViewInternalShowContextMenuFunction::Run() {
+  std::unique_ptr<webview::ShowContextMenu::Params> params(
       webview::ShowContextMenu::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get());
 
-  // TODO(lazyboy): Actually implement filtering menu items, we pass NULL for
-  // now.
-  guest->ShowContextMenu(params->request_id, NULL);
-
-  SendResponse(true);
-  return true;
+  // TODO(lazyboy): Actually implement filtering menu items.
+  guest_->ShowContextMenu(params->request_id);
+  return RespondNow(NoArguments());
 }
 
 }  // namespace extensions

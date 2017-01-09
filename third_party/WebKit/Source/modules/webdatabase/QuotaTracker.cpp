@@ -28,62 +28,65 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
 #include "modules/webdatabase/QuotaTracker.h"
 
+#include "platform/weborigin/SecurityOrigin.h"
 #include "public/platform/Platform.h"
+#include "public/platform/WebSecurityOrigin.h"
 #include "wtf/StdLibExtras.h"
 #include "wtf/Threading.h"
 
 namespace blink {
 
-QuotaTracker& QuotaTracker::instance()
-{
-    AtomicallyInitializedStaticReference(QuotaTracker, tracker, new QuotaTracker);
-    return tracker;
+QuotaTracker& QuotaTracker::instance() {
+  DEFINE_THREAD_SAFE_STATIC_LOCAL(QuotaTracker, tracker, new QuotaTracker);
+  return tracker;
 }
 
 void QuotaTracker::getDatabaseSizeAndSpaceAvailableToOrigin(
-    const String& originIdentifier, const String& databaseName,
-    unsigned long long* databaseSize, unsigned long long* spaceAvailable)
-{
-    // Extra scope to unlock prior to potentially calling Platform.
-    {
-        MutexLocker lockData(m_dataGuard);
-        ASSERT(m_databaseSizes.contains(originIdentifier));
-        HashMap<String, SizeMap>::const_iterator it = m_databaseSizes.find(originIdentifier);
-        ASSERT(it->value.contains(databaseName));
-        *databaseSize = it->value.get(databaseName);
+    SecurityOrigin* origin,
+    const String& databaseName,
+    unsigned long long* databaseSize,
+    unsigned long long* spaceAvailable) {
+  // Extra scope to unlock prior to potentially calling Platform.
+  {
+    MutexLocker lockData(m_dataGuard);
+    ASSERT(m_databaseSizes.contains(origin->toRawString()));
+    HashMap<String, SizeMap>::const_iterator it =
+        m_databaseSizes.find(origin->toRawString());
+    ASSERT(it->value.contains(databaseName));
+    *databaseSize = it->value.get(databaseName);
 
-        if (m_spaceAvailableToOrigins.contains(originIdentifier)) {
-            *spaceAvailable = m_spaceAvailableToOrigins.get(originIdentifier);
-            return;
-        }
+    if (m_spaceAvailableToOrigins.contains(origin->toRawString())) {
+      *spaceAvailable = m_spaceAvailableToOrigins.get(origin->toRawString());
+      return;
     }
+  }
 
-    // The embedder hasn't pushed this value to us, so we pull it as needed.
-    *spaceAvailable = Platform::current()->databaseGetSpaceAvailableForOrigin(originIdentifier);
+  // The embedder hasn't pushed this value to us, so we pull it as needed.
+  *spaceAvailable = Platform::current()->databaseGetSpaceAvailableForOrigin(
+      WebSecurityOrigin(origin));
 }
 
-void QuotaTracker::updateDatabaseSize(
-    const String& originIdentifier, const String& databaseName,
-    unsigned long long databaseSize)
-{
-    MutexLocker lockData(m_dataGuard);
-    HashMap<String, SizeMap>::ValueType* it = m_databaseSizes.add(originIdentifier, SizeMap()).storedValue;
-    it->value.set(databaseName, databaseSize);
+void QuotaTracker::updateDatabaseSize(SecurityOrigin* origin,
+                                      const String& databaseName,
+                                      unsigned long long databaseSize) {
+  MutexLocker lockData(m_dataGuard);
+  HashMap<String, SizeMap>::ValueType* it =
+      m_databaseSizes.add(origin->toRawString(), SizeMap()).storedValue;
+  it->value.set(databaseName, databaseSize);
 }
 
-void QuotaTracker::updateSpaceAvailableToOrigin(const String& originIdentifier, unsigned long long spaceAvailable)
-{
-    MutexLocker lockData(m_dataGuard);
-    m_spaceAvailableToOrigins.set(originIdentifier, spaceAvailable);
+void QuotaTracker::updateSpaceAvailableToOrigin(
+    SecurityOrigin* origin,
+    unsigned long long spaceAvailable) {
+  MutexLocker lockData(m_dataGuard);
+  m_spaceAvailableToOrigins.set(origin->toRawString(), spaceAvailable);
 }
 
-void QuotaTracker::resetSpaceAvailableToOrigin(const String& originIdentifier)
-{
-    MutexLocker lockData(m_dataGuard);
-    m_spaceAvailableToOrigins.remove(originIdentifier);
+void QuotaTracker::resetSpaceAvailableToOrigin(SecurityOrigin* origin) {
+  MutexLocker lockData(m_dataGuard);
+  m_spaceAvailableToOrigins.remove(origin->toRawString());
 }
 
-} // namespace blink
+}  // namespace blink

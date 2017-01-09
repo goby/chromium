@@ -21,20 +21,15 @@
  *
  */
 
-#include "config.h"
 #include "core/html/forms/EmailInputType.h"
 
 #include "bindings/core/v8/ScriptRegexp.h"
 #include "core/InputTypeNames.h"
 #include "core/html/HTMLInputElement.h"
 #include "core/html/parser/HTMLParserIdioms.h"
-#include "core/inspector/ConsoleMessage.h"
 #include "core/page/ChromeClient.h"
-#include "platform/JSONValues.h"
 #include "platform/text/PlatformLocale.h"
 #include "public/platform/Platform.h"
-#include "wtf/LeakAnnotations.h"
-#include "wtf/PassOwnPtr.h"
 #include "wtf/text/StringBuilder.h"
 #include <unicode/idna.h>
 #include <unicode/unistr.h>
@@ -44,11 +39,12 @@ namespace blink {
 using blink::WebLocalizedString;
 
 // http://www.whatwg.org/specs/web-apps/current-work/multipage/states-of-the-type-attribute.html#valid-e-mail-address
-static const char localPartCharacters[] = "abcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+/=?^_`{|}~.-";
+static const char localPartCharacters[] =
+    "abcdefghijklmnopqrstuvwxyz0123456789!#$%&'*+/=?^_`{|}~.-";
 static const char emailPattern[] =
-    "[a-z0-9!#$%&'*+/=?^_`{|}~.-]+" // local part
+    "[a-z0-9!#$%&'*+/=?^_`{|}~.-]+"  // local part
     "@"
-    "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" // domain part
+    "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"  // domain part
     "(?:\\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)*";
 
 // RFC5321 says the maximum total length of a domain name is 255 octets.
@@ -56,255 +52,261 @@ static const int32_t maximumDomainNameLength = 255;
 // Use the same option as in url/url_canon_icu.cc
 static const int32_t idnaConversionOption = UIDNA_CHECK_BIDI;
 
-String EmailInputType::convertEmailAddressToASCII(const String& address)
-{
-    if (address.containsOnlyASCII())
-        return address;
-
-    size_t atPosition = address.find('@');
-    if (atPosition == kNotFound)
-        return address;
-    String host = address.substring(atPosition + 1);
-
-    // UnicodeString ctor for copy-on-write does not work reliably (in debug
-    // build.) TODO(jshin): In an unlikely case this is a perf-issue, treat
-    // 8bit and non-8bit strings separately.
-    icu::UnicodeString idnDomainName(host.charactersWithNullTermination().data(), host.length());
-    icu::UnicodeString domainName;
-
-    // Leak |idna| at the end.
-    UErrorCode errorCode = U_ZERO_ERROR;
-    static icu::IDNA *idna = icu::IDNA::createUTS46Instance(idnaConversionOption, errorCode);
-    ASSERT(idna);
-    icu::IDNAInfo idnaInfo;
-    idna->nameToASCII(idnDomainName, domainName, idnaInfo, errorCode);
-    if (U_FAILURE(errorCode) || idnaInfo.hasErrors() || domainName.length() > maximumDomainNameLength)
-        return address;
-
-    StringBuilder builder;
-    builder.append(address, 0, atPosition + 1);
-    builder.append(domainName.getBuffer(), domainName.length());
-    String asciiEmail = builder.toString();
-    return isValidEmailAddress(asciiEmail) ? asciiEmail : address;
+std::unique_ptr<ScriptRegexp> EmailInputType::createEmailRegexp() {
+  return std::unique_ptr<ScriptRegexp>(
+      new ScriptRegexp(emailPattern, TextCaseUnicodeInsensitive));
 }
 
-String EmailInputType::convertEmailAddressToUnicode(const String& address) const
-{
-    if (!address.containsOnlyASCII())
-        return address;
+String EmailInputType::convertEmailAddressToASCII(const ScriptRegexp& regexp,
+                                                  const String& address) {
+  if (address.containsOnlyASCII())
+    return address;
 
-    size_t atPosition = address.find('@');
-    if (atPosition == kNotFound)
-        return address;
+  size_t atPosition = address.find('@');
+  if (atPosition == kNotFound)
+    return address;
+  String host = address.substring(atPosition + 1);
 
-    if (address.find("xn--", atPosition + 1) == kNotFound)
-        return address;
+  // UnicodeString ctor for copy-on-write does not work reliably (in debug
+  // build.) TODO(jshin): In an unlikely case this is a perf-issue, treat
+  // 8bit and non-8bit strings separately.
+  host.ensure16Bit();
+  icu::UnicodeString idnDomainName(host.characters16(), host.length());
+  icu::UnicodeString domainName;
 
-    if (!chromeClient())
-        return address;
+  // Leak |idna| at the end.
+  UErrorCode errorCode = U_ZERO_ERROR;
+  static icu::IDNA* idna =
+      icu::IDNA::createUTS46Instance(idnaConversionOption, errorCode);
+  DCHECK(idna);
+  icu::IDNAInfo idnaInfo;
+  idna->nameToASCII(idnDomainName, domainName, idnaInfo, errorCode);
+  if (U_FAILURE(errorCode) || idnaInfo.hasErrors() ||
+      domainName.length() > maximumDomainNameLength)
+    return address;
 
-    String languages = chromeClient()->acceptLanguages();
-    String unicodeHost = Platform::current()->convertIDNToUnicode(address.substring(atPosition + 1), languages);
-    StringBuilder builder;
-    builder.append(address, 0, atPosition + 1);
-    builder.append(unicodeHost);
-    return builder.toString();
+  StringBuilder builder;
+  builder.append(address, 0, atPosition + 1);
+  builder.append(domainName.getBuffer(), domainName.length());
+  String asciiEmail = builder.toString();
+  return isValidEmailAddress(regexp, asciiEmail) ? asciiEmail : address;
 }
 
-static bool isInvalidLocalPartCharacter(UChar ch)
-{
-    if (!isASCII(ch))
-        return true;
-    DEFINE_STATIC_LOCAL(const String, validCharacters, (localPartCharacters));
-    return validCharacters.find(toASCIILower(ch)) == kNotFound;
+String EmailInputType::convertEmailAddressToUnicode(
+    const String& address) const {
+  if (!address.containsOnlyASCII())
+    return address;
+
+  size_t atPosition = address.find('@');
+  if (atPosition == kNotFound)
+    return address;
+
+  if (address.find("xn--", atPosition + 1) == kNotFound)
+    return address;
+
+  String unicodeHost = Platform::current()->convertIDNToUnicode(
+      address.substring(atPosition + 1));
+  StringBuilder builder;
+  builder.append(address, 0, atPosition + 1);
+  builder.append(unicodeHost);
+  return builder.toString();
 }
 
-static bool isInvalidDomainCharacter(UChar ch)
-{
-    if (!isASCII(ch))
-        return true;
-    return !isASCIILower(ch) && !isASCIIUpper(ch) && !isASCIIDigit(ch) && ch != '.' && ch != '-';
+static bool isInvalidLocalPartCharacter(UChar ch) {
+  if (!isASCII(ch))
+    return true;
+  DEFINE_STATIC_LOCAL(const String, validCharacters, (localPartCharacters));
+  return validCharacters.find(toASCIILower(ch)) == kNotFound;
 }
 
-static bool checkValidDotUsage(const String& domain)
-{
-    if (domain.isEmpty())
-        return true;
-    if (domain[0] == '.' || domain[domain.length() - 1] == '.')
-        return false;
-    return domain.find("..") == kNotFound;
+static bool isInvalidDomainCharacter(UChar ch) {
+  if (!isASCII(ch))
+    return true;
+  return !isASCIILower(ch) && !isASCIIUpper(ch) && !isASCIIDigit(ch) &&
+         ch != '.' && ch != '-';
 }
 
-bool EmailInputType::isValidEmailAddress(const String& address)
-{
-    int addressLength = address.length();
-    if (!addressLength)
-        return false;
-
-    WTF_ANNOTATE_SCOPED_MEMORY_LEAK;
-    DEFINE_STATIC_LOCAL(const ScriptRegexp, regExp, (emailPattern, TextCaseInsensitive));
-
-    int matchLength;
-    int matchOffset = regExp.match(address, 0, &matchLength);
-
-    return !matchOffset && matchLength == addressLength;
+static bool checkValidDotUsage(const String& domain) {
+  if (domain.isEmpty())
+    return true;
+  if (domain[0] == '.' || domain[domain.length() - 1] == '.')
+    return false;
+  return domain.find("..") == kNotFound;
 }
 
-PassRefPtrWillBeRawPtr<InputType> EmailInputType::create(HTMLInputElement& element)
-{
-    return adoptRefWillBeNoop(new EmailInputType(element));
+bool EmailInputType::isValidEmailAddress(const ScriptRegexp& regexp,
+                                         const String& address) {
+  int addressLength = address.length();
+  if (!addressLength)
+    return false;
+
+  int matchLength;
+  int matchOffset = regexp.match(address, 0, &matchLength);
+
+  return !matchOffset && matchLength == addressLength;
 }
 
-void EmailInputType::countUsage()
-{
-    countUsageIfVisible(UseCounter::InputTypeEmail);
-    bool hasMaxLength = element().fastHasAttribute(HTMLNames::maxlengthAttr);
+EmailInputType::EmailInputType(HTMLInputElement& element)
+    : BaseTextInputType(element) {}
+
+InputType* EmailInputType::create(HTMLInputElement& element) {
+  return new EmailInputType(element);
+}
+
+void EmailInputType::countUsage() {
+  countUsageIfVisible(UseCounter::InputTypeEmail);
+  bool hasMaxLength = element().fastHasAttribute(HTMLNames::maxlengthAttr);
+  if (hasMaxLength)
+    countUsageIfVisible(UseCounter::InputTypeEmailMaxLength);
+  if (element().multiple()) {
+    countUsageIfVisible(UseCounter::InputTypeEmailMultiple);
     if (hasMaxLength)
-        countUsageIfVisible(UseCounter::InputTypeEmailMaxLength);
-    if (element().multiple()) {
-        countUsageIfVisible(UseCounter::InputTypeEmailMultiple);
-        if (hasMaxLength)
-            countUsageIfVisible(UseCounter::InputTypeEmailMultipleMaxLength);
-    }
+      countUsageIfVisible(UseCounter::InputTypeEmailMultipleMaxLength);
+  }
 }
 
-const AtomicString& EmailInputType::formControlType() const
-{
-    return InputTypeNames::email;
+const AtomicString& EmailInputType::formControlType() const {
+  return InputTypeNames::email;
+}
+
+ScriptRegexp& EmailInputType::ensureEmailRegexp() const {
+  if (!m_emailRegexp)
+    m_emailRegexp = createEmailRegexp();
+  return *m_emailRegexp;
 }
 
 // The return value is an invalid email address string if the specified string
 // contains an invalid email address. Otherwise, null string is returned.
 // If an empty string is returned, it means empty address is specified.
 // e.g. "foo@example.com,,bar@example.com" for multiple case.
-String EmailInputType::findInvalidAddress(const String& value) const
-{
-    if (value.isEmpty())
-        return String();
-    if (!element().multiple())
-        return isValidEmailAddress(value) ? String() : value;
-    Vector<String> addresses;
-    value.split(',', true, addresses);
-    for (unsigned i = 0; i < addresses.size(); ++i) {
-        String stripped = stripLeadingAndTrailingHTMLSpaces(addresses[i]);
-        if (!isValidEmailAddress(stripped))
-            return stripped;
-    }
+String EmailInputType::findInvalidAddress(const String& value) const {
+  if (value.isEmpty())
     return String();
+  if (!element().multiple())
+    return isValidEmailAddress(ensureEmailRegexp(), value) ? String() : value;
+  Vector<String> addresses;
+  value.split(',', true, addresses);
+  for (const auto& address : addresses) {
+    String stripped = stripLeadingAndTrailingHTMLSpaces(address);
+    if (!isValidEmailAddress(ensureEmailRegexp(), stripped))
+      return stripped;
+  }
+  return String();
 }
 
-bool EmailInputType::typeMismatchFor(const String& value) const
-{
-    return !findInvalidAddress(value).isNull();
+bool EmailInputType::typeMismatchFor(const String& value) const {
+  return !findInvalidAddress(value).isNull();
 }
 
-bool EmailInputType::typeMismatch() const
-{
-    return typeMismatchFor(element().value());
+bool EmailInputType::typeMismatch() const {
+  return typeMismatchFor(element().value());
 }
 
-String EmailInputType::typeMismatchText() const
-{
-    String invalidAddress = findInvalidAddress(element().value());
-    ASSERT(!invalidAddress.isNull());
-    if (invalidAddress.isEmpty())
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailEmpty);
-    String atSign = String("@");
-    size_t atIndex = invalidAddress.find('@');
-    if (atIndex == kNotFound)
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailNoAtSign, atSign, invalidAddress);
-    // We check validity against an ASCII value because of difficulty to check
-    // invalid characters. However we should show Unicode value.
-    String unicodeAddress = convertEmailAddressToUnicode(invalidAddress);
-    String localPart = invalidAddress.left(atIndex);
-    String domain = invalidAddress.substring(atIndex + 1);
-    if (localPart.isEmpty())
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailEmptyLocal, atSign, unicodeAddress);
-    if (domain.isEmpty())
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailEmptyDomain, atSign, unicodeAddress);
-    size_t invalidCharIndex = localPart.find(isInvalidLocalPartCharacter);
-    if (invalidCharIndex != kNotFound) {
-        unsigned charLength = U_IS_LEAD(localPart[invalidCharIndex]) ? 2 : 1;
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailInvalidLocal, atSign, localPart.substring(invalidCharIndex, charLength));
-    }
-    invalidCharIndex = domain.find(isInvalidDomainCharacter);
-    if (invalidCharIndex != kNotFound) {
-        unsigned charLength = U_IS_LEAD(domain[invalidCharIndex]) ? 2 : 1;
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailInvalidDomain, atSign, domain.substring(invalidCharIndex, charLength));
-    }
-    if (!checkValidDotUsage(domain)) {
-        size_t atIndexInUnicode = unicodeAddress.find('@');
-        ASSERT(atIndexInUnicode != kNotFound);
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmailInvalidDots, String("."), unicodeAddress.substring(atIndexInUnicode + 1));
-    }
-    if (element().multiple())
-        return locale().queryString(WebLocalizedString::ValidationTypeMismatchForMultipleEmail);
-    return locale().queryString(WebLocalizedString::ValidationTypeMismatchForEmail);
+String EmailInputType::typeMismatchText() const {
+  String invalidAddress = findInvalidAddress(element().value());
+  DCHECK(!invalidAddress.isNull());
+  if (invalidAddress.isEmpty())
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailEmpty);
+  String atSign = String("@");
+  size_t atIndex = invalidAddress.find('@');
+  if (atIndex == kNotFound)
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailNoAtSign, atSign,
+        invalidAddress);
+  // We check validity against an ASCII value because of difficulty to check
+  // invalid characters. However we should show Unicode value.
+  String unicodeAddress = convertEmailAddressToUnicode(invalidAddress);
+  String localPart = invalidAddress.left(atIndex);
+  String domain = invalidAddress.substring(atIndex + 1);
+  if (localPart.isEmpty())
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailEmptyLocal, atSign,
+        unicodeAddress);
+  if (domain.isEmpty())
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailEmptyDomain, atSign,
+        unicodeAddress);
+  size_t invalidCharIndex = localPart.find(isInvalidLocalPartCharacter);
+  if (invalidCharIndex != kNotFound) {
+    unsigned charLength = U_IS_LEAD(localPart[invalidCharIndex]) ? 2 : 1;
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailInvalidLocal, atSign,
+        localPart.substring(invalidCharIndex, charLength));
+  }
+  invalidCharIndex = domain.find(isInvalidDomainCharacter);
+  if (invalidCharIndex != kNotFound) {
+    unsigned charLength = U_IS_LEAD(domain[invalidCharIndex]) ? 2 : 1;
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailInvalidDomain, atSign,
+        domain.substring(invalidCharIndex, charLength));
+  }
+  if (!checkValidDotUsage(domain)) {
+    size_t atIndexInUnicode = unicodeAddress.find('@');
+    DCHECK_NE(atIndexInUnicode, kNotFound);
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForEmailInvalidDots,
+        String("."), unicodeAddress.substring(atIndexInUnicode + 1));
+  }
+  if (element().multiple())
+    return locale().queryString(
+        WebLocalizedString::ValidationTypeMismatchForMultipleEmail);
+  return locale().queryString(
+      WebLocalizedString::ValidationTypeMismatchForEmail);
 }
 
-void EmailInputType::warnIfValueIsInvalid(const String& value) const
-{
-    String invalidAddress = findInvalidAddress(value);
-    if (invalidAddress.isNull())
-        return;
-    element().document().addConsoleMessage(ConsoleMessage::create(RenderingMessageSource, WarningMessageLevel,
-        String::format("The specified value %s is not a valid email address.", JSONValue::quoteString(invalidAddress).utf8().data())));
+bool EmailInputType::supportsSelectionAPI() const {
+  return false;
 }
 
-bool EmailInputType::supportsSelectionAPI() const
-{
-    return false;
+String EmailInputType::sanitizeValue(const String& proposedValue) const {
+  String noLineBreakValue = proposedValue.removeCharacters(isHTMLLineBreak);
+  if (!element().multiple())
+    return stripLeadingAndTrailingHTMLSpaces(noLineBreakValue);
+  Vector<String> addresses;
+  noLineBreakValue.split(',', true, addresses);
+  StringBuilder strippedValue;
+  for (size_t i = 0; i < addresses.size(); ++i) {
+    if (i > 0)
+      strippedValue.append(',');
+    strippedValue.append(stripLeadingAndTrailingHTMLSpaces(addresses[i]));
+  }
+  return strippedValue.toString();
 }
 
-String EmailInputType::sanitizeValue(const String& proposedValue) const
-{
-    String noLineBreakValue = proposedValue.removeCharacters(isHTMLLineBreak);
-    if (!element().multiple())
-        return stripLeadingAndTrailingHTMLSpaces(noLineBreakValue);
-    Vector<String> addresses;
-    noLineBreakValue.split(',', true, addresses);
-    StringBuilder strippedValue;
-    for (size_t i = 0; i < addresses.size(); ++i) {
-        if (i > 0)
-            strippedValue.append(',');
-        strippedValue.append(stripLeadingAndTrailingHTMLSpaces(addresses[i]));
-    }
-    return strippedValue.toString();
+String EmailInputType::convertFromVisibleValue(
+    const String& visibleValue) const {
+  String sanitizedValue = sanitizeValue(visibleValue);
+  if (!element().multiple())
+    return convertEmailAddressToASCII(ensureEmailRegexp(), sanitizedValue);
+  Vector<String> addresses;
+  sanitizedValue.split(',', true, addresses);
+  StringBuilder builder;
+  builder.reserveCapacity(sanitizedValue.length());
+  for (size_t i = 0; i < addresses.size(); ++i) {
+    if (i > 0)
+      builder.append(',');
+    builder.append(
+        convertEmailAddressToASCII(ensureEmailRegexp(), addresses[i]));
+  }
+  return builder.toString();
 }
 
-String EmailInputType::convertFromVisibleValue(const String& visibleValue) const
-{
-    String sanitizedValue = sanitizeValue(visibleValue);
-    if (!element().multiple())
-        return convertEmailAddressToASCII(sanitizedValue);
-    Vector<String> addresses;
-    sanitizedValue.split(',', true, addresses);
-    StringBuilder builder;
-    builder.reserveCapacity(sanitizedValue.length());
-    for (size_t i = 0; i < addresses.size(); ++i) {
-        if (i > 0)
-            builder.append(',');
-        builder.append(convertEmailAddressToASCII(addresses[i]));
-    }
-    return builder.toString();
+String EmailInputType::visibleValue() const {
+  String value = element().value();
+  if (!element().multiple())
+    return convertEmailAddressToUnicode(value);
+
+  Vector<String> addresses;
+  value.split(',', true, addresses);
+  StringBuilder builder;
+  builder.reserveCapacity(value.length());
+  for (size_t i = 0; i < addresses.size(); ++i) {
+    if (i > 0)
+      builder.append(',');
+    builder.append(convertEmailAddressToUnicode(addresses[i]));
+  }
+  return builder.toString();
 }
 
-String EmailInputType::visibleValue() const
-{
-    String value = element().value();
-    if (!element().multiple())
-        return convertEmailAddressToUnicode(value);
-
-    Vector<String> addresses;
-    value.split(',', true, addresses);
-    StringBuilder builder;
-    builder.reserveCapacity(value.length());
-    for (size_t i = 0; i < addresses.size(); ++i) {
-        if (i > 0)
-            builder.append(',');
-        builder.append(convertEmailAddressToUnicode(addresses[i]));
-    }
-    return builder.toString();
-}
-
-} // namespace blink
+}  // namespace blink

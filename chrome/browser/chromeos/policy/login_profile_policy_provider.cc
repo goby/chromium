@@ -4,11 +4,12 @@
 
 #include "chrome/browser/chromeos/policy/login_profile_policy_provider.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/values.h"
 #include "chromeos/dbus/power_policy_controller.h"
 #include "components/policy/core/browser/policy_error_map.h"
@@ -16,7 +17,7 @@
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_map.h"
 #include "components/policy/core/common/policy_types.h"
-#include "policy/policy_constants.h"
+#include "components/policy/policy_constants.h"
 
 namespace policy {
 
@@ -31,24 +32,24 @@ const char kActionLogout[] = "Logout";
 const char kActionShutdown[]  = "Shutdown";
 const char kActionDoNothing[] = "DoNothing";
 
-scoped_ptr<base::Value> GetAction(const std::string &action) {
+std::unique_ptr<base::Value> GetAction(const std::string& action) {
   if (action == kActionSuspend) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_SUSPEND));
   }
   if (action == kActionLogout) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_STOP_SESSION));
   }
   if (action == kActionShutdown) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_SHUT_DOWN));
   }
   if (action == kActionDoNothing) {
-    return scoped_ptr<base::Value>(new base::FundamentalValue(
+    return std::unique_ptr<base::Value>(new base::FundamentalValue(
         chromeos::PowerPolicyController::ACTION_DO_NOTHING));
   }
-  return scoped_ptr<base::Value>();
+  return std::unique_ptr<base::Value>();
 }
 
 
@@ -61,12 +62,9 @@ void ApplyDevicePolicyAsRecommendedPolicy(const std::string& device_policy,
                                           PolicyMap* user_policy_map) {
   const base::Value* value = device_policy_map.GetValue(device_policy);
   if (value) {
-    user_policy_map->Set(user_policy,
-                         POLICY_LEVEL_RECOMMENDED,
-                         POLICY_SCOPE_USER,
-                         POLICY_SOURCE_CLOUD,
-                         value->DeepCopy(),
-                         NULL);
+    user_policy_map->Set(user_policy, POLICY_LEVEL_RECOMMENDED,
+                         POLICY_SCOPE_USER, POLICY_SOURCE_CLOUD,
+                         value->CreateDeepCopy(), nullptr);
   }
 }
 
@@ -76,12 +74,8 @@ void ApplyValueAsMandatoryPolicy(const base::Value* value,
                                  const std::string& user_policy,
                                  PolicyMap* user_policy_map) {
   if (value) {
-    user_policy_map->Set(user_policy,
-                         POLICY_LEVEL_MANDATORY,
-                         POLICY_SCOPE_USER,
-                         POLICY_SOURCE_CLOUD,
-                         value->DeepCopy(),
-                         NULL);
+    user_policy_map->Set(user_policy, POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
+                         POLICY_SOURCE_CLOUD, value->CreateDeepCopy(), nullptr);
   }
 }
 
@@ -144,7 +138,7 @@ void LoginProfilePolicyProvider::UpdateFromDevicePolicy() {
   const PolicyNamespace chrome_namespaces(POLICY_DOMAIN_CHROME, std::string());
   const PolicyMap& device_policy_map =
       device_policy_service_->GetPolicies(chrome_namespaces);
-  scoped_ptr<PolicyBundle> bundle(new PolicyBundle);
+  std::unique_ptr<PolicyBundle> bundle(new PolicyBundle);
   PolicyMap& user_policy_map = bundle->Get(chrome_namespaces);
 
   ApplyDevicePolicyAsRecommendedPolicy(
@@ -172,12 +166,12 @@ void LoginProfilePolicyProvider::UpdateFromDevicePolicy() {
       device_policy_map.GetValue(key::kDeviceLoginScreenPowerManagement);
   const base::DictionaryValue* dict = NULL;
   if (value && value->GetAsDictionary(&dict)) {
-    scoped_ptr<base::DictionaryValue> policy_value(dict->DeepCopy());
+    std::unique_ptr<base::DictionaryValue> policy_value(dict->DeepCopy());
     std::string lid_close_action;
     base::Value* screen_dim_delay_scale = NULL;
 
     if (policy_value->GetString(kLidCloseAction, &lid_close_action)) {
-      scoped_ptr<base::Value> action = GetAction(lid_close_action);
+      std::unique_ptr<base::Value> action = GetAction(lid_close_action);
       if (action) {
         ApplyValueAsMandatoryPolicy(
             action.get(), key::kLidCloseAction, &user_policy_map);
@@ -202,7 +196,7 @@ void LoginProfilePolicyProvider::UpdateFromDevicePolicy() {
     }
   }
 
-  UpdatePolicy(bundle.Pass());
+  UpdatePolicy(std::move(bundle));
 }
 
 }  // namespace policy

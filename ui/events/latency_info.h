@@ -5,20 +5,39 @@
 #ifndef UI_EVENTS_LATENCY_INFO_H_
 #define UI_EVENTS_LATENCY_INFO_H_
 
+#include <stdint.h>
+
+#include <memory>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/containers/small_map.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/time/time.h"
-#include "base/trace_event/trace_event.h"
-#include "ipc/ipc_param_traits.h"
 #include "ui/events/events_base_export.h"
+#include "ui/gfx/geometry/point_f.h"
+
+#if !defined(OS_IOS)
+#include "ipc/ipc_param_traits.h"  // nogncheck
+#include "mojo/public/cpp/bindings/struct_traits.h"  // nogncheck
+#endif
+
+namespace base {
+namespace trace_event {
+class ConvertableToTraceFormat;
+}
+}
 
 namespace ui {
 
+#if !defined(OS_IOS)
+namespace mojom {
+class LatencyInfoDataView;
+}
+#endif
+
+// When adding new components, or new metrics based on LatencyInfo,
+// please update latency_info.dot.
 enum LatencyComponentType {
   // ---------------------------BEGIN COMPONENT-------------------------------
   // BEGIN COMPONENT is when we show the latency begin in chrome://tracing.
@@ -38,6 +57,8 @@ enum LatencyComponentType {
   INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT,
   // Timestamp when the UI event is created.
   INPUT_EVENT_LATENCY_UI_COMPONENT,
+  // Timestamp when the event is dispatched on the main thread of the renderer.
+  INPUT_EVENT_LATENCY_RENDERER_MAIN_COMPONENT,
   // This is special component indicating there is rendering scheduled for
   // the event associated with this LatencyInfo on main thread.
   INPUT_EVENT_LATENCY_RENDERING_SCHEDULED_MAIN_COMPONENT,
@@ -61,6 +82,9 @@ enum LatencyComponentType {
   // Timestamp of when the gpu service began swap buffers, unlike
   // INPUT_EVENT_LATENCY_TERMINATED_FRAME_SWAP_COMPONENT which measures after.
   INPUT_EVENT_GPU_SWAP_BUFFER_COMPONENT,
+  // Timestamp of when the gesture scroll update is generated from a mouse wheel
+  // event.
+  INPUT_EVENT_LATENCY_GENERATE_SCROLL_UPDATE_FROM_MOUSE_WHEEL,
   // ---------------------------TERMINAL COMPONENT-----------------------------
   // TERMINAL COMPONENT is when we show the latency end in chrome://tracing.
   // Timestamp when the mouse event is acked from renderer and it does not
@@ -73,10 +97,10 @@ enum LatencyComponentType {
   // cause any rendering scheduled.
   INPUT_EVENT_LATENCY_TERMINATED_KEYBOARD_COMPONENT,
   // Timestamp when the touch event is acked from renderer and it does not
-  // cause any rendering schedueld and does not generate any gesture event.
+  // cause any rendering scheduled and does not generate any gesture event.
   INPUT_EVENT_LATENCY_TERMINATED_TOUCH_COMPONENT,
   // Timestamp when the gesture event is acked from renderer, and it does not
-  // cause any rendering schedueld.
+  // cause any rendering scheduled.
   INPUT_EVENT_LATENCY_TERMINATED_GESTURE_COMPONENT,
   // Timestamp when the frame is swapped (i.e. when the rendering caused by
   // input event actually takes effect).
@@ -91,7 +115,15 @@ enum LatencyComponentType {
   // but the swap failed.
   INPUT_EVENT_LATENCY_TERMINATED_SWAP_FAILED_COMPONENT,
   LATENCY_COMPONENT_TYPE_LAST =
-    INPUT_EVENT_LATENCY_TERMINATED_SWAP_FAILED_COMPONENT,
+      INPUT_EVENT_LATENCY_TERMINATED_SWAP_FAILED_COMPONENT,
+};
+
+enum SourceEventType {
+  UNKNOWN,
+  WHEEL,
+  TOUCH,
+  OTHER,
+  SOURCE_EVENT_TYPE_LAST = OTHER,
 };
 
 class EVENTS_BASE_EXPORT LatencyInfo {
@@ -100,38 +132,35 @@ class EVENTS_BASE_EXPORT LatencyInfo {
     // Nondecreasing number that can be used to determine what events happened
     // in the component at the time this struct was sent on to the next
     // component.
-    int64 sequence_number;
+    int64_t sequence_number;
     // Average time of events that happened in this component.
     base::TimeTicks event_time;
     // Count of events that happened in this component
-    uint32 event_count;
-  };
-
-  struct EVENTS_BASE_EXPORT InputCoordinate {
-    InputCoordinate();
-    InputCoordinate(float x, float y);
-
-    float x;
-    float y;
+    uint32_t event_count;
+    // Time of the oldest event that happened in this component.
+    base::TimeTicks first_event_time;
+    // Time of the most recent event that happened in this component.
+    base::TimeTicks last_event_time;
   };
 
   // Empirically determined constant based on a typical scroll sequence.
   enum { kTypicalMaxComponentsPerLatencyInfo = 10 };
 
-  enum { kMaxCoalescedEventTimestamps = 2 };
-  enum { kMaxInputCoordinates = 2 };
+  enum : size_t { kMaxInputCoordinates = 2 };
 
-  // Map a Latency Component (with a component-specific int64 id) to a
+  // Map a Latency Component (with a component-specific int64_t id) to a
   // component info.
   typedef base::SmallMap<
-      std::map<std::pair<LatencyComponentType, int64>, LatencyComponent>,
+      std::map<std::pair<LatencyComponentType, int64_t>, LatencyComponent>,
       kTypicalMaxComponentsPerLatencyInfo> LatencyMap;
 
   LatencyInfo();
+  LatencyInfo(const LatencyInfo& other);
+  LatencyInfo(SourceEventType type);
   ~LatencyInfo();
 
   // For test only.
-  LatencyInfo(int64 trace_id, bool terminated);
+  LatencyInfo(int64_t trace_id, bool terminated);
 
   // Returns true if the vector |latency_info| is valid. Returns false
   // if it is not valid and log the |referring_msg|.
@@ -152,69 +181,68 @@ class EVENTS_BASE_EXPORT LatencyInfo {
   // Modifies the current sequence number for a component, and adds a new
   // sequence number with the current timestamp.
   void AddLatencyNumber(LatencyComponentType component,
-                        int64 id,
-                        int64 component_sequence_number);
+                        int64_t id,
+                        int64_t component_sequence_number);
 
   // Similar to |AddLatencyNumber|, and also appends |trace_name_str| to
   // the trace event's name.
   // This function should only be called when adding a BEGIN component.
   void AddLatencyNumberWithTraceName(LatencyComponentType component,
-                                     int64 id,
-                                     int64 component_sequence_number,
+                                     int64_t id,
+                                     int64_t component_sequence_number,
                                      const char* trace_name_str);
 
   // Modifies the current sequence number and adds a certain number of events
   // for a specific component.
   void AddLatencyNumberWithTimestamp(LatencyComponentType component,
-                                     int64 id,
-                                     int64 component_sequence_number,
+                                     int64_t id,
+                                     int64_t component_sequence_number,
                                      base::TimeTicks time,
-                                     uint32 event_count);
+                                     uint32_t event_count);
 
   // Returns true if the a component with |type| and |id| is found in
   // the latency_components and the component is stored to |output| if
   // |output| is not NULL. Returns false if no such component is found.
   bool FindLatency(LatencyComponentType type,
-                   int64 id,
+                   int64_t id,
                    LatencyComponent* output) const;
 
   void RemoveLatency(LatencyComponentType type);
 
   // Returns true if there is still room for keeping the |input_coordinate|,
   // false otherwise.
-  bool AddInputCoordinate(const InputCoordinate& input_coordinate);
+  bool AddInputCoordinate(const gfx::PointF& input_coordinate);
 
-  uint32 input_coordinates_size() const { return input_coordinates_size_; }
-  const InputCoordinate* input_coordinates() const {
-    return input_coordinates_;
-  }
-
-  // Returns true if there is still room for keeping the |timestamp|,
-  // false otherwise.
-  bool AddCoalescedEventTimestamp(double timestamp);
-
-  uint32 coalesced_events_size() const { return coalesced_events_size_; }
-  const double* timestamps_of_coalesced_events() const {
-    return timestamps_of_coalesced_events_;
-  }
+  uint32_t input_coordinates_size() const { return input_coordinates_size_; }
+  const gfx::PointF* input_coordinates() const { return input_coordinates_; }
 
   const LatencyMap& latency_components() const { return latency_components_; }
 
+  const SourceEventType& source_event_type() const {
+    return source_event_type_;
+  }
+  void set_source_event_type(SourceEventType type) {
+    source_event_type_ = type;
+  }
+
   bool terminated() const { return terminated_; }
-  int64 trace_id() const { return trace_id_; }
+  void set_coalesced() { coalesced_ = true; }
+  bool coalesced() const { return coalesced_; }
+  int64_t trace_id() const { return trace_id_; }
 
  private:
   void AddLatencyNumberWithTimestampImpl(LatencyComponentType component,
-                                         int64 id,
-                                         int64 component_sequence_number,
+                                         int64_t id,
+                                         int64_t component_sequence_number,
                                          base::TimeTicks time,
-                                         uint32 event_count,
+                                         uint32_t event_count,
                                          const char* trace_name_str);
 
   // Converts latencyinfo into format that can be dumped into trace buffer.
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat> AsTraceableData();
-  scoped_refptr<base::trace_event::ConvertableToTraceFormat>
-    CoordinatesAsTraceableData();
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
+  AsTraceableData();
+  std::unique_ptr<base::trace_event::ConvertableToTraceFormat>
+  CoordinatesAsTraceableData();
 
   // Shown as part of the name of the trace event for this LatencyInfo.
   // String is empty if no tracing is enabled.
@@ -223,18 +251,23 @@ class EVENTS_BASE_EXPORT LatencyInfo {
   LatencyMap latency_components_;
 
   // These coordinates represent window coordinates of the original input event.
-  uint32 input_coordinates_size_;
-  InputCoordinate input_coordinates_[kMaxInputCoordinates];
-
-  uint32 coalesced_events_size_;
-  double timestamps_of_coalesced_events_[kMaxCoalescedEventTimestamps];
+  uint32_t input_coordinates_size_;
+  gfx::PointF input_coordinates_[kMaxInputCoordinates];
 
   // The unique id for matching the ASYNC_BEGIN/END trace event.
-  int64 trace_id_;
+  int64_t trace_id_;
+  // Whether this event has been coalesced into another event.
+  bool coalesced_;
   // Whether a terminal component has been added.
   bool terminated_;
+  // Stores the type of the first source event.
+  SourceEventType source_event_type_;
 
+#if !defined(OS_IOS)
   friend struct IPC::ParamTraits<ui::LatencyInfo>;
+  friend struct mojo::StructTraits<ui::mojom::LatencyInfoDataView,
+                                   ui::LatencyInfo>;
+#endif
 };
 
 }  // namespace ui

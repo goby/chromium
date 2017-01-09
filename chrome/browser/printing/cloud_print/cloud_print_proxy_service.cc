@@ -4,6 +4,9 @@
 
 #include "chrome/browser/printing/cloud_print/cloud_print_proxy_service.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <stack>
 #include <vector>
 
@@ -13,11 +16,10 @@
 #include "base/files/file_util.h"
 #include "base/json/json_reader.h"
 #include "base/location.h"
-#include "base/metrics/histogram.h"
-#include "base/prefs/pref_service.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
@@ -29,6 +31,7 @@
 #include "chrome/common/cloud_print/cloud_print_proxy_info.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/service_messages.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_thread.h"
 #include "printing/backend/print_backend.h"
 
@@ -133,7 +136,7 @@ void CloudPrintProxyService::GetPrinters(const PrintersCallback& callback) {
   if (!list_path.empty()) {
     std::string printers_json;
     base::ReadFileToString(list_path, &printers_json);
-    scoped_ptr<base::Value> value = base::JSONReader::Read(printers_json);
+    std::unique_ptr<base::Value> value = base::JSONReader::Read(printers_json);
     base::ListValue* list = NULL;
     std::vector<std::string> printers;
     if (value && value->GetAsList(&list) && list) {

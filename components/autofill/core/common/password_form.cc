@@ -45,7 +45,6 @@ void PasswordFormToJSON(const PasswordForm& form,
                                      base::ASCIIToUTF16("|")));
   target->SetBoolean("blacklisted", form.blacklisted_by_user);
   target->SetBoolean("preferred", form.preferred);
-  target->SetBoolean("ssl_valid", form.ssl_valid);
   target->SetDouble("date_created", form.date_created.ToDoubleT());
   target->SetDouble("date_synced", form.date_synced.ToDoubleT());
   target->SetInteger("type", form.type);
@@ -56,14 +55,16 @@ void PasswordFormToJSON(const PasswordForm& form,
   target->SetInteger("generation_upload_status", form.generation_upload_status);
   target->SetString("display_name", form.display_name);
   target->SetString("icon_url", form.icon_url.possibly_invalid_spec());
-  target->SetString("federation_url",
-                    form.federation_url.possibly_invalid_spec());
+  target->SetString("federation_origin", form.federation_origin.Serialize());
   target->SetBoolean("skip_next_zero_click", form.skip_zero_click);
   std::ostringstream layout_string_stream;
   layout_string_stream << form.layout;
   target->SetString("layout", layout_string_stream.str());
   target->SetBoolean("was_parsed_using_autofill_predictions",
                      form.was_parsed_using_autofill_predictions);
+  target->SetString("affiliated_web_realm", form.affiliated_web_realm);
+  target->SetBoolean("does_look_like_signup_form",
+                     form.does_look_like_signup_form);
 }
 
 }  // namespace
@@ -74,7 +75,6 @@ PasswordForm::PasswordForm()
       password_value_is_default(false),
       new_password_value_is_default(false),
       new_password_marked_by_site(false),
-      ssl_valid(false),
       preferred(false),
       blacklisted_by_user(false),
       type(TYPE_MANUAL),
@@ -83,14 +83,13 @@ PasswordForm::PasswordForm()
       skip_zero_click(false),
       layout(Layout::LAYOUT_OTHER),
       was_parsed_using_autofill_predictions(false),
-      is_alive(true),
       is_public_suffix_match(false),
-      is_affiliation_based_match(false) {}
+      is_affiliation_based_match(false),
+      does_look_like_signup_form(false) {}
 
-PasswordForm::~PasswordForm() {
-  CHECK(is_alive);
-  is_alive = false;
-}
+PasswordForm::PasswordForm(const PasswordForm& other) = default;
+
+PasswordForm::~PasswordForm() = default;
 
 bool PasswordForm::IsPossibleChangePasswordForm() const {
   return !new_password_element.empty() &&
@@ -114,19 +113,23 @@ bool PasswordForm::operator==(const PasswordForm& form) const {
          new_password_element == form.new_password_element &&
          new_password_marked_by_site == form.new_password_marked_by_site &&
          new_password_value == form.new_password_value &&
-         ssl_valid == form.ssl_valid && preferred == form.preferred &&
-         date_created == form.date_created && date_synced == form.date_synced &&
+         preferred == form.preferred && date_created == form.date_created &&
+         date_synced == form.date_synced &&
          blacklisted_by_user == form.blacklisted_by_user && type == form.type &&
          times_used == form.times_used &&
          form_data.SameFormAs(form.form_data) &&
          generation_upload_status == form.generation_upload_status &&
          display_name == form.display_name && icon_url == form.icon_url &&
-         federation_url == form.federation_url &&
+         // We compare the serialization of the origins here, as we want unique
+         // origins to compare as '=='.
+         federation_origin.Serialize() == form.federation_origin.Serialize() &&
          skip_zero_click == form.skip_zero_click && layout == form.layout &&
          was_parsed_using_autofill_predictions ==
              form.was_parsed_using_autofill_predictions &&
          is_public_suffix_match == form.is_public_suffix_match &&
-         is_affiliation_based_match == form.is_affiliation_based_match;
+         is_affiliation_based_match == form.is_affiliation_based_match &&
+         affiliated_web_realm == form.affiliated_web_realm &&
+         does_look_like_signup_form == form.does_look_like_signup_form;
 }
 
 bool PasswordForm::operator!=(const PasswordForm& form) const {

@@ -9,7 +9,6 @@
 #include <string>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
@@ -123,7 +122,7 @@ class CHROMEOS_EXPORT ClientCertResolver : public NetworkStateHandlerObserver,
   // instead.
   base::Time Now() const;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer, true> observers_;
 
   // The set of networks that were checked/resolved in previous passes. These
   // networks are skipped in the NetworkListChanged notification.

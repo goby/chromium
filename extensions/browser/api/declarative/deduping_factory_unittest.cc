@@ -4,6 +4,9 @@
 
 #include "extensions/browser/api/declarative/deduping_factory.h"
 
+#include <memory>
+
+#include "base/macros.h"
 #include "base/values.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -70,10 +73,10 @@ scoped_refptr<const BaseClass> CreateFoo(const std::string& /*instance_type*/,
   return scoped_refptr<const BaseClass>(new Foo(parameter));
 }
 
-scoped_ptr<base::DictionaryValue> CreateDictWithParameter(int parameter) {
-  scoped_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
+std::unique_ptr<base::DictionaryValue> CreateDictWithParameter(int parameter) {
+  std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
   dict->SetInteger("parameter", parameter);
-  return dict.Pass();
+  return dict;
 }
 
 }  // namespace
@@ -85,10 +88,10 @@ TEST(DedupingFactoryTest, InstantiationParameterized) {
   factory.RegisterFactoryMethod(
       kTypeName, DedupingFactory<BaseClass>::IS_PARAMETERIZED, &CreateFoo);
 
-  scoped_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
-  scoped_ptr<base::DictionaryValue> d2(CreateDictWithParameter(2));
-  scoped_ptr<base::DictionaryValue> d3(CreateDictWithParameter(3));
-  scoped_ptr<base::DictionaryValue> d4(CreateDictWithParameter(4));
+  std::unique_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
+  std::unique_ptr<base::DictionaryValue> d2(CreateDictWithParameter(2));
+  std::unique_ptr<base::DictionaryValue> d3(CreateDictWithParameter(3));
+  std::unique_ptr<base::DictionaryValue> d4(CreateDictWithParameter(4));
 
   std::string error;
   bool bad_message = false;
@@ -132,8 +135,8 @@ TEST(DedupingFactoryTest, InstantiationNonParameterized) {
   factory.RegisterFactoryMethod(
       kTypeName, DedupingFactory<BaseClass>::IS_NOT_PARAMETERIZED, &CreateFoo);
 
-  scoped_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
-  scoped_ptr<base::DictionaryValue> d2(CreateDictWithParameter(2));
+  std::unique_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
+  std::unique_ptr<base::DictionaryValue> d2(CreateDictWithParameter(2));
 
   std::string error;
   bool bad_message = false;
@@ -158,7 +161,7 @@ TEST(DedupingFactoryTest, TypeNames) {
   factory.RegisterFactoryMethod(
       kTypeName2, DedupingFactory<BaseClass>::IS_PARAMETERIZED, &CreateFoo);
 
-  scoped_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
+  std::unique_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
 
   std::string error;
   bool bad_message = false;
@@ -178,7 +181,7 @@ TEST(DedupingFactoryTest, Clear) {
   factory.RegisterFactoryMethod(
       kTypeName, DedupingFactory<BaseClass>::IS_PARAMETERIZED, &CreateFoo);
 
-  scoped_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
+  std::unique_ptr<base::DictionaryValue> d1(CreateDictWithParameter(1));
 
   std::string error;
   bool bad_message = false;

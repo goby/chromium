@@ -25,8 +25,11 @@ void WebMAudioClient::Reset() {
 }
 
 bool WebMAudioClient::InitializeConfig(
-    const std::string& codec_id, const std::vector<uint8>& codec_private,
-    int64 seek_preroll, int64 codec_delay, bool is_encrypted,
+    const std::string& codec_id,
+    const std::vector<uint8_t>& codec_private,
+    int64_t seek_preroll,
+    int64_t codec_delay,
+    const EncryptionScheme& encryption_scheme,
     AudioDecoderConfig* config) {
   DCHECK(config);
   SampleFormat sample_format = kSampleFormatPlanarF32;
@@ -75,20 +78,15 @@ bool WebMAudioClient::InitializeConfig(
                               base::Time::kNanosecondsPerSecond);
   }
 
-  config->Initialize(
-      audio_codec,
-      sample_format,
-      channel_layout,
-      samples_per_second,
-      codec_private,
-      is_encrypted,
-      base::TimeDelta::FromMicroseconds(
-          (seek_preroll != -1 ? seek_preroll : 0) / 1000),
-      codec_delay_in_frames);
+  config->Initialize(audio_codec, sample_format, channel_layout,
+                     samples_per_second, codec_private, encryption_scheme,
+                     base::TimeDelta::FromMicroseconds(
+                         (seek_preroll != -1 ? seek_preroll : 0) / 1000),
+                     codec_delay_in_frames);
   return config->IsValidConfig();
 }
 
-bool WebMAudioClient::OnUInt(int id, int64 val) {
+bool WebMAudioClient::OnUInt(int id, int64_t val) {
   if (id == kWebMIdChannels) {
     if (channels_ != -1) {
       MEDIA_LOG(ERROR, media_log_) << "Multiple values for id " << std::hex

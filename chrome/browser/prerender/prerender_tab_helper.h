@@ -5,7 +5,9 @@
 #ifndef CHROME_BROWSER_PRERENDER_PRERENDER_TAB_HELPER_H_
 #define CHROME_BROWSER_PRERENDER_PRERENDER_TAB_HELPER_H_
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
 #include "chrome/browser/prerender/prerender_histograms.h"
@@ -13,14 +15,6 @@
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "url/gurl.h"
-
-namespace autofill {
-struct PasswordForm;
-}
-
-namespace password_manager {
-class PasswordManager;
-}
 
 namespace prerender {
 
@@ -36,14 +30,12 @@ class PrerenderTabHelper
 
   // content::WebContentsObserver implementation.
   void DidGetRedirectForResourceRequest(
-      content::RenderFrameHost* render_frame_host,
       const content::ResourceRedirectDetails& details) override;
   void DidStopLoading() override;
   void DidStartProvisionalLoadForFrame(
       content::RenderFrameHost* render_frame_host,
       const GURL& validated_url,
-      bool is_error_page,
-      bool is_iframe_srcdoc) override;
+      bool is_error_page) override;
   void DidCommitProvisionalLoadForFrame(
       content::RenderFrameHost* render_frame_host,
       const GURL& validated_url,
@@ -69,6 +61,11 @@ class PrerenderTabHelper
 
   // Retrieves the PrerenderManager, or NULL, if none was found.
   PrerenderManager* MaybeGetPrerenderManager() const;
+
+  // Returns the current TimeTicks synchronized with PrerenderManager ticks. In
+  // tests the clock can be mocked out in PrerenderManager, but in production
+  // this should be always TimeTicks::Now().
+  base::TimeTicks GetTimeTicksFromPrerenderManager() const;
 
   // Returns whether the WebContents being observed is currently prerendering.
   bool IsPrerendering();

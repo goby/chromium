@@ -5,6 +5,7 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_DISPLAY_INFO_PROVIDER_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_DISPLAY_INFO_PROVIDER_H_
 
+#include "base/macros.h"
 #include "extensions/browser/api/system_display/display_info_provider.h"
 
 namespace extensions {
@@ -19,9 +20,8 @@ class ShellDisplayInfoProvider : public DisplayInfoProvider {
                const api::system_display::DisplayProperties& info,
                std::string* error) override;
   void UpdateDisplayUnitInfoForPlatform(
-      const gfx::Display& display,
+      const display::Display& display,
       extensions::api::system_display::DisplayUnitInfo* unit) override;
-  gfx::Screen* GetActiveScreen() override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(ShellDisplayInfoProvider);

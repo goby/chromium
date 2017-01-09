@@ -5,11 +5,12 @@
 #include "components/os_crypt/os_crypt.h"
 
 #include <CommonCrypto/CommonCryptor.h>  // for kCCBlockSizeAES128
+#include <stddef.h>
 
 #include "base/command_line.h"
 #include "base/debug/leak_annotations.h"
+#include "base/lazy_instance.h"
 #include "base/logging.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/lock.h"
 #include "components/os_crypt/keychain_password_mac.h"
@@ -40,14 +41,16 @@ static bool use_mock_keychain = false;
 // this and migrate to different encryption without data loss.
 const char kEncryptionVersionPrefix[] = "v10";
 
+// This lock is used to make the GetEncrytionKey method thread-safe.
+base::LazyInstance<base::Lock>::Leaky g_lock = LAZY_INSTANCE_INITIALIZER;
+
 // Generates a newly allocated SymmetricKey object based on the password found
 // in the Keychain.  The generated key is for AES encryption.  Returns NULL key
 // in the case password access is denied or key generation error occurs.
 crypto::SymmetricKey* GetEncryptionKey() {
   static crypto::SymmetricKey* cached_encryption_key = NULL;
   static bool key_is_cached = false;
-  static base::Lock lock;
-  base::AutoLock auto_lock(lock);
+  base::AutoLock auto_lock(g_lock.Get());
 
   if (key_is_cached)
     return cached_encryption_key;
@@ -77,12 +80,10 @@ crypto::SymmetricKey* GetEncryptionKey() {
 
   // Create an encryption key from our password and salt. The key is
   // intentionally leaked.
-  cached_encryption_key =
-      crypto::SymmetricKey::DeriveKeyFromPassword(crypto::SymmetricKey::AES,
-                                                  password,
-                                                  salt,
-                                                  kEncryptionIterations,
-                                                  kDerivedKeySizeInBits);
+  cached_encryption_key = crypto::SymmetricKey::DeriveKeyFromPassword(
+                              crypto::SymmetricKey::AES, password, salt,
+                              kEncryptionIterations, kDerivedKeySizeInBits)
+                              .release();
   ANNOTATE_LEAKING_OBJECT_PTR(cached_encryption_key);
   DCHECK(cached_encryption_key);
   return cached_encryption_key;

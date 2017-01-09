@@ -4,12 +4,14 @@
 
 #include "chrome/browser/tracing/navigation_tracing.h"
 
+#include <utility>
+
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/tracing/crash_service_uploader.h"
 #include "chrome/common/chrome_switches.h"
-#include "components/tracing/tracing_switches.h"
+#include "components/tracing/common/tracing_switches.h"
 #include "content/public/browser/background_tracing_config.h"
 #include "content/public/browser/background_tracing_manager.h"
 #include "content/public/browser/browser_thread.h"
@@ -34,14 +36,14 @@ void OnUploadComplete(TraceCrashServiceUploader* uploader,
 }
 
 void UploadCallback(const scoped_refptr<base::RefCountedString>& file_contents,
-                    scoped_ptr<const base::DictionaryValue> metadata,
+                    std::unique_ptr<const base::DictionaryValue> metadata,
                     base::Closure callback) {
   TraceCrashServiceUploader* uploader = new TraceCrashServiceUploader(
       g_browser_process->system_request_context());
 
   uploader->DoUpload(
       file_contents->data(), content::TraceUploader::UNCOMPRESSED_UPLOAD,
-      metadata.Pass(), content::TraceUploader::UploadProgressCallback(),
+      std::move(metadata), content::TraceUploader::UploadProgressCallback(),
       base::Bind(&OnUploadComplete, base::Owned(uploader), callback));
 }
 
@@ -59,22 +61,36 @@ void SetupNavigationTracing() {
   base::DictionaryValue dict;
   dict.SetString("mode", "REACTIVE_TRACING_MODE");
 
-  scoped_ptr<base::ListValue> rules_list(new base::ListValue());
+  std::unique_ptr<base::ListValue> rules_list(new base::ListValue());
   {
-    scoped_ptr<base::DictionaryValue> rules_dict(new base::DictionaryValue());
+    std::unique_ptr<base::DictionaryValue> rules_dict(
+        new base::DictionaryValue());
     rules_dict->SetString("rule", "TRACE_ON_NAVIGATION_UNTIL_TRIGGER_OR_FULL");
     rules_dict->SetString("trigger_name", kNavigationTracingConfig);
+    rules_dict->SetBoolean("stop_tracing_on_repeated_reactive", true);
     rules_dict->SetString("category", "BENCHMARK_DEEP");
-    rules_list->Append(rules_dict.Pass());
+    rules_list->Append(std::move(rules_dict));
   }
-  dict.Set("configs", rules_list.Pass());
+  {
+    std::unique_ptr<base::DictionaryValue> rules_dict(
+        new base::DictionaryValue());
+    rules_dict->SetString("rule",
+        "MONITOR_AND_DUMP_WHEN_SPECIFIC_HISTOGRAM_AND_VALUE");
+    rules_dict->SetString("category", "BENCHMARK_MEMORY_HEAVY");
+    rules_dict->SetString("histogram_name", "V8.GCLowMemoryNotification");
+    rules_dict->SetInteger("trigger_delay", 5);
+    rules_dict->SetInteger("histogram_lower_value", 0);
+    rules_dict->SetInteger("histogram_upper_value", 10000);
+    rules_list->Append(std::move(rules_dict));
+  }
+  dict.Set("configs", std::move(rules_list));
 
-  scoped_ptr<content::BackgroundTracingConfig> config(
+  std::unique_ptr<content::BackgroundTracingConfig> config(
       content::BackgroundTracingConfig::FromDict(&dict));
   DCHECK(config);
 
   content::BackgroundTracingManager::GetInstance()->SetActiveScenario(
-      config.Pass(), base::Bind(&UploadCallback),
+      std::move(config), base::Bind(&UploadCallback),
       content::BackgroundTracingManager::NO_DATA_FILTERING);
 }
 
@@ -98,8 +114,7 @@ NavigationTracingObserver::~NavigationTracingObserver() {
 void NavigationTracingObserver::DidStartProvisionalLoadForFrame(
     content::RenderFrameHost* render_frame_host,
     const GURL& validated_url,
-    bool is_error_page,
-    bool is_iframe_srcdoc) {
+    bool is_error_page) {
   if (!render_frame_host->GetParent() && !is_error_page) {
     content::BackgroundTracingManager::GetInstance()->TriggerNamedEvent(
         navigation_handle,

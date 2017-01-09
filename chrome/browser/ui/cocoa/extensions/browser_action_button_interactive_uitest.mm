@@ -2,20 +2,28 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
+
 #import <Cocoa/Cocoa.h>
 
-#include "base/memory/scoped_ptr.h"
+#include <memory>
+
+#include "base/bind.h"
+#include "base/callback.h"
+#include "base/callback_helpers.h"
+#include "base/macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/extension_action_test_util.h"
 #include "chrome/browser/extensions/extension_browsertest.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/ui/browser_window.h"
 #import "chrome/browser/ui/cocoa/app_menu/app_menu_controller.h"
 #import "chrome/browser/ui/cocoa/browser_window_controller.h"
-#import "chrome/browser/ui/cocoa/extensions/browser_action_button.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_container_view.h"
 #import "chrome/browser/ui/cocoa/extensions/browser_actions_controller.h"
+#import "chrome/browser/ui/cocoa/test/run_loop_testing.h"
 #import "chrome/browser/ui/cocoa/toolbar/toolbar_controller.h"
 #include "chrome/browser/ui/global_error/global_error.h"
 #include "chrome/browser/ui/global_error/global_error_service.h"
@@ -24,6 +32,7 @@
 #include "chrome/browser/ui/toolbar/toolbar_actions_model.h"
 #include "chrome/test/base/interactive_test_utils.h"
 #include "extensions/common/feature_switch.h"
+#include "ui/base/cocoa/cocoa_base_utils.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
 
 namespace {
@@ -69,7 +78,7 @@ NSPoint GetCenterPoint(NSView* view) {
   NSRect bounds = [view bounds];
   NSPoint center = NSMakePoint(NSMidX(bounds), NSMidY(bounds));
   center = [view convertPoint:center toView:nil];
-  center = [window convertBaseToScreen:center];
+  center = ui::ConvertPointFromWindowToScreen(window, center);
   return NSMakePoint(center.x, [screen frame].size.height - center.y);
 }
 
@@ -123,6 +132,72 @@ void MoveMouseToCenter(NSView* view) {
 
 @end
 
+// A helper class to wait for a menu to open and close.
+@interface MenuWatcher : NSObject {
+  // The MenuController for the menu this object is watching.
+  MenuController* menuController_;
+
+  // The closure to run when the menu opens, if any.
+  base::Closure openClosure_;
+
+  // The closure to run when the menu closes, if any.
+  base::Closure closeClosure_;
+}
+
+- (id)initWithController:(MenuController*)controller;
+
+// Notifications from the MenuController.
+- (void)menuDidClose:(NSNotification*)notification;
+- (void)menuDidOpen:(NSNotification*)notification;
+
+@property(nonatomic, assign) base::Closure openClosure;
+@property(nonatomic, assign) base::Closure closeClosure;
+
+@end
+
+@implementation MenuWatcher
+
+@synthesize openClosure = openClosure_;
+@synthesize closeClosure = closeClosure_;
+
+- (id)initWithController:(MenuController*)controller {
+  if (self = [super init]) {
+    menuController_ = controller;
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+         selector:@selector(menuDidOpen:)
+       name:kMenuControllerMenuWillOpenNotification
+        object:menuController_];
+    [[NSNotificationCenter defaultCenter]
+        addObserver:self
+         selector:@selector(menuDidClose:)
+       name:kMenuControllerMenuDidCloseNotification
+        object:menuController_];
+  }
+  return self;
+}
+
+- (void)dealloc {
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [super dealloc];
+}
+
+- (void)menuDidClose:(NSNotification*)notification {
+  if (!closeClosure_.is_null()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::ResetAndReturn(&closeClosure_));
+  }
+}
+
+- (void)menuDidOpen:(NSNotification*)notification {
+  if (!openClosure_.is_null()) {
+    base::ThreadTaskRunnerHandle::Get()->PostTask(
+        FROM_HERE, base::ResetAndReturn(&openClosure_));
+  }
+}
+
+@end
+
 class BrowserActionButtonUiTest : public ExtensionBrowserTest {
  protected:
   BrowserActionButtonUiTest() {}
@@ -156,10 +231,10 @@ class BrowserActionButtonUiTest : public ExtensionBrowserTest {
   ToolbarController* toolbarController() { return toolbarController_; }
   AppMenuController* appMenuController() { return appMenuController_; }
   ToolbarActionsModel* model() { return model_; }
-  NSView* wrenchButton() { return [toolbarController_ wrenchButton]; }
+  NSView* appMenuButton() { return [toolbarController_ appMenuButton]; }
 
  private:
-  scoped_ptr<extensions::FeatureSwitch::ScopedOverride> enable_redesign_;
+  std::unique_ptr<extensions::FeatureSwitch::ScopedOverride> enable_redesign_;
 
   ToolbarController* toolbarController_ = nil;
   AppMenuController* appMenuController_ = nil;
@@ -196,7 +271,7 @@ void ClickOnOverflowedAction(ToolbarController* toolbarController,
 
   // This should close the app menu.
   EXPECT_FALSE([appMenuController isMenuOpen]);
-  base::MessageLoop::current()->PostTask(FROM_HERE, closure);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, closure);
 }
 
 // Verifies that the action is "popped out" of overflow; that is, it is visible
@@ -207,13 +282,15 @@ void CheckActionIsPoppedOut(BrowserActionsController* actionsController,
   EXPECT_EQ([actionsController containerView], [actionButton superview]);
   EXPECT_EQ([actionButton viewController],
             [actionsController toolbarActionsBar]->popped_out_action());
+  // Since the button is popped out for a popup or context menu, it should be
+  // highlighted.
+  EXPECT_TRUE([actionButton isHighlighted]);
 }
 
 // Test that opening a context menu works for both actions on the main bar and
 // actions in the overflow menu.
-// Flaky: http://crbug.com/561461
 IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
-                       DISABLED_ContextMenusOnMainAndOverflow) {
+                       ContextMenusOnMainAndOverflow) {
   // Add an extension with a browser action.
   scoped_refptr<const extensions::Extension> extension =
       extensions::extension_action_test_util::CreateActionExtension(
@@ -252,6 +329,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
     runLoop.Run();
     // The menu should have opened from the click.
     EXPECT_TRUE([menuHelper menuOpened]);
+    EXPECT_FALSE([actionButton isHighlighted]);
   }
 
   // Reset the menu helper so we can use it again.
@@ -263,8 +341,8 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
   model()->SetVisibleIconCount(0);
   EXPECT_EQ(nil, [actionButton superview]);
 
-  // Move the mouse over the app button.
-  MoveMouseToCenter(wrenchButton());
+  // Move the mouse over the app menu button.
+  MoveMouseToCenter(appMenuButton());
 
   {
     // No menu yet (on the browser action).
@@ -273,24 +351,29 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
     // Click on the app menu, and pass in a callback to continue the test in
     // ClickOnOverflowedAction (Due to the blocking nature of Cocoa menus,
     // passing in runLoop.QuitClosure() is not sufficient here.)
-    ui_controls::SendMouseEventsNotifyWhenDone(
-        ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+    base::scoped_nsobject<MenuWatcher> menuWatcher(
+        [[MenuWatcher alloc] initWithController:appMenuController()]);
+    [menuWatcher setOpenClosure:
         base::Bind(&ClickOnOverflowedAction,
                    base::Unretained(toolbarController()),
-                   runLoop.QuitClosure()));
+                   runLoop.QuitClosure())];
+    ui_controls::SendMouseEvents(ui_controls::LEFT,
+                                 ui_controls::DOWN | ui_controls::UP);
     runLoop.Run();
+
     // The menu should have opened. Note that the menu opened on the main bar's
     // action button, not the overflow's. Since Cocoa doesn't support running
     // a menu-within-a-menu, this is what has to happen.
     EXPECT_TRUE([menuHelper menuOpened]);
+    EXPECT_FALSE([actionButton isHighlighted]);
   }
 }
 
 // Checks the layout of the overflow bar in the app menu.
-void CheckWrenchMenuLayout(ToolbarController* toolbarController,
-                           int overflowStartIndex,
-                           const std::string& error_message,
-                           const base::Closure& closure) {
+void CheckAppMenuLayout(ToolbarController* toolbarController,
+                        int overflowStartIndex,
+                        const std::string& error_message,
+                        const base::Closure& closure) {
   AppMenuController* appMenuController =
       [toolbarController appMenuController];
   // The app menu should start as open (since that's where the overflowed
@@ -352,11 +435,13 @@ void CheckWrenchMenuLayout(ToolbarController* toolbarController,
   // Close the app menu.
   [appMenuController cancel];
   EXPECT_FALSE([appMenuController isMenuOpen]) << error_message;
-  base::MessageLoop::current()->PostTask(FROM_HERE, closure);
+  base::ThreadTaskRunnerHandle::Get()->PostTask(FROM_HERE, closure);
 }
 
 // Tests the layout of the overflow container in the app menu.
-IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest, TestOverflowContainerLayout) {
+// Disabled due to crashing flakily, see crbug.com/602203.
+IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
+                       DISABLED_TestOverflowContainerLayout) {
   // Add a bunch of extensions - enough to trigger multiple rows in the overflow
   // menu.
   const int kNumExtensions = 12;
@@ -370,19 +455,19 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest, TestOverflowContainerLayout) {
   ASSERT_EQ(kNumExtensions, static_cast<int>(model()->toolbar_items().size()));
 
   // A helper function to open the app menu and call the check function.
-  auto resizeAndActivateWrench = [this](int visible_count,
-                                        const std::string& error_message) {
+  auto resizeAndActivateAppMenu = [this](int visible_count,
+                                         const std::string& error_message) {
     model()->SetVisibleIconCount(kNumExtensions - visible_count);
-    MoveMouseToCenter(wrenchButton());
+    MoveMouseToCenter(appMenuButton());
 
     {
       base::RunLoop runLoop;
       // Click on the app menu, and pass in a callback to continue the test in
-      // CheckWrenchMenuLayout (due to the blocking nature of Cocoa menus,
+      // CheckAppMenuLayout (due to the blocking nature of Cocoa menus,
       // passing in runLoop.QuitClosure() is not sufficient here.)
       ui_controls::SendMouseEventsNotifyWhenDone(
           ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
-          base::Bind(&CheckWrenchMenuLayout,
+          base::Bind(&CheckAppMenuLayout,
                      base::Unretained(toolbarController()),
                      kNumExtensions - visible_count,
                      error_message,
@@ -393,7 +478,7 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest, TestOverflowContainerLayout) {
 
   // Test the layout with gradually more extensions hidden.
   for (int i = 1; i <= kNumExtensions; ++i)
-    resizeAndActivateWrench(i, base::StringPrintf("Normal: %d", i));
+    resizeAndActivateAppMenu(i, base::StringPrintf("Normal: %d", i));
 
   // Adding a global error adjusts the app menu size, and has been known to mess
   // up the overflow container's bounds (crbug.com/511326).
@@ -404,9 +489,9 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest, TestOverflowContainerLayout) {
   // It's probably excessive to test every level of the overflow here. Test
   // having all actions overflowed, some actions overflowed, and one action
   // overflowed.
-  resizeAndActivateWrench(kNumExtensions, "GlobalError Full");
-  resizeAndActivateWrench(kNumExtensions / 2, "GlobalError Half");
-  resizeAndActivateWrench(1, "GlobalError One");
+  resizeAndActivateAppMenu(kNumExtensions, "GlobalError Full");
+  resizeAndActivateAppMenu(kNumExtensions / 2, "GlobalError Half");
+  resizeAndActivateAppMenu(1, "GlobalError One");
 }
 
 void AddExtensionWithMenuOpen(ToolbarController* toolbarController,
@@ -414,6 +499,7 @@ void AddExtensionWithMenuOpen(ToolbarController* toolbarController,
                               const base::Closure& closure) {
   AppMenuController* appMenuController =
       [toolbarController appMenuController];
+  EXPECT_TRUE([appMenuController isMenuOpen]);
 
   scoped_refptr<const extensions::Extension> extension =
       extensions::extension_action_test_util::CreateActionExtension(
@@ -426,14 +512,14 @@ void AddExtensionWithMenuOpen(ToolbarController* toolbarController,
   // Close the app menu.
   [appMenuController cancel];
   EXPECT_FALSE([appMenuController isMenuOpen]);
-  base::MessageLoop::current()->PostTask(FROM_HERE, closure);
+
+  closure.Run();
 }
 
 // Test adding an extension while the app menu is open. Regression test for
 // crbug.com/561237.
-// Flaky: http://crbug.com/564623
 IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
-                       DISABLED_AddExtensionWithMenuOpen) {
+                       AddExtensionWithMenuOpen) {
   // Add an extension to ensure the overflow menu is present.
   scoped_refptr<const extensions::Extension> extension =
       extensions::extension_action_test_util::CreateActionExtension(
@@ -443,17 +529,123 @@ IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
   ASSERT_EQ(1, static_cast<int>(model()->toolbar_items().size()));
   model()->SetVisibleIconCount(0);
 
-  MoveMouseToCenter(wrenchButton());
+  MoveMouseToCenter(appMenuButton());
 
   base::RunLoop runLoop;
   // Click on the app menu, and pass in a callback to continue the test in
   // AddExtensionWithMenuOpen (due to the blocking nature of Cocoa menus,
   // passing in runLoop.QuitClosure() is not sufficient here.)
-  ui_controls::SendMouseEventsNotifyWhenDone(
-      ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+  base::scoped_nsobject<MenuWatcher> menuWatcher(
+      [[MenuWatcher alloc] initWithController:appMenuController()]);
+  [menuWatcher setOpenClosure:
       base::Bind(&AddExtensionWithMenuOpen,
-                 base::Unretained(toolbarController()),
-                 extension_service(),
-                 runLoop.QuitClosure()));
+                 base::Unretained(toolbarController()), extension_service(),
+                 runLoop.QuitClosure())];
+  ui_controls::SendMouseEvents(ui_controls::LEFT,
+                               ui_controls::DOWN | ui_controls::UP);
   runLoop.Run();
+}
+
+// Test that activating an action that doesn't want to run on the page via the
+// mouse and the keyboard works.
+IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
+                       OpenMenuOnDisabledActionWithMouseOrKeyboard) {
+  // Add an extension with a page action.
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::extension_action_test_util::CreateActionExtension(
+          "page action", extensions::extension_action_test_util::PAGE_ACTION);
+  extension_service()->AddExtension(extension.get());
+  ASSERT_EQ(1u, model()->toolbar_items().size());
+
+  BrowserActionsController* actionsController =
+      [toolbarController() browserActionsController];
+  BrowserActionButton* actionButton = [actionsController buttonWithIndex:0];
+  ASSERT_TRUE(actionButton);
+
+  // Stub out the action button's normal context menu with a fake one so we
+  // can track when it opens.
+  base::scoped_nsobject<NSMenu> testContextMenu(
+      [[NSMenu alloc] initWithTitle:@""]);
+  base::scoped_nsobject<MenuHelper> menuHelper([[MenuHelper alloc] init]);
+  [testContextMenu setDelegate:menuHelper.get()];
+  [actionButton setTestContextMenu:testContextMenu.get()];
+
+  // The button should be attached.
+  EXPECT_TRUE([actionButton superview]);
+
+  // Move the mouse and click on the button. The menu should open.
+  MoveMouseToCenter(actionButton);
+  {
+    EXPECT_FALSE([menuHelper menuOpened]);
+    base::RunLoop runLoop;
+    ui_controls::SendMouseEventsNotifyWhenDone(
+        ui_controls::LEFT, ui_controls::DOWN | ui_controls::UP,
+        runLoop.QuitClosure());
+    runLoop.Run();
+    EXPECT_TRUE([menuHelper menuOpened]);
+  }
+
+  // Reset the menu helper so we can use it again.
+  [menuHelper setMenuOpened:NO];
+
+  // Send the 'space' key to the button with it as the first responder. The menu
+  // should open.
+  [[actionButton window] makeFirstResponder:actionButton];
+  EXPECT_TRUE([[actionButton window] firstResponder] == actionButton);
+  {
+    EXPECT_FALSE([menuHelper menuOpened]);
+    base::RunLoop runLoop;
+    ui_controls::SendKeyPressNotifyWhenDone([actionButton window],
+                                            ui::VKEY_SPACE, false, false, false,
+                                            false, runLoop.QuitClosure());
+    runLoop.Run();
+    EXPECT_TRUE([menuHelper menuOpened]);
+  }
+}
+
+void CloseAppMenu(AppMenuController* appMenuController,
+                  const base::Closure& quitClosure) {
+  EXPECT_TRUE([appMenuController isMenuOpen]);
+  [appMenuController cancel];
+  quitClosure.Run();
+}
+
+// Tests opening the app menu with an overflow section needed, then closing it,
+// removing the need for the overflow section, and re-opening it.
+// Regression test for crbug.com/603241.
+IN_PROC_BROWSER_TEST_F(BrowserActionButtonUiTest,
+                       TestReopeningAppMenuWithOverflowNotNeeded) {
+  // Add an extension with a browser action and overflow it in the menu.
+  scoped_refptr<const extensions::Extension> extension =
+      extensions::extension_action_test_util::CreateActionExtension(
+          "browser_action",
+          extensions::extension_action_test_util::BROWSER_ACTION);
+  extension_service()->AddExtension(extension.get());
+  ASSERT_EQ(1u, model()->toolbar_items().size());
+  model()->SetVisibleIconCount(0);
+
+  // Move the mouse over the app menu button.
+  MoveMouseToCenter(appMenuButton());
+
+  auto openAndCloseAppMenu = [](AppMenuController* controller) {
+    base::RunLoop runLoop;
+    base::scoped_nsobject<MenuWatcher> menuWatcher(
+        [[MenuWatcher alloc] initWithController:controller]);
+    [menuWatcher setOpenClosure:
+        base::Bind(&CloseAppMenu,
+                   base::Unretained(controller),
+                   runLoop.QuitClosure())];
+    ui_controls::SendMouseEvents(ui_controls::LEFT,
+                                 ui_controls::DOWN | ui_controls::UP);
+    runLoop.Run();
+  };
+  openAndCloseAppMenu(appMenuController());
+
+  // Move the extension back to the main bar, so an overflow bar is no longer
+  // needed. Then open and close the app menu a couple times.
+  // This tests that the menu properly cleans up after itself when an overflow
+  // was present, and is no longer (fix for crbug.com/603241).
+  model()->SetVisibleIconCount(1);
+  openAndCloseAppMenu(appMenuController());
+  openAndCloseAppMenu(appMenuController());
 }

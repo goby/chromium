@@ -6,12 +6,11 @@ import("//build/config/features.gni")
 
 static_library("renderer") {
   sources = [
+    "pdf_accessibility_tree.cc",
+    "pdf_accessibility_tree.h",
     "pepper_pdf_host.cc",
     "pepper_pdf_host.h",
   ]
-
-  # TODO(jschuh): crbug.com/167187 fix size_t to int truncations.
-  configs += [ "//build/config/compiler:no_size_t_to_int_warning" ]
 
   deps = [
     "//base",

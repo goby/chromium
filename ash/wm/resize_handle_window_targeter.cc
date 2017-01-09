@@ -4,9 +4,10 @@
 
 #include "ash/wm/resize_handle_window_targeter.h"
 
-#include "ash/ash_constants.h"
-#include "ash/wm/immersive_fullscreen_controller.h"
-#include "ash/wm/window_state.h"
+#include "ash/common/ash_constants.h"
+#include "ash/common/wm/window_state.h"
+#include "ash/shared/immersive_fullscreen_controller.h"
+#include "ash/wm/window_state_aura.h"
 #include "ui/aura/window.h"
 #include "ui/events/event.h"
 
@@ -15,8 +16,7 @@ namespace ash {
 ResizeHandleWindowTargeter::ResizeHandleWindowTargeter(
     aura::Window* window,
     ImmersiveFullscreenController* controller)
-    : window_(window),
-      immersive_controller_(controller) {
+    : window_(window), immersive_controller_(controller) {
   wm::WindowState* window_state = wm::GetWindowState(window_);
   OnPostWindowStateTypeChange(window_state, wm::WINDOW_STATE_TYPE_DEFAULT);
   window_state->AddObserver(this);
@@ -33,13 +33,12 @@ ResizeHandleWindowTargeter::~ResizeHandleWindowTargeter() {
 void ResizeHandleWindowTargeter::OnPostWindowStateTypeChange(
     wm::WindowState* window_state,
     wm::WindowStateType old_type) {
-  if (window_state->IsMaximizedOrFullscreen()) {
+  if (window_state->IsMaximizedOrFullscreenOrPinned()) {
     frame_border_inset_ = gfx::Insets();
   } else {
-    frame_border_inset_ = gfx::Insets(kResizeInsideBoundsSize,
-                                      kResizeInsideBoundsSize,
-                                      kResizeInsideBoundsSize,
-                                      kResizeInsideBoundsSize);
+    frame_border_inset_ =
+        gfx::Insets(kResizeInsideBoundsSize, kResizeInsideBoundsSize,
+                    kResizeInsideBoundsSize, kResizeInsideBoundsSize);
   }
 }
 
@@ -55,15 +54,16 @@ aura::Window* ResizeHandleWindowTargeter::FindTargetForLocatedEvent(
   if (window == window_) {
     gfx::Insets insets;
     if (immersive_controller_ && immersive_controller_->IsEnabled() &&
-        !immersive_controller_->IsRevealed() &&
-        event->IsTouchEvent()) {
+        !immersive_controller_->IsRevealed() && event->IsTouchEvent()) {
       // If the window is in immersive fullscreen, and top-of-window views are
       // not revealed, then touch events towards the top of the window
       // should not reach the child window so that touch gestures can be used to
       // reveal the top-of-windows views. This is needed because the child
       // window may consume touch events and prevent touch-scroll gesture from
       // being generated.
-      insets = gfx::Insets(kImmersiveFullscreenTopEdgeInset, 0, 0, 0);
+      insets = gfx::Insets(
+          ImmersiveFullscreenController::kImmersiveFullscreenTopEdgeInset, 0, 0,
+          0);
     } else {
       // If the event falls very close to the inside of the frame border, then
       // target the window itself, so that the window can be resized easily.

@@ -4,21 +4,25 @@
 
 #include "media/midi/usb_midi_device_factory_android.h"
 
+#include <stddef.h>
+
 #include "base/android/context_utils.h"
 #include "base/bind.h"
 #include "base/containers/hash_tables.h"
 #include "base/lazy_instance.h"
+#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/synchronization/lock.h"
 #include "jni/UsbMidiDeviceFactoryAndroid_jni.h"
 #include "media/midi/usb_midi_device_android.h"
 
-namespace media {
+using base::android::JavaParamRef;
+
 namespace midi {
 
 namespace {
 
-typedef UsbMidiDevice::Factory::Callback Callback;
+using Callback = UsbMidiDevice::Factory::Callback;
 
 }  // namespace
 
@@ -28,7 +32,7 @@ UsbMidiDeviceFactoryAndroid::~UsbMidiDeviceFactoryAndroid() {
   JNIEnv* env = base::android::AttachCurrentThread();
   if (!raw_factory_.is_null())
     Java_UsbMidiDeviceFactoryAndroid_close(
-        env, raw_factory_.obj(), base::android::GetApplicationContext());
+        env, raw_factory_, base::android::GetApplicationContext());
 }
 
 void UsbMidiDeviceFactoryAndroid::EnumerateDevices(
@@ -44,7 +48,7 @@ void UsbMidiDeviceFactoryAndroid::EnumerateDevices(
   callback_ = callback;
 
   if (Java_UsbMidiDeviceFactoryAndroid_enumerateDevices(
-          env, raw_factory_.obj(), base::android::GetApplicationContext())) {
+          env, raw_factory_, base::android::GetApplicationContext())) {
     // Asynchronous operation.
     return;
   }
@@ -75,7 +79,7 @@ void UsbMidiDeviceFactoryAndroid::OnUsbMidiDeviceAttached(
     const JavaParamRef<jobject>& caller,
     const JavaParamRef<jobject>& device) {
   delegate_->OnDeviceAttached(
-      scoped_ptr<UsbMidiDevice>(new UsbMidiDeviceAndroid(device, delegate_)));
+      base::MakeUnique<UsbMidiDeviceAndroid>(device, delegate_));
 }
 
 // Called from the Java world.
@@ -91,4 +95,3 @@ bool UsbMidiDeviceFactoryAndroid::RegisterUsbMidiDeviceFactory(JNIEnv* env) {
 }
 
 }  // namespace midi
-}  // namespace media

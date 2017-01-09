@@ -4,10 +4,13 @@
 
 #include "chrome/browser/ui/webui/system_info_ui.h"
 
+#include <memory>
+#include <utility>
+
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "base/message_loop/message_loop.h"
 #include "base/strings/string_piece.h"
@@ -22,14 +25,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/url_constants.h"
-#include "chrome/grit/chromium_strings.h"
+#include "chrome/grit/browser_resources.h"
 #include "chrome/grit/generated_resources.h"
-#include "chrome/grit/locale_settings.h"
 #include "content/public/browser/url_data_source.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_ui.h"
 #include "content/public/browser/web_ui_message_handler.h"
-#include "grit/browser_resources.h"
 #include "net/base/directory_lister.h"
 #include "net/base/escape.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -50,18 +51,25 @@ class SystemInfoUIHTMLSource : public content::URLDataSource{
   std::string GetSource() const override;
   void StartDataRequest(
       const std::string& path,
-      int render_process_id,
-      int render_frame_id,
+      const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
       const content::URLDataSource::GotDataCallback& callback) override;
   std::string GetMimeType(const std::string&) const override {
     return "text/html";
   }
-  bool ShouldAddContentSecurityPolicy() const override { return false; }
+  std::string GetContentSecurityPolicyScriptSrc() const override {
+    // 'unsafe-inline' is added to script-src.
+    return "script-src 'self' chrome://resources 'unsafe-eval' "
+        "'unsafe-inline';";
+  }
+
+  std::string GetContentSecurityPolicyStyleSrc() const override {
+    return "style-src 'self' chrome://resources 'unsafe-inline';";
+  }
 
  private:
   ~SystemInfoUIHTMLSource() override {}
 
-  void SysInfoComplete(scoped_ptr<SystemLogsResponse> response);
+  void SysInfoComplete(std::unique_ptr<SystemLogsResponse> response);
   void RequestComplete();
   void WaitForData();
 
@@ -69,7 +77,7 @@ class SystemInfoUIHTMLSource : public content::URLDataSource{
   std::string path_;
   content::URLDataSource::GotDataCallback callback_;
 
-  scoped_ptr<SystemLogsResponse> response_;
+  std::unique_ptr<SystemLogsResponse> response_;
   base::WeakPtrFactory<SystemInfoUIHTMLSource> weak_ptr_factory_;
   DISALLOW_COPY_AND_ASSIGN(SystemInfoUIHTMLSource);
 };
@@ -102,8 +110,7 @@ std::string SystemInfoUIHTMLSource::GetSource() const {
 
 void SystemInfoUIHTMLSource::StartDataRequest(
     const std::string& path,
-    int render_process_id,
-    int render_frame_id,
+    const content::ResourceRequestInfo::WebContentsGetter& wc_getter,
     const content::URLDataSource::GotDataCallback& callback) {
   path_ = path;
   callback_ = callback;
@@ -113,10 +120,9 @@ void SystemInfoUIHTMLSource::StartDataRequest(
                             weak_ptr_factory_.GetWeakPtr()));
 }
 
-
 void SystemInfoUIHTMLSource::SysInfoComplete(
-    scoped_ptr<SystemLogsResponse> sys_info) {
-  response_ = sys_info.Pass();
+    std::unique_ptr<SystemLogsResponse> sys_info) {
+  response_ = std::move(sys_info);
   RequestComplete();
 }
 
@@ -150,10 +156,10 @@ void SystemInfoUIHTMLSource::RequestComplete() {
     for (SystemLogsResponse::const_iterator it = response_->begin();
          it != response_->end();
          ++it) {
-      base::DictionaryValue* val = new base::DictionaryValue;
+      std::unique_ptr<base::DictionaryValue> val(new base::DictionaryValue);
       val->SetString("statName", it->first);
       val->SetString("statValue", it->second);
-      details->Append(val);
+      details->Append(std::move(val));
     }
   }
   static const base::StringPiece systeminfo_html(

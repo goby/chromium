@@ -2,11 +2,14 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <stdint.h>
 #include "base/strings/sys_string_conversions.h"
-#import "chrome/browser/ui/cocoa/cocoa_test_helper.h"
+#include "base/time/time.h"
+#import "chrome/browser/ui/cocoa/test/cocoa_test_helper.h"
+
 #include "chrome/browser/ui/cocoa/content_settings/cookie_details.h"
 #include "net/cookies/canonical_cookie.h"
-#include "net/cookies/parsed_cookie.h"
+#include "net/cookies/cookie_options.h"
 #import "testing/gtest_mac.h"
 #include "url/gurl.h"
 
@@ -27,9 +30,9 @@ TEST_F(CookiesDetailsTest, CreateForCookie) {
   GURL url("http://chromium.org");
   std::string cookieLine(
       "PHPSESSID=0123456789abcdef0123456789abcdef; path=/");
-  net::ParsedCookie pc(cookieLine);
-  net::CanonicalCookie cookie(url, pc);
-  details.reset([[CocoaCookieDetails alloc] initWithCookie:&cookie
+  std::unique_ptr<net::CanonicalCookie> cookie(net::CanonicalCookie::Create(
+      url, cookieLine, base::Time::Now(), net::CookieOptions()));
+  details.reset([[CocoaCookieDetails alloc] initWithCookie:cookie.get()
                                          canEditExpiration:NO]);
 
   EXPECT_EQ([details.get() type], kCocoaCookieDetailsTypeCookie);
@@ -59,7 +62,7 @@ TEST_F(CookiesDetailsTest, CreateForTreeDatabase) {
   GURL origin("http://chromium.org");
   std::string database_name("sassolungo");
   std::string description("a great place to climb");
-  int64 size = 1234;
+  int64_t size = 1234;
   base::Time last_modified = base::Time::Now();
   BrowsingDataDatabaseHelper::DatabaseInfo info(
       storage::DatabaseIdentifier::CreateFromOrigin(origin),
@@ -89,7 +92,7 @@ TEST_F(CookiesDetailsTest, CreateForTreeDatabase) {
 TEST_F(CookiesDetailsTest, CreateForTreeLocalStorage) {
   base::scoped_nsobject<CocoaCookieDetails> details;
   const GURL kOrigin("http://chromium.org/");
-  int64 size = 1234;
+  int64_t size = 1234;
   base::Time last_modified = base::Time::Now();
   BrowsingDataLocalStorageHelper::LocalStorageInfo info(
       kOrigin, size, last_modified);
@@ -147,7 +150,7 @@ TEST_F(CookiesDetailsTest, CreateForTreeIndexedDB) {
   base::scoped_nsobject<CocoaCookieDetails> details;
 
   GURL origin("http://moose.org/");
-  int64 size = 1234;
+  int64_t size = 1234;
   base::Time last_modified = base::Time::Now();
   content::IndexedDBInfo info(origin,
                               size,
@@ -285,7 +288,7 @@ TEST_F(CookiesDetailsTest, CreateForTreeCacheStorage) {
   base::scoped_nsobject<CocoaCookieDetails> details;
 
   GURL origin("https://example.com/");
-  int64 size = 1234;
+  int64_t size = 1234;
   base::Time last_modified = base::Time::Now();
   content::CacheStorageUsageInfo info(origin, size, last_modified);
 

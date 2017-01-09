@@ -5,11 +5,12 @@
 #include "components/favicon/content/content_favicon_driver.h"
 
 #include "base/location.h"
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
 #include "base/single_thread_task_runner.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/ui/browser.h"
@@ -72,16 +73,6 @@ class TestResourceDispatcherHostDelegate
         bypassed_cache_ = true;
     }
   }
-
-  void DownloadStarting(
-      net::URLRequest* request,
-      content::ResourceContext* resource_context,
-      int child_id,
-      int route_id,
-      int request_id,
-      bool is_content_initiated,
-      bool must_download,
-      ScopedVector<content::ResourceThrottle>* throttles) override {}
 
  private:
   GURL url_;
@@ -204,12 +195,12 @@ class ContentFaviconDriverTest : public InProcessBrowserTest,
 // Test that when a user reloads a page ignoring the cache that the favicon is
 // is redownloaded and (not returned from either the favicon cache or the HTTP
 // cache).
-IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadIgnoringCache) {
+IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadBypassingCache) {
   ASSERT_TRUE(embedded_test_server()->Start());
   GURL url = embedded_test_server()->GetURL("/favicon/page_with_favicon.html");
   GURL icon_url = embedded_test_server()->GetURL("/favicon/icon.png");
 
-  scoped_ptr<TestResourceDispatcherHostDelegate> delegate(
+  std::unique_ptr<TestResourceDispatcherHostDelegate> delegate(
       new TestResourceDispatcherHostDelegate(icon_url));
   content::ResourceDispatcherHost::Get()->SetDelegate(delegate.get());
 
@@ -217,7 +208,8 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadIgnoringCache) {
   {
     PendingTaskWaiter waiter(web_contents(), this);
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);
+        browser(), url, WindowOpenDisposition::CURRENT_TAB,
+        ui_test_utils::BROWSER_TEST_NONE);
     waiter.Wait();
   }
   ASSERT_TRUE(delegate->was_requested());
@@ -231,7 +223,8 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadIgnoringCache) {
   {
     PendingTaskWaiter waiter(web_contents(), this);
     ui_test_utils::NavigateToURLWithDisposition(
-        browser(), url, CURRENT_TAB, ui_test_utils::BROWSER_TEST_NONE);
+        browser(), url, WindowOpenDisposition::CURRENT_TAB,
+        ui_test_utils::BROWSER_TEST_NONE);
     waiter.Wait();
   }
   EXPECT_FALSE(delegate->bypassed_cache());
@@ -240,7 +233,7 @@ IN_PROC_BROWSER_TEST_F(ContentFaviconDriverTest, ReloadIgnoringCache) {
   // A reload ignoring the cache should refetch the favicon from the website.
   {
     PendingTaskWaiter waiter(web_contents(), this);
-    chrome::ExecuteCommand(browser(), IDC_RELOAD_IGNORING_CACHE);
+    chrome::ExecuteCommand(browser(), IDC_RELOAD_BYPASSING_CACHE);
     waiter.Wait();
   }
   ASSERT_TRUE(delegate->was_requested());

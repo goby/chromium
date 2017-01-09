@@ -4,6 +4,7 @@
 
 #include "ios/chrome/browser/services/gcm/ios_chrome_gcm_profile_service_factory.h"
 
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/threading/sequenced_worker_pool.h"
@@ -12,10 +13,10 @@
 #include "components/keyed_service/ios/browser_state_dependency_manager.h"
 #include "components/signin/core/browser/profile_identity_provider.h"
 #include "components/signin/core/browser/signin_manager.h"
+#include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/chrome/browser/signin/oauth2_token_service_factory.h"
 #include "ios/chrome/browser/signin/signin_manager_factory.h"
 #include "ios/chrome/common/channel_info.h"
-#include "ios/public/provider/chrome/browser/browser_state/chrome_browser_state.h"
 #include "ios/web/public/web_thread.h"
 
 // static
@@ -31,6 +32,15 @@ IOSChromeGCMProfileServiceFactory::GetInstance() {
   return base::Singleton<IOSChromeGCMProfileServiceFactory>::get();
 }
 
+// static
+std::string IOSChromeGCMProfileServiceFactory::GetProductCategoryForSubtypes() {
+#if defined(GOOGLE_CHROME_BUILD)
+  return "com.chrome.ios";
+#else
+  return "org.chromium.ios";
+#endif
+}
+
 IOSChromeGCMProfileServiceFactory::IOSChromeGCMProfileServiceFactory()
     : BrowserStateKeyedServiceFactory(
           "GCMProfileService",
@@ -41,7 +51,7 @@ IOSChromeGCMProfileServiceFactory::IOSChromeGCMProfileServiceFactory()
 
 IOSChromeGCMProfileServiceFactory::~IOSChromeGCMProfileServiceFactory() {}
 
-scoped_ptr<KeyedService>
+std::unique_ptr<KeyedService>
 IOSChromeGCMProfileServiceFactory::BuildServiceInstanceFor(
     web::BrowserState* context) const {
   DCHECK(!context->IsOffTheRecord());
@@ -53,15 +63,16 @@ IOSChromeGCMProfileServiceFactory::BuildServiceInstanceFor(
           base::SequencedWorkerPool::SKIP_ON_SHUTDOWN));
   ios::ChromeBrowserState* browser_state =
       ios::ChromeBrowserState::FromBrowserState(context);
-  return make_scoped_ptr(new gcm::GCMProfileService(
+  return base::MakeUnique<gcm::GCMProfileService>(
       browser_state->GetPrefs(), browser_state->GetStatePath(),
       browser_state->GetRequestContext(), ::GetChannel(),
-      make_scoped_ptr(new ProfileIdentityProvider(
+      GetProductCategoryForSubtypes(),
+      base::WrapUnique(new ProfileIdentityProvider(
           ios::SigninManagerFactory::GetForBrowserState(browser_state),
           OAuth2TokenServiceFactory::GetForBrowserState(browser_state),
           base::Closure())),
-      make_scoped_ptr(new gcm::GCMClientFactory),
+      base::WrapUnique(new gcm::GCMClientFactory),
       web::WebThread::GetTaskRunnerForThread(web::WebThread::UI),
       web::WebThread::GetTaskRunnerForThread(web::WebThread::IO),
-      blocking_task_runner));
+      blocking_task_runner);
 }

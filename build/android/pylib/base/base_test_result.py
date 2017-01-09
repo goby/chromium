@@ -9,18 +9,33 @@ import threading
 
 class ResultType(object):
   """Class enumerating test types."""
+  # The test passed.
   PASS = 'PASS'
+
+  # The test was intentionally skipped.
   SKIP = 'SKIP'
+
+  # The test failed.
   FAIL = 'FAIL'
+
+  # The test caused the containing process to crash.
   CRASH = 'CRASH'
+
+  # The test timed out.
   TIMEOUT = 'TIMEOUT'
+
+  # The test ran, but we couldn't determine what happened.
   UNKNOWN = 'UNKNOWN'
+
+  # The test did not run.
+  NOTRUN = 'NOTRUN'
 
   @staticmethod
   def GetTypes():
     """Get a list of all test types."""
     return [ResultType.PASS, ResultType.SKIP, ResultType.FAIL,
-            ResultType.CRASH, ResultType.TIMEOUT, ResultType.UNKNOWN]
+            ResultType.CRASH, ResultType.TIMEOUT, ResultType.UNKNOWN,
+            ResultType.NOTRUN]
 
 
 class BaseTestResult(object):
@@ -41,6 +56,8 @@ class BaseTestResult(object):
     self._test_type = test_type
     self._duration = duration
     self._log = log
+    self._tombstones = None
+    self._logcat_url = None
 
   def __str__(self):
     return self._name
@@ -88,6 +105,17 @@ class BaseTestResult(object):
     """Get the test log."""
     return self._log
 
+  def SetTombstones(self, tombstones):
+    self._tombstones = tombstones
+
+  def GetTombstones(self):
+    return self._tombstones
+
+  def SetLogcatUrl(self, logcat_url):
+    self._logcat_url = logcat_url
+
+  def GetLogcatUrl(self):
+    return self._logcat_url
 
 class TestRunResults(object):
   """Set of results for a test run."""
@@ -161,6 +189,7 @@ class TestRunResults(object):
     """
     assert isinstance(result, BaseTestResult)
     with self._results_lock:
+      self._results.discard(result)
       self._results.add(result)
 
   def AddResults(self, results):
@@ -179,7 +208,8 @@ class TestRunResults(object):
     Args:
       results: An instance of TestRunResults.
     """
-    assert isinstance(results, TestRunResults)
+    assert isinstance(results, TestRunResults), (
+           'Expected TestRunResult object: %s' % type(results))
     with self._results_lock:
       # pylint: disable=W0212
       self._results.update(results._results)

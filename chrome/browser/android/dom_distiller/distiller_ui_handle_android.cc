@@ -5,12 +5,14 @@
 #include "chrome/browser/android/dom_distiller/distiller_ui_handle_android.h"
 
 #include "base/android/jni_string.h"
-#include "chrome/browser/ui/android/window_android_helper.h"
+#include "chrome/browser/ui/android/view_android_helper.h"
 #include "components/dom_distiller/core/url_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "jni/DomDistillerUIUtils_jni.h"
 #include "ui/android/window_android.h"
 #include "url/gurl.h"
+
+using base::android::ScopedJavaLocalRef;
 
 namespace dom_distiller {
 
@@ -29,7 +31,7 @@ void DistillerUIHandleAndroid::ReportExternalFeedback(
       env, url_utils::GetOriginalUrlFromDistillerUrl(url).spec());
 
   Java_DomDistillerUIUtils_reportFeedbackWithWebContents(
-      env, web_contents->GetJavaWebContents().obj(), jurl.obj(), good);
+      env, web_contents->GetJavaWebContents(), jurl, good);
 }
 
 // static
@@ -37,18 +39,13 @@ void DistillerUIHandleAndroid::OpenSettings(
     content::WebContents* web_contents) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_DomDistillerUIUtils_openSettings(env,
-      web_contents->GetJavaWebContents().obj());
+                                        web_contents->GetJavaWebContents());
 }
 
 // static
 void DistillerUIHandleAndroid::ClosePanel(bool animate) {
   JNIEnv* env = base::android::AttachCurrentThread();
   Java_DomDistillerUIUtils_closePanel(env, animate);
-}
-
-// static
-bool RegisterUIHandle(JNIEnv* env) {
-  return RegisterNativesImpl(env);
 }
 
 }  // namespace android

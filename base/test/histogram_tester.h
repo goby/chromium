@@ -6,15 +6,16 @@
 #define BASE_TEST_HISTOGRAM_TESTER_H_
 
 #include <map>
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include "base/basictypes.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/metrics/histogram.h"
 #include "base/metrics/histogram_base.h"
+#include "base/time/time.h"
 
 namespace base {
 
@@ -52,6 +53,12 @@ class HistogramTester {
   // constructed.
   void ExpectTotalCount(const std::string& name,
                         base::HistogramBase::Count count) const;
+
+  // We know exact number of samples for buckets corresponding to a time
+  // interval. Other intervals may have samples too.
+  void ExpectTimeBucketCount(const std::string& name,
+                             base::TimeDelta sample,
+                             base::HistogramBase::Count count) const;
 
   // Returns a list of all of the buckets recorded since creation of this
   // object, as vector<Bucket>, where the Bucket represents the min boundary of
@@ -93,7 +100,7 @@ class HistogramTester {
 
   // Access a modified HistogramSamples containing only what has been logged
   // to the histogram since the creation of this object.
-  scoped_ptr<HistogramSamples> GetHistogramSamplesSinceCreation(
+  std::unique_ptr<HistogramSamples> GetHistogramSamplesSinceCreation(
       const std::string& histogram_name) const;
 
  private:
@@ -113,9 +120,8 @@ class HistogramTester {
                        const base::HistogramSamples& samples) const;
 
   // Used to determine the histogram changes made during this instance's
-  // lifecycle. This instance takes ownership of the samples, which are deleted
-  // when the instance is destroyed.
-  std::map<std::string, HistogramSamples*> histograms_snapshot_;
+  // lifecycle.
+  std::map<std::string, std::unique_ptr<HistogramSamples>> histograms_snapshot_;
 
   DISALLOW_COPY_AND_ASSIGN(HistogramTester);
 };

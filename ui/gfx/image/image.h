@@ -19,12 +19,15 @@
 #ifndef UI_GFX_IMAGE_IMAGE_H_
 #define UI_GFX_IMAGE_IMAGE_H_
 
+#include <stddef.h>
+
 #include <map>
+#include <memory>
 #include <vector>
 
-#include "base/basictypes.h"
 #include "base/memory/ref_counted_memory.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/memory/scoped_policy.h"
+#include "build/build_config.h"
 #include "ui/gfx/gfx_export.h"
 #include "ui/gfx/native_widget_types.h"
 
@@ -54,7 +57,7 @@ class GFX_EXPORT Image {
   };
 
   using RepresentationMap =
-      std::map<RepresentationType, scoped_ptr<internal::ImageRep>>;
+      std::map<RepresentationType, std::unique_ptr<internal::ImageRep>>;
 
   // Creates an empty image with no representations.
   Image();
@@ -70,6 +73,10 @@ class GFX_EXPORT Image {
 #if defined(OS_IOS)
   // Does not retain |image|; expects to take ownership.
   explicit Image(UIImage* image);
+
+  // Retains argument according to |policy|.
+  Image(UIImage* image, base::scoped_policy::OwnershipPolicy policy);
+
 #elif defined(OS_MACOSX)
   // Does not retain |image|; expects to take ownership.
   // A single NSImage object can contain multiple bitmaps so there's no reason
@@ -181,8 +188,11 @@ class GFX_EXPORT Image {
   internal::ImageRep* GetRepresentation(
       RepresentationType rep_type, bool must_exist) const;
 
-  // Stores a representation into the map.
-  void AddRepresentation(scoped_ptr<internal::ImageRep> rep) const;
+  // Stores a representation into the map. A representation of that type must
+  // not already be in the map. Returns a pointer to the representation stored
+  // inside the map.
+  internal::ImageRep* AddRepresentation(
+      std::unique_ptr<internal::ImageRep> rep) const;
 
   // Internal class that holds all the representations. This allows the Image to
   // be cheaply copied.

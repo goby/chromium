@@ -79,35 +79,69 @@ GEN('#if defined(OS_CHROMEOS)');
 TEST_F('HelpPageWebUITest', 'testRequestUpdate', function() {
   var container = $('update-status-container');
   var update = $('request-update');
+  var policyIcon = $('controlled-feature-icon');
 
   help.HelpPage.setUpdateStatus('updated', '');
   expectTrue(container.hidden);
   expectTrue(!update.hidden && !update.disabled);
+  expectTrue(policyIcon.hidden);
 
   update.click();
   expectTrue(!update.hidden && update.disabled);
   expectFalse(container.hidden);
+  expectTrue(policyIcon.hidden);
 
   help.HelpPage.setUpdateStatus('checking', '');
   expectFalse(container.hidden);
   expectTrue(!update.hidden && update.disabled);
+  expectTrue(policyIcon.hidden);
 
   help.HelpPage.setUpdateStatus('failed', 'Error');
   expectFalse(container.hidden);
   expectTrue(!update.hidden && !update.disabled);
+  expectTrue(policyIcon.hidden);
 
   update.click();
   help.HelpPage.setUpdateStatus('checking', '');
   expectFalse(container.hidden);
   expectTrue(!update.hidden && update.disabled);
+  expectTrue(policyIcon.hidden);
 
   help.HelpPage.setUpdateStatus('nearly_updated', '');
   expectFalse(container.hidden);
   expectTrue(update.hidden);
+  expectTrue(policyIcon.hidden);
 
   help.HelpPage.setUpdateStatus('updated', '');
   expectFalse(container.hidden);
   expectTrue(!update.hidden && update.disabled);
+  expectTrue(policyIcon.hidden);
+
+  help.HelpPage.setUpdateStatus('disabled_by_admin', '');
+  expectTrue(container.hidden);
+  expectTrue(!update.hidden && update.disabled);
+  expectFalse(policyIcon.hidden);
+});
+
+// Test that the EndofLife String is shown and hidden properly.
+TEST_F('HelpPageWebUITest', 'testUpdateEolMessage', function() {
+   // Enable when failure is resolved.
+   // AX_TEXT_04: http://crbug.com/570563
+  this.accessibilityAuditConfig.ignoreSelectors(
+      'linkWithUnclearPurpose',
+      '#eol-learnMore > A');
+
+  var updateStatusContainer = $('update-status-container');
+  var update = $('request-update');
+  var eolStatusContainer = $('eol-status-container');
+
+  help.HelpPage.updateEolMessage('device_supported', '');
+  expectTrue(eolStatusContainer.hidden);
+
+  help.HelpPage.updateEolMessage('device_endoflife', '');
+  expectFalse(eolStatusContainer.hidden);
+  expectTrue(update.disabled);
+  expectTrue(updateStatusContainer.hidden);
 });
 
 GEN('#endif');

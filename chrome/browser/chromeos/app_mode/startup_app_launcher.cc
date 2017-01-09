@@ -4,6 +4,7 @@
 
 #include "chrome/browser/chromeos/app_mode/startup_app_launcher.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/json/json_file_value_serializer.h"
@@ -14,6 +15,7 @@
 #include "chrome/browser/chromeos/app_mode/kiosk_app_manager.h"
 #include "chrome/browser/chromeos/app_mode/kiosk_diagnosis_runner.h"
 #include "chrome/browser/chromeos/login/session/user_session_manager.h"
+#include "chrome/browser/chromeos/net/delay_network_call.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/extensions/install_tracker.h"
 #include "chrome/browser/extensions/install_tracker_factory.h"
@@ -26,9 +28,9 @@
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "components/crx_file/id_util.h"
+#include "components/session_manager/core/session_manager.h"
 #include "components/signin/core/browser/profile_oauth2_token_service.h"
 #include "components/signin/core/browser/signin_manager.h"
-#include "components/user_manager/user_manager.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/notification_service.h"
 #include "extensions/browser/extension_system.h"
@@ -125,9 +127,9 @@ void StartupAppLauncher::LoadOAuthFileOnBlockingPool(
   base::FilePath user_data_dir;
   CHECK(PathService::Get(chrome::DIR_USER_DATA, &user_data_dir));
   base::FilePath auth_file = user_data_dir.Append(kOAuthFileName);
-  scoped_ptr<JSONFileValueDeserializer> deserializer(
+  std::unique_ptr<JSONFileValueDeserializer> deserializer(
       new JSONFileValueDeserializer(user_data_dir.Append(kOAuthFileName)));
-  scoped_ptr<base::Value> value =
+  std::unique_ptr<base::Value> value =
       deserializer->Deserialize(&error_code, &error_msg);
   base::DictionaryValue* dict = NULL;
   if (error_code != JSONFileValueDeserializer::JSON_NO_ERROR ||
@@ -269,7 +271,8 @@ void StartupAppLauncher::MaybeCheckExtensionUpdate() {
       extensions::ExtensionSystem::Get(profile_)
           ->extension_service()
           ->updater();
-  if (!delegate_->IsNetworkReady() || !updater) {
+  if (!delegate_->IsNetworkReady() || !updater ||
+      PrimaryAppHasPendingUpdate()) {
     MaybeLaunchApp();
     return;
   }
@@ -308,12 +311,13 @@ void StartupAppLauncher::OnExtensionUpdateCheckFinished() {
 void StartupAppLauncher::Observe(int type,
                                  const content::NotificationSource& source,
                                  const content::NotificationDetails& details) {
-  DCHECK(type == extensions::NOTIFICATION_EXTENSION_UPDATE_FOUND);
-  typedef const std::pair<std::string, Version> UpdateDetails;
+  DCHECK_EQ(extensions::NOTIFICATION_EXTENSION_UPDATE_FOUND, type);
+  using UpdateDetails = const std::pair<std::string, base::Version>;
   const std::string& id = content::Details<UpdateDetails>(details)->first;
-  const Version& version = content::Details<UpdateDetails>(details)->second;
+  const base::Version& version =
+      content::Details<UpdateDetails>(details)->second;
   VLOG(1) << "Found extension update id=" << id
-      << " version=" << version.GetString();
+          << " version=" << version.GetString();
   extension_update_found_ = true;
 }
 
@@ -405,6 +409,12 @@ bool StartupAppLauncher::HasSecondaryApps() const {
   return extensions::KioskModeInfo::HasSecondaryApps(extension);
 }
 
+bool StartupAppLauncher::PrimaryAppHasPendingUpdate() const {
+  return !!extensions::ExtensionSystem::Get(profile_)
+               ->extension_service()
+               ->GetPendingExtensionUpdate(app_id_);
+}
+
 bool StartupAppLauncher::DidPrimaryOrSecondaryAppFailedToInstall(
     bool success,
     const std::string& id) const {
@@ -454,12 +464,12 @@ void StartupAppLauncher::LaunchApp() {
   }
 
   // Always open the app in a window.
-  OpenApplication(AppLaunchParams(profile_, extension,
-                                  extensions::LAUNCH_CONTAINER_WINDOW,
-                                  NEW_WINDOW, extensions::SOURCE_KIOSK));
+  OpenApplication(AppLaunchParams(
+      profile_, extension, extensions::LAUNCH_CONTAINER_WINDOW,
+      WindowOpenDisposition::NEW_WINDOW, extensions::SOURCE_KIOSK));
   KioskAppManager::Get()->InitSession(profile_, app_id_);
 
-  user_manager::UserManager::Get()->SessionStarted();
+  session_manager::SessionManager::Get()->SessionStarted();
 
   content::NotificationService::current()->Notify(
       chrome::NOTIFICATION_KIOSK_APP_LAUNCHED,
@@ -509,7 +519,10 @@ void StartupAppLauncher::BeginInstall() {
 
 void StartupAppLauncher::MaybeInstallSecondaryApps() {
   if (!AreSecondaryAppsInstalled() && !delegate_->IsNetworkReady()) {
-    OnLaunchFailure(KioskAppLaunchError::UNABLE_TO_INSTALL);
+    DelayNetworkCall(
+        base::TimeDelta::FromMilliseconds(kDefaultNetworkRetryDelayMS),
+        base::Bind(&StartupAppLauncher::MaybeInstallSecondaryApps,
+                   AsWeakPtr()));
     return;
   }
 
@@ -536,11 +549,16 @@ void StartupAppLauncher::MaybeInstallSecondaryApps() {
 
 void StartupAppLauncher::OnReadyToLaunch() {
   ready_to_launch_ = true;
-  UpdateAppData();
+  MaybeUpdateAppData();
   delegate_->OnReadyToLaunch();
 }
 
-void StartupAppLauncher::UpdateAppData() {
+void StartupAppLauncher::MaybeUpdateAppData() {
+  // Skip copying meta data from the current installed primary app when
+  // there is a pending update.
+  if (PrimaryAppHasPendingUpdate())
+    return;
+
   KioskAppManager::Get()->ClearAppData(app_id_);
   KioskAppManager::Get()->UpdateAppDataFromProfile(app_id_, profile_, NULL);
 }

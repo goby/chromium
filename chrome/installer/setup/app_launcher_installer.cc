@@ -9,10 +9,10 @@
 #include "base/strings/string16.h"
 #include "base/version.h"
 #include "chrome/installer/setup/install_worker.h"
+#include "chrome/installer/setup/installer_state.h"
 #include "chrome/installer/setup/setup_util.h"
 #include "chrome/installer/util/google_update_constants.h"
 #include "chrome/installer/util/install_util.h"
-#include "chrome/installer/util/installer_state.h"
 #include "chrome/installer/util/installer_util_strings.h"
 #include "chrome/installer/util/l10n_string_util.h"
 #include "chrome/installer/util/product.h"
@@ -35,38 +35,20 @@ const wchar_t kLegacyCmdQuickEnableApplicationHost[] =
 // The legacy app_host.exe executable, which should be eradicated.
 const wchar_t kLegacyChromeAppHostExe[] = L"app_host.exe";
 
-base::string16 GetAppLauncherDisplayName() {
-  return GetLocalizedString(IDS_PRODUCT_APP_LAUNCHER_NAME_BASE);
-}
-
 void AddLegacyAppCommandRemovalItem(const InstallerState& installer_state,
                                     const AppRegistrationData& reg_data,
                                     const wchar_t* name,
                                     WorkItemList* list) {
   // Ignore failures since this is a clean-up operation and shouldn't block
   // install or update.
-  list->AddDeleteRegKeyWorkItem(
-                      installer_state.root_key(),
-                      GetRegistrationDataCommandKey(reg_data, name),
-                      KEY_WOW64_32KEY)
-      ->set_ignore_failure(true);
+  auto* delete_reg_key_work_item = list->AddDeleteRegKeyWorkItem(
+      installer_state.root_key(), GetRegistrationDataCommandKey(reg_data, name),
+      KEY_WOW64_32KEY);
+  delete_reg_key_work_item->set_best_effort(true);
+  delete_reg_key_work_item->set_rollback_enabled(false);
 }
 
 }  // namespace
-
-void AddAppLauncherVersionKeyWorkItems(HKEY root,
-                                       const base::Version& new_version,
-                                       bool add_language_identifier,
-                                       WorkItemList* list) {
-  DCHECK(!InstallUtil::IsChromeSxSProcess());
-  const UpdatingAppRegistrationData app_launcher_reg_data(kAppLauncherGuid);
-  AddVersionKeyWorkItems(root,
-                         app_launcher_reg_data.GetVersionKey(),
-                         GetAppLauncherDisplayName(),
-                         new_version,
-                         add_language_identifier,
-                         list);
-}
 
 void RemoveAppLauncherVersionKey(HKEY reg_root) {
   DCHECK(!InstallUtil::IsChromeSxSProcess());
@@ -79,9 +61,10 @@ void AddRemoveLegacyAppHostExeWorkItems(const base::FilePath& target_path,
                                         const base::FilePath& temp_path,
                                         WorkItemList* list) {
   DCHECK(!InstallUtil::IsChromeSxSProcess());
-  list->AddDeleteTreeWorkItem(
-      target_path.Append(kLegacyChromeAppHostExe),
-      temp_path)->set_ignore_failure(true);
+  auto* delete_tree_work_item = list->AddDeleteTreeWorkItem(
+      target_path.Append(kLegacyChromeAppHostExe), temp_path);
+  delete_tree_work_item->set_best_effort(true);
+  delete_tree_work_item->set_rollback_enabled(false);
 }
 
 void AddRemoveLegacyAppCommandsWorkItems(const InstallerState& installer_state,

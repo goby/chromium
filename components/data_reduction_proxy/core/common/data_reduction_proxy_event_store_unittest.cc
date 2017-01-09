@@ -4,12 +4,15 @@
 
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_event_store.h"
 
+#include <stddef.h>
+
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "base/bind.h"
 #include "base/json/json_writer.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -20,6 +23,9 @@
 #include "net/base/net_errors.h"
 #include "net/http/http_status_code.h"
 #include "net/log/net_log.h"
+#include "net/log/net_log_event_type.h"
+#include "net/log/net_log_source_type.h"
+#include "net/log/net_log_with_source.h"
 #include "net/log/test_net_log.h"
 #include "net/log/test_net_log_entry.h"
 #include "net/proxy/proxy_server.h"
@@ -30,8 +36,8 @@ namespace data_reduction_proxy {
 class DataReductionProxyEventStoreTest : public testing::Test {
  public:
   DataReductionProxyEventStoreTest() : net_log_(new net::TestNetLog()) {
-    bound_net_log_ = net::BoundNetLog::Make(
-        net_log_.get(), net::NetLog::SOURCE_DATA_REDUCTION_PROXY);
+    net_log_with_source_ = net::NetLogWithSource::Make(
+        net_log_.get(), net::NetLogSourceType::DATA_REDUCTION_PROXY);
   }
 
   void SetUp() override {
@@ -61,8 +67,8 @@ class DataReductionProxyEventStoreTest : public testing::Test {
 
   net::TestNetLog* net_log() { return net_log_.get(); }
 
-  const net::BoundNetLog& bound_net_log() {
-    return bound_net_log_;
+  const net::NetLogWithSource& net_log_with_source() {
+    return net_log_with_source_;
   }
 
   size_t event_count() const { return event_store_->stored_events_.size(); }
@@ -77,22 +83,19 @@ class DataReductionProxyEventStoreTest : public testing::Test {
   }
 
  private:
-  scoped_ptr<net::TestNetLog> net_log_;
-  scoped_ptr<DataReductionProxyEventStore> event_store_;
-  scoped_ptr<DataReductionProxyEventCreator> event_creator_;
-  net::BoundNetLog bound_net_log_;
+  std::unique_ptr<net::TestNetLog> net_log_;
+  std::unique_ptr<DataReductionProxyEventStore> event_store_;
+  std::unique_ptr<DataReductionProxyEventCreator> event_creator_;
+  net::NetLogWithSource net_log_with_source_;
 };
 
 TEST_F(DataReductionProxyEventStoreTest, TestAddProxyEnabledEvent) {
   EXPECT_EQ(0u, event_count());
   std::vector<net::ProxyServer> proxies_for_http;
-  std::vector<net::ProxyServer> proxies_for_https;
-  event_creator()->AddProxyEnabledEvent(net_log(), false, proxies_for_http,
-                                        proxies_for_https);
+  event_creator()->AddProxyEnabledEvent(net_log(), false, proxies_for_http);
   EXPECT_EQ(1u, event_count());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_ENABLED,
-            entry.type);
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_ENABLED, entry.type);
 }
 
 TEST_F(DataReductionProxyEventStoreTest, TestAddProxyDisabledEvent) {
@@ -100,19 +103,18 @@ TEST_F(DataReductionProxyEventStoreTest, TestAddProxyDisabledEvent) {
   event_creator()->AddProxyDisabledEvent(net_log());
   EXPECT_EQ(1u, event_count());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_ENABLED,
-            entry.type);
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_ENABLED, entry.type);
 }
 
 TEST_F(DataReductionProxyEventStoreTest, TestAddBypassActionEvent) {
   EXPECT_EQ(0u, event_count());
   EXPECT_EQ(nullptr, last_bypass_event());
   event_creator()->AddBypassActionEvent(
-      bound_net_log(), BYPASS_ACTION_TYPE_BYPASS, "GET", GURL(), false,
+      net_log_with_source(), BYPASS_ACTION_TYPE_BYPASS, "GET", GURL(), false,
       base::TimeDelta::FromMinutes(1));
   EXPECT_EQ(1u, event_count());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_BYPASS_REQUESTED,
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_BYPASS_REQUESTED,
             entry.type);
   EXPECT_NE(nullptr, last_bypass_event());
 }
@@ -120,13 +122,13 @@ TEST_F(DataReductionProxyEventStoreTest, TestAddBypassActionEvent) {
 TEST_F(DataReductionProxyEventStoreTest, TestAddBypassTypeEvent) {
   EXPECT_EQ(0u, event_count());
   EXPECT_EQ(nullptr, last_bypass_event());
-  event_creator()->AddBypassTypeEvent(bound_net_log(), BYPASS_EVENT_TYPE_LONG,
-                                      "GET", GURL(), false,
-                                      base::TimeDelta::FromMinutes(1));
+  event_creator()->AddBypassTypeEvent(net_log_with_source(),
+                                      BYPASS_EVENT_TYPE_LONG, "GET", GURL(),
+                                      false, base::TimeDelta::FromMinutes(1));
   EXPECT_EQ(1u, event_count());
   EXPECT_EQ(1u, net_log()->GetSize());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_BYPASS_REQUESTED,
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_BYPASS_REQUESTED,
             entry.type);
   EXPECT_NE(nullptr, last_bypass_event());
 }
@@ -137,18 +139,18 @@ TEST_F(DataReductionProxyEventStoreTest, TestAddProxyFallbackEvent) {
                                          net::ERR_PROXY_CONNECTION_FAILED);
   EXPECT_EQ(1u, event_count());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_FALLBACK, entry.type);
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_FALLBACK, entry.type);
 }
 
 TEST_F(DataReductionProxyEventStoreTest, TestBeginSecureProxyCheck) {
   EXPECT_EQ(0u, event_count());
   EXPECT_EQ(DataReductionProxyEventStorageDelegate::CHECK_UNKNOWN,
             secure_proxy_check_state());
-  event_creator()->BeginSecureProxyCheck(bound_net_log(), GURL());
+  event_creator()->BeginSecureProxyCheck(net_log_with_source(), GURL());
   EXPECT_EQ(1u, event_count());
   EXPECT_EQ(1u, net_log()->GetSize());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_CANARY_REQUEST,
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_CANARY_REQUEST,
             entry.type);
   EXPECT_EQ(DataReductionProxyEventStorageDelegate::CHECK_PENDING,
             secure_proxy_check_state());
@@ -158,11 +160,12 @@ TEST_F(DataReductionProxyEventStoreTest, TestEndSecureProxyCheck) {
   EXPECT_EQ(0u, event_count());
   EXPECT_EQ(DataReductionProxyEventStorageDelegate::CHECK_UNKNOWN,
             secure_proxy_check_state());
-  event_creator()->EndSecureProxyCheck(bound_net_log(), 0, net::HTTP_OK, true);
+  event_creator()->EndSecureProxyCheck(net_log_with_source(), 0, net::HTTP_OK,
+                                       true);
   EXPECT_EQ(1u, event_count());
   EXPECT_EQ(1u, net_log()->GetSize());
   net::TestNetLogEntry entry = GetSingleEntry();
-  EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_CANARY_REQUEST,
+  EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_CANARY_REQUEST,
             entry.type);
   EXPECT_EQ(DataReductionProxyEventStorageDelegate::CHECK_SUCCESS,
             secure_proxy_check_state());
@@ -195,13 +198,14 @@ TEST_F(DataReductionProxyEventStoreTest, TestEndSecureProxyCheckFailed) {
   EXPECT_EQ(DataReductionProxyEventStorageDelegate::CHECK_UNKNOWN,
             secure_proxy_check_state());
   for (const auto& test : tests) {
-    event_creator()->EndSecureProxyCheck(bound_net_log(), test.net_error,
+    event_creator()->EndSecureProxyCheck(net_log_with_source(), test.net_error,
                                          test.http_response_code,
                                          test.secure_proxy_check_succeeded);
     EXPECT_EQ(expected_event_count, net_log()->GetSize()) << test.test_case;
     EXPECT_EQ(expected_event_count++, event_count()) << test.test_case;
     net::TestNetLogEntry entry = GetLatestEntry();
-    EXPECT_EQ(net::NetLog::TYPE_DATA_REDUCTION_PROXY_CANARY_REQUEST, entry.type)
+    EXPECT_EQ(net::NetLogEventType::DATA_REDUCTION_PROXY_CANARY_REQUEST,
+              entry.type)
         << test.test_case;
     EXPECT_EQ(test.secure_proxy_check_succeeded
                   ? DataReductionProxyEventStorageDelegate::CHECK_SUCCESS
@@ -214,36 +218,31 @@ TEST_F(DataReductionProxyEventStoreTest, TestEndSecureProxyCheckFailed) {
 TEST_F(DataReductionProxyEventStoreTest, TestFeedbackMethods) {
   DataReductionProxyConfigurator configurator(net_log(), event_creator());
   EXPECT_EQ(std::string(), event_store()->GetHttpProxyList());
-  EXPECT_EQ(std::string(), event_store()->GetHttpsProxyList());
   EXPECT_EQ(std::string(), event_store()->SanitizedLastBypassEvent());
 
   std::vector<net::ProxyServer> http_proxies;
-  std::vector<net::ProxyServer> https_proxies;
   http_proxies.push_back(net::ProxyServer(net::ProxyServer::SCHEME_HTTP,
                                           net::HostPortPair("foo.com", 80)));
   http_proxies.push_back(net::ProxyServer(net::ProxyServer::SCHEME_HTTPS,
                                           net::HostPortPair("bar.com", 443)));
-  https_proxies.push_back(net::ProxyServer(net::ProxyServer::SCHEME_HTTP,
-                                           net::HostPortPair("baz.com", 80)));
-  configurator.Enable(false, http_proxies, https_proxies);
+  configurator.Enable(false, http_proxies);
   EXPECT_EQ("foo.com:80;https://bar.com:443",
             event_store()->GetHttpProxyList());
-  EXPECT_EQ("baz.com:80", event_store()->GetHttpsProxyList());
 
   configurator.Disable();
   EXPECT_EQ(std::string(), event_store()->GetHttpProxyList());
-  EXPECT_EQ(std::string(), event_store()->GetHttpsProxyList());
 }
 
 TEST_F(DataReductionProxyEventStoreTest, TestFeedbackLastBypassEventFullURL) {
   DataReductionProxyConfigurator configurator(net_log(), event_creator());
   std::vector<net::ProxyServer> http_proxies;
-  std::vector<net::ProxyServer> https_proxies;
-  configurator.Enable(false, http_proxies, https_proxies);
+  configurator.Enable(false, http_proxies);
 
-  scoped_ptr<base::DictionaryValue> bypass_event(new base::DictionaryValue());
-  scoped_ptr<base::DictionaryValue> bypass_params(new base::DictionaryValue());
-  scoped_ptr<base::DictionaryValue> sanitized_event(
+  std::unique_ptr<base::DictionaryValue> bypass_event(
+      new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> bypass_params(
+      new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> sanitized_event(
       new base::DictionaryValue());
 
   // Set bypass event time to be 4 minutes ago.
@@ -257,23 +256,26 @@ TEST_F(DataReductionProxyEventStoreTest, TestFeedbackLastBypassEventFullURL) {
   sanitized_event->SetString("bypass_seconds", "40");
   bypass_params->SetString("url", "http://www.foo.com/bar?baz=1234");
   sanitized_event->SetString("url", "http://www.foo.com/bar");
+  bypass_params->SetString("method", "GET");
+  sanitized_event->SetString("method", "GET");
 
-  bypass_event->Set("params", bypass_params.Pass());
+  bypass_event->Set("params", std::move(bypass_params));
   std::string sanitized_output;
   base::JSONWriter::Write(*sanitized_event.get(), &sanitized_output);
-  event_store()->AddAndSetLastBypassEvent(bypass_event.Pass(), 0);
+  event_store()->AddAndSetLastBypassEvent(std::move(bypass_event), 0);
   EXPECT_EQ(sanitized_output, event_store()->SanitizedLastBypassEvent());
 }
 
 TEST_F(DataReductionProxyEventStoreTest, TestFeedbackLastBypassEventHostOnly) {
   DataReductionProxyConfigurator configurator(net_log(), event_creator());
   std::vector<net::ProxyServer> http_proxies;
-  std::vector<net::ProxyServer> https_proxies;
-  configurator.Enable(false, http_proxies, https_proxies);
+  configurator.Enable(false, http_proxies);
 
-  scoped_ptr<base::DictionaryValue> bypass_event(new base::DictionaryValue());
-  scoped_ptr<base::DictionaryValue> bypass_params(new base::DictionaryValue());
-  scoped_ptr<base::DictionaryValue> sanitized_event(
+  std::unique_ptr<base::DictionaryValue> bypass_event(
+      new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> bypass_params(
+      new base::DictionaryValue());
+  std::unique_ptr<base::DictionaryValue> sanitized_event(
       new base::DictionaryValue());
 
   // Set bypass event time to be 6 minutes ago.
@@ -287,11 +289,13 @@ TEST_F(DataReductionProxyEventStoreTest, TestFeedbackLastBypassEventHostOnly) {
   sanitized_event->SetString("bypass_seconds", "40");
   bypass_params->SetString("url", "http://www.foo.com/bar?baz=1234");
   sanitized_event->SetString("url", "www.foo.com");
+  bypass_params->SetString("method", "GET");
+  sanitized_event->SetString("method", "GET");
 
-  bypass_event->Set("params", bypass_params.Pass());
+  bypass_event->Set("params", std::move(bypass_params));
   std::string sanitized_output;
   base::JSONWriter::Write(*sanitized_event.get(), &sanitized_output);
-  event_store()->AddAndSetLastBypassEvent(bypass_event.Pass(), 0);
+  event_store()->AddAndSetLastBypassEvent(std::move(bypass_event), 0);
   EXPECT_EQ(sanitized_output, event_store()->SanitizedLastBypassEvent());
 }
 

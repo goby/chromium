@@ -7,17 +7,17 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <set>
 #include <string>
 
-#include "base/basictypes.h"
 #include "base/compiler_specific.h"
-#include "base/debug/stack_trace.h"
 #include "base/files/file_path.h"
 #include "base/lazy_instance.h"
+#include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/timer/timer.h"
+#include "net/base/chunked_upload_data_stream.h"
 #include "net/base/host_port_pair.h"
 #include "net/http/http_request_headers.h"
 #include "net/url_request/url_fetcher.h"
@@ -68,8 +68,8 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
                      const std::string& upload_content);
   void SetUploadFilePath(const std::string& upload_content_type,
                          const base::FilePath& file_path,
-                         uint64 range_offset,
-                         uint64 range_length,
+                         uint64_t range_offset,
+                         uint64_t range_length,
                          scoped_refptr<base::TaskRunner> file_task_runner);
   void SetUploadStreamFactory(
       const std::string& upload_content_type,
@@ -87,9 +87,11 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   void SetExtraRequestHeaders(const std::string& extra_request_headers);
   void AddExtraRequestHeader(const std::string& header_line);
   void SetRequestContext(URLRequestContextGetter* request_context_getter);
-  // Set the URL that should be consulted for the third-party cookie
-  // blocking policy.
-  void SetFirstPartyForCookies(const GURL& first_party_for_cookies);
+  // Set the origin that should be considered as "initiating" the fetch. This
+  // URL
+  // will be considered the "first-party" when applying cookie blocking policy
+  // to requests, and treated as the request's initiator.
+  void SetInitiator(const base::Optional<url::Origin>& initiator);
   // Set the key and data callback that is used when setting the user
   // data on any URLRequest objects this object creates.
   void SetURLRequestUserData(
@@ -107,7 +109,7 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   void SaveResponseToTemporaryFile(
       scoped_refptr<base::SequencedTaskRunner> file_task_runner);
   void SaveResponseWithWriter(
-      scoped_ptr<URLFetcherResponseWriter> response_writer);
+      std::unique_ptr<URLFetcherResponseWriter> response_writer);
   HttpResponseHeaders* GetResponseHeaders() const;
   HostPortPair GetSocketAddress() const;
   bool WasFetchedViaProxy() const;
@@ -116,7 +118,6 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   const GURL& GetURL() const;
   const URLRequestStatus& GetStatus() const;
   int GetResponseCode() const;
-  const ResponseCookies& GetCookies() const;
   int64_t GetReceivedResponseContentLength() const;
   int64_t GetTotalReceivedBytes() const;
   // Reports that the received content was malformed (i.e. failed parsing
@@ -134,7 +135,7 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   void OnReceivedRedirect(URLRequest* request,
                           const RedirectInfo& redirect_info,
                           bool* defer_redirect) override;
-  void OnResponseStarted(URLRequest* request) override;
+  void OnResponseStarted(URLRequest* request, int net_error) override;
   void OnReadCompleted(URLRequest* request, int bytes_read) override;
   void OnCertificateRequested(URLRequest* request,
                               SSLCertRequestInfo* cert_request_info) override;
@@ -215,10 +216,13 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
 
   // Notify Delegate about the progress of upload/download.
   void InformDelegateUploadProgress();
-  void InformDelegateUploadProgressInDelegateThread(int64 current, int64 total);
+  void InformDelegateUploadProgressInDelegateThread(int64_t current,
+                                                    int64_t total);
   void InformDelegateDownloadProgress();
-  void InformDelegateDownloadProgressInDelegateThread(int64 current,
-                                                      int64 total);
+  void InformDelegateDownloadProgressInDelegateThread(
+      int64_t current,
+      int64_t total,
+      int64_t current_network_bytes);
 
   // Check if any upload data is set or not.
   void AssertHasNoUploadData() const;
@@ -235,18 +239,17 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
   // Task runner for upload file access.
   scoped_refptr<base::TaskRunner> upload_file_task_runner_;
-  scoped_ptr<URLRequest> request_;   // The actual request this wraps
+  std::unique_ptr<URLRequest> request_;  // The actual request this wraps
   int load_flags_;                   // Flags for the load operation
   int response_code_;                // HTTP status code for the request
   scoped_refptr<IOBuffer> buffer_;
                                      // Read buffer
   scoped_refptr<URLRequestContextGetter> request_context_getter_;
                                      // Cookie/cache info for the request
-  GURL first_party_for_cookies_;     // The first party URL for the request
+  base::Optional<url::Origin> initiator_;  // The request's initiator
   // The user data to add to each newly-created URLRequest.
   const void* url_request_data_key_;
   URLFetcher::CreateDataCallback url_request_create_data_callback_;
-  ResponseCookies cookies_;          // Response cookies
   HttpRequestHeaders extra_request_headers_;
   scoped_refptr<HttpResponseHeaders> response_headers_;
   bool was_fetched_via_proxy_;
@@ -258,9 +261,9 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   bool upload_content_set_;          // SetUploadData has been called
   std::string upload_content_;       // HTTP POST payload
   base::FilePath upload_file_path_;  // Path to file containing POST payload
-  uint64 upload_range_offset_;       // Offset from the beginning of the file
+  uint64_t upload_range_offset_;     // Offset from the beginning of the file
                                      // to be uploaded.
-  uint64 upload_range_length_;       // The length of the part of file to be
+  uint64_t upload_range_length_;     // The length of the part of file to be
                                      // uploaded.
   URLFetcher::CreateUploadStreamCallback
       upload_stream_factory_;        // Callback to create HTTP POST payload.
@@ -268,6 +271,14 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   std::string referrer_;             // HTTP Referer header value and policy
   URLRequest::ReferrerPolicy referrer_policy_;
   bool is_chunked_upload_;           // True if using chunked transfer encoding
+
+  // Used to write to |chunked_stream|, even after ownership has been passed to
+  // the URLRequest. Continues to be valid even after the request deletes its
+  // upload data.
+  std::unique_ptr<ChunkedUploadDataStream::Writer> chunked_stream_writer_;
+
+  // Temporary storage of ChunkedUploadDataStream, before request is created.
+  std::unique_ptr<ChunkedUploadDataStream> chunked_stream_;
 
   // Used to determine how long to wait before making a request or doing a
   // retry.
@@ -292,7 +303,7 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
   bool was_cancelled_;
 
   // Writer object to write response to the destination like file and string.
-  scoped_ptr<URLFetcherResponseWriter> response_writer_;
+  std::unique_ptr<URLFetcherResponseWriter> response_writer_;
 
   // By default any server-initiated redirects are automatically followed. If
   // this flag is set to true, however, a redirect will halt the fetch and call
@@ -326,16 +337,13 @@ class URLFetcherCore : public base::RefCountedThreadSafe<URLFetcherCore>,
 
   // Timer to poll the progress of uploading for POST and PUT requests.
   // When crbug.com/119629 is fixed, scoped_ptr is not necessary here.
-  scoped_ptr<base::RepeatingTimer> upload_progress_checker_timer_;
+  std::unique_ptr<base::RepeatingTimer> upload_progress_checker_timer_;
   // Number of bytes sent so far.
-  int64 current_upload_bytes_;
+  int64_t current_upload_bytes_;
   // Number of bytes received so far.
-  int64 current_response_bytes_;
+  int64_t current_response_bytes_;
   // Total expected bytes to receive (-1 if it cannot be determined).
-  int64 total_response_bytes_;
-
-  // TODO(willchan): Get rid of this after debugging crbug.com/90971.
-  base::debug::StackTrace stack_trace_;
+  int64_t total_response_bytes_;
 
   static base::LazyInstance<Registry> g_registry;
 

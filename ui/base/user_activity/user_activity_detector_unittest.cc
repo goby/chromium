@@ -4,8 +4,10 @@
 
 #include "ui/base/user_activity/user_activity_detector.h"
 
+#include <memory>
+
 #include "base/compiler_specific.h"
-#include "base/memory/scoped_ptr.h"
+#include "base/macros.h"
 #include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/base/user_activity/user_activity_observer.h"
@@ -74,9 +76,9 @@ class UserActivityDetectorTest : public testing::Test {
     detector_->ProcessReceivedEvent(event);
   }
 
-  scoped_ptr<TestPlatformEventSource> platform_event_source_;
-  scoped_ptr<UserActivityDetector> detector_;
-  scoped_ptr<TestUserActivityObserver> observer_;
+  std::unique_ptr<TestPlatformEventSource> platform_event_source_;
+  std::unique_ptr<UserActivityDetector> detector_;
+  std::unique_ptr<TestUserActivityObserver> observer_;
 
   base::TimeTicks now_;
 
@@ -139,8 +141,8 @@ TEST_F(UserActivityDetectorTest, Basic) {
   observer_->reset_stats();
 
   AdvanceTime(advance_delta);
-  ui::TouchEvent touch_event(
-      ui::ET_TOUCH_PRESSED, gfx::Point(), 0, base::TimeDelta());
+  ui::TouchEvent touch_event(ui::ET_TOUCH_PRESSED, gfx::Point(), 0,
+                             base::TimeTicks());
   OnEvent(&touch_event);
   EXPECT_FALSE(touch_event.handled());
   EXPECT_EQ(now_.ToInternalValue(),
@@ -149,12 +151,8 @@ TEST_F(UserActivityDetectorTest, Basic) {
   observer_->reset_stats();
 
   AdvanceTime(advance_delta);
-  ui::GestureEvent gesture_event(
-      0,
-      0,
-      ui::EF_NONE,
-      base::TimeDelta::FromMilliseconds(base::Time::Now().ToDoubleT() * 1000),
-      ui::GestureEventDetails(ui::ET_GESTURE_TAP));
+  ui::GestureEvent gesture_event(0, 0, ui::EF_NONE, base::TimeTicks::Now(),
+                                 ui::GestureEventDetails(ui::ET_GESTURE_TAP));
   OnEvent(&gesture_event);
   EXPECT_FALSE(gesture_event.handled());
   EXPECT_EQ(now_.ToInternalValue(),

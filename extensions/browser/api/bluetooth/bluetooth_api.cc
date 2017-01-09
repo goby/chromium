@@ -4,7 +4,9 @@
 
 #include "extensions/browser/api/bluetooth/bluetooth_api.h"
 
+#include <memory>
 #include <string>
+#include <utility>
 
 #include "base/bind_helpers.h"
 #include "base/lazy_instance.h"
@@ -103,7 +105,7 @@ BluetoothGetAdapterStateFunction::~BluetoothGetAdapterStateFunction() {}
 bool BluetoothGetAdapterStateFunction::DoWork(
     scoped_refptr<BluetoothAdapter> adapter) {
   bluetooth::AdapterState state;
-  PopulateAdapterState(*adapter.get(), &state);
+  PopulateAdapterState(*adapter, &state);
   results_ = bluetooth::GetAdapterState::Results::Create(state);
   SendResponse(true);
   return true;
@@ -115,8 +117,7 @@ bool BluetoothGetDevicesFunction::DoWork(
     scoped_refptr<BluetoothAdapter> adapter) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  base::ListValue* device_list = new base::ListValue;
-  SetResult(device_list);
+  std::unique_ptr<base::ListValue> device_list(new base::ListValue);
 
   BluetoothAdapter::DeviceList devices = adapter->GetDevices();
   for (BluetoothAdapter::DeviceList::const_iterator iter = devices.begin();
@@ -128,9 +129,10 @@ bool BluetoothGetDevicesFunction::DoWork(
     bluetooth::Device extension_device;
     bluetooth::BluetoothDeviceToApiDevice(*device, &extension_device);
 
-    device_list->Append(extension_device.ToValue().release());
+    device_list->Append(extension_device.ToValue());
   }
 
+  SetResult(std::move(device_list));
   SendResponse(true);
 
   return true;
@@ -142,14 +144,14 @@ bool BluetoothGetDeviceFunction::DoWork(
     scoped_refptr<BluetoothAdapter> adapter) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
-  scoped_ptr<GetDevice::Params> params(GetDevice::Params::Create(*args_));
+  std::unique_ptr<GetDevice::Params> params(GetDevice::Params::Create(*args_));
   EXTENSION_FUNCTION_VALIDATE(params.get() != NULL);
 
   BluetoothDevice* device = adapter->GetDevice(params->device_address);
   if (device) {
     bluetooth::Device extension_device;
     bluetooth::BluetoothDeviceToApiDevice(*device, &extension_device);
-    SetResult(extension_device.ToValue().release());
+    SetResult(extension_device.ToValue());
     SendResponse(true);
   } else {
     SetError(kInvalidDevice);

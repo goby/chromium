@@ -8,7 +8,9 @@
 #include <map>
 #include <string>
 #include <utility>
+#include <vector>
 
+#include "base/macros.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "content/browser/renderer_host/media/media_stream_requester.h"
 #include "content/common/content_export.h"
@@ -16,10 +18,12 @@
 #include "content/public/browser/browser_message_filter.h"
 #include "content/public/browser/resource_context.h"
 
+namespace url {
+class Origin;
+}
 namespace content {
 
 class MediaStreamManager;
-class ResourceContext;
 
 // MediaStreamDispatcherHost is a delegate for Media Stream API messages used by
 // MediaStreamImpl.  There is one MediaStreamDispatcherHost per
@@ -27,10 +31,9 @@ class ResourceContext;
 class CONTENT_EXPORT MediaStreamDispatcherHost : public BrowserMessageFilter,
                                                  public MediaStreamRequester {
  public:
-  MediaStreamDispatcherHost(
-      int render_process_id,
-      const ResourceContext::SaltCallback& salt_callback,
-      MediaStreamManager* media_stream_manager);
+  MediaStreamDispatcherHost(int render_process_id,
+                            const std::string& salt,
+                            MediaStreamManager* media_stream_manager);
 
   // MediaStreamRequester implementation.
   void StreamGenerated(int render_frame_id,
@@ -45,10 +48,6 @@ class CONTENT_EXPORT MediaStreamDispatcherHost : public BrowserMessageFilter,
   void DeviceStopped(int render_frame_id,
                      const std::string& label,
                      const StreamDeviceInfo& device) override;
-  void DevicesEnumerated(int render_frame_id,
-                         int page_request_id,
-                         const std::string& label,
-                         const StreamDeviceInfoArray& devices) override;
   void DeviceOpened(int render_frame_id,
                     int page_request_id,
                     const std::string& label,
@@ -66,27 +65,19 @@ class CONTENT_EXPORT MediaStreamDispatcherHost : public BrowserMessageFilter,
 
   void OnGenerateStream(int render_frame_id,
                         int page_request_id,
-                        const StreamOptions& components,
-                        const GURL& security_origin,
+                        const StreamControls& controls,
+                        const url::Origin& security_origin,
                         bool user_gesture);
   void OnCancelGenerateStream(int render_frame_id,
                               int page_request_id);
   void OnStopStreamDevice(int render_frame_id,
                           const std::string& device_id);
 
-  void OnEnumerateDevices(int render_frame_id,
-                          int page_request_id,
-                          MediaStreamType type,
-                          const GURL& security_origin);
-
-  void OnCancelEnumerateDevices(int render_frame_id,
-                                int page_request_id);
-
   void OnOpenDevice(int render_frame_id,
                     int page_request_id,
                     const std::string& device_id,
                     MediaStreamType type,
-                    const GURL& security_origin);
+                    const url::Origin& security_origin);
 
   void OnCloseDevice(int render_frame_id,
                      const std::string& label);
@@ -95,10 +86,13 @@ class CONTENT_EXPORT MediaStreamDispatcherHost : public BrowserMessageFilter,
                     int page_request_id,
                     const std::string& label);
 
-  bool IsURLAllowed(const GURL& url);
+  // IPC message handler: Set if the video capturing is secure.
+  void OnSetCapturingLinkSecured(int session_id,
+                                 content::MediaStreamType type,
+                                 bool is_secure);
 
   int render_process_id_;
-  ResourceContext::SaltCallback salt_callback_;
+  std::string salt_;
   MediaStreamManager* media_stream_manager_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaStreamDispatcherHost);

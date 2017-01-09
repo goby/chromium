@@ -7,12 +7,17 @@
 
 #include "google_apis/gcm/engine/connection_factory.h"
 
+#include <stddef.h>
+
+#include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
+#include "google_apis/gcm/engine/connection_event_tracker.h"
 #include "google_apis/gcm/engine/connection_handler.h"
 #include "google_apis/gcm/protocol/mcs.pb.h"
 #include "net/base/backoff_entry.h"
 #include "net/base/network_change_notifier.h"
+#include "net/log/net_log_with_source.h"
 #include "net/proxy/proxy_info.h"
 #include "net/proxy/proxy_service.h"
 #include "net/socket/client_socket_handle.h"
@@ -25,7 +30,6 @@ class NetLog;
 
 namespace gcm {
 
-class ConnectionHandlerImpl;
 class GCMStatsRecorder;
 
 class GCM_EXPORT ConnectionFactoryImpl :
@@ -75,11 +79,9 @@ class GCM_EXPORT ConnectionFactoryImpl :
   net::IPEndPoint GetPeerIP();
 
  protected:
-  // Implementation of Connect(..). If not in backoff, uses |login_request_|
-  // in attempting a connection/handshake. On connection/handshake failure, goes
-  // into backoff.
+  // Initiate the connection to the GCM server.
   // Virtual for testing.
-  virtual void ConnectImpl();
+  virtual void StartConnection();
 
   // Helper method for initalizing the connection hander.
   // Virtual for testing.
@@ -87,12 +89,12 @@ class GCM_EXPORT ConnectionFactoryImpl :
 
   // Helper method for creating a backoff entry.
   // Virtual for testing.
-  virtual scoped_ptr<net::BackoffEntry> CreateBackoffEntry(
+  virtual std::unique_ptr<net::BackoffEntry> CreateBackoffEntry(
       const net::BackoffEntry::Policy* const policy);
 
   // Helper method for creating the connection handler.
   // Virtual for testing.
-  virtual scoped_ptr<ConnectionHandler> CreateConnectionHandler(
+  virtual std::unique_ptr<ConnectionHandler> CreateConnectionHandler(
       base::TimeDelta read_timeout,
       const ConnectionHandler::ProtoReceivedCallback& read_callback,
       const ConnectionHandler::ProtoSentCallback& write_callback,
@@ -109,9 +111,17 @@ class GCM_EXPORT ConnectionFactoryImpl :
   void ConnectionHandlerCallback(int result);
 
  private:
+  friend class ConnectionFactoryImplTest;
+
+  ConnectionEventTracker* GetEventTrackerForTesting();
+
   // Helper method for checking backoff and triggering a connection as
   // necessary.
   void ConnectWithBackoff();
+
+  // Implementation of Connect(..). If not in backoff attempts a connection and
+  // handshake. On connection/handshake failure, goes into backoff.
+  void ConnectImpl();
 
   // Proxy resolution and connection functions.
   void OnProxyResolveDone(int status);
@@ -125,6 +135,10 @@ class GCM_EXPORT ConnectionFactoryImpl :
   // Updates the GCM Network Session's HttpAuthCache with the HTTP Network
   // Session's cache, if available.
   void RebuildNetworkSessionAuthCache();
+
+  // The tracker will maintain a list of all connection attempts with GCM,
+  // whether they succeeded, and their duration.
+  ConnectionEventTracker event_tracker_;
 
   // The MCS endpoints to make connections to, sorted in order of priority.
   const std::vector<GURL> mcs_endpoints_;
@@ -143,7 +157,7 @@ class GCM_EXPORT ConnectionFactoryImpl :
   // credentials. If nullptr, is ignored.
   net::HttpNetworkSession* http_network_session_;
   // Net log to use in connection attempts.
-  net::BoundNetLog bound_net_log_;
+  net::NetLogWithSource net_log_;
   // The current PAC request, if one exists. Owned by the proxy service.
   net::ProxyService::PacRequest* pac_request_;
   // The current proxy info.
@@ -151,10 +165,10 @@ class GCM_EXPORT ConnectionFactoryImpl :
   // The handle to the socket for the current connection, if one exists.
   net::ClientSocketHandle socket_handle_;
   // Current backoff entry.
-  scoped_ptr<net::BackoffEntry> backoff_entry_;
+  std::unique_ptr<net::BackoffEntry> backoff_entry_;
   // Backoff entry from previous connection attempt. Updated on each login
   // completion.
-  scoped_ptr<net::BackoffEntry> previous_backoff_;
+  std::unique_ptr<net::BackoffEntry> previous_backoff_;
 
   // Whether a connection attempt is currently actively in progress.
   bool connecting_;
@@ -184,7 +198,7 @@ class GCM_EXPORT ConnectionFactoryImpl :
   ConnectionHandler::ProtoSentCallback write_callback_;
 
   // The current connection handler, if one exists.
-  scoped_ptr<ConnectionHandler> connection_handler_;
+  std::unique_ptr<ConnectionHandler> connection_handler_;
 
   // Builder for generating new login requests.
   BuildLoginRequestCallback request_builder_;

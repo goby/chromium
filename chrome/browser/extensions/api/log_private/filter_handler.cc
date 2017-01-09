@@ -4,6 +4,8 @@
 
 #include "chrome/browser/extensions/api/log_private/filter_handler.h"
 
+#include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -15,14 +17,14 @@ namespace {
 
 template <typename T>
 bool IsValidField(const std::vector<T>& filter, const T& field) {
-  return (!filter.size() ||
+  return (filter.empty() ||
           std::find(filter.begin(), filter.end(), field) != filter.end());
 }
 
 }  // namespace
 
 FilterHandler::FilterHandler(const api::log_private::Filter& filter) {
-  scoped_ptr<base::DictionaryValue> filter_value = filter.ToValue();
+  std::unique_ptr<base::DictionaryValue> filter_value = filter.ToValue();
   api::log_private::Filter::Populate(*filter_value, &filter_);
 }
 

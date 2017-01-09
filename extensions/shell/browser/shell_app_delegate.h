@@ -5,8 +5,9 @@
 #ifndef EXTENSIONS_SHELL_BROWSER_SHELL_APP_DELEGATE_H_
 #define EXTENSIONS_SHELL_BROWSER_SHELL_APP_DELEGATE_H_
 
-#include "extensions/browser/app_window/app_delegate.h"
+#include "base/macros.h"
 #include "content/public/browser/web_contents_observer.h"
+#include "extensions/browser/app_window/app_delegate.h"
 
 namespace extensions {
 
@@ -34,7 +35,7 @@ class ShellAppDelegate : public AppDelegate {
                       bool* was_blocked) override;
   content::ColorChooser* ShowColorChooser(content::WebContents* web_contents,
                                           SkColor initial_color) override;
-  void RunFileChooser(content::WebContents* tab,
+  void RunFileChooser(content::RenderFrameHost* render_frame_host,
                       const content::FileChooserParams& params) override;
   void RequestMediaAccessPermission(
       content::WebContents* web_contents,

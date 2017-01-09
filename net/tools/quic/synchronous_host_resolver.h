@@ -8,19 +8,16 @@
 #define NET_TOOLS_QUIC_SYNCHRONOUS_HOST_RESOLVER_H_
 
 #include "net/base/address_list.h"
-#include "net/base/net_export.h"
 #include "net/dns/host_resolver.h"
 
 namespace net {
 
-namespace tools {
 
 class SynchronousHostResolver {
  public:
   static int Resolve(const std::string& host, AddressList* addresses);
 };
 
-}  // namespace tools
 }  // namespace net
 
 #endif  // NET_TOOLS_QUIC_SYNCHRONOUS_HOST_RESOLVER_H_

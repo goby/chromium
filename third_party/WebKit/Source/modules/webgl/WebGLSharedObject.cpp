@@ -23,8 +23,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include "config.h"
-
 #include "modules/webgl/WebGLSharedObject.h"
 
 #include "modules/webgl/WebGLContextGroup.h"
@@ -33,30 +31,33 @@
 namespace blink {
 
 WebGLSharedObject::WebGLSharedObject(WebGLRenderingContextBase* context)
-    : WebGLObject(context),
-      m_contextGroup(context->contextGroup())
-{
+    : WebGLObject(context), m_contextGroup(this, context->contextGroup()) {}
+
+bool WebGLSharedObject::validate(const WebGLContextGroup* contextGroup,
+                                 const WebGLRenderingContextBase*) const {
+  // The contexts and context groups no longer maintain references to all
+  // the objects they ever created, so there's no way to invalidate them
+  // eagerly during context loss. The invalidation is discovered lazily.
+  return contextGroup == m_contextGroup &&
+         cachedNumberOfContextLosses() == contextGroup->numberOfContextLosses();
 }
 
-WebGLSharedObject::~WebGLSharedObject()
-{
-    if (m_contextGroup)
-        m_contextGroup->removeObject(this);
+uint32_t WebGLSharedObject::currentNumberOfContextLosses() const {
+  return m_contextGroup->numberOfContextLosses();
 }
 
-void WebGLSharedObject::detachContextGroup()
-{
-    detach();
-    if (m_contextGroup) {
-        deleteObject(nullptr);
-        m_contextGroup->removeObject(this);
-        m_contextGroup = nullptr;
-    }
+gpu::gles2::GLES2Interface* WebGLSharedObject::getAGLInterface() const {
+  return m_contextGroup->getAGLInterface();
 }
 
-WebGraphicsContext3D* WebGLSharedObject::getAWebGraphicsContext3D() const
-{
-    return m_contextGroup ? m_contextGroup->getAWebGraphicsContext3D() : nullptr;
+DEFINE_TRACE(WebGLSharedObject) {
+  visitor->trace(m_contextGroup);
+  WebGLObject::trace(visitor);
 }
 
-} // namespace blink
+DEFINE_TRACE_WRAPPERS(WebGLSharedObject) {
+  visitor->traceWrappers(m_contextGroup);
+  WebGLObject::traceWrappers(visitor);
+}
+
+}  // namespace blink

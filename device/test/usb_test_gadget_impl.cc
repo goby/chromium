@@ -2,8 +2,10 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "device/test/usb_test_gadget.h"
+#include <stddef.h>
+#include <stdint.h>
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -11,19 +13,22 @@
 #include "base/compiler_specific.h"
 #include "base/files/file.h"
 #include "base/files/file_path.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
-#include "base/memory/scoped_ptr.h"
 #include "base/path_service.h"
 #include "base/process/process_handle.h"
 #include "base/run_loop.h"
 #include "base/scoped_observer.h"
+#include "base/single_thread_task_runner.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/thread_task_runner_handle.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
-#include "device/core/device_client.h"
+#include "device/base/device_client.h"
+#include "device/test/usb_test_gadget.h"
 #include "device/usb/usb_device.h"
 #include "device/usb/usb_device_handle.h"
 #include "device/usb/usb_service.h"
@@ -69,7 +74,7 @@ static const int kReenumeratePeriod = 100;  // 0.1 seconds
 struct UsbTestGadgetConfiguration {
   UsbTestGadget::Type type;
   const char* http_resource;
-  uint16 product_id;
+  uint16_t product_id;
 };
 
 static const struct UsbTestGadgetConfiguration kConfigurations[] = {
@@ -88,7 +93,7 @@ bool ReadFile(const base::FilePath& file_path, std::string* content) {
     return false;
   }
 
-  STLClearObject(content);
+  base::STLClearObject(content);
   int rv;
   do {
     char buf[4096];
@@ -120,12 +125,12 @@ bool ReadLocalPackage(std::string* package) {
   return ReadFile(file_path, package);
 }
 
-scoped_ptr<net::URLFetcher> CreateURLFetcher(
+std::unique_ptr<net::URLFetcher> CreateURLFetcher(
     scoped_refptr<net::URLRequestContextGetter> request_context_getter,
     const GURL& url,
     net::URLFetcher::RequestType request_type,
     net::URLFetcherDelegate* delegate) {
-  scoped_ptr<net::URLFetcher> url_fetcher =
+  std::unique_ptr<net::URLFetcher> url_fetcher =
       net::URLFetcher::Create(url, request_type, delegate);
 
   url_fetcher->SetRequestContext(request_context_getter.get());
@@ -147,7 +152,7 @@ class URLRequestContextGetter : public net::URLRequestContextGetter {
     if (!context_) {
       net::URLRequestContextBuilder context_builder;
       context_builder.set_proxy_service(net::ProxyService::CreateDirect());
-      context_ = context_builder.Build().Pass();
+      context_ = context_builder.Build();
     }
     return context_.get();
   }
@@ -157,7 +162,7 @@ class URLRequestContextGetter : public net::URLRequestContextGetter {
     return network_task_runner_;
   }
 
-  scoped_ptr<net::URLRequestContext> context_;
+  std::unique_ptr<net::URLRequestContext> context_;
   scoped_refptr<base::SingleThreadTaskRunner> network_task_runner_;
 };
 
@@ -183,7 +188,7 @@ int SimplePOSTRequest(
     const GURL& url,
     const std::string& form_data) {
   URLFetcherDelegate delegate;
-  scoped_ptr<net::URLFetcher> url_fetcher = CreateURLFetcher(
+  std::unique_ptr<net::URLFetcher> url_fetcher = CreateURLFetcher(
       request_context_getter, url, net::URLFetcher::POST, &delegate);
 
   url_fetcher->SetUploadData("application/x-www-form-urlencoded", form_data);
@@ -201,7 +206,7 @@ class UsbGadgetFactory : public UsbService::Observer,
     usb_service_ = DeviceClient::Get()->GetUsbService();
     request_context_getter_ = new URLRequestContextGetter(io_task_runner);
 
-    static uint32 next_session_id;
+    static uint32_t next_session_id;
     base::ProcessId process_id = base::GetCurrentProcId();
     session_id_ = base::StringPrintf("%d-%d", process_id, next_session_id++);
 
@@ -210,11 +215,11 @@ class UsbGadgetFactory : public UsbService::Observer,
 
   ~UsbGadgetFactory() override {}
 
-  scoped_ptr<UsbTestGadget> WaitForDevice() {
+  std::unique_ptr<UsbTestGadget> WaitForDevice() {
     EnumerateDevices();
     run_loop_.Run();
-    return make_scoped_ptr(
-        new UsbTestGadgetImpl(request_context_getter_, usb_service_, device_));
+    return base::MakeUnique<UsbTestGadgetImpl>(request_context_getter_,
+                                               usb_service_, device_);
   }
 
  private:
@@ -234,7 +239,7 @@ class UsbGadgetFactory : public UsbService::Observer,
     if (!device_) {
       // TODO(reillyg): This timer could be replaced by a way to use long-
       // polling to wait for claimed devices to become unclaimed.
-      base::MessageLoop::current()->PostDelayedTask(
+      base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
           FROM_HERE, base::Bind(&UsbGadgetFactory::EnumerateDevices,
                                 weak_factory_.GetWeakPtr()),
           base::TimeDelta::FromMilliseconds(kReenumeratePeriod));
@@ -374,7 +379,7 @@ class UsbGadgetFactory : public UsbService::Observer,
     version_.clear();
 
     // Wait a bit and then try again to find an available device.
-    base::MessageLoop::current()->PostDelayedTask(
+    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE, base::Bind(&UsbGadgetFactory::EnumerateDevices,
                               weak_factory_.GetWeakPtr()),
         base::TimeDelta::FromMilliseconds(kReenumeratePeriod));
@@ -383,7 +388,7 @@ class UsbGadgetFactory : public UsbService::Observer,
   UsbService* usb_service_ = nullptr;
   scoped_refptr<net::URLRequestContextGetter> request_context_getter_;
   std::string session_id_;
-  scoped_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<net::URLFetcher> url_fetcher_;
   scoped_refptr<UsbDevice> device_;
   std::string serial_number_;
   bool claimed_ = false;
@@ -424,7 +429,7 @@ class DeviceAddListener : public UsbService::Observer {
 
   void OnDeviceAdded(scoped_refptr<UsbDevice> device) override {
     if (device->vendor_id() == 0x18D1 && !device->serial_number().empty()) {
-      const uint16 product_id = device->product_id();
+      const uint16_t product_id = device->product_id();
       if (product_id_ == -1) {
         bool found = false;
         for (size_t i = 0; i < arraysize(kConfigurations); ++i) {
@@ -516,10 +521,10 @@ bool UsbTestGadget::IsTestEnabled() {
   return command_line->HasSwitch(kCommandLineSwitch);
 }
 
-scoped_ptr<UsbTestGadget> UsbTestGadget::Claim(
+std::unique_ptr<UsbTestGadget> UsbTestGadget::Claim(
     scoped_refptr<base::SingleThreadTaskRunner> io_task_runner) {
   UsbGadgetFactory gadget_factory(io_task_runner);
-  return gadget_factory.WaitForDevice().Pass();
+  return gadget_factory.WaitForDevice();
 }
 
 UsbTestGadgetImpl::UsbTestGadgetImpl(
